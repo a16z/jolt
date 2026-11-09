@@ -1,7 +1,7 @@
 use jolt_crypto::HomomorphicCommitment;
 use jolt_field::JoltField;
 
-use crate::RelaxedError;
+use crate::blindfold::RelaxedError;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RelaxedInstance<F, Com> {

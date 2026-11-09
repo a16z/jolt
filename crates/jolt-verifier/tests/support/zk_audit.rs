@@ -4,7 +4,7 @@ use jolt_crypto::{HomomorphicCommitment, VectorCommitment};
 use jolt_field::JoltField;
 use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, ZkOpeningScheme};
 use jolt_transcript::{Encoding, FieldTranscript, VerifierInit};
-use jolt_zk::BlindFoldProtocol;
+use jolt_zk::blindfold::BlindFoldProtocol;
 
 use jolt_verifier::{
     preprocessing::JoltVerifierPreprocessing,

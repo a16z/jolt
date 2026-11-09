@@ -33,7 +33,7 @@ use jolt_verifier::stages::{
     stage1, stage2, stage3, stage4, stage5, stage6a, stage6b, stage7, stage8,
 };
 use jolt_verifier::{VerifierError, JOLT_SESSION};
-use jolt_zk::{BlindFoldProof, BlindFoldProtocol, BlindFoldWitness};
+use jolt_zk::blindfold::{BlindFoldProof, BlindFoldProtocol, BlindFoldWitness};
 
 use crate::{JoltProverPreprocessing, ProverError};
 
@@ -157,7 +157,7 @@ where
         .ok_or(ProverError::Verifier(
             VerifierError::MissingVectorCommitmentSetup,
         ))?;
-    let proof = jolt_zk::prove::<F, VC, T, _>(
+    let proof = jolt_zk::blindfold::prove::<F, VC, T, _>(
         vc_setup,
         &protocol,
         &mut transcript,

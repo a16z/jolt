@@ -26,7 +26,7 @@ use jolt_verifier::proof::JoltStageProofs;
 #[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 use jolt_verifier::JoltProofClaims;
 #[cfg(all(feature = "prover-fixtures", feature = "zk"))]
-use jolt_zk::BlindFoldProof;
+use jolt_zk::blindfold::BlindFoldProof;
 
 #[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 const DEFAULT_SAMPLES: usize = 64;

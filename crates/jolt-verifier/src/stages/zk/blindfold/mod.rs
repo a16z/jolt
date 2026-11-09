@@ -122,7 +122,7 @@ use jolt_sumcheck::{
     BatchedCommittedSumcheckConsistency, CommittedSumcheckConsistency, SumcheckDomainSpec,
     SumcheckStatement,
 };
-use jolt_zk::{BlindFoldProtocol, BlindFoldProtocolBuilder, OpeningAlias};
+use jolt_zk::blindfold::{BlindFoldProtocol, BlindFoldProtocolBuilder, OpeningAlias};
 use num_traits::Zero;
 
 use super::{inputs::BlindFoldInputs, outputs::CommittedOutputClaimOutput};
