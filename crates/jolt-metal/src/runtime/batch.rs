@@ -120,7 +120,9 @@ impl<'a> Batch<'a> {
     /// pattern, including access derived from inline values. Aliasing between
     /// bindings, concurrent accesses between threads, and synchronization
     /// within the kernel must obey the Metal Shading Language memory model.
-    /// These requirements apply to reads as well as writes; pipeline
+    /// Reads must access initialized data; uninitialized buffers may be bound
+    /// only where the kernel writes before reading. These requirements apply
+    /// to reads as well as writes; pipeline
     /// reflection validates argument types, but cannot validate access bounds
     /// or the shader's memory behavior. Validation failures leave the batch
     /// unchanged. A backend error during encoding makes the batch unusable.

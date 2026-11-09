@@ -2,6 +2,7 @@
 //! uninhabited and its methods are statically unreachable.
 
 use std::env::consts::OS;
+use std::mem::MaybeUninit;
 
 use crate::error::MetalError;
 use crate::runtime::batch::Binding;
@@ -12,6 +13,9 @@ use crate::runtime::sys::RawBatchOutcome;
 pub(crate) enum RawDevice {}
 
 impl RawDevice {
+    pub(crate) fn new_uninit_buffer(&self, _bytes: usize) -> Result<RawBuffer, MetalError> {
+        match *self {}
+    }
     pub(crate) fn system_default() -> Result<(Self, DeviceInfo), MetalError> {
         Err(MetalError::Unavailable {
             reason: format!("Metal requires macOS; this is {OS}"),
@@ -56,6 +60,9 @@ pub(crate) enum RawPipeline {}
 pub(crate) enum RawBuffer {}
 
 impl RawBuffer {
+    pub(crate) fn host_uninit<T>(&mut self, _len: usize) -> Option<&mut [MaybeUninit<T>]> {
+        match *self {}
+    }
     pub(crate) fn host_bytes(&mut self, _len: usize) -> Option<&[u8]> {
         match *self {}
     }

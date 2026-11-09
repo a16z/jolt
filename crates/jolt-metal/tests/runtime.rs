@@ -75,15 +75,18 @@ mod gpu {
 
         let pipeline64 = library.pipeline(&host_name::<u64>(VEC_ADD)).unwrap();
         let pipeline32 = library.pipeline(&host_name::<u32>(VEC_ADD)).unwrap();
-        let (a_dev, b_dev) = (
-            DeviceBuffer::from_slice(&device, &a).unwrap(),
-            DeviceBuffer::from_slice(&device, &b).unwrap(),
-        );
+        let mut a_dev = DeviceBuffer::<std::mem::MaybeUninit<u64>>::uninit(&device, LEN).unwrap();
+        for (slot, value) in a_dev.write_uninit().unwrap().iter_mut().zip(&a) {
+            let _ = slot.write(*value);
+        }
+        // SAFETY: the loop fills exactly LEN padding-free u64 elements.
+        let a_dev = unsafe { a_dev.assume_init() }.unwrap();
+        let b_dev = DeviceBuffer::from_slice(&device, &b).unwrap();
         let (a32_dev, b32_dev) = (
             DeviceBuffer::from_slice(&device, &a32).unwrap(),
             DeviceBuffer::from_slice(&device, &b32).unwrap(),
         );
-        let mut out = DeviceBuffer::<u64>::zeroed(&device, LEN).unwrap();
+        let out = DeviceBuffer::<std::mem::MaybeUninit<u64>>::uninit(&device, LEN).unwrap();
         let mut out32 = DeviceBuffer::<u32>::zeroed(&device, LEN).unwrap();
 
         let mut batch = Batch::new(&device).unwrap();
@@ -112,6 +115,8 @@ mod gpu {
         }
         .unwrap();
         let _ = batch.commit_and_wait().unwrap();
+        // SAFETY: vec_add completed and wrote every logical u64 output once.
+        let mut out = unsafe { out.assume_init() }.unwrap();
 
         let expected: Vec<u64> = a.iter().zip(&b).map(|(x, y)| x.wrapping_add(*y)).collect();
         let expected32: Vec<u32> = a32

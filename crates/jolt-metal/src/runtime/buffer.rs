@@ -1,5 +1,5 @@
 use std::marker::PhantomData;
-use std::mem::size_of;
+use std::mem::{size_of, MaybeUninit};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use bytemuck::checked::{self, CheckedBitPattern};
@@ -116,7 +116,56 @@ impl<T: NoUninit> DeviceBuffer<T> {
     }
 }
 
-impl<T: CheckedBitPattern> DeviceBuffer<T> {
+impl<T> DeviceBuffer<MaybeUninit<T>> {
+    /// Allocates storage without initializing its contents. It can be filled
+    /// through an exclusive host slice or bound to a GPU writer. Call
+    /// [`Self::assume_init`] only after every logical element has been written.
+    /// Uninitialized storage has no safe readback method:
+    ///
+    /// ```compile_fail
+    /// use std::mem::MaybeUninit;
+    /// use jolt_metal::runtime::DeviceBuffer;
+    /// fn read_uninitialized(buffer: &mut DeviceBuffer<MaybeUninit<u64>>) {
+    ///     let _ = buffer.read();
+    /// }
+    /// ```
+    pub fn uninit(device: &Device, len: usize) -> Result<Self, MetalError> {
+        let byte_len = Self::byte_len(device, len)?;
+        let sys = device.sys.new_uninit_buffer(byte_len)?;
+        Ok(Self::from_sys(device, sys, len, byte_len))
+    }
+
+    /// Exclusive storage for host initialization. It cannot overlap an encoded
+    /// batch borrow, and uncertain GPU completion prevents access.
+    pub fn write_uninit(&mut self) -> Result<&mut [MaybeUninit<T>], MetalError> {
+        self.access.require_available("host initialization")?;
+        self.sys
+            .host_uninit(self.len)
+            .ok_or_else(|| MetalError::InvalidReadback {
+                reason: "initialization storage has incompatible size or alignment".into(),
+            })
+    }
+
+    /// Marks a completely initialized buffer ready for ordinary use.
+    ///
+    /// # Safety
+    /// All bytes of every logical element, including padding, must be
+    /// initialized, and each element must be a valid `T`. A GPU initializer
+    /// must have successfully completed and write every element on all paths.
+    pub unsafe fn assume_init(self) -> Result<DeviceBuffer<T>, MetalError> {
+        self.access.require_available("initialization completion")?;
+        Ok(DeviceBuffer {
+            sys: self.sys,
+            access: self.access,
+            len: self.len,
+            byte_len: self.byte_len,
+            device_id: self.device_id,
+            _element: PhantomData,
+        })
+    }
+}
+
+impl<T: CheckedBitPattern + NoUninit> DeviceBuffer<T> {
     /// Views the buffer's contents after checking that every element is a
     /// valid `T`. A kernel that wrote an invalid value (for a field element,
     /// a non-canonical one) yields [`MetalError::InvalidReadback`].

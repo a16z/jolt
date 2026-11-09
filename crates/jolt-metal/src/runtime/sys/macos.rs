@@ -6,6 +6,7 @@
 //! Callers validate arguments before calling in here; this layer only checks
 //! what Metal itself reports (nil objects, `NSError`s, command-buffer status).
 
+use std::mem::{align_of, size_of, MaybeUninit};
 use std::panic::AssertUnwindSafe;
 use std::ptr::NonNull;
 use std::slice;
@@ -107,14 +108,18 @@ impl RawDevice {
         objc("currentAllocatedSize", || self.raw.currentAllocatedSize())
     }
 
-    pub(crate) fn new_zeroed_buffer(&self, bytes: usize) -> Result<RawBuffer, MetalError> {
+    pub(crate) fn new_uninit_buffer(&self, bytes: usize) -> Result<RawBuffer, MetalError> {
         let length = bytes.max(MIN_ALLOCATION);
         let raw = objc("newBufferWithLength", || {
             self.raw
                 .newBufferWithLength_options(length, buffer_options())
         })?
         .ok_or(MetalError::AllocationFailed { bytes })?;
-        let buffer = RawBuffer::new(raw)?;
+        RawBuffer::new(raw)
+    }
+
+    pub(crate) fn new_zeroed_buffer(&self, bytes: usize) -> Result<RawBuffer, MetalError> {
+        let buffer = self.new_uninit_buffer(bytes)?;
         // SAFETY: `contents` points to `allocated` writable bytes of a
         // shared-storage buffer that no command buffer references yet.
         unsafe { buffer.contents.write_bytes(0, buffer.allocated) };
@@ -274,6 +279,20 @@ impl RawBuffer {
         })
     }
 
+    pub(crate) fn host_uninit<T>(&mut self, len: usize) -> Option<&mut [MaybeUninit<T>]> {
+        let bytes = len.checked_mul(size_of::<T>())?;
+        if bytes > self.allocated
+            || bytes > isize::MAX as usize
+            || !(self.contents.as_ptr() as usize).is_multiple_of(align_of::<T>())
+        {
+            return None;
+        }
+        // SAFETY: the checked allocation covers this aligned slice. Its
+        // elements may be uninitialized; the exclusive borrow and the caller's
+        // completion check prevent host/GPU overlap.
+        Some(unsafe { slice::from_raw_parts_mut(self.contents.as_ptr().cast(), len) })
+    }
+
     /// The first `len` bytes of the buffer, for the host.
     ///
     /// The caller establishes that no GPU work touches the buffer through the
@@ -284,9 +303,10 @@ impl RawBuffer {
             return None;
         }
         // SAFETY: `contents` points to `allocated >= len` bytes initialized
-        // at creation (zeroed or copied) and since written only by completed
-        // GPU work; the caller checked that no GPU access is in flight; the
-        // slice borrows `self`, so the buffer outlives it.
+        // by a constructor or an initializer certified through assume_init,
+        // and since written only by completed GPU work. The caller checked
+        // that no GPU access is in flight. The slice borrows self, so the
+        // buffer outlives it.
         Some(unsafe { slice::from_raw_parts(self.contents.as_ptr(), len) })
     }
 }
