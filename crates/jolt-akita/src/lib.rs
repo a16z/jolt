@@ -47,6 +47,8 @@ mod shape_guard;
 mod trace_onehot;
 mod verifier_resources;
 mod verifier_setup;
+#[cfg(feature = "zk")]
+mod whiteout;
 
 pub use akita_pcs::{AkitaError, TrustedBytes};
 
@@ -62,15 +64,28 @@ pub use adapters::{
 };
 pub use configs::AkitaChunkProfile;
 pub use deferred::AkitaVerificationContext;
+/// The shape argument of [`TraceOneHotCommitment::whiteout_commit_precommitted`].
+#[cfg(feature = "zk")]
+pub use jolt_zk::whiteout::{DenseSource, PrecommittedShape};
 pub use native_batching::{
     AkitaNativeBatchPolynomials, AkitaNativeBatchStatement, AkitaNativeBatching,
 };
 pub use schedule_artifacts::{AkitaOneHotScheduleArtifact, AkitaScheduleArtifacts};
 pub use schedule_registry::{DenseGroupLayout, GroupedScheduleParams};
+#[cfg(feature = "zk-prover")]
+pub use scheme::WhiteoutPads;
 pub use scheme::{
     AkitaProverTranscript, AkitaScheme, AkitaVerifierTranscript, TraceOneHotCommitment,
 };
 pub use trace_onehot::{no_selected_row, TraceOneHotColumn, TraceOneHotRows};
+#[cfg(all(feature = "zk-prover", feature = "logging"))]
+pub use whiteout::census as whiteout_census;
+#[cfg(feature = "zk-prover")]
+pub use whiteout::WhiteoutResidual;
+#[cfg(feature = "zk")]
+pub use whiteout::{
+    WhiteoutCapacity, WhiteoutCapacityError, WhiteoutPlanError, WhiteoutPlans, WhiteoutStream,
+};
 
 /// Jolt↔Akita basis-order bridging, exposed so benchmarks measuring the raw
 /// backend use the exact transform the adapter uses.

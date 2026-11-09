@@ -9,6 +9,8 @@
 //! plan schedules.
 
 use std::collections::hash_map::Entry;
+#[cfg(feature = "zk")]
+use std::collections::BTreeSet;
 use std::collections::HashMap;
 
 use akita_config::{policy_of, CommitmentConfig, TrustedScheduleCatalog};
@@ -20,6 +22,8 @@ use akita_pcs::AkitaError;
 use akita_planner::emit::{GroupedGenerationRequest, PrecommittedProducer};
 use akita_planner::find_adapted_schedule;
 use akita_schedules::{ResolvedScheduleRow, ValidatedScheduleCatalog};
+#[cfg(feature = "zk")]
+use jolt_zk::whiteout::{DenseSource, PrecommittedShape};
 use serde::{Deserialize, Serialize};
 use std::error::Error;
 use std::fmt::{Display, Formatter, Result as FormatResult};
@@ -135,6 +139,42 @@ impl GroupedScheduleParams {
 
     pub(crate) fn final_group(&self) -> PolynomialGroupLayout {
         self.final_group
+    }
+
+    /// Whiteout: every list of precommitted groups an opening under these
+    /// parameters may fold, in canonical order: each combination of the
+    /// optional advice groups, then the mandatory groups.
+    #[cfg(feature = "zk")]
+    pub(crate) fn whiteout_admitted(&self) -> BTreeSet<Vec<PrecommittedShape>> {
+        let bounded = |num_vars| PrecommittedShape {
+            num_vars,
+            source: DenseSource::Bounded,
+        };
+        let mandatory = self
+            .mandatory_dense_layouts
+            .iter()
+            .map(|layout| match *layout {
+                DenseGroupLayout::Bounded { num_vars } => bounded(num_vars),
+                DenseGroupLayout::FullWidth { num_vars } => PrecommittedShape {
+                    num_vars,
+                    source: DenseSource::FullField,
+                },
+            })
+            .collect::<Vec<_>>();
+        let untrusted = [None, self.untrusted_physical_arity];
+        let trusted = [None, self.trusted_physical_arity];
+        untrusted
+            .iter()
+            .flat_map(|untrusted| trusted.iter().map(move |trusted| (*untrusted, *trusted)))
+            .map(|(untrusted, trusted)| {
+                untrusted
+                    .into_iter()
+                    .chain(trusted)
+                    .map(bounded)
+                    .chain(mandatory.iter().copied())
+                    .collect()
+            })
+            .collect()
     }
 
     /// Provision and audit the exact grouped rows before constructing backend matrices.

@@ -27,6 +27,8 @@ use jolt_field::Zero;
 use jolt_openings::OpeningsError;
 use jolt_poly::{MultilinearPoly, OneHotIndexOrder, OneHotPolynomial, Polynomial};
 use jolt_transcript::{BytesMsg, Encoding};
+#[cfg(feature = "zk")]
+use jolt_zk::whiteout::PrecommittedShape;
 #[cfg(feature = "parallel")]
 use rayon::{ThreadPool, ThreadPoolBuilder};
 use serde::{Deserialize, Serialize};
@@ -41,6 +43,8 @@ use crate::prepared::{PreparedBytes, PreparedVerifier};
 use crate::schedule_artifacts::AkitaScheduleArtifacts;
 use crate::schedule_registry::GroupedScheduleParams;
 use crate::verifier_resources::PREPARED_VERIFIER_RESOURCES;
+#[cfg(feature = "zk")]
+use crate::whiteout::{PreparedWhiteout, WhiteoutPlans, WhiteoutSetup};
 
 pub type AkitaField = akita_config::proof_optimized::fp128::Field;
 pub(crate) type AkitaConfig = JoltDenseBounded;
@@ -169,20 +173,23 @@ fn with_profile_backend_pool<R>(selection: ProfileBackendPool, f: impl FnOnce() 
     f()
 }
 
-/// Runs verifier backend calls in `f` on an explicit host-sized pool.
+/// Runs `f` on an explicit host-sized pool, its backend calls included.
 #[cfg(feature = "profiling")]
 #[doc(hidden)]
-pub fn with_host_parallel_verifier_backend<R>(f: impl FnOnce() -> R) -> R {
-    let _ = host_parallel_verifier_pool();
-    with_profile_backend_pool(ProfileBackendPool::HostParallel, f)
+pub fn with_host_parallel_verifier_backend<R: Send>(f: impl FnOnce() -> R + Send) -> R {
+    host_parallel_verifier_pool()
+        .install(|| with_profile_backend_pool(ProfileBackendPool::HostParallel, f))
 }
 
-/// Runs verifier backend calls in `f` on exactly one worker.
+/// Runs `f` on exactly one worker, its backend calls included: the Jolt
+/// stages and Whiteout's own parallel loops run on the caller's pool, not
+/// [`with_backend_pool`], so a single-threaded measurement installs the pool
+/// around the whole verify.
 #[cfg(feature = "profiling")]
 #[doc(hidden)]
-pub fn with_single_threaded_verifier_backend<R>(f: impl FnOnce() -> R) -> R {
-    let _ = single_threaded_verifier_pool();
-    with_profile_backend_pool(ProfileBackendPool::SingleThreaded, f)
+pub fn with_single_threaded_verifier_backend<R: Send>(f: impl FnOnce() -> R + Send) -> R {
+    single_threaded_verifier_pool()
+        .install(|| with_profile_backend_pool(ProfileBackendPool::SingleThreaded, f))
 }
 
 #[cfg(feature = "profiling")]
@@ -251,6 +258,21 @@ pub struct AkitaSetupParams {
     #[serde(default, rename = "advice_schedule")]
     pub(crate) grouped_schedule: Option<GroupedScheduleParams>,
     pub(crate) schedule_artifacts: Arc<AkitaScheduleArtifacts>,
+    /// Whiteout: the trace group commits hiding and opens masked.
+    #[cfg(feature = "zk")]
+    #[serde(default)]
+    pub(crate) whiteout: Option<WhiteoutSource>,
+}
+
+/// Where a Whiteout setup's plans come from.
+#[cfg(feature = "zk")]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) enum WhiteoutSource {
+    /// Planned at setup.
+    Plan,
+    /// Persisted plans, validated when the setup is built or decoded and
+    /// never replaced by planning.
+    Load(WhiteoutPlans),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -277,6 +299,8 @@ impl AkitaSetupParams {
             flavor: AkitaSetupFlavor::Both,
             grouped_schedule: None,
             schedule_artifacts,
+            #[cfg(feature = "zk")]
+            whiteout: None,
         }
     }
 
@@ -300,6 +324,8 @@ impl AkitaSetupParams {
             flavor: AkitaSetupFlavor::OneHot,
             grouped_schedule: None,
             schedule_artifacts,
+            #[cfg(feature = "zk")]
+            whiteout: None,
         }
     }
 
@@ -324,6 +350,8 @@ impl AkitaSetupParams {
             flavor: AkitaSetupFlavor::OneHot,
             grouped_schedule,
             schedule_artifacts,
+            #[cfg(feature = "zk")]
+            whiteout: None,
         }
     }
 
@@ -345,6 +373,8 @@ impl AkitaSetupParams {
             flavor: AkitaSetupFlavor::Dense,
             grouped_schedule: None,
             schedule_artifacts,
+            #[cfg(feature = "zk")]
+            whiteout: None,
         }
     }
 
@@ -356,6 +386,22 @@ impl AkitaSetupParams {
     /// Constructors default to one chunk with no chunked folds.
     pub fn with_akita_chunk_profile(mut self, profile: AkitaChunkProfile) -> Self {
         self.akita_chunk_profile = profile;
+        self
+    }
+
+    /// Whiteout: commits the trace group hiding and opens it masked.
+    #[cfg(feature = "zk")]
+    pub fn with_whiteout(mut self) -> Self {
+        self.whiteout = Some(WhiteoutSource::Plan);
+        self
+    }
+
+    /// Whiteout, from persisted plans ([`AkitaVerifierSetup::whiteout_plans`])
+    /// instead of planning: the setup validates them when it is built and
+    /// refuses them, never replans, if they fail.
+    #[cfg(feature = "zk")]
+    pub fn with_whiteout_plans(mut self, plans: WhiteoutPlans) -> Self {
+        self.whiteout = Some(WhiteoutSource::Load(plans));
         self
     }
 
@@ -520,8 +566,10 @@ impl AkitaProverSetup {
 
 /// Serializable public inputs for deriving backend keys.
 ///
-/// The exact validated schedule artifacts are serialized; derived scheme
-/// objects, prepared keys, and caches are rebuilt lazily after transport.
+/// The exact validated schedule artifacts are serialized. After transport a
+/// clear setup rebuilds its scheme objects and backend verifiers on first
+/// use; a Whiteout setup with plans prepares its verifier state while
+/// decoding.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AkitaVerifierSetup {
@@ -555,6 +603,15 @@ pub(crate) enum AkitaVerifierScheduleArtifacts {
         dense: PreparedBytes,
         one_hot: PreparedBytes,
     },
+    /// Whiteout: a single-chunk one-hot setup with the masked opening's
+    /// parameters and plans. Last, so the `zk` feature leaves the clear
+    /// variants' discriminants, and hence every clear setup's bytes, as
+    /// they are without it.
+    #[cfg(feature = "zk")]
+    OneHotWhiteout {
+        one_hot: PreparedBytes,
+        whiteout: WhiteoutSetup,
+    },
 }
 
 impl AkitaVerifierScheduleArtifacts {
@@ -570,12 +627,16 @@ impl AkitaVerifierScheduleArtifacts {
                 ..
             } => Some((*dense_profile, dense)),
             Self::OneHot { .. } => None,
+            #[cfg(feature = "zk")]
+            Self::OneHotWhiteout { .. } => None,
         }
     }
 
     pub(crate) fn one_hot(&self) -> Option<&PreparedBytes> {
         match self {
             Self::OneHot { one_hot, .. } | Self::Both { one_hot, .. } => Some(one_hot),
+            #[cfg(feature = "zk")]
+            Self::OneHotWhiteout { one_hot, .. } => Some(one_hot),
             Self::Dense { .. } => None,
         }
     }
@@ -584,15 +645,23 @@ impl AkitaVerifierScheduleArtifacts {
         match self {
             Self::OneHot { profile, .. } | Self::Both { profile, .. } => *profile,
             Self::Dense { .. } => AkitaChunkProfile::default(),
+            #[cfg(feature = "zk")]
+            Self::OneHotWhiteout { .. } => AkitaChunkProfile::default(),
         }
     }
 
-    pub(crate) fn slots(&mut self) -> Vec<&mut PreparedBytes> {
+    pub(crate) fn slots(&mut self) -> Vec<(&mut PreparedBytes, bool)> {
         match self {
-            Self::Dense { dense, .. } => vec![dense],
-            Self::OneHot { one_hot, .. } => vec![one_hot],
+            Self::Dense { dense, .. } => vec![(dense, false)],
+            Self::OneHot { one_hot, .. } => vec![(one_hot, false)],
             Self::Both { dense, one_hot, .. } => {
-                vec![dense, one_hot]
+                vec![(dense, false), (one_hot, false)]
+            }
+            #[cfg(feature = "zk")]
+            Self::OneHotWhiteout { one_hot, whiteout } => {
+                let mut slots = vec![(one_hot, false)];
+                slots.extend(whiteout.payload_slots());
+                slots
             }
         }
     }
@@ -672,6 +741,26 @@ impl AkitaVerifierSetup {
 
     pub fn akita_chunk_profile(&self) -> AkitaChunkProfile {
         self.schedule_artifacts.akita_chunk_profile()
+    }
+
+    /// Whiteout: every plan this setup holds or has derived, its response
+    /// schedules included, for a setup built from them
+    /// ([`AkitaSetupParams::with_whiteout_plans`]); `None` for a setup
+    /// without Whiteout or not yet planned.
+    #[cfg(feature = "zk")]
+    pub fn whiteout_plans(&self) -> Option<WhiteoutPlans> {
+        self.whiteout().and_then(WhiteoutSetup::export)
+    }
+
+    /// Whiteout: the masked opening's parameters; `None` for a clear setup.
+    #[cfg(feature = "zk")]
+    pub(crate) fn whiteout(&self) -> Option<&WhiteoutSetup> {
+        match &*self.schedule_artifacts {
+            AkitaVerifierScheduleArtifacts::OneHotWhiteout { whiteout, .. } => Some(whiteout),
+            AkitaVerifierScheduleArtifacts::Dense { .. }
+            | AkitaVerifierScheduleArtifacts::OneHot { .. }
+            | AkitaVerifierScheduleArtifacts::Both { .. } => None,
+        }
     }
 
     /// Primes the lazy verifier cache from freshly built backend keys, so
@@ -920,6 +1009,8 @@ impl AkitaVerifierSetup {
 /// ignored by equality and skipped by serde; clones share the cache.
 #[derive(Clone, Default)]
 pub(crate) struct BackendVerifierCache {
+    #[cfg(feature = "zk")]
+    pub(crate) whiteout: Arc<OnceLock<Arc<PreparedWhiteout>>>,
     dense: Arc<OnceLock<Arc<AkitaVerifier<AkitaConfig>>>>,
     one_hot: Arc<OnceLock<Arc<AkitaOneHotBackendVerifier>>>,
     dense_scheme: Arc<OnceLock<Result<Arc<AkitaBackendScheme>, String>>>,
@@ -955,6 +1046,10 @@ impl BackendVerifierCache {
 
     /// Take `prepared`'s verifiers, which own their matrix and prefix commitments.
     pub(crate) fn adopt(&self, prepared: &Self) {
+        #[cfg(feature = "zk")]
+        if let Some(whiteout) = prepared.whiteout.get() {
+            let _ = self.whiteout.get_or_init(|| Arc::clone(whiteout));
+        }
         if let Some(verifier) = prepared.dense.get() {
             let _ = self.dense.get_or_init(|| Arc::clone(verifier));
         }
@@ -1188,9 +1283,27 @@ pub struct AkitaProverHint {
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum AkitaHintSource {
-    Dense { poly_count: usize },
-    OneHot { poly_count: usize, one_hot_k: usize },
-    TraceOneHot { poly_count: usize, one_hot_k: usize },
+    Dense {
+        poly_count: usize,
+    },
+    OneHot {
+        poly_count: usize,
+        one_hot_k: usize,
+    },
+    TraceOneHot {
+        poly_count: usize,
+        one_hot_k: usize,
+    },
+    /// Whiteout: one dense polynomial committed hiding, on the setup's
+    /// Whiteout backend, as a precommitted group of `shape`.
+    #[cfg(feature = "zk")]
+    #[cfg_attr(
+        not(feature = "zk-prover"),
+        expect(dead_code, reason = "only the prover half commits hiding")
+    )]
+    WhiteoutPrecommitted {
+        shape: PrecommittedShape,
+    },
 }
 
 impl Default for AkitaHintSource {
@@ -1203,6 +1316,8 @@ impl AkitaHintSource {
     pub(crate) const fn backend_flavor(self) -> AkitaBackendFlavor {
         match self {
             Self::Dense { .. } => AkitaBackendFlavor::Dense,
+            #[cfg(feature = "zk")]
+            Self::WhiteoutPrecommitted { .. } => AkitaBackendFlavor::Dense,
             Self::OneHot { .. } | Self::TraceOneHot { .. } => AkitaBackendFlavor::OneHot,
         }
     }
@@ -1210,6 +1325,8 @@ impl AkitaHintSource {
     pub(crate) const fn kind(self) -> &'static str {
         match self {
             Self::Dense { .. } => "dense",
+            #[cfg(feature = "zk")]
+            Self::WhiteoutPrecommitted { .. } => "whiteout_precommitted",
             Self::OneHot { .. } => "one_hot",
             Self::TraceOneHot { .. } => "trace_one_hot",
         }
@@ -1220,6 +1337,8 @@ impl AkitaHintSource {
             Self::Dense { poly_count }
             | Self::OneHot { poly_count, .. }
             | Self::TraceOneHot { poly_count, .. } => poly_count,
+            #[cfg(feature = "zk")]
+            Self::WhiteoutPrecommitted { .. } => 1,
         }
     }
 }

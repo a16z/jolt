@@ -75,7 +75,18 @@ Regenerate this repository's catalogs:
 cargo run --release -p jolt-akita --bin gen_jolt_schedules -- crates/jolt-akita/schedules
 ```
 
-Selectors include `k16`, `k256`, `k16-single`, `k256-single`, `w8r2`, `dense-bounded`, and `dense-full`. Append `--check` to replan and compare
+`jolt-fp128-response-digits.aks` holds Whiteout's response rows (family
+`fp128_response_digits`, one row per `e` length `ν = 18..=27`, the top being the response proof's
+`MAX_RESPONSE_NUM_VARS`). A Whiteout setup derives each length's one-row
+plan from it and refuses a catalog that lacks one; it never plans a response
+row. `from_directory` loads it when present. Generate it with
+`--features zk` and the `response` selector:
+
+```sh
+cargo run --release -p jolt-akita --features zk --bin gen_jolt_schedules -- crates/jolt-akita/schedules response
+```
+
+Selectors include `k16`, `k256`, `k16-single`, `k256-single`, `w8r2`, `dense-bounded`, `dense-full`, and (with `zk`) `response`. Append `--check` to replan and compare
 canonical bytes without replacing the files. The catalogs are generated with
 the Akita revision pinned in the workspace `Cargo.toml`. Every catalog binds
 Akita's planner policy digest, which includes the SIS security policy and its

@@ -688,6 +688,12 @@ impl BatchOpeningScheme for AkitaNativeBatching {
                 .map_err(prove_failed)?;
                 (selection, proof)
             }
+            #[cfg(feature = "zk")]
+            AkitaHintSource::WhiteoutPrecommitted { .. } => {
+                return Err(invalid_batch(
+                    "a Whiteout precommitted group opens only in its masked opening",
+                ));
+            }
             AkitaHintSource::OneHot { .. } | AkitaHintSource::TraceOneHot { .. } => prove_one_hot(
                 setup,
                 point,
