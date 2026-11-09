@@ -12,7 +12,7 @@ fn native_input_packed_and_dense_rounds_match_reference() {
     // binds, then a small CPU tail. Retained rows include MIN/MAX immediates
     // and independent flags. Round2 needs q(1), while non-Boolean binds keep
     // the accumulated equality scalar nonzero.
-    super::super::super::tests::assert_parity_field::<F>(
+    super::super::tests::assert_parity_field::<F>(
         7,
         717,
         67,
