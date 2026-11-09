@@ -247,6 +247,14 @@ These are development observations, not the repeated four-workload acceptance
 comparison. Ring classification found only 2.6% uniform rings, so an additional
 uniform-only transformed key is deferred.
 
+ReadRAF at Jolt `a743ff017` also verified the small and T27 proofs. Its cycle
+phase fell from 2.1477 to 1.7571 s in the separate profiles, including a shared
+row upload moved from a later consumer. Overall throughput remains provisional:
+two matched untraced observations took 26.2297 and 26.0313 s, while the prior
+root-fold binary took 25.2315 and 27.8937 s. That variation prevents a firm
+full-proof speedup claim. The frozen binaries, manifests, and observations are
+in `read-raf-metal/` and `read-raf-paired/` under the same artifact directory.
+
 Reuse existing profiler stage labels and `jolt-eval` telemetry objectives for
 prover/stage time where available. Add only measurements needed to identify GPU
 dispatch time, host preparation, and waiting; keep end-to-end time authoritative.
@@ -292,8 +300,16 @@ lazy-policy crossover, and keeps subsequent shrinking prefixes on the device
 until the small CPU tail. Separate claim and selector extents retain their
 implicit tails. Its packed claim byte shares the existing 32-byte instruction
 row, which a proof-owned carry keeps alive for later RA and Booleanity use.
-Focused round and Metal validation checks pass; full-proof performance is the
-next integration measurement.
+Focused round and Metal validation checks pass; the full-proof development
+measurements above remain provisional.
+
+Sparse register cycle rounds retain compact seed entries and increments through
+the first bind, then create a device prefix directly at the canonical sparse
+transition. The host advances address masks and offsets; field values and
+indexed/direct selector coefficients remain on the device until the small CPU
+tail. Existing CPU code owns address-first fallback and the final address phase.
+Its independent sparse-boundary oracle and Metal validation pass; full-proof
+performance is the next integration measurement.
 
 Spartan outer remainder stays on the optimized CPU path. Its initial GPU port
 was correct, but upload and buffer preparation alone exceeded the measured CPU
