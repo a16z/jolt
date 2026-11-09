@@ -217,11 +217,11 @@ For immediate forms, `R = 0` when `rd = x0` and `R = 1` otherwise. `R + 1` means
 | `CSRRCI` | raw | uimm = 0 | — → 1 |
 | `CSRRCI` | raw | uimm = 1–31 | — → R + 1 |
 
-No path is longer than at `fe91c0de5`. Relative to main, a register `CSRRW` to `mtvec` with a nonzero source costs four extra rows, or three with an alias; a writing `CSRRS mtvec` costs three extra rows, or two with an alias. `CSRRS mstatus` and `CSRRS mepc` cost one extra row except aliases, whose cost equals main. `ECALL` saves one row and `MRET` costs two extra rows. The boot `mtvec` register write therefore costs four extra rows.
+Relative to main, a register `CSRRW` to `mtvec` with a nonzero source costs four extra rows, or three with an alias; a writing `CSRRS mtvec` costs three extra rows, or two with an alias. `CSRRS mstatus` and `CSRRS mepc` cost one extra row except aliases, whose cost equals main. `ECALL` saves one row and `MRET` costs two extra rows. The boot `mtvec` register write therefore costs four extra rows.
 
 ### Instruction-count rationale
 
-The tables enumerate each path with **main**, **before** (`fe91c0de5`) and **final** counts. Each raw row applies separately to `mcause`, `mtval` and `mscratch`. Immediate value classes partition all 32 values, and both destination cases are explicit. Counts are pinned as literals by `system_expansion_counts_match_spec_paths`; the tracer test `system_expansions_refine_architectural_formulas` independently checks the architectural formulas and invariants.
+The tables enumerate each path with **main** and **final** counts. Each raw row applies separately to `mcause`, `mtval` and `mscratch`. Immediate value classes partition all 32 values, and both destination cases are explicit. Counts are pinned as literals by `system_expansion_counts_match_spec_paths`; the tracer test `system_expansions_refine_architectural_formulas` independently checks the architectural formulas and invariants.
 
 A row has one register output, except a control-flow row also sets the next PC. Distinct required register outputs give a lower bound. The canonical no-op is the minimum one-row representation of an advancing source instruction. The lower bounds below fix the current representation: v39 stores only bits 3 and 7, v34 is architectural `mtvec`, and v36 is canonical architectural `mepc`. Other registers and memory are arbitrary unless an earlier row supplies a required output.
 
@@ -240,15 +240,15 @@ These leave open four-row writes and three-row fused sets that use right shifts,
 
 #### ECALL
 
-| Path | main | before | final | Rationale |
-|---|---|---|---|---|
-| all states | 7 | 7 | 6 | mepc, mcause and mtval each need a write; status needs two rows by the exclusion below; next PC needs JALR. AUIPC writes mepc directly. |
+| Path | main | final | Rationale |
+|---|---|---|---|
+| all states | 7 | 6 | mepc, mcause and mtval each need a write; status needs two rows by the exclusion below; next PC needs JALR. AUIPC writes mepc directly. |
 
 #### MRET
 
-| Path | main | before | final | Rationale |
-|---|---|---|---|---|
-| all states | 1 | 3 | 3 | Status needs two rows by the exclusion below; JALR writes next PC. |
+| Path | main | final | Rationale |
+|---|---|---|---|
+| all states | 1 | 3 | Status needs two rows by the exclusion below; JALR writes next PC. |
 
 For the fixed v39 representation, the status functions on inputs `0, 8, 0x80, 0x88` are respectively `0, 0x80, 0, 0x80` for `ECALL` and `0x80, 0x80, 0x88, 0x88` for `MRET`. Neither is a single row of any kind:
 
@@ -271,164 +271,164 @@ This exclusion supplies the two-status-row lower bound for both instructions in 
 
 #### CSRRW
 
-| CSR / operand path | main | before | final | Rationale |
-|---|---|---|---|---|
-| mstatus: `rd = x0, rs1 = x0` | 1 | 1 | 1 | One legalized CSR write. |
-| mstatus: `rd = x0, rs1 ≠ x0` | 1 | 1 | 1 | One legalized CSR write. |
-| mstatus: `rd ≠ x0, rs1 = x0` | 2 | 2 | 2 | One legalized CSR write and one distinct rd output. |
-| mstatus: `rd ≠ x0, rs1 ≠ x0, rd ≠ rs1` | 2 | 2 | 2 | One legalized CSR write and one distinct rd output. |
-| mstatus: `rd = rs1 ≠ x0` | 3 | 3 | 3 | The three-row alias bound above is met; legalization is folded into the write. |
-| mepc: `rd = x0, rs1 = x0` | 1 | 1 | 1 | One legalized CSR write. |
-| mepc: `rd = x0, rs1 ≠ x0` | 1 | 1 | 1 | One legalized CSR write. |
-| mepc: `rd ≠ x0, rs1 = x0` | 2 | 2 | 2 | One legalized CSR write and one distinct rd output. |
-| mepc: `rd ≠ x0, rs1 ≠ x0, rd ≠ rs1` | 2 | 2 | 2 | One legalized CSR write and one distinct rd output. |
-| mepc: `rd = rs1 ≠ x0` | 3 | 3 | 3 | The three-row alias bound above is met; legalization is folded into the write. |
-| mtvec: `rd = x0, rs1 = x0` | 1 | 6 | 1 | One legalized CSR write. |
-| mtvec: `rd = x0, rs1 ≠ x0` | 1 | 6 | 5 | Five rows mask the source/old difference and apply it. Best found; lower bound open as described above. |
-| mtvec: `rd ≠ x0, rs1 = x0` | 2 | 7 | 2 | One legalized CSR write and one distinct rd output. |
-| mtvec: `rd ≠ x0, rs1 ≠ x0, rd ≠ rs1` | 2 | 7 | 6 | Five writing rows and one read. Best found; lower bound open as described above. |
-| mtvec: `rd = rs1 ≠ x0` | 3 | 8 | 6 | Five writing rows consume the source before the read, avoiding an alias copy. Best found; lower bound open as described above. |
-| raw: `rd = x0, rs1 = x0` | 1 | 1 | 1 | One legalized CSR write. |
-| raw: `rd = x0, rs1 ≠ x0` | 1 | 1 | 1 | One legalized CSR write. |
-| raw: `rd ≠ x0, rs1 = x0` | 2 | 2 | 2 | One legalized CSR write and one distinct rd output. |
-| raw: `rd ≠ x0, rs1 ≠ x0, rd ≠ rs1` | 2 | 2 | 2 | One legalized CSR write and one distinct rd output. |
-| raw: `rd = rs1 ≠ x0` | 3 | 3 | 3 | The three-row alias bound above is met; legalization is folded into the write. |
+| CSR / operand path | main | final | Rationale |
+|---|---|---|---|
+| mstatus: `rd = x0, rs1 = x0` | 1 | 1 | One legalized CSR write. |
+| mstatus: `rd = x0, rs1 ≠ x0` | 1 | 1 | One legalized CSR write. |
+| mstatus: `rd ≠ x0, rs1 = x0` | 2 | 2 | One legalized CSR write and one distinct rd output. |
+| mstatus: `rd ≠ x0, rs1 ≠ x0, rd ≠ rs1` | 2 | 2 | One legalized CSR write and one distinct rd output. |
+| mstatus: `rd = rs1 ≠ x0` | 3 | 3 | The three-row alias bound above is met; legalization is folded into the write. |
+| mepc: `rd = x0, rs1 = x0` | 1 | 1 | One legalized CSR write. |
+| mepc: `rd = x0, rs1 ≠ x0` | 1 | 1 | One legalized CSR write. |
+| mepc: `rd ≠ x0, rs1 = x0` | 2 | 2 | One legalized CSR write and one distinct rd output. |
+| mepc: `rd ≠ x0, rs1 ≠ x0, rd ≠ rs1` | 2 | 2 | One legalized CSR write and one distinct rd output. |
+| mepc: `rd = rs1 ≠ x0` | 3 | 3 | The three-row alias bound above is met; legalization is folded into the write. |
+| mtvec: `rd = x0, rs1 = x0` | 1 | 1 | One legalized CSR write. |
+| mtvec: `rd = x0, rs1 ≠ x0` | 1 | 5 | Five rows mask the source/old difference and apply it. Best found; lower bound open as described above. |
+| mtvec: `rd ≠ x0, rs1 = x0` | 2 | 2 | One legalized CSR write and one distinct rd output. |
+| mtvec: `rd ≠ x0, rs1 ≠ x0, rd ≠ rs1` | 2 | 6 | Five writing rows and one read. Best found; lower bound open as described above. |
+| mtvec: `rd = rs1 ≠ x0` | 3 | 6 | Five writing rows consume the source before the read, avoiding an alias copy. Best found; lower bound open as described above. |
+| raw: `rd = x0, rs1 = x0` | 1 | 1 | One legalized CSR write. |
+| raw: `rd = x0, rs1 ≠ x0` | 1 | 1 | One legalized CSR write. |
+| raw: `rd ≠ x0, rs1 = x0` | 2 | 2 | One legalized CSR write and one distinct rd output. |
+| raw: `rd ≠ x0, rs1 ≠ x0, rd ≠ rs1` | 2 | 2 | One legalized CSR write and one distinct rd output. |
+| raw: `rd = rs1 ≠ x0` | 3 | 3 | The three-row alias bound above is met; legalization is folded into the write. |
 
 #### CSRRS
 
-| CSR / operand path | main | before | final | Rationale |
-|---|---|---|---|---|
-| mstatus: `rd = x0, rs1 = x0` | 1 | 1 | 1 | One read, or one canonical no-op when both registers are x0. |
-| mstatus: `rd = x0, rs1 ≠ x0` | 1 | 2 | 2 | One operand mask and one OR merge meet the two-writing-row bound above. |
-| mstatus: `rd ≠ x0, rs1 = x0` | 1 | 1 | 1 | One read, or one canonical no-op when both registers are x0. |
-| mstatus: `rd ≠ x0, rs1 ≠ x0, rd ≠ rs1` | 2 | 3 | 3 | Two writing rows by the masked-merge bound above, plus one read; operand preparation also satisfies the alias bound. |
-| mstatus: `rd = rs1 ≠ x0` | 3 | 4 | 3 | Two writing rows by the masked-merge bound above, plus one read; operand preparation also satisfies the alias bound. |
-| mepc: `rd = x0, rs1 = x0` | 1 | 1 | 1 | One read, or one canonical no-op when both registers are x0. |
-| mepc: `rd = x0, rs1 ≠ x0` | 1 | 2 | 2 | One operand mask and one OR merge meet the two-writing-row bound above. |
-| mepc: `rd ≠ x0, rs1 = x0` | 1 | 1 | 1 | One read, or one canonical no-op when both registers are x0. |
-| mepc: `rd ≠ x0, rs1 ≠ x0, rd ≠ rs1` | 2 | 3 | 3 | Two writing rows by the masked-merge bound above, plus one read; operand preparation also satisfies the alias bound. |
-| mepc: `rd = rs1 ≠ x0` | 3 | 4 | 3 | Two writing rows by the masked-merge bound above, plus one read; operand preparation also satisfies the alias bound. |
-| mtvec: `rd = x0, rs1 = x0` | 1 | 1 | 1 | One read, or one canonical no-op when both registers are x0. |
-| mtvec: `rd = x0, rs1 ≠ x0` | 1 | 7 | 4 | Three rows transform the operand, then one OR merges with old state. Best found; lower bound open as described above. |
-| mtvec: `rd ≠ x0, rs1 = x0` | 1 | 1 | 1 | One read, or one canonical no-op when both registers are x0. |
-| mtvec: `rd ≠ x0, rs1 ≠ x0, rd ≠ rs1` | 2 | 8 | 5 | Three operand-transform rows, one OR merge and one read. Best found; lower bound open as described above. |
-| mtvec: `rd = rs1 ≠ x0` | 3 | 9 | 5 | Three operand-transform rows consume the source before the read; one OR merge completes the update. Best found; lower bound open as described above. |
-| raw: `rd = x0, rs1 = x0` | 1 | 1 | 1 | One read, or one canonical no-op when both registers are x0. |
-| raw: `rd = x0, rs1 ≠ x0` | 1 | 1 | 1 | One OR update. |
-| raw: `rd ≠ x0, rs1 = x0` | 1 | 1 | 1 | One read, or one canonical no-op when both registers are x0. |
-| raw: `rd ≠ x0, rs1 ≠ x0, rd ≠ rs1` | 2 | 2 | 2 | One OR update; one distinct read. |
-| raw: `rd = rs1 ≠ x0` | 3 | 3 | 3 | One OR update, one read and one preserved input meet the three-row alias bound above. |
+| CSR / operand path | main | final | Rationale |
+|---|---|---|---|
+| mstatus: `rd = x0, rs1 = x0` | 1 | 1 | One read, or one canonical no-op when both registers are x0. |
+| mstatus: `rd = x0, rs1 ≠ x0` | 1 | 2 | One operand mask and one OR merge meet the two-writing-row bound above. |
+| mstatus: `rd ≠ x0, rs1 = x0` | 1 | 1 | One read, or one canonical no-op when both registers are x0. |
+| mstatus: `rd ≠ x0, rs1 ≠ x0, rd ≠ rs1` | 2 | 3 | Two writing rows by the masked-merge bound above, plus one read; operand preparation also satisfies the alias bound. |
+| mstatus: `rd = rs1 ≠ x0` | 3 | 3 | Two writing rows by the masked-merge bound above, plus one read; operand preparation also satisfies the alias bound. |
+| mepc: `rd = x0, rs1 = x0` | 1 | 1 | One read, or one canonical no-op when both registers are x0. |
+| mepc: `rd = x0, rs1 ≠ x0` | 1 | 2 | One operand mask and one OR merge meet the two-writing-row bound above. |
+| mepc: `rd ≠ x0, rs1 = x0` | 1 | 1 | One read, or one canonical no-op when both registers are x0. |
+| mepc: `rd ≠ x0, rs1 ≠ x0, rd ≠ rs1` | 2 | 3 | Two writing rows by the masked-merge bound above, plus one read; operand preparation also satisfies the alias bound. |
+| mepc: `rd = rs1 ≠ x0` | 3 | 3 | Two writing rows by the masked-merge bound above, plus one read; operand preparation also satisfies the alias bound. |
+| mtvec: `rd = x0, rs1 = x0` | 1 | 1 | One read, or one canonical no-op when both registers are x0. |
+| mtvec: `rd = x0, rs1 ≠ x0` | 1 | 4 | Three rows transform the operand, then one OR merges with old state. Best found; lower bound open as described above. |
+| mtvec: `rd ≠ x0, rs1 = x0` | 1 | 1 | One read, or one canonical no-op when both registers are x0. |
+| mtvec: `rd ≠ x0, rs1 ≠ x0, rd ≠ rs1` | 2 | 5 | Three operand-transform rows, one OR merge and one read. Best found; lower bound open as described above. |
+| mtvec: `rd = rs1 ≠ x0` | 3 | 5 | Three operand-transform rows consume the source before the read; one OR merge completes the update. Best found; lower bound open as described above. |
+| raw: `rd = x0, rs1 = x0` | 1 | 1 | One read, or one canonical no-op when both registers are x0. |
+| raw: `rd = x0, rs1 ≠ x0` | 1 | 1 | One OR update. |
+| raw: `rd ≠ x0, rs1 = x0` | 1 | 1 | One read, or one canonical no-op when both registers are x0. |
+| raw: `rd ≠ x0, rs1 ≠ x0, rd ≠ rs1` | 2 | 2 | One OR update; one distinct read. |
+| raw: `rd = rs1 ≠ x0` | 3 | 3 | One OR update, one read and one preserved input meet the three-row alias bound above. |
 
 #### CSRRC
 
-| CSR / operand path | main | before | final | Rationale |
-|---|---|---|---|---|
-| mstatus: `rd = x0, rs1 = x0` | — | 1 | 1 | One read, or one canonical no-op when both registers are x0. |
-| mstatus: `rd = x0, rs1 ≠ x0` | — | 1 | 1 | One ANDN update. |
-| mstatus: `rd ≠ x0, rs1 = x0` | — | 1 | 1 | One read, or one canonical no-op when both registers are x0. |
-| mstatus: `rd ≠ x0, rs1 ≠ x0, rd ≠ rs1` | — | 2 | 2 | One ANDN update; one distinct read. |
-| mstatus: `rd = rs1 ≠ x0` | — | 3 | 3 | One ANDN update, one read and one preserved input meet the three-row alias bound above. |
-| mepc: `rd = x0, rs1 = x0` | — | 1 | 1 | One read, or one canonical no-op when both registers are x0. |
-| mepc: `rd = x0, rs1 ≠ x0` | — | 1 | 1 | One ANDN update. |
-| mepc: `rd ≠ x0, rs1 = x0` | — | 1 | 1 | One read, or one canonical no-op when both registers are x0. |
-| mepc: `rd ≠ x0, rs1 ≠ x0, rd ≠ rs1` | — | 2 | 2 | One ANDN update; one distinct read. |
-| mepc: `rd = rs1 ≠ x0` | — | 3 | 3 | One ANDN update, one read and one preserved input meet the three-row alias bound above. |
-| mtvec: `rd = x0, rs1 = x0` | — | 1 | 1 | One read, or one canonical no-op when both registers are x0. |
-| mtvec: `rd = x0, rs1 ≠ x0` | — | 1 | 1 | One ANDN update. |
-| mtvec: `rd ≠ x0, rs1 = x0` | — | 1 | 1 | One read, or one canonical no-op when both registers are x0. |
-| mtvec: `rd ≠ x0, rs1 ≠ x0, rd ≠ rs1` | — | 2 | 2 | One ANDN update; one distinct read. |
-| mtvec: `rd = rs1 ≠ x0` | — | 3 | 3 | One ANDN update, one read and one preserved input meet the three-row alias bound above. |
-| raw: `rd = x0, rs1 = x0` | — | 1 | 1 | One read, or one canonical no-op when both registers are x0. |
-| raw: `rd = x0, rs1 ≠ x0` | — | 1 | 1 | One ANDN update. |
-| raw: `rd ≠ x0, rs1 = x0` | — | 1 | 1 | One read, or one canonical no-op when both registers are x0. |
-| raw: `rd ≠ x0, rs1 ≠ x0, rd ≠ rs1` | — | 2 | 2 | One ANDN update; one distinct read. |
-| raw: `rd = rs1 ≠ x0` | — | 3 | 3 | One ANDN update, one read and one preserved input meet the three-row alias bound above. |
+| CSR / operand path | main | final | Rationale |
+|---|---|---|---|
+| mstatus: `rd = x0, rs1 = x0` | — | 1 | One read, or one canonical no-op when both registers are x0. |
+| mstatus: `rd = x0, rs1 ≠ x0` | — | 1 | One ANDN update. |
+| mstatus: `rd ≠ x0, rs1 = x0` | — | 1 | One read, or one canonical no-op when both registers are x0. |
+| mstatus: `rd ≠ x0, rs1 ≠ x0, rd ≠ rs1` | — | 2 | One ANDN update; one distinct read. |
+| mstatus: `rd = rs1 ≠ x0` | — | 3 | One ANDN update, one read and one preserved input meet the three-row alias bound above. |
+| mepc: `rd = x0, rs1 = x0` | — | 1 | One read, or one canonical no-op when both registers are x0. |
+| mepc: `rd = x0, rs1 ≠ x0` | — | 1 | One ANDN update. |
+| mepc: `rd ≠ x0, rs1 = x0` | — | 1 | One read, or one canonical no-op when both registers are x0. |
+| mepc: `rd ≠ x0, rs1 ≠ x0, rd ≠ rs1` | — | 2 | One ANDN update; one distinct read. |
+| mepc: `rd = rs1 ≠ x0` | — | 3 | One ANDN update, one read and one preserved input meet the three-row alias bound above. |
+| mtvec: `rd = x0, rs1 = x0` | — | 1 | One read, or one canonical no-op when both registers are x0. |
+| mtvec: `rd = x0, rs1 ≠ x0` | — | 1 | One ANDN update. |
+| mtvec: `rd ≠ x0, rs1 = x0` | — | 1 | One read, or one canonical no-op when both registers are x0. |
+| mtvec: `rd ≠ x0, rs1 ≠ x0, rd ≠ rs1` | — | 2 | One ANDN update; one distinct read. |
+| mtvec: `rd = rs1 ≠ x0` | — | 3 | One ANDN update, one read and one preserved input meet the three-row alias bound above. |
+| raw: `rd = x0, rs1 = x0` | — | 1 | One read, or one canonical no-op when both registers are x0. |
+| raw: `rd = x0, rs1 ≠ x0` | — | 1 | One ANDN update. |
+| raw: `rd ≠ x0, rs1 = x0` | — | 1 | One read, or one canonical no-op when both registers are x0. |
+| raw: `rd ≠ x0, rs1 ≠ x0, rd ≠ rs1` | — | 2 | One ANDN update; one distinct read. |
+| raw: `rd = rs1 ≠ x0` | — | 3 | One ANDN update, one read and one preserved input meet the three-row alias bound above. |
 
 #### CSRRWI
 
-| CSR / immediate / destination path | main | before | final | Rationale |
-|---|---|---|---|---|
-| mstatus: `uimm = 0`, `rd = x0` | — | 1 | 1 | One constant CSR write. Read suppressed. |
-| mstatus: `uimm = 0`, `rd ≠ x0` | — | 2 | 2 | One constant CSR write. One distinct rd output. |
-| mepc: `uimm = 0`, `rd = x0` | — | 1 | 1 | One constant CSR write. Read suppressed. |
-| mepc: `uimm = 0`, `rd ≠ x0` | — | 2 | 2 | One constant CSR write. One distinct rd output. |
-| raw: `uimm = 0`, `rd = x0` | — | 1 | 1 | One constant CSR write. Read suppressed. |
-| raw: `uimm = 0`, `rd ≠ x0` | — | 2 | 2 | One constant CSR write. One distinct rd output. |
-| mstatus: `uimm = 1–31`, `rd = x0` | — | 2 | 1 | One constant CSR write. Read suppressed. |
-| mstatus: `uimm = 1–31`, `rd ≠ x0` | — | 3 | 2 | One constant CSR write. One distinct rd output. |
-| mepc: `uimm = 1–31`, `rd = x0` | — | 2 | 1 | One constant CSR write. Read suppressed. |
-| mepc: `uimm = 1–31`, `rd ≠ x0` | — | 3 | 2 | One constant CSR write. One distinct rd output. |
-| raw: `uimm = 1–31`, `rd = x0` | — | 2 | 1 | One constant CSR write. Read suppressed. |
-| raw: `uimm = 1–31`, `rd ≠ x0` | — | 3 | 2 | One constant CSR write. One distinct rd output. |
-| mtvec: `uimm = 0`, `rd = x0` | — | 6 | 1 | One constant CSR write. Read suppressed. |
-| mtvec: `uimm = 0`, `rd ≠ x0` | — | 7 | 2 | One constant CSR write. One distinct rd output. |
-| mtvec: `bit 1 clear, uimm ≠ 0`, `rd = x0` | — | 7 | 1 | One constant CSR write. Read suppressed. |
-| mtvec: `bit 1 clear, uimm ≠ 0`, `rd ≠ x0` | — | 8 | 2 | One constant CSR write. One distinct rd output. |
-| mtvec: `uimm = 2, 3`, `rd = x0` | — | 7 | 1 | One mask keeps the old MODE; the new BASE is zero. Read suppressed. |
-| mtvec: `uimm = 2, 3`, `rd ≠ x0` | — | 8 | 2 | One mask keeps the old MODE; the new BASE is zero. One distinct rd output. |
-| mtvec: `bit 1 set, BASE ≠ 0`, `rd = x0` | — | 7 | 2 | Isolating old MODE and inserting nonzero BASE meet the two-writing-row bound above. Read suppressed. |
-| mtvec: `bit 1 set, BASE ≠ 0`, `rd ≠ x0` | — | 8 | 3 | Isolating old MODE and inserting nonzero BASE meet the two-writing-row bound above. One distinct rd output. |
+| CSR / immediate / destination path | main | final | Rationale |
+|---|---|---|---|
+| mstatus: `uimm = 0`, `rd = x0` | — | 1 | One constant CSR write. Read suppressed. |
+| mstatus: `uimm = 0`, `rd ≠ x0` | — | 2 | One constant CSR write. One distinct rd output. |
+| mepc: `uimm = 0`, `rd = x0` | — | 1 | One constant CSR write. Read suppressed. |
+| mepc: `uimm = 0`, `rd ≠ x0` | — | 2 | One constant CSR write. One distinct rd output. |
+| raw: `uimm = 0`, `rd = x0` | — | 1 | One constant CSR write. Read suppressed. |
+| raw: `uimm = 0`, `rd ≠ x0` | — | 2 | One constant CSR write. One distinct rd output. |
+| mstatus: `uimm = 1–31`, `rd = x0` | — | 1 | One constant CSR write. Read suppressed. |
+| mstatus: `uimm = 1–31`, `rd ≠ x0` | — | 2 | One constant CSR write. One distinct rd output. |
+| mepc: `uimm = 1–31`, `rd = x0` | — | 1 | One constant CSR write. Read suppressed. |
+| mepc: `uimm = 1–31`, `rd ≠ x0` | — | 2 | One constant CSR write. One distinct rd output. |
+| raw: `uimm = 1–31`, `rd = x0` | — | 1 | One constant CSR write. Read suppressed. |
+| raw: `uimm = 1–31`, `rd ≠ x0` | — | 2 | One constant CSR write. One distinct rd output. |
+| mtvec: `uimm = 0`, `rd = x0` | — | 1 | One constant CSR write. Read suppressed. |
+| mtvec: `uimm = 0`, `rd ≠ x0` | — | 2 | One constant CSR write. One distinct rd output. |
+| mtvec: `bit 1 clear, uimm ≠ 0`, `rd = x0` | — | 1 | One constant CSR write. Read suppressed. |
+| mtvec: `bit 1 clear, uimm ≠ 0`, `rd ≠ x0` | — | 2 | One constant CSR write. One distinct rd output. |
+| mtvec: `uimm = 2, 3`, `rd = x0` | — | 1 | One mask keeps the old MODE; the new BASE is zero. Read suppressed. |
+| mtvec: `uimm = 2, 3`, `rd ≠ x0` | — | 2 | One mask keeps the old MODE; the new BASE is zero. One distinct rd output. |
+| mtvec: `bit 1 set, BASE ≠ 0`, `rd = x0` | — | 2 | Isolating old MODE and inserting nonzero BASE meet the two-writing-row bound above. Read suppressed. |
+| mtvec: `bit 1 set, BASE ≠ 0`, `rd ≠ x0` | — | 3 | Isolating old MODE and inserting nonzero BASE meet the two-writing-row bound above. One distinct rd output. |
 
 #### CSRRSI
 
-| CSR / immediate / destination path | main | before | final | Rationale |
-|---|---|---|---|---|
-| mstatus: `uimm = 0`, `rd = x0` | — | 1 | 1 | Effective mask is zero: one canonical no-op. |
-| mstatus: `uimm = 0`, `rd ≠ x0` | — | 1 | 1 | Effective mask is zero: one required read. |
-| mstatus: `uimm ≠ 0, bit 3 clear`, `rd = x0` | — | 3 | 1 | Effective mask is zero: one canonical no-op. |
-| mstatus: `uimm ≠ 0, bit 3 clear`, `rd ≠ x0` | — | 4 | 1 | Effective mask is zero: one required read. |
-| mstatus: `bit 3 set`, `rd = x0` | — | 3 | 1 | One immediate bit update. |
-| mstatus: `bit 3 set`, `rd ≠ x0` | — | 4 | 2 | One immediate bit update and one distinct rd output. |
-| mepc: `uimm = 0`, `rd = x0` | — | 1 | 1 | Effective mask is zero: one canonical no-op. |
-| mepc: `uimm = 0`, `rd ≠ x0` | — | 1 | 1 | Effective mask is zero: one required read. |
-| mepc: `uimm = 1`, `rd = x0` | — | 3 | 1 | Effective mask is zero: one canonical no-op. |
-| mepc: `uimm = 1`, `rd ≠ x0` | — | 4 | 1 | Effective mask is zero: one required read. |
-| mepc: `uimm = 2–31`, `rd = x0` | — | 3 | 1 | One immediate bit update. |
-| mepc: `uimm = 2–31`, `rd ≠ x0` | — | 4 | 2 | One immediate bit update and one distinct rd output. |
-| mtvec: `uimm = 0`, `rd = x0` | — | 1 | 1 | Effective mask is zero: one canonical no-op. |
-| mtvec: `uimm = 0`, `rd ≠ x0` | — | 1 | 1 | Effective mask is zero: one required read. |
-| mtvec: `uimm = 2, 3`, `rd = x0` | — | 8 | 1 | Effective mask is zero: one canonical no-op. |
-| mtvec: `uimm = 2, 3`, `rd ≠ x0` | — | 9 | 1 | Effective mask is zero: one required read. |
-| mtvec: `other nonzero values`, `rd = x0` | — | 8 | 1 | One immediate bit update. |
-| mtvec: `other nonzero values`, `rd ≠ x0` | — | 9 | 2 | One immediate bit update and one distinct rd output. |
-| raw: `uimm = 0`, `rd = x0` | — | 1 | 1 | Effective mask is zero: one canonical no-op. |
-| raw: `uimm = 0`, `rd ≠ x0` | — | 1 | 1 | Effective mask is zero: one required read. |
-| raw: `uimm = 1–31`, `rd = x0` | — | 2 | 1 | One immediate bit update. |
-| raw: `uimm = 1–31`, `rd ≠ x0` | — | 3 | 2 | One immediate bit update and one distinct rd output. |
+| CSR / immediate / destination path | main | final | Rationale |
+|---|---|---|---|
+| mstatus: `uimm = 0`, `rd = x0` | — | 1 | Effective mask is zero: one canonical no-op. |
+| mstatus: `uimm = 0`, `rd ≠ x0` | — | 1 | Effective mask is zero: one required read. |
+| mstatus: `uimm ≠ 0, bit 3 clear`, `rd = x0` | — | 1 | Effective mask is zero: one canonical no-op. |
+| mstatus: `uimm ≠ 0, bit 3 clear`, `rd ≠ x0` | — | 1 | Effective mask is zero: one required read. |
+| mstatus: `bit 3 set`, `rd = x0` | — | 1 | One immediate bit update. |
+| mstatus: `bit 3 set`, `rd ≠ x0` | — | 2 | One immediate bit update and one distinct rd output. |
+| mepc: `uimm = 0`, `rd = x0` | — | 1 | Effective mask is zero: one canonical no-op. |
+| mepc: `uimm = 0`, `rd ≠ x0` | — | 1 | Effective mask is zero: one required read. |
+| mepc: `uimm = 1`, `rd = x0` | — | 1 | Effective mask is zero: one canonical no-op. |
+| mepc: `uimm = 1`, `rd ≠ x0` | — | 1 | Effective mask is zero: one required read. |
+| mepc: `uimm = 2–31`, `rd = x0` | — | 1 | One immediate bit update. |
+| mepc: `uimm = 2–31`, `rd ≠ x0` | — | 2 | One immediate bit update and one distinct rd output. |
+| mtvec: `uimm = 0`, `rd = x0` | — | 1 | Effective mask is zero: one canonical no-op. |
+| mtvec: `uimm = 0`, `rd ≠ x0` | — | 1 | Effective mask is zero: one required read. |
+| mtvec: `uimm = 2, 3`, `rd = x0` | — | 1 | Effective mask is zero: one canonical no-op. |
+| mtvec: `uimm = 2, 3`, `rd ≠ x0` | — | 1 | Effective mask is zero: one required read. |
+| mtvec: `other nonzero values`, `rd = x0` | — | 1 | One immediate bit update. |
+| mtvec: `other nonzero values`, `rd ≠ x0` | — | 2 | One immediate bit update and one distinct rd output. |
+| raw: `uimm = 0`, `rd = x0` | — | 1 | Effective mask is zero: one canonical no-op. |
+| raw: `uimm = 0`, `rd ≠ x0` | — | 1 | Effective mask is zero: one required read. |
+| raw: `uimm = 1–31`, `rd = x0` | — | 1 | One immediate bit update. |
+| raw: `uimm = 1–31`, `rd ≠ x0` | — | 2 | One immediate bit update and one distinct rd output. |
 
 #### CSRRCI
 
-| CSR / immediate / destination path | main | before | final | Rationale |
-|---|---|---|---|---|
-| mstatus: `uimm = 0`, `rd = x0` | — | 1 | 1 | Effective mask is zero: one canonical no-op. |
-| mstatus: `uimm = 0`, `rd ≠ x0` | — | 1 | 1 | Effective mask is zero: one required read. |
-| mstatus: `uimm ≠ 0, bit 3 clear`, `rd = x0` | — | 2 | 1 | Effective mask is zero: one canonical no-op. |
-| mstatus: `uimm ≠ 0, bit 3 clear`, `rd ≠ x0` | — | 3 | 1 | Effective mask is zero: one required read. |
-| mstatus: `bit 3 set`, `rd = x0` | — | 2 | 1 | One immediate bit update. |
-| mstatus: `bit 3 set`, `rd ≠ x0` | — | 3 | 2 | One immediate bit update and one distinct rd output. |
-| mepc: `uimm = 0`, `rd = x0` | — | 1 | 1 | Effective mask is zero: one canonical no-op. |
-| mepc: `uimm = 0`, `rd ≠ x0` | — | 1 | 1 | Effective mask is zero: one required read. |
-| mepc: `uimm = 1`, `rd = x0` | — | 2 | 1 | Effective mask is zero: one canonical no-op. |
-| mepc: `uimm = 1`, `rd ≠ x0` | — | 3 | 1 | Effective mask is zero: one required read. |
-| mepc: `uimm = 2–31`, `rd = x0` | — | 2 | 1 | One immediate bit update. |
-| mepc: `uimm = 2–31`, `rd ≠ x0` | — | 3 | 2 | One immediate bit update and one distinct rd output. |
-| mtvec: `uimm = 0`, `rd = x0` | — | 1 | 1 | Effective mask is zero: one canonical no-op. |
-| mtvec: `uimm = 0`, `rd ≠ x0` | — | 1 | 1 | Effective mask is zero: one required read. |
-| mtvec: `uimm = 2`, `rd = x0` | — | 2 | 1 | Effective mask is zero: one canonical no-op. |
-| mtvec: `uimm = 2`, `rd ≠ x0` | — | 3 | 1 | Effective mask is zero: one required read. |
-| mtvec: `other nonzero values`, `rd = x0` | — | 2 | 1 | One immediate bit update. |
-| mtvec: `other nonzero values`, `rd ≠ x0` | — | 3 | 2 | One immediate bit update and one distinct rd output. |
-| raw: `uimm = 0`, `rd = x0` | — | 1 | 1 | Effective mask is zero: one canonical no-op. |
-| raw: `uimm = 0`, `rd ≠ x0` | — | 1 | 1 | Effective mask is zero: one required read. |
-| raw: `uimm = 1–31`, `rd = x0` | — | 2 | 1 | One immediate bit update. |
-| raw: `uimm = 1–31`, `rd ≠ x0` | — | 3 | 2 | One immediate bit update and one distinct rd output. |
+| CSR / immediate / destination path | main | final | Rationale |
+|---|---|---|---|
+| mstatus: `uimm = 0`, `rd = x0` | — | 1 | Effective mask is zero: one canonical no-op. |
+| mstatus: `uimm = 0`, `rd ≠ x0` | — | 1 | Effective mask is zero: one required read. |
+| mstatus: `uimm ≠ 0, bit 3 clear`, `rd = x0` | — | 1 | Effective mask is zero: one canonical no-op. |
+| mstatus: `uimm ≠ 0, bit 3 clear`, `rd ≠ x0` | — | 1 | Effective mask is zero: one required read. |
+| mstatus: `bit 3 set`, `rd = x0` | — | 1 | One immediate bit update. |
+| mstatus: `bit 3 set`, `rd ≠ x0` | — | 2 | One immediate bit update and one distinct rd output. |
+| mepc: `uimm = 0`, `rd = x0` | — | 1 | Effective mask is zero: one canonical no-op. |
+| mepc: `uimm = 0`, `rd ≠ x0` | — | 1 | Effective mask is zero: one required read. |
+| mepc: `uimm = 1`, `rd = x0` | — | 1 | Effective mask is zero: one canonical no-op. |
+| mepc: `uimm = 1`, `rd ≠ x0` | — | 1 | Effective mask is zero: one required read. |
+| mepc: `uimm = 2–31`, `rd = x0` | — | 1 | One immediate bit update. |
+| mepc: `uimm = 2–31`, `rd ≠ x0` | — | 2 | One immediate bit update and one distinct rd output. |
+| mtvec: `uimm = 0`, `rd = x0` | — | 1 | Effective mask is zero: one canonical no-op. |
+| mtvec: `uimm = 0`, `rd ≠ x0` | — | 1 | Effective mask is zero: one required read. |
+| mtvec: `uimm = 2`, `rd = x0` | — | 1 | Effective mask is zero: one canonical no-op. |
+| mtvec: `uimm = 2`, `rd ≠ x0` | — | 1 | Effective mask is zero: one required read. |
+| mtvec: `other nonzero values`, `rd = x0` | — | 1 | One immediate bit update. |
+| mtvec: `other nonzero values`, `rd ≠ x0` | — | 2 | One immediate bit update and one distinct rd output. |
+| raw: `uimm = 0`, `rd = x0` | — | 1 | Effective mask is zero: one canonical no-op. |
+| raw: `uimm = 0`, `rd ≠ x0` | — | 1 | Effective mask is zero: one required read. |
+| raw: `uimm = 1–31`, `rd = x0` | — | 1 | One immediate bit update. |
+| raw: `uimm = 1–31`, `rd ≠ x0` | — | 2 | One immediate bit update and one distinct rd output. |
 
-Removed rows and their dependency arguments:
+Where the sequences save rows, and why:
 
-- `ECALL` loses the PC copy because `AUIPC` can target v36 directly.
-- A nonzero register `mtvec` swap replaces the six-row sign-mask selection with five writing rows. Masking the full source/old difference consumes the source before the read, also removing the alias copy. A zero source needs no selection at all, removing five rows.
-- Register `CSRRS mtvec` loses three rows by transforming only the operand with a dynamic mask, without constructing `old | bits` or comparing it with old MODE. Its alias case also loses the source copy. Masking the operand before the read removes the source copy for aliased `CSRRS mstatus` and `CSRRS mepc` too.
-- Every nonzero immediate loses its materialization row. Constant `mstatus`/`mepc` swaps also fold legalization into the write. Constant set masks fold the post-OR legalization into the immediate; constant `mtvec` updates resolve the reserved predicate at expansion time. Effective-zero updates omit the update row when a read already represents the instruction, or retain a single canonical no-op otherwise.
+- `ECALL` needs no PC copy, one row less than on `main`, because `AUIPC` can target v36 directly.
+- A nonzero register `mtvec` swap masks the full source/old difference in five writing rows. This consumes the source before the read, so the alias case needs no copy. A zero source needs no masking at all: one write.
+- Register `CSRRS mtvec` transforms only the operand with a dynamic mask, without constructing `old | bits` or comparing it with old MODE. This also consumes the source, so its alias case needs no copy. Masking the operand before the read removes the source copy for aliased `CSRRS mstatus` and `CSRRS mepc` too, so their alias cost equals `main`'s.
+- No immediate is materialized in a register. Constant `mstatus`/`mepc` swaps also fold legalization into the write. Constant set masks fold the post-OR legalization into the immediate; constant `mtvec` updates resolve the reserved predicate at expansion time. Effective-zero updates omit the update row when a read already represents the instruction, or retain a single canonical no-op otherwise.
 - For the remaining three-row aliased swaps, raw sets and clears, reordering alone cannot remove preservation: the information-loss argument above excludes either two-row ordering.
 
 ### Effect on proving
@@ -554,7 +554,7 @@ No code changes.
 ### Acceptance criteria
 
 - [x] The thirteen divergence tests above pass on this branch and fail on `main` (the last four because `main` cannot decode the instructions); the ten behaviour-pinning tests pass on both.
-- [x] `cargo nextest run -p jolt-program` passes, including the 360-case golden fixture (24 differences from main, 15 from `fe91c0de5`).
+- [x] `cargo nextest run -p jolt-program` passes, including the 360-case golden fixture (24 differences from main).
 - [x] `cargo nextest run -p tracer` passes.
 - [x] `cargo nextest run -p jolt-prover --features prover-fixtures -E 'binary(e2e_matrix)'` proves and verifies all guests.
 - [x] `cargo clippy --all --features host -q --all-targets -- -D warnings`, the same with `host,zk`, and `cargo fmt` pass.
