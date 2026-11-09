@@ -32,30 +32,30 @@ F read_raf_dense(device const F* values, device const F* tails, uint prefix, ulo
 template <typename F, uint N>
 void read_raf_product(thread F* lo, thread F* hi, device const F* tails,
                       device const F* cached, bool need_zero, thread F* out) {
-    F values[N], slopes[N], constant = F::one();
+    F values[N], slopes[N], scale = F::one();
     uint degree = 0, mask = 0;
     for (uint i = 0; i < N; i++) {
         F delta = hi[i] - lo[i];
-        if (all(delta.limb == uint4(0))) {
-            if (N == 9 && i != 0 && all(hi[i].limb == tails[i].limb)) mask |= 1u << (i - 1);
-            else constant = constant * hi[i];
+        if (metal::all(delta.limb == uint4(0))) {
+            if (N == 9 && i != 0 && metal::all(hi[i].limb == tails[i].limb)) mask |= 1u << (i - 1);
+            else scale = scale * hi[i];
         } else {
             values[degree] = hi[i]; slopes[degree] = delta; degree++;
         }
     }
-    if (N == 9 && mask != 0) constant = constant * cached[mask];
+    if (N == 9 && mask != 0) scale = scale * cached[mask];
     for (uint i = 0; i <= N; i++) out[i] = F::zero();
     if (need_zero) {
         F value = F::one();
         for (uint i = 0; i < N; i++) value = value * lo[i];
         out[N] = value;
     }
-    if (all(constant.limb == uint4(0))) return;
+    if (metal::all(scale.limb == uint4(0))) return;
     if (degree == 0) {
-        for (uint i = 0; i < N - 1; i++) out[i] = constant;
+        for (uint i = 0; i < N - 1; i++) out[i] = scale;
         return;
     }
-    values[0] = values[0] * constant; slopes[0] = slopes[0] * constant;
+    values[0] = values[0] * scale; slopes[0] = slopes[0] * scale;
     F lead = slopes[0];
     for (uint i = 1; i < degree; i++) lead = lead * slopes[i];
     uint samples = degree <= 6 ? degree : N - 1;
