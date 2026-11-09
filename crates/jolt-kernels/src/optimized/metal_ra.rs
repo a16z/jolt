@@ -1,4 +1,6 @@
 //! Device-owned row-major prefixes shared by lazy selector consumers.
+use std::mem::MaybeUninit;
+
 use jolt_akita::AkitaField as F;
 use jolt_metal::runtime::{
     host_name, Batch, Binding, Device, DeviceBuffer, Grid, LibrarySpec, ShaderLibrary,
@@ -78,15 +80,15 @@ impl MetalRaFold {
         {
             return Err(Self::invalid("invalid lazy selector geometry"));
         }
+        let _span = tracing::info_span!("metal_ra_materialize").entered();
         let len = prefix
             .checked_mul(columns)
             .ok_or_else(|| Self::invalid("prefix size overflows"))?;
-        let output = DeviceBuffer::zeroed(&self.device, len)?;
+        let output = DeviceBuffer::<MaybeUninit<F>>::uninit(&self.device, len)?;
         let flat: Vec<_> = tables.iter().flatten().copied().collect();
         let tables = DeviceBuffer::from_slice(&self.device, &flat)?;
         let selectors = DeviceBuffer::from_slice(&self.device, selectors)?;
         let params = Self::params([rows.prefix.len(), prefix, width, columns, radix])?;
-        let _span = tracing::info_span!("metal_ra_materialize").entered();
         self.dispatch(
             "ra_materialize",
             &[
@@ -100,6 +102,12 @@ impl MetalRaFold {
             ],
             len,
         )?;
+        // SAFETY: successful dispatch completion precedes this conversion.
+        // ra_materialize writes one canonical, padding-free F at every index
+        // in 0..len, including rows filled entirely from the constant tail.
+        // If len is zero, dispatch does no work and there are no values to
+        // initialize; the allocation's physical padding is never exposed.
+        let output = unsafe { output.assume_init()? };
         Ok(DeviceRa {
             prefix,
             tails: tails.to_vec(),
@@ -108,14 +116,14 @@ impl MetalRaFold {
     }
 
     pub(super) fn bind(&self, previous: &DeviceRa, challenge: F) -> Result<DeviceRa, MetalError> {
+        let _span = tracing::info_span!("metal_ra_dense_bind").entered();
         let prefix = previous.prefix.div_ceil(2);
         let len = prefix
             .checked_mul(previous.tails.len())
             .ok_or_else(|| Self::invalid("prefix size overflows"))?;
-        let output = DeviceBuffer::zeroed(&self.device, len)?;
+        let output = DeviceBuffer::<MaybeUninit<F>>::uninit(&self.device, len)?;
         let tails = DeviceBuffer::from_slice(&self.device, &previous.tails)?;
         let params = Self::params([previous.prefix, prefix, previous.tails.len()])?;
-        let _span = tracing::info_span!("metal_ra_dense_bind").entered();
         self.dispatch(
             "ra_fold",
             &[
@@ -127,6 +135,11 @@ impl MetalRaFold {
             ],
             len,
         )?;
+        // SAFETY: ra_fold has completed and writes every logical element,
+        // including the odd last row paired with the per-column tail. Field
+        // arithmetic returns canonical, padding-free F values. A zero-length
+        // dispatch has no logical elements and needs no initialization.
+        let output = unsafe { output.assume_init()? };
         Ok(DeviceRa {
             prefix,
             tails: previous.tails.clone(),
