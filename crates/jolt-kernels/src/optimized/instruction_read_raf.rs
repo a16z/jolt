@@ -906,6 +906,31 @@ struct PhaseSums<F> {
     suffixes: Vec<Option<Vec<F>>>,
 }
 
+/// Owns the weights and scan acceleration state across address phases. The
+/// caller retains phase geometry, challenges, checkpoints and polynomial setup.
+trait AddressPhaseScanner<F: JoltField>: crate::MaybeAllocative + Send {
+    fn scan(&mut self, request: &PhaseScan<'_, F>) -> Result<PhaseSums<F>, SumcheckError<F>>;
+}
+
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
+struct HostAddressScan<F: JoltField> {
+    rows: Arc<ConstantSuffix<InstructionCycleRow>>,
+    blocks: ScanBlocks<F>,
+    /// Only offsets retained in blocks are live after duplicate coalescing.
+    /// The final representative carries the complete constant-suffix mass.
+    weights: Vec<F>,
+}
+
+impl<F: JoltField> AddressPhaseScanner<F> for HostAddressScan<F> {
+    fn scan(&mut self, request: &PhaseScan<'_, F>) -> Result<PhaseSums<F>, SumcheckError<F>> {
+        Ok(request.run(
+            &mut self.blocks,
+            &self.rows.representatives()[..self.weights.len()],
+            &mut self.weights,
+        ))
+    }
+}
+
 impl<F: JoltField> PhaseSums<F> {
     fn zero() -> Self {
         Self {
@@ -1282,10 +1307,7 @@ pub struct OptimizedInstructionReadRafKernel<F: JoltField> {
     gamma: F,
     r_reduction: Vec<F>,
     rows: Arc<ConstantSuffix<InstructionCycleRow>>,
-    blocks: ScanBlocks<F>,
-    /// The final weight aggregates the constant row suffix. After coalescing,
-    /// only offsets retained in `blocks` are live; merged-away weights are stale.
-    u_evals: Vec<F>,
+    address_scan: Option<Box<dyn AddressPhaseScanner<F>>>,
     #[cfg_attr(feature = "allocative", allocative(visit = crate::backend::visit_heap_free_elements))]
     prefix_checkpoints: Vec<PrefixEval<F>>,
     /// `ALL_PREFIXES` indices referenced by tables some cycle selects.
@@ -1317,25 +1339,53 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
         witness: &dyn JoltWitnessPlane<F>,
         inputs: ProverInputs<'_, F, InstructionReadRaf<F>>,
     ) -> Result<Self, KernelError<F>> {
+        Self::prepare_with_scanner(session, witness, inputs, |_, host| Ok(Box::new(host)))
+    }
+
+    fn prepare_with_scanner(
+        session: &mut ProofSession,
+        witness: &dyn JoltWitnessPlane<F>,
+        inputs: ProverInputs<'_, F, InstructionReadRaf<F>>,
+        scanner: impl FnOnce(
+            &mut ProofSession,
+            HostAddressScan<F>,
+        ) -> Result<Box<dyn AddressPhaseScanner<F>>, KernelError<F>>,
+    ) -> Result<Self, KernelError<F>> {
         let dimensions = inputs.relation.dimensions();
         let rows = Arc::new(InstructionCycleRow::collect(
             witness,
             1 << dimensions.log_t(),
         )?);
         session.park(SharedInstructionRows(Arc::clone(&rows)));
-        Self::new(
+        Self::new_with_scanner(
             dimensions,
             &inputs.points.lookup_output,
             rows,
             inputs.challenges.gamma,
+            |host| scanner(session, host),
         )
     }
 
+    #[cfg(test)]
     pub(crate) fn new(
         dimensions: InstructionReadRafDimensions,
         r_reduction: &[F],
         rows: Arc<ConstantSuffix<InstructionCycleRow>>,
         gamma: F,
+    ) -> Result<Self, KernelError<F>> {
+        Self::new_with_scanner(dimensions, r_reduction, rows, gamma, |host| {
+            Ok(Box::new(host))
+        })
+    }
+
+    fn new_with_scanner(
+        dimensions: InstructionReadRafDimensions,
+        r_reduction: &[F],
+        rows: Arc<ConstantSuffix<InstructionCycleRow>>,
+        gamma: F,
+        scanner: impl FnOnce(
+            HostAddressScan<F>,
+        ) -> Result<Box<dyn AddressPhaseScanner<F>>, KernelError<F>>,
     ) -> Result<Self, KernelError<F>> {
         let address_bits = dimensions.instruction_address_bits();
         let log_t = dimensions.log_t();
@@ -1439,13 +1489,17 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
                 )
             })
         };
+        let address_scan = scanner(HostAddressScan {
+            rows: Arc::clone(&rows),
+            blocks: ScanBlocks::new(blocks),
+            weights: u_evals,
+        })?;
         let mut kernel = Self {
             dimensions,
             gamma,
             r_reduction: r_reduction.to_vec(),
             rows,
-            blocks: ScanBlocks::new(blocks),
-            u_evals,
+            address_scan: Some(address_scan),
             prefix_checkpoints: ALL_PREFIXES
                 .iter()
                 .map(|prefix| prefix.default_checkpoint::<F>())
@@ -1464,7 +1518,7 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
             claim_columns: Arc::new(Vec::new().into()),
             progress: RoundProgress::new(dimensions.sumcheck_rounds()),
         };
-        kernel.init_phase(0);
+        kernel.init_phase(0)?;
         Ok(kernel)
     }
 
@@ -1480,7 +1534,7 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
         self.address_bits() - (phase + 1) * CHUNK_LEN
     }
 
-    fn init_phase(&mut self, phase: usize) {
+    fn init_phase(&mut self, phase: usize) -> Result<(), SumcheckError<F>> {
         let suffix_len = self.suffix_len(phase);
         let previous = phase
             .checked_sub(1)
@@ -1496,11 +1550,20 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
             upper_suffix_bits: suffix_len.saturating_sub(self.address_bits() / 2),
             tables: LookupTableKind::<RISCV_XLEN>::iter().collect(),
         };
-        let PhaseSums { raf, suffixes } = scan.run(
-            &mut self.blocks,
-            &self.rows.representatives()[..self.u_evals.len()],
-            &mut self.u_evals,
-        );
+        let sums = self
+            .address_scan
+            .as_mut()
+            .ok_or(SumcheckError::MissingEvaluationSource {
+                kind: "instruction address scan",
+            })?
+            .scan(&scan)?;
+        self.install_phase(phase, sums);
+        Ok(())
+    }
+
+    fn install_phase(&mut self, phase: usize, sums: PhaseSums<F>) {
+        let suffix_len = self.suffix_len(phase);
+        let PhaseSums { raf, suffixes } = sums;
 
         let q_shift_half: Vec<F> = raf
             .shift_half
@@ -1914,10 +1977,9 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
 
         // The address-phase state is dead past this point; the rows live on
         // in the lazy RA source until the third cycle bind.
-        self.u_evals = Vec::new();
+        self.address_scan = None;
         self.prefix_tables = Vec::new();
         self.suffix_tables = Vec::new();
-        self.blocks = ScanBlocks::new(Vec::new());
     }
 
     fn bind(&mut self, challenge: F) -> Result<(), SumcheckError<F>> {
@@ -1963,7 +2025,7 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
                 }
 
                 if phase + 1 < self.phases() {
-                    self.init_phase(phase + 1);
+                    self.init_phase(phase + 1)?;
                 } else {
                     self.init_cycle_rounds();
                 }
