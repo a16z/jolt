@@ -1,3 +1,10 @@
+// Field order matches each host u32 parameter array. Struct references expose
+// the complete inline argument size to Metal reflection.
+struct RegisterSeedMessageParams { uint rows, pairs, in_len, inc_len, first_bound, need_one; };
+struct RegisterSeedBindParams { uint rows, inc_len; };
+struct RegisterSparseBindParams { uint rows, out_rows, inc_len, direct, out_direct, ra_bits, wa_bits; };
+struct RegisterSparseMessageParams { uint rows, pairs, in_len, inc_len, direct, need_one; };
+
 struct RegisterSeed { ulong prev, next, meta; };
 
 uint register_rank(uint4 mask, uint col) {
@@ -108,7 +115,7 @@ kernel void rw_seed_message(
     device const F* e_in [[buffer(6)]],
     device const F* e_out [[buffer(7)]],
     device F* partials [[buffer(8)]],
-    constant uint* p [[buffer(9)]],
+    constant RegisterSeedMessageParams& p [[buffer(9)]],
     constant F& r1 [[buffer(10)]],
     uint group [[threadgroup_position_in_grid]],
     uint tid [[thread_index_in_threadgroup]],
@@ -122,26 +129,26 @@ kernel void rw_seed_message(
     Acc sums[3] = {Acc::zero(), Acc::zero(), Acc::zero()};
     for (uint task = tid; task < 1024; task += 256) {
         uint pair = group * 1024 + task;
-        if (pair >= p[1]) break;
-        uint seed_group = p[4] ? pair : pair / 2;
+        if (pair >= p.pairs) break;
+        uint seed_group = p.first_bound ? pair : pair / 2;
         uint begin = offsets[seed_group], end = offsets[seed_group + 1];
         uint4 mask = masks[seed_group];
         F inc0, inc1;
-        if (p[4]) {
-            F a = register_raw_inc<F>(raw_inc,p[3],4*pair), b = register_raw_inc<F>(raw_inc,p[3],4*pair+1);
-            F c = register_raw_inc<F>(raw_inc,p[3],4*pair+2), d = register_raw_inc<F>(raw_inc,p[3],4*pair+3);
+        if (p.first_bound) {
+            F a = register_raw_inc<F>(raw_inc,p.inc_len,4*pair), b = register_raw_inc<F>(raw_inc,p.inc_len,4*pair+1);
+            F c = register_raw_inc<F>(raw_inc,p.inc_len,4*pair+2), d = register_raw_inc<F>(raw_inc,p.inc_len,4*pair+3);
             inc0 = a + r1 * (b-a); inc1 = c + r1 * (d-c);
-        } else { inc0 = register_raw_inc<F>(raw_inc,p[3],2*pair); inc1 = register_raw_inc<F>(raw_inc,p[3],2*pair+1); }
+        } else { inc0 = register_raw_inc<F>(raw_inc,p.inc_len,2*pair); inc1 = register_raw_inc<F>(raw_inc,p.inc_len,2*pair+1); }
         Acc inner[3] = {Acc::zero(), Acc::zero(), Acc::zero()};
         while (register_any(mask)) {
             uint col = register_next(mask);
-            RegisterCell<F> even = p[4] ? register_seed_pair<F>(entries,begin,end,4*pair,col,r1) : register_seed_cell<F>(entries,begin,end,2*pair,col);
-            RegisterCell<F> odd = p[4] ? register_seed_pair<F>(entries,begin,end,4*pair+2,col,r1) : register_seed_cell<F>(entries,begin,end,2*pair+1,col);
+            RegisterCell<F> even = p.first_bound ? register_seed_pair<F>(entries,begin,end,4*pair,col,r1) : register_seed_cell<F>(entries,begin,end,2*pair,col);
+            RegisterCell<F> odd = p.first_bound ? register_seed_pair<F>(entries,begin,end,4*pair+2,col,r1) : register_seed_cell<F>(entries,begin,end,2*pair+1,col);
             even.ra = ra_lut[even.ra_code]; even.wa = wa_lut[even.wa_code];
             odd.ra = ra_lut[odd.ra_code]; odd.wa = wa_lut[odd.wa_code];
-            register_pair_evals(even,odd,inc0,inc1,p[5]!=0,inner);
+            register_pair_evals(even,odd,inc0,inc1,p.need_one!=0,inner);
         }
-        F weight = e_in[pair % p[2]] * e_out[pair / p[2]];
+        F weight = e_in[pair % p.in_len] * e_out[pair / p.in_len];
         for (uint k=0;k<3;k++) sums[k].fmadd(weight,inner[k].reduce());
     }
     for(uint k=0;k<3;k++) {
@@ -161,11 +168,11 @@ kernel void rw_seed_bind(
     device ulong2* boundaries [[buffer(6)]],
     device uint* codes [[buffer(7)]],
     device F* inc [[buffer(8)]],
-    constant uint* p [[buffer(9)]],
+    constant RegisterSeedBindParams& p [[buffer(9)]],
     constant F& r1 [[buffer(10)]],
     constant F& r2 [[buffer(11)]],
     uint row [[thread_position_in_grid]]) {
-    if (row >= p[0]) return;
+    if (row >= p.rows) return;
     uint begin=offsets[row],end=offsets[row+1], index=out_offsets[row];
     uint4 mask=masks[row];
     while(register_any(mask)) {
@@ -176,9 +183,9 @@ kernel void rw_seed_bind(
         values[index]=cell.val; boundaries[index]=ulong2(cell.prev,cell.next);
         codes[index]=(cell.wa_code<<16)|cell.ra_code; index++;
     }
-    if (row < ((p[1]>>2)+uint((p[1]&3)!=0))) {
-        F a=register_raw_inc<F>(raw_inc,p[1],4*row),b=register_raw_inc<F>(raw_inc,p[1],4*row+1);
-        F c=register_raw_inc<F>(raw_inc,p[1],4*row+2),d=register_raw_inc<F>(raw_inc,p[1],4*row+3);
+    if (row < ((p.inc_len>>2)+uint((p.inc_len&3)!=0))) {
+        F a=register_raw_inc<F>(raw_inc,p.inc_len,4*row),b=register_raw_inc<F>(raw_inc,p.inc_len,4*row+1);
+        F c=register_raw_inc<F>(raw_inc,p.inc_len,4*row+2),d=register_raw_inc<F>(raw_inc,p.inc_len,4*row+3);
         F lo=a+r1*(b-a),hi=c+r1*(d-c);
         inc[row]=lo+r2*(hi-lo);
     }
@@ -204,23 +211,23 @@ kernel void rw_sparse_bind(
     device const uint4* out_masks [[buffer(15)]],
     device const uint* out_offsets [[buffer(16)]],
     device F* out_inc [[buffer(17)]],
-    constant uint* p [[buffer(18)]],
+    constant RegisterSparseBindParams& p [[buffer(18)]],
     constant F& r [[buffer(19)]],
     uint row [[thread_position_in_grid]]) {
-    if(row>=p[1]) return;
+    if(row>=p.out_rows) return;
     uint4 mask=out_masks[row]; uint index=out_offsets[row];
     while(register_any(mask)) {
         uint col=register_next(mask);
-        RegisterCell<F> even=register_sparse_cell(values,boundaries,codes,ra,wa,masks,offsets,ra_lut,wa_lut,p[0],2*row,col,p[3]!=0,p[4]!=0);
-        RegisterCell<F> odd=register_sparse_cell(values,boundaries,codes,ra,wa,masks,offsets,ra_lut,wa_lut,p[0],2*row+1,col,p[3]!=0,p[4]!=0);
-        RegisterCell<F> cell=register_bind_cell(even,odd,r,p[5],p[6],p[4]!=0);
+        RegisterCell<F> even=register_sparse_cell(values,boundaries,codes,ra,wa,masks,offsets,ra_lut,wa_lut,p.rows,2*row,col,p.direct!=0,p.out_direct!=0);
+        RegisterCell<F> odd=register_sparse_cell(values,boundaries,codes,ra,wa,masks,offsets,ra_lut,wa_lut,p.rows,2*row+1,col,p.direct!=0,p.out_direct!=0);
+        RegisterCell<F> cell=register_bind_cell(even,odd,r,p.ra_bits,p.wa_bits,p.out_direct!=0);
         out_values[index]=cell.val; out_boundaries[index]=ulong2(cell.prev,cell.next);
-        if(p[4]) {out_ra[index]=cell.ra;out_wa[index]=cell.wa;}
+        if(p.out_direct) {out_ra[index]=cell.ra;out_wa[index]=cell.wa;}
         else out_codes[index]=(cell.wa_code<<16)|cell.ra_code;
         index++;
     }
-    if(row<((p[2]>>1)+(p[2]&1))) {
-        F lo=inc[2*row],hi=2*row+1<p[2]?inc[2*row+1]:F::zero();
+    if(row<((p.inc_len>>1)+(p.inc_len&1))) {
+        F lo=inc[2*row],hi=2*row+1<p.inc_len?inc[2*row+1]:F::zero();
         out_inc[row]=lo+r*(hi-lo);
     }
 }
@@ -240,7 +247,7 @@ kernel void rw_sparse_message(
     device const F* e_in [[buffer(10)]],
     device const F* e_out [[buffer(11)]],
     device F* partials [[buffer(12)]],
-    constant uint* p [[buffer(13)]],
+    constant RegisterSparseMessageParams& p [[buffer(13)]],
     uint group [[threadgroup_position_in_grid]],
     uint tid [[thread_index_in_threadgroup]],
     ushort lane [[thread_index_in_simdgroup]],
@@ -252,17 +259,17 @@ kernel void rw_sparse_message(
     threadgroup Acc scratch[3][32];
     Acc sums[3]={Acc::zero(),Acc::zero(),Acc::zero()};
     for(uint task=tid;task<1024;task+=256) {
-        uint pair=group*1024+task;if(pair>=p[1])break;
-        uint4 mask=masks[2*pair];if(2*pair+1<p[0])mask|=masks[2*pair+1];
-        F lo_inc=2*pair<p[3]?inc[2*pair]:F::zero(),hi_inc=2*pair+1<p[3]?inc[2*pair+1]:F::zero();
+        uint pair=group*1024+task;if(pair>=p.pairs)break;
+        uint4 mask=masks[2*pair];if(2*pair+1<p.rows)mask|=masks[2*pair+1];
+        F lo_inc=2*pair<p.inc_len?inc[2*pair]:F::zero(),hi_inc=2*pair+1<p.inc_len?inc[2*pair+1]:F::zero();
         Acc inner[3]={Acc::zero(),Acc::zero(),Acc::zero()};
         while(register_any(mask)) {
             uint col=register_next(mask);
-            RegisterCell<F> even=register_sparse_cell(values,boundaries,codes,ra,wa,masks,offsets,ra_lut,wa_lut,p[0],2*pair,col,p[4]!=0,true);
-            RegisterCell<F> odd=register_sparse_cell(values,boundaries,codes,ra,wa,masks,offsets,ra_lut,wa_lut,p[0],2*pair+1,col,p[4]!=0,true);
-            register_pair_evals(even,odd,lo_inc,hi_inc,p[5]!=0,inner);
+            RegisterCell<F> even=register_sparse_cell(values,boundaries,codes,ra,wa,masks,offsets,ra_lut,wa_lut,p.rows,2*pair,col,p.direct!=0,true);
+            RegisterCell<F> odd=register_sparse_cell(values,boundaries,codes,ra,wa,masks,offsets,ra_lut,wa_lut,p.rows,2*pair+1,col,p.direct!=0,true);
+            register_pair_evals(even,odd,lo_inc,hi_inc,p.need_one!=0,inner);
         }
-        F weight=e_in[pair%p[2]]*e_out[pair/p[2]];
+        F weight=e_in[pair%p.in_len]*e_out[pair/p.in_len];
         for(uint k=0;k<3;k++)sums[k].fmadd(weight,inner[k].reduce());
     }
     for(uint k=0;k<3;k++) {
