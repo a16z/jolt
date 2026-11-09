@@ -115,7 +115,7 @@ impl MetalInstructionRaKernel {
             };
             let radix = tables.first().map_or(0, |table| table.len() / width);
             if self.cpu.num_committed_per_virtual != 4
-                || !matches!(*width, 2 | 4 | 8)
+                || !matches!(*width, 1 | 2 | 4 | 8)
                 || !matches!(radix, 16 | 256)
                 || tables.len() * radix.ilog2() as usize > 128
             {

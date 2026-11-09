@@ -122,7 +122,7 @@ impl MetalBooleanityKernel {
                     return Ok(None);
                 };
                 let radix = tables.first().map_or(0, |table| table.len() / width);
-                if !matches!(*width, 4 | 8) || !matches!(radix, 16 | 256) {
+                if !matches!(*width, 1 | 2 | 4 | 8) || !matches!(radix, 16 | 256) {
                     return Ok(None);
                 }
                 if tables.len() != source.num_columns()
