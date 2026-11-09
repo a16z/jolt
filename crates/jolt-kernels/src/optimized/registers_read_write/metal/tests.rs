@@ -2,6 +2,7 @@ use super::super::test_support::{assert_kernel_parity, structured_fixture};
 use super::*;
 use crate::optimized::parity::ExceptionalEq;
 use jolt_claims::protocols::jolt::{JoltPolynomialId, JoltVirtualPolynomial};
+use jolt_field::Ring;
 use jolt_poly::Polynomial;
 use jolt_verifier::stages::stage4::registers_read_write_checking::{
     RegistersReadWriteChallenges, RegistersReadWriteInputClaims,
