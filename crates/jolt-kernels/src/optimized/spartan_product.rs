@@ -16,6 +16,7 @@ use jolt_claims::protocols::composed::ComposedOpeningId;
 use jolt_claims::protocols::field_inline::geometry::product::selected_product_remainder_output_openings;
 use jolt_verifier::stages::relations::OpeningIdOf;
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 #[cfg(feature = "field-inline")]
 use jolt_claims::protocols::composed::geometry::SPARTAN_PRODUCT_BASE_LANES;
@@ -96,6 +97,77 @@ pub struct SpartanProductRow {
     pub next_is_noop: NextIsNoop,
     #[opening(OpFlags(CircuitFlags::VirtualInstruction))]
     pub virtual_instruction: OpFlag,
+}
+
+/// Optional native producer. Geometry, challenges and claim ordering remain in
+/// this module; implementations own only arithmetic and resident field columns.
+trait ProductCompute<F: JoltField>: Send + Sync {
+    fn admits(&self, prefix: usize) -> bool;
+    fn extension_values(
+        &self,
+        rows: &BundleAccess<'_, SpartanProductRow>,
+        prefix: usize,
+        point: &[F],
+        coefficients: &[[i64; DOMAIN]; EXTENSION_SIZE],
+    ) -> Result<Vec<F>, KernelError<F>>;
+    fn prepare_columns(
+        &self,
+        rows: &BundleAccess<'_, SpartanProductRow>,
+        prefix: usize,
+        cycles: usize,
+        weights: &[F],
+        eq: &GruenSplitEqPolynomial<F>,
+    ) -> Result<Box<dyn ProductDeviceColumns<F>>, KernelError<F>>;
+    fn claimed_inputs(
+        &self,
+        rows: &BundleAccess<'_, SpartanProductRow>,
+        weights: &PrefixCycleWeights<F>,
+    ) -> Result<Vec<F>, SumcheckKernelError<F>>;
+}
+
+trait ProductDeviceColumns<F: JoltField>: crate::MaybeAllocative + Send {
+    /// Return a small CPU tail only after the device bind completes.
+    fn bind(&mut self, challenge: F) -> Result<Option<[PrefixColumn<F>; 2]>, SumcheckError<F>>;
+    fn products(&mut self, eq: &GruenSplitEqPolynomial<F>) -> Result<[F; 3], SumcheckError<F>>;
+}
+
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
+enum ProductColumns<F: JoltField> {
+    Cpu {
+        left: PrefixColumn<F>,
+        right: PrefixColumn<F>,
+        purged: bool,
+    },
+    Device(Box<dyn ProductDeviceColumns<F>>),
+}
+
+impl<F: JoltField> ProductColumns<F> {
+    fn bind(&mut self, challenge: F, rounds: usize) -> Result<(), SumcheckError<F>> {
+        match self {
+            Self::Cpu {
+                left,
+                right,
+                purged,
+            } => {
+                let shrunk = left.bind(challenge);
+                let _ = right.bind(challenge);
+                if shrunk && !*purged {
+                    *purged = true;
+                    crate::mem::purge_retained_memory(rounds);
+                }
+            }
+            Self::Device(device) => {
+                if let Some([left, right]) = device.bind(challenge)? {
+                    *self = Self::Cpu {
+                        left,
+                        right,
+                        purged: true,
+                    };
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 fn extension_positions() -> impl Iterator<Item = usize> {
@@ -217,6 +289,8 @@ struct SpartanProductCarry<F: JoltField> {
     #[cfg_attr(feature = "allocative", allocative(visit = crate::backend::visit_heap_free_elements))]
     field_rows: Vec<(usize, FieldInlineSpartanRow<F>)>,
     extension_values: Vec<F>,
+    #[cfg_attr(feature = "allocative", allocative(skip))]
+    compute: Option<Arc<dyn ProductCompute<F>>>,
 }
 
 fn extension_t1_values<F: JoltField>(
@@ -314,12 +388,32 @@ impl OptimizedProductUniskip {
         )
     }
 
+    #[cfg(test)]
     fn prepare_from_store<F: JoltField>(
         session: &mut ProofSession,
         log_t: usize,
         tau_low: &[F],
         rows: BundleStore<SpartanProductRow>,
         #[cfg(feature = "field-inline")] field_rows: Vec<(usize, FieldInlineSpartanRow<F>)>,
+    ) -> Result<(), KernelError<F>> {
+        Self::prepare_from_store_with_compute(
+            session,
+            log_t,
+            tau_low,
+            rows,
+            #[cfg(feature = "field-inline")]
+            field_rows,
+            None,
+        )
+    }
+
+    fn prepare_from_store_with_compute<F: JoltField>(
+        session: &mut ProofSession,
+        log_t: usize,
+        tau_low: &[F],
+        rows: BundleStore<SpartanProductRow>,
+        #[cfg(feature = "field-inline")] field_rows: Vec<(usize, FieldInlineSpartanRow<F>)>,
+        compute: Option<Arc<dyn ProductCompute<F>>>,
     ) -> Result<(), KernelError<F>> {
         if tau_low.len() != log_t {
             return Err(KernelError::InvariantViolation {
@@ -332,13 +426,25 @@ impl OptimizedProductUniskip {
         if let Some((cycle, _)) = field_rows.last() {
             prefix_cycles = prefix_cycles.max(cycle.saturating_add(1)).min(1 << log_t);
         }
-        let extension_values = extension_t1_values(
-            &rows.access(),
-            prefix_cycles,
-            tau_low,
-            #[cfg(feature = "field-inline")]
-            &field_rows,
-        )?;
+        #[cfg(feature = "field-inline")]
+        let compute = compute.filter(|_| field_rows.is_empty());
+        let compute = compute.filter(|backend| backend.admits(prefix_cycles));
+        let extension_values = if let Some(backend) = &compute {
+            backend.extension_values(
+                &rows.access(),
+                prefix_cycles,
+                tau_low,
+                &extension_coefficients(),
+            )?
+        } else {
+            extension_t1_values(
+                &rows.access(),
+                prefix_cycles,
+                tau_low,
+                #[cfg(feature = "field-inline")]
+                &field_rows,
+            )?
+        };
         session.park(SpartanProductCarry {
             log_t,
             prefix_cycles,
@@ -347,8 +453,41 @@ impl OptimizedProductUniskip {
             #[cfg(feature = "field-inline")]
             field_rows,
             extension_values,
+            compute,
         });
         Ok(())
+    }
+}
+
+impl OptimizedProductUniskip {
+    fn prepare_with_compute<F: JoltField>(
+        session: &mut ProofSession,
+        log_t: usize,
+        tau_low: &[F],
+        witness: &dyn JoltWitnessPlane<F>,
+        compute: Option<Arc<dyn ProductCompute<F>>>,
+    ) -> Result<(), KernelError<F>> {
+        let rows = BundleStore::resolve(witness, 1usize << log_t)?;
+        #[cfg(feature = "field-inline")]
+        let field_rows = if let Some(carry) = session.take::<FieldSpartanCarry<F>>() {
+            carry.0
+        } else {
+            witness
+                .field_inline()
+                .ok_or(KernelError::Witness(WitnessError::UnavailableView {
+                    label: "composed Spartan product field-inline oracle",
+                }))?
+                .field_inline_spartan_rows()?
+        };
+        Self::prepare_from_store_with_compute(
+            session,
+            log_t,
+            tau_low,
+            rows,
+            #[cfg(feature = "field-inline")]
+            field_rows,
+            compute,
+        )
     }
 }
 
@@ -363,26 +502,7 @@ impl<F: JoltField> UniskipKernel<F, ProductRemainder<F>, SumcheckInputClaims<F, 
         tau_low: &[F],
         witness: &dyn JoltWitnessPlane<F>,
     ) -> Result<(), KernelError<F>> {
-        let rows = BundleStore::resolve(witness, 1usize << log_t)?;
-        #[cfg(feature = "field-inline")]
-        let field_rows = if let Some(carry) = session.take::<FieldSpartanCarry<F>>() {
-            carry.0
-        } else {
-            witness
-                .field_inline()
-                .ok_or(KernelError::Witness(WitnessError::UnavailableView {
-                    label: "composed Spartan product field-inline oracle",
-                }))?
-                .field_inline_spartan_rows()?
-        };
-        Self::prepare_from_store(
-            session,
-            log_t,
-            tau_low,
-            rows,
-            #[cfg(feature = "field-inline")]
-            field_rows,
-        )
+        Self::prepare_with_compute(session, log_t, tau_low, witness, None)
     }
 
     #[tracing::instrument(skip_all, name = "SpartanProductUniskip::first_round_poly")]
@@ -477,10 +597,10 @@ impl<F: JoltField> PrepareKernel<F, ProductRemainder<F>> for OptimizedProductRem
 
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct ProductRemainderKernel<F: JoltField> {
-    left: PrefixColumn<F>,
-    right: PrefixColumn<F>,
+    columns: ProductColumns<F>,
     prefix_cycles: usize,
-    purged: bool,
+    #[cfg_attr(feature = "allocative", allocative(skip))]
+    compute: Option<Arc<dyn ProductCompute<F>>>,
     split_eq: GruenSplitEqPolynomial<F>,
     #[cfg_attr(feature = "allocative", allocative(skip))]
     pending_endpoints: Option<(F, F)>,
@@ -503,6 +623,7 @@ impl<F: JoltField> ProductRemainderKernel<F> {
             rows,
             #[cfg(feature = "field-inline")]
             field_rows,
+            compute,
             ..
         } = carry;
         let rounds = inputs.relation.rounds();
@@ -520,6 +641,28 @@ impl<F: JoltField> ProductRemainderKernel<F> {
             BindingOrder::LowToHigh,
             Some(scale),
         );
+
+        if let Some(backend) = &compute {
+            let columns = backend.prepare_columns(
+                &rows.access(),
+                prefix_cycles,
+                1usize << log_t,
+                &weights,
+                &split_eq,
+            )?;
+            return Ok(Self {
+                columns: ProductColumns::Device(columns),
+                prefix_cycles,
+                compute,
+                split_eq,
+                pending_endpoints: None,
+                challenges: RoundChallenges::new(rounds),
+                rows,
+                #[cfg(feature = "field-inline")]
+                field_rows,
+                lagrange_weights: weights,
+            });
+        }
 
         // Fused round-0 materialization: one pass over the typed rows writes
         // the weighted left/right tables and accumulates the first round's
@@ -642,16 +785,19 @@ impl<F: JoltField> ProductRemainderKernel<F> {
             endpoints.1,
         );
         Ok(Self {
-            left: PrefixColumn {
-                values: left,
-                tail: [left_tail; 2],
-            },
-            right: PrefixColumn {
-                values: right,
-                tail: [right_tail; 2],
+            columns: ProductColumns::Cpu {
+                left: PrefixColumn {
+                    values: left,
+                    tail: [left_tail; 2],
+                },
+                right: PrefixColumn {
+                    values: right,
+                    tail: [right_tail; 2],
+                },
+                purged: false,
             },
             prefix_cycles,
-            purged: false,
+            compute,
             split_eq,
             pending_endpoints: Some(endpoints),
             challenges: RoundChallenges::new(rounds),
@@ -662,16 +808,12 @@ impl<F: JoltField> ProductRemainderKernel<F> {
         })
     }
 
-    fn bind(&mut self, challenge: F) {
-        let shrunk = self.left.bind(challenge);
-        let _ = self.right.bind(challenge);
-        if shrunk && !self.purged {
-            self.purged = true;
-            crate::mem::purge_retained_memory(self.challenges.total());
-        }
+    fn bind(&mut self, challenge: F) -> Result<(), SumcheckError<F>> {
+        self.columns.bind(challenge, self.challenges.total())?;
         self.split_eq.bind(challenge);
         self.challenges.push(challenge);
         self.pending_endpoints = None;
+        Ok(())
     }
 
     fn cycle_weights(&self) -> PrefixCycleWeights<F> {
@@ -756,21 +898,33 @@ impl<F: JoltField> ProveRounds<F> for ProductRemainderKernel<F> {
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
         if let Some(challenge) = bind {
-            self.bind(challenge);
+            self.bind(challenge)?;
         }
-        let (q_zero, q_infinity) = match self.pending_endpoints.take() {
-            Some(endpoints) => endpoints,
-            None => self.left.product_endpoints(&self.right, &self.split_eq),
+        let eq = &self.split_eq;
+        let need_one = eq.current_linear_evals().0.is_zero() && !eq.current_scalar().is_zero();
+        let [q_zero, q_infinity, q_one] = match &mut self.columns {
+            ProductColumns::Cpu { left, right, .. } => {
+                let (zero, infinity) = self
+                    .pending_endpoints
+                    .take()
+                    .unwrap_or_else(|| left.product_endpoints(right, eq));
+                [
+                    zero,
+                    infinity,
+                    if need_one {
+                        left.product_at_one(right, eq)
+                    } else {
+                        F::zero()
+                    },
+                ]
+            }
+            ProductColumns::Device(device) => device.products(eq)?,
         };
-        self.split_eq
-            .checked_cubic(q_zero, q_infinity, previous_claim, round, || {
-                self.left.product_at_one(&self.right, &self.split_eq)
-            })
+        eq.checked_cubic(q_zero, q_infinity, previous_claim, round, || q_one)
     }
 
     fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {
-        self.bind(bind);
-        Ok(())
+        self.bind(bind)
     }
 }
 
@@ -803,11 +957,15 @@ impl<F: JoltField> SumcheckKernel<F> for ProductRemainderKernel<F> {
         let claims: BTreeMap<OpeningIdOf<F, Self::Relation>, F> = ids
             .into_iter()
             .map(Into::into)
-            .zip(self.claimed_inputs(&weights).map_err(|_| {
-                SumcheckKernelError::InvariantViolation {
-                    reason: "product opening walk re-extraction failed after the rounds",
-                }
-            })?)
+            .zip(if let Some(backend) = &self.compute {
+                backend.claimed_inputs(&self.rows.access(), &weights)?
+            } else {
+                self.claimed_inputs(&weights).map_err(|_| {
+                    SumcheckKernelError::InvariantViolation {
+                        reason: "product opening walk re-extraction failed after the rounds",
+                    }
+                })?
+            })
             .collect();
         #[cfg(feature = "field-inline")]
         let claims: BTreeMap<_, _> = claims
