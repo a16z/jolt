@@ -57,12 +57,7 @@ impl InputDevice<F> for ResidentInput {
         let pending = Pending::new(&self.gpu, next_prefix, new_bits != 0).map_err(compute_error)?;
         let partials = partials(groups, &self.gpu.device).map_err(compute_error)?;
         drop(allocate);
-        let constants = Constants {
-            tails: self.tails,
-            tail_word,
-            challenge,
-            gamma: self.gamma,
-        };
+        let constants = Constants::new(self.tails, tail_word, challenge, self.gamma);
         let params = Params {
             prefix: word(self.prefix).map_err(compute_error)?,
             output_len: word(next_prefix).map_err(compute_error)?,

@@ -40,12 +40,44 @@ struct Params {
 #[repr(C)]
 #[derive(Clone, Copy, NoUninit)]
 struct Constants {
-    tails: [F; NUM_TABLES],
+    is_rs1: F,
+    rs1: F,
+    is_pc: F,
+    upc: F,
+    is_rs2: F,
+    rs2: F,
+    is_imm: F,
+    imm: F,
+    is_rd: F,
+    rd: F,
     tail_word: [u32; 4],
     challenge: F,
     gamma: F,
 }
 const _: () = assert!(size_of::<Constants>() == 208);
+
+impl Constants {
+    // Individual NoUninit field members match Metal's contiguous tails[10].
+    // Fp128 is not Pod, so its Rust array cannot derive NoUninit transitively.
+    fn new(tails: [F; NUM_TABLES], tail_word: [u32; 4], challenge: F, gamma: F) -> Self {
+        let [is_rs1, rs1, is_pc, upc, is_rs2, rs2, is_imm, imm, is_rd, rd] = tails;
+        Self {
+            is_rs1,
+            rs1,
+            is_pc,
+            upc,
+            is_rs2,
+            rs2,
+            is_imm,
+            imm,
+            is_rd,
+            rd,
+            tail_word,
+            challenge,
+            gamma,
+        }
+    }
+}
 
 struct Gpu {
     device: Device,

@@ -86,12 +86,7 @@ pub(super) fn materialize(
         challenge,
     );
     let lut = DeviceBuffer::from_slice(&gpu.device, &flag_table.values).map_err(compute_error)?;
-    let constants = Constants {
-        tails,
-        tail_word: words(flag_table.tail),
-        challenge,
-        gamma,
-    };
+    let constants = Constants::new(tails, words(flag_table.tail), challenge, gamma);
     // Tile boundaries coincide with message-pair and equality-block boundaries.
     let block_rows = equality
         .inner_len
