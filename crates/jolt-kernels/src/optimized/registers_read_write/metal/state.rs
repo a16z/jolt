@@ -58,6 +58,7 @@ enum Coefficients {
     Direct {
         ra: DeviceBuffer<F>,
         wa: DeviceBuffer<F>,
+        unused_codes: DeviceBuffer<u32>,
     },
 }
 
@@ -83,6 +84,7 @@ impl Sparse {
             Coefficients::Direct {
                 ra: DeviceBuffer::zeroed(&gpu.device, entries)?,
                 wa: DeviceBuffer::zeroed(&gpu.device, entries)?,
+                unused_codes: DeviceBuffer::zeroed(&gpu.device, 1)?,
             }
         } else {
             Coefficients::Indexed(DeviceBuffer::zeroed(&gpu.device, entries)?)
@@ -95,12 +97,12 @@ impl Sparse {
             inc: DeviceBuffer::zeroed(&gpu.device, inc_len)?,
         })
     }
-    // Inactive coefficient operands alias the value buffer; the shader's
-    // indexed/direct branch never accesses those operands.
+    // Inactive field operands may alias values. The code operand still needs
+    // a uint element: runtime reflection checks even unused argument types.
     fn codes(&self) -> Binding<'_> {
         match &self.coeffs {
             Coefficients::Indexed(codes) => Binding::buffer(codes),
-            _ => Binding::buffer(&self.values),
+            Coefficients::Direct { unused_codes, .. } => Binding::buffer(unused_codes),
         }
     }
     fn ra(&self) -> Binding<'_> {
@@ -418,7 +420,7 @@ impl DeviceCycle {
         let Phase::Sparse(mut state) = self.phase else {
             return Err(invalid("CPU restoration before sparse materialization"));
         };
-        let Coefficients::Direct { mut ra, mut wa } = state.coeffs else {
+        let Coefficients::Direct { mut ra, mut wa, .. } = state.coeffs else {
             return Err(invalid("CPU restoration before LUT transition"));
         };
         let values = state.values.read()?;
