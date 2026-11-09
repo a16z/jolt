@@ -13,6 +13,8 @@ pub struct DeviceLimits {
     pub recommended_max_working_set_size: u64,
     /// `MTLDevice.maxThreadsPerThreadgroup.width`.
     pub max_threads_per_threadgroup: usize,
+    /// `MTLDevice.maxThreadgroupMemoryLength`, in bytes.
+    pub max_threadgroup_memory_length: usize,
 }
 
 pub(crate) struct DeviceInfo {

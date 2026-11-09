@@ -163,6 +163,7 @@ pub(crate) struct ArgumentSlot {
 pub(crate) struct PipelineInfo {
     pub(crate) max_total_threads_per_threadgroup: usize,
     pub(crate) thread_execution_width: usize,
+    pub(crate) static_threadgroup_memory_length: usize,
     pub(crate) slots: Vec<ArgumentSlot>,
 }
 
@@ -185,6 +186,10 @@ impl Pipeline {
     /// SIMD-group width; threadgroup sizes should be a multiple of it.
     pub fn thread_execution_width(&self) -> usize {
         self.info.thread_execution_width
+    }
+
+    pub fn static_threadgroup_memory_length(&self) -> usize {
+        self.info.static_threadgroup_memory_length
     }
 }
 

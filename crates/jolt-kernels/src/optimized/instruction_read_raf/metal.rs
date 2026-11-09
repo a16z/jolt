@@ -9,6 +9,8 @@ use jolt_metal::MetalError;
 use super::super::metal_rows::{ResidentInstructionRows, UploadedRows};
 use super::*;
 
+mod address;
+
 const MIN_GPU_PREFIX: usize = 1 << 16;
 const CPU_TAIL_ROWS: usize = 1 << 12;
 const MAX_SIMDGROUPS: usize = 8;
@@ -22,7 +24,7 @@ impl MetalInstructionReadRaf {
         for (name, source) in FIELD_HEADERS {
             spec = spec.source(name, source);
         }
-        let spec = spec
+        let mut spec = spec
             .source(
                 "read_raf_geometry",
                 &format!("#define READ_RAF_MAX_SIMDGROUPS {MAX_SIMDGROUPS}"),
@@ -30,6 +32,18 @@ impl MetalInstructionReadRaf {
             .source("read_raf.metal", include_str!("read_raf.metal"))
             .instantiate::<AkitaField>("read_raf_round9")
             .instantiate::<AkitaField>("read_raf_round17");
+        spec = spec.source(
+            "address_geometry",
+            &format!("#define ADDRESS_BINS {CHUNK_SIZE}u"),
+        );
+        spec = spec.source("address.metal", include_str!("metal/address.metal"));
+        for name in address::KERNELS {
+            spec = spec.instantiate::<AkitaField>(name);
+        }
+        #[cfg(test)]
+        {
+            spec = spec.instantiate::<AkitaField>("address_suffix_oracle");
+        }
         let library = ShaderLibrary::compile(&device, &spec)?;
         Ok(Self(Arc::new(ReadRafGpu { device, library })))
     }
@@ -45,7 +59,22 @@ impl PrepareKernel<AkitaField, InstructionReadRaf<AkitaField>> for MetalInstruct
         Box<dyn SumcheckKernel<AkitaField, Relation = InstructionReadRaf<AkitaField>>>,
         KernelError<AkitaField>,
     > {
-        let cpu = OptimizedInstructionReadRafKernel::prepare(session, witness, inputs)?;
+        let cpu = OptimizedInstructionReadRafKernel::prepare_with_scanner(
+            session,
+            witness,
+            inputs,
+            |session, host| match address::DeviceAddressScan::try_new(
+                Arc::clone(&self.0),
+                session,
+                &host,
+                MIN_GPU_PREFIX,
+            )
+            .map_err(compute_error)?
+            {
+                Some(device) => Ok(Box::new(device)),
+                None => Ok(Box::new(host)),
+            },
+        )?;
         let resident = ResidentInstructionRows::shared(session, &cpu.rows)?;
         Ok(Box::new(MetalReadRafKernel {
             cpu,

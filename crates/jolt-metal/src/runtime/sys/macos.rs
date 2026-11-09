@@ -96,6 +96,7 @@ impl RawDevice {
                     max_buffer_length: raw.maxBufferLength(),
                     recommended_max_working_set_size: raw.recommendedMaxWorkingSetSize(),
                     max_threads_per_threadgroup: raw.maxThreadsPerThreadgroup().width,
+                    max_threadgroup_memory_length: raw.maxThreadgroupMemoryLength(),
                 },
             };
             Ok((Self { raw, queue }, info))
@@ -238,6 +239,7 @@ impl RawLibrary {
             let info = PipelineInfo {
                 max_total_threads_per_threadgroup: raw.maxTotalThreadsPerThreadgroup(),
                 thread_execution_width: raw.threadExecutionWidth(),
+                static_threadgroup_memory_length: raw.staticThreadgroupMemoryLength(),
                 slots,
             };
             Ok((RawPipeline(raw), info))

@@ -14,6 +14,7 @@ use crate::reference::instruction_read_raf::InstructionReadRafKernel;
 #[test]
 fn compact_read_raf_matches_reference_through_device_handoff() {
     let gpu = MetalInstructionReadRaf::new().unwrap();
+    address::check_suffixes(&gpu.0).unwrap();
     // Nine factors covers the cached constant products; seventeen factors
     // reaches width four on a small domain with the production lazy policy.
     for (log_t, virtuals, prefix, zero_tail) in [(10, 8, 1001, true), (16, 16, 40001, false)] {
@@ -23,6 +24,13 @@ fn compact_read_raf_matches_reference_through_device_handoff() {
             NonZeroUsize::new(virtuals).unwrap(),
         );
         let mut witness = fixture_rows(log_t, 947);
+        for (index, row) in witness[..prefix].iter_mut().enumerate() {
+            if index.is_multiple_of(3) {
+                row.lookup_index = LookupIndex((1u128 << 32) | (index % 5) as u128);
+                row.table_index = TableIndex(Some(RangePrefixSums::<AkitaField>::table().index()));
+                row.raf_flag = InstructionRafFlag(true);
+            }
+        }
         let mut tail = witness[0];
         if zero_tail {
             tail.lookup_index = LookupIndex(0);
@@ -39,9 +47,20 @@ fn compact_read_raf_matches_reference_through_device_handoff() {
         let mut session = ProofSession::default();
         let owner = ResidentInstructionRows::shared(&mut session, &source).unwrap();
         let weak = Arc::downgrade(&owner);
-        let cpu =
-            OptimizedInstructionReadRafKernel::new(dimensions, &point, Arc::clone(&source), gamma)
-                .unwrap();
+        let cpu = OptimizedInstructionReadRafKernel::new_with_scanner(
+            dimensions,
+            &point,
+            Arc::clone(&source),
+            gamma,
+            |host| {
+                let device =
+                    address::DeviceAddressScan::try_new(Arc::clone(&gpu.0), &mut session, &host, 0)
+                        .map_err(compute_error)?
+                        .unwrap();
+                Ok(Box::new(device))
+            },
+        )
+        .unwrap();
         let mut kernel = Box::new(MetalReadRafKernel {
             cpu,
             rows: Some(owner),
@@ -53,8 +72,15 @@ fn compact_read_raf_matches_reference_through_device_handoff() {
         let mut saw_device = false;
         let mut saw_dense_bind = false;
         let mut lazy_widths = Vec::new();
+        let draw = |round| {
+            if zero_tail && round == 0 {
+                AkitaField::from_u64(1)
+            } else {
+                challenge::<AkitaField>(round)
+            }
+        };
         for round in 0..rounds {
-            let bind = round.checked_sub(1).map(challenge::<AkitaField>);
+            let bind = round.checked_sub(1).map(draw);
             let expected = reference.prove_round(bind, round, claim).unwrap();
             let was_resident = kernel
                 .device
@@ -75,14 +101,14 @@ fn compact_read_raf_matches_reference_through_device_handoff() {
             {
                 lazy_widths.push(*width);
             }
-            claim = expected.evaluate(challenge(round));
+            claim = expected.evaluate(draw(round));
         }
         assert!(saw_device);
         if virtuals == 16 {
             assert!(saw_dense_bind);
             assert!(lazy_widths.contains(&2) && lazy_widths.contains(&4));
         }
-        let final_bind = challenge(rounds - 1);
+        let final_bind = draw(rounds - 1);
         reference.finish_rounds(final_bind).unwrap();
         kernel.finish_rounds(final_bind).unwrap();
         let inputs = InstructionReadRafInputClaims {
