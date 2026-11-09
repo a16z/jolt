@@ -4,6 +4,7 @@
 pub mod crt_ntt_repr;
 pub mod cyclotomic;
 pub mod eval;
+mod ifma52;
 mod residue;
 
 pub use crt_ntt_repr::{
@@ -18,4 +19,5 @@ pub use cyclotomic::{
 pub use eval::{
     eval_ring_at, evaluate_power_sequence_mle, scalar_powers, scalar_powers_with_stride,
 };
+pub use ifma52::{Ifma52NttMatrix, Ifma52Params};
 pub use residue::{residue_kernel, terminal_residue_kernel, ResidueKernelPoint};

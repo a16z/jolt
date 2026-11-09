@@ -540,6 +540,7 @@ mod capacity_tests {
 #[expect(clippy::unwrap_used, reason = "test code")]
 mod garner_tests {
     use super::GarnerData;
+    use crate::ntt::ifma52::IFMA52_PRIMES;
     use crate::ntt::tables::{I16_TAIL_PRIME, I32_RAW_PRIMES};
     use crate::Field;
     use crate::{Prime128OffsetA7F7, Prime32Offset99};
@@ -608,6 +609,8 @@ mod garner_tests {
     #[test]
     fn shoup_mixed_radix_matches_crt_congruences() {
         check_profile(I32_RAW_PRIMES.map(|prime| prime as u64));
+        check_profile(IFMA52_PRIMES);
+        check_profile([IFMA52_PRIMES[0], 12_289, I32_RAW_PRIMES[0] as u64]);
         check_profile([(1 << 62) - 57, (1 << 61) - 1, 3]);
         check_profile([I16_TAIL_PRIME.p as u64; 1]);
         check_profile([
