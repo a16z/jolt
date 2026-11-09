@@ -124,7 +124,7 @@ impl Secp256k1Fq {
     }
     #[inline(always)]
     pub fn is_zero(&self) -> bool {
-        self.e == [0u64; 4]
+        (self.e[0] | self.e[1] | self.e[2] | self.e[3]) == 0
     }
     #[inline(always)]
     pub fn neg(&self) -> Self {
@@ -440,7 +440,7 @@ impl Secp256k1Fr {
     }
     #[inline(always)]
     pub fn is_zero(&self) -> bool {
-        self.e == [0u64; 4]
+        (self.e[0] | self.e[1] | self.e[2] | self.e[3]) == 0
     }
     #[inline(always)]
     pub fn neg(&self) -> Self {
