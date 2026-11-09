@@ -369,6 +369,18 @@ families together when the measured benefit depends on that sharing, notably
 Spartan outer/product and instruction address/cycle processing. Avoid repeated
 trace walks, a dense field vector per selector, and unrelated full-trace copies.
 
+The native product candidate supplies the first bounded Spartan producer:
+40-byte rows extracted through `SpartanProductRow`, at most 2^20 rows per tile.
+Canonical Rust extension coefficients and Lagrange weights drive GPU uniskip and
+remainder production; no precomputed field planes are uploaded. CPU code owns
+the split equality, challenge sequence, odd boundary pair, and final opening
+recipe. Device columns restore to CPU at 2^12 rows. The three native source passes
+(uniskip, preparation, openings), allocations, upload, waits, and restoration
+must all be measured. This source-only candidate has no performance claim yet.
+The outer path retains its current guard aggregation and typed coefficient
+folds until a separate compact producer is justified. Raw `JoltTraceRow` bytes
+are not a public GPU decoding interface.
+
 For prefix-backed tables, carry the stored prefix length and tail semantics into
 the kernel. Dispatch over stored pairs, handle the boundary pair, and add the
 tail contribution analytically using the current equality-polynomial semantics.

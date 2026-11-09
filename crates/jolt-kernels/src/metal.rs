@@ -6,17 +6,20 @@ use crate::optimized::booleanity::metal::MetalBooleanity;
 use crate::optimized::bytecode_read_raf::metal::MetalBytecodeReadRafAddress;
 use crate::optimized::instruction_ra_virtualization::metal::MetalInstructionRa;
 use crate::optimized::instruction_read_raf::metal::MetalInstructionReadRaf;
+use crate::optimized::spartan_product::metal::MetalProductUniskip;
 use crate::JoltBackend;
 
 mod trace_compute;
 pub use trace_compute::MetalTraceCompute;
 
 impl<PCS: CommitmentScheme<Field = AkitaField>> JoltBackend<AkitaField, PCS> {
-    /// Use Metal for compact ReadRAF, instruction-RA and Booleanity cycle rounds.
+    /// Use Metal for native Spartan product and compact ReadRAF, instruction-RA
+    /// and Booleanity cycle rounds.
     /// Other slots retain their current implementations.
     /// Compiles the shaders before any proof starts; device/setup errors are
     /// returned to the caller rather than silently selecting the CPU backend.
     pub fn with_metal_compute(mut self) -> Result<Self, MetalError> {
+        self.spartan_product_uniskip = Box::new(MetalProductUniskip::new()?);
         self.instruction_read_raf = Box::new(MetalInstructionReadRaf::new()?);
         self.instruction_ra_virtualization = Box::new(MetalInstructionRa::new()?);
         self.booleanity_cycle = Box::new(MetalBooleanity::new()?);

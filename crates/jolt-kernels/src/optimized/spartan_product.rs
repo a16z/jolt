@@ -70,6 +70,9 @@ use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
 
+#[cfg(feature = "metal")]
+pub(crate) mod metal;
+
 const DOMAIN: usize = SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE;
 const EXTENDED_SIZE: usize = 2 * DOMAIN - 1;
 const EXTENSION_SIZE: usize = DOMAIN - 1;
@@ -102,7 +105,7 @@ pub struct SpartanProductRow {
 /// Optional native producer. Geometry, challenges and claim ordering remain in
 /// this module; implementations own only arithmetic and resident field columns.
 trait ProductCompute<F: JoltField>: Send + Sync {
-    fn admits(&self, prefix: usize) -> bool;
+    fn admits(&self, prefix: usize, log_t: usize) -> bool;
     fn extension_values(
         &self,
         rows: &BundleAccess<'_, SpartanProductRow>,
@@ -428,7 +431,7 @@ impl OptimizedProductUniskip {
         }
         #[cfg(feature = "field-inline")]
         let compute = compute.filter(|_| field_rows.is_empty());
-        let compute = compute.filter(|backend| backend.admits(prefix_cycles));
+        let compute = compute.filter(|backend| backend.admits(prefix_cycles, log_t));
         let extension_values = if let Some(backend) = &compute {
             backend.extension_values(
                 &rows.access(),
@@ -867,12 +870,13 @@ impl<F: JoltField> ProductRemainderKernel<F> {
     /// eq-weighted walk over the sparse field-inline rows.
     #[cfg(feature = "field-inline")]
     fn field_claimed_inputs(&self, weights: &PrefixCycleWeights<F>) -> [F; 3] {
+        let field_rows = &self.field_rows;
         map_reduce_chunks(
-            self.field_rows.len(),
+            field_rows.len(),
             1 << 12,
             |range| {
                 let mut values = [F::zero(); 3];
-                for (cycle, row) in &self.field_rows[range] {
+                for (cycle, row) in &field_rows[range] {
                     let weight = weights.evaluate(*cycle);
                     values[0] += weight * row.rs1_value;
                     values[1] += weight * row.rs2_value;
@@ -901,7 +905,7 @@ impl<F: JoltField> ProveRounds<F> for ProductRemainderKernel<F> {
             self.bind(challenge)?;
         }
         let eq = &self.split_eq;
-        let need_one = eq.current_linear_evals().0.is_zero() && !eq.current_scalar().is_zero();
+        let need_one = eq.current_linear_evals().1.is_zero() && !eq.current_scalar().is_zero();
         let [q_zero, q_infinity, q_one] = match &mut self.columns {
             ProductColumns::Cpu { left, right, .. } => {
                 let (zero, infinity) = self
@@ -1068,7 +1072,7 @@ mod tests {
         }
     }
 
-    fn synthetic_rows(log_t: usize, seed: u64) -> Vec<SpartanProductRow> {
+    pub(super) fn synthetic_rows(log_t: usize, seed: u64) -> Vec<SpartanProductRow> {
         let mut state = seed | 1;
         let mut next = move || {
             state ^= state << 13;
