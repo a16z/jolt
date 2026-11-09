@@ -147,7 +147,8 @@ impl MetalRaFold {
         if len == 0 {
             return Ok(());
         }
-        u32::try_from(len).map_err(|_| Self::invalid("dispatch exceeds 32-bit indexing"))?;
+        let _ =
+            u32::try_from(len).map_err(|_| Self::invalid("dispatch exceeds 32-bit indexing"))?;
         let pipeline = self.library.pipeline(&host_name::<F>(name))?;
         let threads = pipeline.max_total_threads_per_threadgroup().min(256);
         if threads == 0 {
@@ -159,7 +160,7 @@ impl MetalRaFold {
         unsafe {
             batch.dispatch_unchecked(pipeline, bindings, Grid::linear(len, threads))?;
         }
-        batch.commit_and_wait()?;
+        let _ = batch.commit_and_wait()?;
         Ok(())
     }
 
