@@ -41,6 +41,7 @@ impl Program {
             max_untrusted_advice_size: DEFAULT_MAX_UNTRUSTED_ADVICE_SIZE,
             max_trusted_advice_size: DEFAULT_MAX_TRUSTED_ADVICE_SIZE,
             max_output_size: DEFAULT_MAX_OUTPUT_SIZE,
+            pcall_keccakf_capacity: MemoryConfig::default().pcall_keccakf_capacity,
             std: false,
             backtrace: Some("off".to_string()), // Default to off for minimal size
             elf: None,
@@ -93,6 +94,7 @@ impl Program {
     }
 
     pub fn set_memory_config(&mut self, memory_config: MemoryConfig) {
+        self.pcall_keccakf_capacity = memory_config.pcall_keccakf_capacity;
         self.set_heap_size(memory_config.heap_size);
         self.set_stack_size(memory_config.stack_size);
         self.set_max_input_size(memory_config.max_input_size);
@@ -502,6 +504,7 @@ impl Program {
             max_trusted_advice_size: self.max_trusted_advice_size,
             max_output_size: self.max_output_size,
             program_size: Some(program_size),
+            pcall_keccakf_capacity: self.pcall_keccakf_capacity,
         }
     }
 

@@ -726,6 +726,36 @@ mod tests {
     fn ram_access_matches_memory_circuit_flags() {
         let observation = Observation::default();
         for &kind in JoltInstructionKind::ALL {
+            #[cfg(feature = "pcall-keccakf")]
+            if matches!(
+                kind,
+                JoltInstructionKind::PcallCall(_)
+                    | JoltInstructionKind::PcallRead(_)
+                    | JoltInstructionKind::PcallWrite(_)
+                    | JoltInstructionKind::PcallReturn(_)
+            ) {
+                use harness::TEST_ADDR;
+                // Unsupported PCALL rows cannot produce native observations.
+                let program = harness::single_row_program(JoltInstructionRow {
+                    instruction_kind: kind,
+                    address: TEST_ADDR as usize,
+                    is_first_in_sequence: true,
+                    ..JoltInstructionRow::default()
+                });
+                let error = CompiledProgram::compile(&program)
+                    .err()
+                    .expect("PCALL must be rejected");
+                assert!(
+                    matches!(
+                        error,
+                        TraceError::Backend(
+                            "jolt-tracer-x86: unsupported instruction kind in bytecode"
+                        )
+                    ),
+                    "{kind:?}: {error:?}"
+                );
+                continue;
+            }
             let flags = JoltInstruction::from(JoltInstructionRow {
                 instruction_kind: kind,
                 ..JoltInstructionRow::default()

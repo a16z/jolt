@@ -1290,6 +1290,7 @@ name = "jolt-inlines-keccak256"
 version = "0.1.0"
 dependencies = [
  "jolt-inlines-sdk",
+ "jolt-platform",
 ]
 
 [[package]]
@@ -1473,6 +1474,7 @@ name = "jolt-riscv"
 version = "0.1.0"
 dependencies = [
  "ark-serialize",
+ "jolt-platform",
  "serde",
  "strum",
  "thiserror 2.0.18",

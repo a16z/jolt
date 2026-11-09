@@ -2,6 +2,57 @@ use crate::{RATE_IN_BYTES, RATE_IN_U64};
 
 const HASH_LEN: usize = 32;
 
+#[cfg(all(
+    not(feature = "pcall-keccakf"),
+    not(feature = "host"),
+    any(target_arch = "riscv32", target_arch = "riscv64")
+))]
+use crate::KECCAK256_FUNCT7 as GUEST_KECCAK_FUNCT7;
+#[cfg(all(
+    feature = "pcall-keccakf",
+    not(feature = "host"),
+    any(target_arch = "riscv32", target_arch = "riscv64")
+))]
+use jolt_platform::PCALL_FUNCT7 as GUEST_KECCAK_FUNCT7;
+
+/// Apply Keccak-f[1600], using PCALL when the guest feature is enabled.
+#[inline(always)]
+pub fn keccak_f(state: &mut [u64; 25]) {
+    #[cfg(all(
+        not(feature = "host"),
+        any(target_arch = "riscv32", target_arch = "riscv64")
+    ))]
+    unsafe {
+        use crate::{INLINE_OPCODE, KECCAK256_FUNCT3};
+        core::arch::asm!(
+            ".insn r {opcode}, {funct3}, {funct7}, x0, {state}, x0",
+            opcode = const INLINE_OPCODE,
+            funct3 = const KECCAK256_FUNCT3,
+            funct7 = const GUEST_KECCAK_FUNCT7,
+            state = in(reg) state.as_mut_ptr(),
+            options(nostack)
+        );
+    }
+    #[cfg(feature = "host")]
+    crate::exec::execute_keccak_f(state);
+    #[cfg(all(
+        not(feature = "host"),
+        not(any(target_arch = "riscv32", target_arch = "riscv64"))
+    ))]
+    {
+        let _ = state;
+        panic!("keccak_f requires RISC-V target or host feature");
+    }
+}
+
+/// Absorb a disjoint, aligned rate block, then apply Keccak-f[1600].
+#[inline(always)]
+pub fn keccak_absorb_f(state: &mut [u64; 25], block: &[u64; 17]) {
+    // SAFETY: references provide 8-byte aligned, non-overlapping ports of the
+    // sizes required by keccak256_absorb_permute.
+    unsafe { keccak256_absorb_permute(state.as_mut_ptr(), block.as_ptr().cast()) };
+}
+
 pub struct Keccak256 {
     state: [u64; 25],
     buffer: [u64; RATE_IN_U64],
@@ -169,12 +220,12 @@ pub unsafe fn keccak256_absorb_permute(state: *mut u64, block: *const u8) {
         any(target_arch = "riscv32", target_arch = "riscv64")
     ))]
     {
-        use crate::{INLINE_OPCODE, KECCAK256_ABSORB_PERMUTE_FUNCT3, KECCAK256_FUNCT7};
+        use crate::{INLINE_OPCODE, KECCAK256_ABSORB_PERMUTE_FUNCT3};
         core::arch::asm!(
             ".insn r {opcode}, {funct3}, {funct7}, x0, {rs1}, {rs2}",
             opcode = const INLINE_OPCODE,
             funct3 = const KECCAK256_ABSORB_PERMUTE_FUNCT3,
-            funct7 = const KECCAK256_FUNCT7,
+            funct7 = const GUEST_KECCAK_FUNCT7,
             rs1 = in(reg) state,
             rs2 = in(reg) block,
             options(nostack)

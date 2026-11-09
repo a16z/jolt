@@ -45,3 +45,6 @@ pub const DEFAULT_MAX_TRACE_LENGTH: u64 = 1 << 24;
 pub const MAX_BLINDFOLD_GENERATORS: usize = 64;
 #[cfg(not(feature = "field-inline"))]
 pub const MAX_BLINDFOLD_GENERATORS: usize = 32;
+
+/// Default maximum KECCAKF calls per execution.
+pub const DEFAULT_PCALL_KECCAKF_CAPACITY: usize = 2048;

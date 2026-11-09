@@ -13,6 +13,7 @@ workspace = true
 
 [features]
 default = ["std", "serialization"]
+pcall-keccakf = ["jolt-riscv/pcall-keccakf"]
 serialization = ["dep:ark-serialize", "dep:serde", "jolt-riscv/serialization"]
 std = ["common/std"]
 parallel = ["dep:rayon"]

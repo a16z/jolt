@@ -445,8 +445,10 @@ mod tests {
                             "{}: memory row looks up {table:?}",
                             $canonical_name,
                         );
+                        // PCALL reads are execute-only; proving rejects them before witness generation.
                         assert!(
-                            !circuit[CircuitFlags::Load] || direct_load || address_offset,
+                            !circuit[CircuitFlags::Load] || direct_load || address_offset
+                                || (cfg!(feature = "pcall-keccakf") && $canonical_name == "pcall.read" && table.is_none()),
                             "{}: load must range-check its RAM read or use an audited floor-address lookup",
                             $canonical_name,
                         );

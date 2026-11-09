@@ -234,6 +234,14 @@ When designing your inline, consider:
 
 For concrete examples and implementation patterns, study the existing inline implementations in the Jolt codebase.
 
+### KECCAKF precompile tracing
+
+With the default-off `pcall-keccakf` guest feature, the Keccak helpers emit the
+reserved PCALL encoding. Existing inline keys retain their original semantics.
+See [KECCAKF precompile tracing](precompiles.md) for host configuration, capacity,
+and the temporary rejection of feature-enabled proving.
+
+
 ## Future Directions
 
 The inline system continues to evolve with planned enhancements:

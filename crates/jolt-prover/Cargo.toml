@@ -13,6 +13,15 @@ workspace = true
 
 [features]
 default = ["parallel"]
+pcall-keccakf = [
+  "jolt-witness/pcall-keccakf",
+  "akita",
+  "jolt-verifier/pcall-keccakf",
+  "jolt-program/pcall-keccakf",
+  "jolt-lookup-tables/pcall-keccakf",
+  "jolt-host?/pcall-keccakf",
+  "tracer?/pcall-keccakf",
+]
 parallel = [
   "jolt-program/parallel",
   "jolt-crypto/parallel",

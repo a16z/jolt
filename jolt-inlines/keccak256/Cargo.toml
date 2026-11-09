@@ -9,9 +9,11 @@ repository = "https://github.com/a16z/jolt"
 
 [features]
 default = []
+pcall-keccakf = []
 host = ["jolt-inlines-sdk/host"]
 
 [dependencies]
+jolt-platform.workspace = true
 jolt-inlines-sdk = { workspace = true, optional = true }
 
 [dev-dependencies]
@@ -19,5 +21,5 @@ hex-literal.workspace = true
 jolt-inlines-sdk = { workspace = true, features = ["test-utils"] }
 rand = { workspace = true, features = ["std", "std_rng"] }
 sha3.workspace = true
-tiny-keccak = { version = "2.0", features = ["keccak"] }
+tiny-keccak.workspace = true
 tracer = { workspace = true, features = ["std", "test-utils"] }

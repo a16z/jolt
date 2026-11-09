@@ -509,6 +509,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "jolt-platform"
+version = "0.1.0"
+
+[[package]]
 name = "jolt-poly"
 version = "0.1.0"
 dependencies = [
@@ -537,6 +541,7 @@ name = "jolt-riscv"
 version = "0.1.0"
 dependencies = [
  "ark-serialize",
+ "jolt-platform",
  "serde",
  "strum",
  "thiserror",

@@ -1,6 +1,7 @@
 #![cfg_attr(not(feature = "host"), no_std)]
 
-pub const INLINE_OPCODE: u32 = 0x0B;
+use jolt_platform::PCALL_OPCODE;
+pub const INLINE_OPCODE: u32 = PCALL_OPCODE;
 
 pub const KECCAK256_FUNCT3: u32 = 0x00;
 pub const KECCAK256_ABSORB_PERMUTE_FUNCT3: u32 = 0x01;
