@@ -29,6 +29,7 @@ members = [
   "crates/jolt-akita",
   "crates/jolt-zk",
   "crates/jolt-crypto",
+  "crates/jolt-dit",
   "crates/jolt-program",
   "crates/jolt-lean-gen",
   "crates/jolt-poly",
