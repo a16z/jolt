@@ -6,8 +6,8 @@ use crate::optimized::booleanity::metal::MetalBooleanity;
 use crate::optimized::instruction_ra_virtualization::metal::MetalInstructionRa;
 use crate::JoltBackend;
 
-mod trace_commitment;
-pub use trace_commitment::MetalTraceCommitment;
+mod trace_compute;
+pub use trace_compute::MetalTraceCompute;
 
 impl<PCS: CommitmentScheme<Field = AkitaField>> JoltBackend<AkitaField, PCS> {
     /// Use Metal for compact instruction-RA and Booleanity cycle rounds.

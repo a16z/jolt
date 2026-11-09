@@ -5,11 +5,12 @@ use std::{
 
 use akita_error::{checked, AkitaError};
 use akita_metal::onehot::{DeviceK16Sources, OneHotCommitShape};
+use akita_metal::onehot_fold::{OneHotFoldShape, OneHotFoldWorkspace};
 use akita_metal::onehot_ntt::{DeviceOneHotNttKey, OneHotNttWorkspace};
 use akita_metal::AkitaMetal;
 use akita_pcs::custom_source::CommitInnerPlan;
 use akita_types::{AkitaExpandedSetup, RingVec};
-use jolt_akita::{AkitaField, TraceOneHotCommitKernel, TraceOneHotRows};
+use jolt_akita::{AkitaField, TraceOneHotComputeKernel, TraceOneHotFoldPlan, TraceOneHotRows};
 use jolt_field::Zero;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -21,22 +22,21 @@ const STAGING_BYTES: usize = 1 << 28;
 #[cfg(feature = "parallel")]
 const PACK_ROWS: usize = 1 << 13;
 
-/// Commitment arithmetic for an exact setup owner. The existing Akita CPU
-/// backend retains the source and handles used by subsequent opening stages.
-pub struct MetalTraceCommitment {
+/// Trace arithmetic attached to an exact commitment setup owner. The Akita
+/// CPU backend retains the source and opening handles.
+pub struct MetalTraceCompute {
     expanded: Arc<AkitaExpandedSetup<AkitaField>>,
     metal: AkitaMetal,
     key: Mutex<Option<(usize, DeviceOneHotNttKey)>>,
 }
 
-impl fmt::Debug for MetalTraceCommitment {
+impl fmt::Debug for MetalTraceCompute {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("MetalTraceCommitment")
-            .finish_non_exhaustive()
+        f.debug_struct("MetalTraceCompute").finish_non_exhaustive()
     }
 }
 
-impl MetalTraceCommitment {
+impl MetalTraceCompute {
     pub fn new(expanded: Arc<AkitaExpandedSetup<AkitaField>>) -> Result<Self, AkitaError> {
         Ok(Self {
             expanded,
@@ -44,9 +44,126 @@ impl MetalTraceCommitment {
             key: Mutex::new(None),
         })
     }
+
+    fn pack_rows(
+        &self,
+        rows: &dyn TraceOneHotRows,
+        first_row: usize,
+        window_rows: usize,
+    ) -> Result<DeviceK16Sources, AkitaError> {
+        let columns = rows.num_columns();
+        let stored_rows = rows
+            .nonzero_prefix_len()
+            .saturating_sub(first_row)
+            .min(window_rows);
+        let selectors_len = checked::product([stored_rows, columns])
+            .ok_or_else(|| AkitaError::InvalidInput("trace selector size overflows".into()))?;
+        let mut selected = vec![0; selectors_len];
+        let mut masks = vec![0; stored_rows];
+        #[cfg(feature = "parallel")]
+        selected
+            .par_chunks_mut(PACK_ROWS * columns)
+            .zip(masks.par_chunks_mut(PACK_ROWS))
+            .enumerate()
+            .for_each(|(chunk, (selected, masks))| {
+                rows.fill_rows_with_masks(first_row + chunk * PACK_ROWS, selected, masks);
+            });
+        #[cfg(not(feature = "parallel"))]
+        rows.fill_rows_with_masks(first_row, &mut selected, &mut masks);
+        DeviceK16Sources::from_row_major(&self.metal, selected, &masks, columns, window_rows)
+            .map_err(compute_error)
+    }
 }
 
-impl TraceOneHotCommitKernel for MetalTraceCommitment {
+impl TraceOneHotComputeKernel for MetalTraceCompute {
+    fn decompose_fold(
+        &self,
+        rows: &dyn TraceOneHotRows,
+        one_hot_k: usize,
+        plan: TraceOneHotFoldPlan<'_>,
+    ) -> Result<Option<Vec<i32>>, AkitaError> {
+        if one_hot_k != K
+            || plan.ring_dimension() != D
+            || plan.segment_rings() < plan.num_positions()
+            || !plan.segment_rings().is_multiple_of(plan.num_positions())
+            || plan
+                .challenges()
+                .iter()
+                .flat_map(|challenge| &challenge.positions)
+                .any(|position| !position.is_multiple_of(8))
+        {
+            return Ok(None);
+        }
+        let columns = rows.num_columns();
+        let prefix = rows.nonzero_prefix_len();
+        if !(1..=64).contains(&columns) || prefix > rows.num_rows() {
+            return Err(compute_error("invalid trace row extent"));
+        }
+        if plan.challenges().len() > 1 << 26 {
+            return Ok(None);
+        }
+        // A fixed output coefficient receives each challenge term at most
+        // once: the one-hot source exponents within a ring are distinct.
+        for range in plan.chunk_ranges() {
+            let mut bound = 0u64;
+            for column in plan.challenges().chunks_exact(plan.blocks_per_column()) {
+                let challenges = column
+                    .get(range.clone())
+                    .ok_or_else(|| compute_error("validated fold range exceeds column"))?;
+                for challenge in challenges {
+                    bound += challenge
+                        .coeffs
+                        .iter()
+                        .map(|coefficient| u64::from(coefficient.unsigned_abs()))
+                        .sum::<u64>();
+                }
+            }
+            if bound > i32::MAX as u64 {
+                return Ok(None);
+            }
+        }
+        let _span = tracing::info_span!("metal_trace_decompose_fold").entered();
+        let dense_len = checked::product([plan.challenges().len(), 64])
+            .ok_or_else(|| compute_error("dense challenge size overflows"))?;
+        let mut dense_challenges = vec![0i8; dense_len];
+        for (dense, challenge) in dense_challenges.chunks_exact_mut(64).zip(plan.challenges()) {
+            for (&position, &coefficient) in challenge.positions.iter().zip(&challenge.coeffs) {
+                let slot = dense
+                    .get_mut(position as usize / 8)
+                    .ok_or_else(|| compute_error("validated challenge exceeds subring"))?;
+                *slot = coefficient;
+            }
+        }
+        let shape = OneHotFoldShape {
+            num_positions: plan.num_positions(),
+            blocks_per_column: plan.blocks_per_column(),
+            num_columns: columns,
+        };
+        let mut workspace =
+            OneHotFoldWorkspace::new(&self.metal, shape, &dense_challenges, plan.chunk_ranges())
+                .map_err(compute_error)?;
+        let rows_per_block = checked::product([plan.num_positions(), D / K])
+            .ok_or_else(|| compute_error("fold block size overflows"))?;
+        let blocks_per_window = staging_blocks(rows_per_block, columns)?;
+        let active_blocks = prefix.div_ceil(rows_per_block);
+        for first_block in (0..active_blocks).step_by(blocks_per_window) {
+            let blocks = blocks_per_window.min(active_blocks - first_block);
+            let first_row = first_block * rows_per_block;
+            let window_rows = (blocks * rows_per_block).min(rows.num_rows() - first_row);
+            let pack = tracing::info_span!("metal_trace_fold_pack").entered();
+            let sources = self.pack_rows(rows, first_row, window_rows)?;
+            drop(pack);
+            let dispatch =
+                tracing::info_span!("metal_trace_fold_dispatch", gpu_s = tracing::field::Empty);
+            let _dispatch = dispatch.enter();
+            let gpu_time = workspace
+                .accumulate(&sources, first_block)
+                .map_err(compute_error)?;
+            let _ = dispatch.record("gpu_s", gpu_time.as_secs_f64());
+        }
+        workspace.read().map(Some).map_err(compute_error)
+    }
+
     fn commit(
         &self,
         expanded: &AkitaExpandedSetup<AkitaField>,
@@ -117,40 +234,15 @@ impl TraceOneHotCommitKernel for MetalTraceCommitment {
         let (_, key) = cached
             .as_ref()
             .ok_or_else(|| compute_error("missing prepared key"))?;
-        let bytes_per_block = checked::product([rows_per_block, columns + size_of::<u64>()])
-            .ok_or_else(|| AkitaError::InvalidInput("trace staging size overflows".into()))?;
-        let blocks_per_window = (STAGING_BYTES / bytes_per_block).max(1);
+        let blocks_per_window = staging_blocks(rows_per_block, columns)?;
         let active_blocks = prefix.div_ceil(rows_per_block);
         let mut workspace = OneHotNttWorkspace::new(&self.metal);
         for first_block in (0..active_blocks).step_by(blocks_per_window) {
             let blocks = blocks_per_window.min(active_blocks - first_block);
             let first_row = first_block * rows_per_block;
             let window_rows = (blocks * rows_per_block).min(logical_rows - first_row);
-            let stored_rows = window_rows.min(prefix - first_row);
-            let selectors_len = checked::product([stored_rows, columns])
-                .ok_or_else(|| AkitaError::InvalidInput("trace selector size overflows".into()))?;
-            let mut selected = vec![0; selectors_len];
-            let mut masks = vec![0; stored_rows];
             let pack_span = tracing::info_span!("metal_trace_commit_pack").entered();
-            #[cfg(feature = "parallel")]
-            selected
-                .par_chunks_mut(PACK_ROWS * columns)
-                .zip(masks.par_chunks_mut(PACK_ROWS))
-                .enumerate()
-                .for_each(|(chunk, (selected, masks))| {
-                    rows.fill_rows_with_masks(first_row + chunk * PACK_ROWS, selected, masks);
-                });
-            #[cfg(not(feature = "parallel"))]
-            rows.fill_rows_with_masks(first_row, &mut selected, &mut masks);
-            let sources = DeviceK16Sources::from_row_major(
-                &self.metal,
-                selected,
-                &masks,
-                columns,
-                window_rows,
-            )
-            .map_err(compute_error)?;
-            drop(masks);
+            let sources = self.pack_rows(rows, first_row, window_rows)?;
             drop(pack_span);
             let dispatch =
                 tracing::info_span!("metal_trace_commit_dispatch", gpu_s = tracing::field::Empty);
@@ -182,6 +274,12 @@ impl TraceOneHotCommitKernel for MetalTraceCommitment {
     }
 }
 
+fn staging_blocks(rows_per_block: usize, columns: usize) -> Result<usize, AkitaError> {
+    let bytes_per_block = checked::product([rows_per_block, columns + size_of::<u64>()])
+        .ok_or_else(|| compute_error("trace staging size overflows"))?;
+    Ok((STAGING_BYTES / bytes_per_block).max(1))
+}
+
 fn compute_error(error: impl fmt::Display) -> AkitaError {
-    AkitaError::InvalidInput(format!("Metal trace commitment: {error}"))
+    AkitaError::InvalidInput(format!("Metal trace arithmetic: {error}"))
 }

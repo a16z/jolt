@@ -14,6 +14,7 @@ use akita_pcs::custom_source::{
 use akita_types::{AkitaExpandedSetup, RingVec};
 use jolt_claims::protocols::jolt::lattice::strategy::MAX_ONE_HOT_TRACE_COLUMNS;
 
+use super::decomposition::TraceOneHotFoldPlan;
 use super::kernels::{trace_commitment_capability, TraceOneHotColumnCommitOperation};
 use super::NO_SELECTED_ROW;
 use crate::AkitaField;
@@ -64,10 +65,10 @@ pub trait TraceOneHotRows: Send + Sync + 'static {
     }
 }
 
-/// Optional arithmetic for the existing CPU-owned trace commitment operation.
+/// Optional arithmetic for the existing CPU-owned trace operations.
 /// A kernel returns `None` only when it declines the setup or geometry before
 /// execution. Once selected, validation and device errors must propagate.
-pub trait TraceOneHotCommitKernel: Debug + Send + Sync {
+pub trait TraceOneHotComputeKernel: Debug + Send + Sync {
     fn commit(
         &self,
         expanded: &AkitaExpandedSetup<AkitaField>,
@@ -75,6 +76,17 @@ pub trait TraceOneHotCommitKernel: Debug + Send + Sync {
         one_hot_k: usize,
         plan: CommitInnerPlan,
     ) -> Result<Option<Vec<RingVec<AkitaField>>>, AkitaError>;
+
+    /// Returns compressed centered coefficients in position/chunk/coefficient
+    /// order. The caller owns digit expansion and fold-witness construction.
+    fn decompose_fold(
+        &self,
+        _rows: &dyn TraceOneHotRows,
+        _one_hot_k: usize,
+        _plan: TraceOneHotFoldPlan<'_>,
+    ) -> Result<Option<Vec<i32>>, AkitaError> {
+        Ok(None)
+    }
 }
 
 /// Default value written by [`TraceOneHotRows::fill_row`] for an empty row.
@@ -86,7 +98,7 @@ pub const fn no_selected_row() -> u8 {
 /// A native column view retaining the shared trace owner.
 #[derive(Clone)]
 pub struct TraceOneHotColumn {
-    pub(crate) commit_kernel: Option<Arc<dyn TraceOneHotCommitKernel>>,
+    pub(crate) compute_kernel: Option<Arc<dyn TraceOneHotComputeKernel>>,
     pub(super) rows: Arc<dyn TraceOneHotRows>,
     pub(super) num_rows: usize,
     pub(super) num_columns: usize,
@@ -155,7 +167,7 @@ impl TraceOneHotColumn {
         }
         Ok((0..num_columns)
             .map(|column_index| Self {
-                commit_kernel: None,
+                compute_kernel: None,
                 rows: Arc::clone(&rows),
                 num_rows,
                 num_columns,
@@ -340,7 +352,7 @@ pub(super) fn validate_batch(polys: &[&TraceOneHotColumn]) -> Result<(), AkitaEr
         || polys.len() != first.num_columns
         || polys.iter().enumerate().any(|(column, source)| {
             !Arc::ptr_eq(&source.rows, &first.rows)
-                || match (&source.commit_kernel, &first.commit_kernel) {
+                || match (&source.compute_kernel, &first.compute_kernel) {
                     (None, None) => false,
                     (Some(a), Some(b)) => !Arc::ptr_eq(a, b),
                     _ => true,

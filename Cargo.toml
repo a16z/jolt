@@ -313,19 +313,19 @@ dory = { package = "dory-pcs", version = "0.5.0", features = [
   "disk-persistence",
   "zk",
 ] }
-akita-algebra = { git = "https://github.com/GUJustin/akita.git", rev = "551159bb4a5741cce1e42fc5ee4b0f921ec5ba45", default-features = false }
-akita-metal = { git = "https://github.com/GUJustin/akita.git", rev = "551159bb4a5741cce1e42fc5ee4b0f921ec5ba45", default-features = false }
-akita-config = { git = "https://github.com/GUJustin/akita.git", rev = "551159bb4a5741cce1e42fc5ee4b0f921ec5ba45", default-features = false }
-akita-error = { git = "https://github.com/GUJustin/akita.git", rev = "551159bb4a5741cce1e42fc5ee4b0f921ec5ba45", default-features = false }
-akita-pcs = { git = "https://github.com/GUJustin/akita.git", rev = "551159bb4a5741cce1e42fc5ee4b0f921ec5ba45", default-features = false }
-akita-planner = { git = "https://github.com/GUJustin/akita.git", rev = "551159bb4a5741cce1e42fc5ee4b0f921ec5ba45", default-features = false }
-akita-schedules = { git = "https://github.com/GUJustin/akita.git", rev = "551159bb4a5741cce1e42fc5ee4b0f921ec5ba45", default-features = false }
-akita-challenges = { git = "https://github.com/GUJustin/akita.git", rev = "551159bb4a5741cce1e42fc5ee4b0f921ec5ba45", default-features = false }
-akita-types = { git = "https://github.com/GUJustin/akita.git", rev = "551159bb4a5741cce1e42fc5ee4b0f921ec5ba45", default-features = false }
-akita-params = { git = "https://github.com/GUJustin/akita.git", rev = "551159bb4a5741cce1e42fc5ee4b0f921ec5ba45", default-features = false }
-akita-transcript = { git = "https://github.com/GUJustin/akita.git", rev = "551159bb4a5741cce1e42fc5ee4b0f921ec5ba45", default-features = false }
-akita-prover = { git = "https://github.com/GUJustin/akita.git", rev = "551159bb4a5741cce1e42fc5ee4b0f921ec5ba45", default-features = false }
-akita-verifier = { git = "https://github.com/GUJustin/akita.git", rev = "551159bb4a5741cce1e42fc5ee4b0f921ec5ba45", default-features = false }
+akita-algebra = { git = "https://github.com/GUJustin/akita.git", rev = "f71495e2d55fc5b91162b0ecaf80701dee6fe84c", default-features = false }
+akita-metal = { git = "https://github.com/GUJustin/akita.git", rev = "f71495e2d55fc5b91162b0ecaf80701dee6fe84c", default-features = false }
+akita-config = { git = "https://github.com/GUJustin/akita.git", rev = "f71495e2d55fc5b91162b0ecaf80701dee6fe84c", default-features = false }
+akita-error = { git = "https://github.com/GUJustin/akita.git", rev = "f71495e2d55fc5b91162b0ecaf80701dee6fe84c", default-features = false }
+akita-pcs = { git = "https://github.com/GUJustin/akita.git", rev = "f71495e2d55fc5b91162b0ecaf80701dee6fe84c", default-features = false }
+akita-planner = { git = "https://github.com/GUJustin/akita.git", rev = "f71495e2d55fc5b91162b0ecaf80701dee6fe84c", default-features = false }
+akita-schedules = { git = "https://github.com/GUJustin/akita.git", rev = "f71495e2d55fc5b91162b0ecaf80701dee6fe84c", default-features = false }
+akita-challenges = { git = "https://github.com/GUJustin/akita.git", rev = "f71495e2d55fc5b91162b0ecaf80701dee6fe84c", default-features = false }
+akita-types = { git = "https://github.com/GUJustin/akita.git", rev = "f71495e2d55fc5b91162b0ecaf80701dee6fe84c", default-features = false }
+akita-params = { git = "https://github.com/GUJustin/akita.git", rev = "f71495e2d55fc5b91162b0ecaf80701dee6fe84c", default-features = false }
+akita-transcript = { git = "https://github.com/GUJustin/akita.git", rev = "f71495e2d55fc5b91162b0ecaf80701dee6fe84c", default-features = false }
+akita-prover = { git = "https://github.com/GUJustin/akita.git", rev = "f71495e2d55fc5b91162b0ecaf80701dee6fe84c", default-features = false }
+akita-verifier = { git = "https://github.com/GUJustin/akita.git", rev = "f71495e2d55fc5b91162b0ecaf80701dee6fe84c", default-features = false }
 
 # Core Utilities
 clap = { version = "4.6.1", features = ["derive"] }

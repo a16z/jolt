@@ -50,7 +50,7 @@ pub mod mem;
 #[cfg(feature = "metal")]
 mod metal;
 #[cfg(feature = "metal")]
-pub use metal::MetalTraceCommitment;
+pub use metal::MetalTraceCompute;
 pub mod opening;
 pub mod optimized;
 pub mod precommitted_reduction;

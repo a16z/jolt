@@ -57,7 +57,7 @@ impl ExternalInnerCommitmentOperation<AkitaField> for TraceOneHotColumnCommitOpe
             .map(|source| source.payload::<TraceOneHotColumn>())
             .collect::<Result<Vec<_>, _>>()?;
         validate_batch(&sources)?;
-        if let Some(kernel) = &sources[0].commit_kernel {
+        if let Some(kernel) = &sources[0].compute_kernel {
             if let Some(commitments) = kernel.commit(
                 prepared.expanded(),
                 sources[0].rows.as_ref(),

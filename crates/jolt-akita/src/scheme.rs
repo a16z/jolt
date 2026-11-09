@@ -239,7 +239,9 @@ impl AkitaScheme {
             TraceOneHotColumn::new(setup.one_hot_k(), AKITA_SOURCE_RING_DIMENSION, rows)
                 .map_err(commit_failed)?;
         for column in &mut source {
-            column.commit_kernel.clone_from(&setup.trace_commit_kernel);
+            column
+                .compute_kernel
+                .clone_from(&setup.trace_compute_kernel);
         }
         let num_vars = RootPolyMeta::num_vars(
             source
@@ -538,7 +540,7 @@ impl AkitaScheme {
         }
         verifier.prime_backend_cache(backend_verifier_setup, one_hot_backend_verifier_setup)?;
         let prover = AkitaProverSetup {
-            trace_commit_kernel: None,
+            trace_compute_kernel: None,
             inherited_setup: None,
             full_width,
             backend_prover_setup,

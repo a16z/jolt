@@ -16,6 +16,45 @@ use super::{
     DECOMPOSE_POSITION_WORKING_SET_TARGET, ROTATED_CHALLENGE_TABLE_BUDGET, TASKS_PER_RAYON_WORKER,
 };
 
+/// Geometry and challenges already validated by the native trace fold owner.
+/// Chunk ranges partition the blocks of each column, independently of the
+/// claim-major challenge layout.
+#[derive(Clone, Copy, Debug)]
+pub struct TraceOneHotFoldPlan<'a> {
+    ring_dimension: usize,
+    num_positions: usize,
+    segment_rings: usize,
+    blocks_per_column: usize,
+    challenges: &'a [SparseChallenge],
+    chunk_ranges: &'a [Range<usize>],
+}
+
+impl<'a> TraceOneHotFoldPlan<'a> {
+    pub fn ring_dimension(self) -> usize {
+        self.ring_dimension
+    }
+
+    pub fn num_positions(self) -> usize {
+        self.num_positions
+    }
+
+    pub fn segment_rings(self) -> usize {
+        self.segment_rings
+    }
+
+    pub fn blocks_per_column(self) -> usize {
+        self.blocks_per_column
+    }
+
+    pub fn challenges(self) -> &'a [SparseChallenge] {
+        self.challenges
+    }
+
+    pub fn chunk_ranges(self) -> &'a [Range<usize>] {
+        self.chunk_ranges
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum DecomposeRotationMode {
     Auto,
@@ -596,6 +635,21 @@ pub(super) fn decompose_fold_columns_with_mode<const D: usize>(
             "noncanonical fold chunk ranges".into(),
         ));
     }
+    if let Some(kernel) = &source.compute_kernel {
+        let plan = TraceOneHotFoldPlan {
+            ring_dimension: D,
+            num_positions,
+            segment_rings,
+            blocks_per_column: blocks_per_poly,
+            challenges,
+            chunk_ranges,
+        };
+        if let Some(compressed) =
+            kernel.decompose_fold(source.rows.as_ref(), source.one_hot_k, plan)?
+        {
+            return finish_decompose_fold::<D>(compressed, num_positions, num_chunks, num_digits);
+        }
+    }
     let mut block_chunks = vec![0usize; blocks_per_poly];
     for (chunk, range) in chunk_ranges.iter().enumerate() {
         for block_chunk in &mut block_chunks[range.clone()] {
@@ -846,6 +900,30 @@ pub(super) fn decompose_fold_columns_with_mode<const D: usize>(
         })?;
         compressed
     };
+    finish_decompose_fold::<D>(
+        compressed.into_flattened(),
+        num_positions,
+        num_chunks,
+        num_digits,
+    )
+}
+
+fn finish_decompose_fold<const D: usize>(
+    compressed: Vec<i32>,
+    num_positions: usize,
+    num_chunks: usize,
+    num_digits: usize,
+) -> Result<Vec<DecomposeFoldWitness>, AkitaError> {
+    let expected = num_positions
+        .checked_mul(num_chunks)
+        .and_then(|rows| rows.checked_mul(D))
+        .ok_or_else(|| AkitaError::InvalidInput("compressed fold size overflow".into()))?;
+    if compressed.len() != expected {
+        return Err(AkitaError::InvalidSize {
+            expected,
+            actual: compressed.len(),
+        });
+    }
     let _expand_span = tracing::info_span!(
         "trace_onehot_decompose_expand_digits",
         num_positions,
@@ -855,13 +933,17 @@ pub(super) fn decompose_fold_columns_with_mode<const D: usize>(
     let expanded = if num_chunks == 1 && num_digits == 1 {
         vec![compressed]
     } else {
+        let expanded_len = num_positions
+            .checked_mul(num_digits)
+            .and_then(|rows| rows.checked_mul(D))
+            .ok_or_else(|| AkitaError::InvalidInput("expanded fold size overflow".into()))?;
         let mut expanded = (0..num_chunks)
-            .map(|_| Vec::with_capacity(num_positions.saturating_mul(num_digits)))
+            .map(|_| Vec::with_capacity(expanded_len))
             .collect::<Vec<_>>();
-        for position in compressed.chunks_exact(num_chunks) {
-            for (expanded, &coeffs) in expanded.iter_mut().zip(position) {
-                expanded.push(coeffs);
-                expanded.extend((1..num_digits).map(|_| [0i32; D]));
+        for position in compressed.chunks_exact(num_chunks * D) {
+            for (expanded, coeffs) in expanded.iter_mut().zip(position.chunks_exact(D)) {
+                expanded.extend_from_slice(coeffs);
+                expanded.resize(expanded.len() + (num_digits - 1) * D, 0);
             }
         }
         expanded
@@ -873,10 +955,10 @@ pub(super) fn decompose_fold_columns_with_mode<const D: usize>(
         num_digits,
     )
     .entered();
-    Ok(expanded
+    expanded
         .into_iter()
-        .map(DecomposeFoldWitness::from_centered_rows::<D>)
-        .collect())
+        .map(DecomposeFoldWitness::from_centered_flat::<D>)
+        .collect()
 }
 
 #[cfg(test)]

@@ -71,7 +71,8 @@ pub use scheme::{
     AkitaProverTranscript, AkitaScheme, AkitaVerifierTranscript, TraceOneHotCommitment,
 };
 pub use trace_onehot::{
-    no_selected_row, TraceOneHotColumn, TraceOneHotCommitKernel, TraceOneHotRows,
+    no_selected_row, TraceOneHotColumn, TraceOneHotComputeKernel, TraceOneHotFoldPlan,
+    TraceOneHotRows,
 };
 
 /// Jolt↔Akita basis-order bridging, exposed so benchmarks measuring the raw

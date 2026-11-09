@@ -1202,10 +1202,9 @@ fn prove_workload(
     };
     #[cfg(feature = "metal")]
     let pcs_setup = if use_metal {
-        use jolt_kernels::MetalTraceCommitment;
-        pcs_setup.with_trace_commit_kernel(|expanded| {
-            Ok(Arc::new(MetalTraceCommitment::new(expanded)?))
-        })?
+        use jolt_kernels::MetalTraceCompute;
+        pcs_setup
+            .with_trace_compute_kernel(|expanded| Ok(Arc::new(MetalTraceCompute::new(expanded)?)))?
     } else {
         pcs_setup
     };

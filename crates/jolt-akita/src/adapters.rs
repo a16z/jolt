@@ -40,7 +40,7 @@ pub use crate::one_hot_family::{AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256};
 use crate::prepared::{PreparedBytes, PreparedVerifier};
 use crate::schedule_artifacts::AkitaScheduleArtifacts;
 use crate::schedule_registry::GroupedScheduleParams;
-use crate::trace_onehot::TraceOneHotCommitKernel;
+use crate::trace_onehot::TraceOneHotComputeKernel;
 use crate::verifier_resources::PREPARED_VERIFIER_RESOURCES;
 
 pub type AkitaField = akita_config::proof_optimized::fp128::Field;
@@ -377,7 +377,7 @@ pub(crate) struct FullWidthBackendSetup {
 
 #[derive(Clone, Debug)]
 pub struct AkitaProverSetup {
-    pub(crate) trace_commit_kernel: Option<Arc<dyn TraceOneHotCommitKernel>>,
+    pub(crate) trace_compute_kernel: Option<Arc<dyn TraceOneHotComputeKernel>>,
     pub(crate) inherited_setup: Option<Arc<InheritedSetupClaims>>,
     pub(crate) full_width: BTreeMap<usize, Arc<FullWidthBackendSetup>>,
     pub(crate) backend_prover_setup: Option<Arc<AkitaBackendProverSetup>>,
@@ -391,14 +391,14 @@ pub struct AkitaProverSetup {
 impl AkitaProverSetup {
     /// Installs arithmetic prepared for this exact one-hot setup owner.
     /// Cloned setups share the kernel; replacing the setup domain clears it.
-    pub fn with_trace_commit_kernel(
+    pub fn with_trace_compute_kernel(
         mut self,
         create: impl FnOnce(
             Arc<AkitaExpandedSetup<AkitaField>>,
-        ) -> Result<Arc<dyn TraceOneHotCommitKernel>, AkitaError>,
+        ) -> Result<Arc<dyn TraceOneHotComputeKernel>, AkitaError>,
     ) -> Result<Self, OpeningsError> {
         let expanded = Arc::clone(&self.one_hot_backend()?.0.expanded);
-        self.trace_commit_kernel = Some(create(expanded).map_err(akita_error)?);
+        self.trace_compute_kernel = Some(create(expanded).map_err(akita_error)?);
         Ok(self)
     }
 
@@ -426,7 +426,7 @@ impl AkitaProverSetup {
         self.verifier.backend_cache.one_hot = Default::default();
         self.one_hot_cpu_backend = Some(Arc::new(backend));
         self.one_hot_backend_prover_setup = Some(Arc::new(prover));
-        self.trace_commit_kernel = None;
+        self.trace_compute_kernel = None;
         self.verifier.prime_backend_cache(None, Some(public))?;
         Ok(self)
     }

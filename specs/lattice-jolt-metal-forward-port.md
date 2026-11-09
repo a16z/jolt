@@ -228,6 +228,14 @@ entirely would leave roughly 18.5–19.5 s in those runs, so a PCS-only port can
 reach the target. More recent integration measurements include contention and
 are not a clean current-main suite baseline.
 
+The November 9 Booleanity candidate at Jolt `51090b762`, with Akita `551159bb`,
+verified one untraced Fibonacci T27 proof in 26.008432208 s
+(5.160546661 padded MHz, 18 workers). Its build manifest is
+`jolt-metal-forward-port-artifacts-20261109/booleanity-metal/manifest.json`.
+This records the trace-commitment, instruction-RA, and Booleanity routing before
+root-fold offload; it does not establish the four-workload target or a root-fold
+speedup.
+
 Reuse existing profiler stage labels and `jolt-eval` telemetry objectives for
 prover/stage time where available. Add only measurements needed to identify GPU
 dispatch time, host preparation, and waiting; keep end-to-end time authoritative.
@@ -324,6 +332,18 @@ Opening kernels support the current sparse representations, including chunked
 sparse challenges. Both obey the plan's ring dimension and column ordering. A
 shape unsupported by a GPU kernel retains the current CPU route before the
 operation starts.
+
+The retained `TraceOneHotComputeKernel` now owns commitment and root-fold
+arithmetic through the same setup/source `Arc`. Decomposition constructs a
+read-only `TraceOneHotFoldPlan` after the existing geometry, challenge, and
+canonical-range checks. The Metal D512/K16 path accepts subring64 challenges
+and whole-block segments, then returns compressed centered `i32` coefficients
+in position/chunk/coefficient order. Chunk ranges partition each column's blocks;
+challenges remain claim-major. CPU and GPU share digit expansion and witness
+construction, with no coefficient copy for one chunk and one digit. The fold
+reuses bounded row packing and checks packed-index and accumulation bounds before
+dispatch. Its performance benefit remains to be measured; coefficient packing
+still uses the current CPU kernel.
 
 Integer limb-NTT and deferred-accumulation kernels retain explicit reconstruction
 and accumulation bounds for every admitted geometry. Changing tile sizes or
