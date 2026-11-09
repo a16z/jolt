@@ -553,6 +553,7 @@ dependencies = [
  "cc",
  "num-traits",
  "rand_core",
+ "rayon",
  "serde",
  "spongefish",
  "thiserror",
