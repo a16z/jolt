@@ -604,6 +604,7 @@ pub(super) fn decompose_fold_columns_with_mode<const D: usize>(
     let _span = tracing::info_span!(
         "TraceOneHotColumn::decompose_fold_batch",
         ring_dimension = D,
+        compute_kernel = source.compute_kernel.is_some(),
         rows = source.rows.num_rows(),
         columns = source.rows.num_columns(),
         num_chunks,

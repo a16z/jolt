@@ -63,7 +63,7 @@ Akita. It starts from the optimized CPU backend and selects GPU kernels for
 supported shapes. Trace commitments preserve committed-zero masks and implicit
 padding. Instruction-RA and Booleanity cycle rounds share compact device rows,
 while retaining CPU categorical startup, binding, and output checks.
-Root decompose/fold also supports D512/K16 traces with subring64 challenges,
+Root decompose/fold also supports D512/K16 traces with sparse ring challenges,
 including canonical chunked folds. It packs bounded trace windows and preserves
 the CPU digit expansion and witness construction. Unsupported fold shapes,
 coefficient packing, and Spartan outer remainder use the optimized CPU path.

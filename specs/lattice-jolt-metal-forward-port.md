@@ -336,12 +336,12 @@ operation starts.
 The retained `TraceOneHotComputeKernel` now owns commitment and root-fold
 arithmetic through the same setup/source `Arc`. Decomposition constructs a
 read-only `TraceOneHotFoldPlan` after the existing geometry, challenge, and
-canonical-range checks. The Metal D512/K16 path accepts subring64 challenges
+canonical-range checks. The Metal D512/K16 path accepts sparse ring challenges
 and whole-block segments, then returns compressed centered `i32` coefficients
 in position/chunk/coefficient order. Chunk ranges partition each column's blocks;
 challenges remain claim-major. CPU and GPU share digit expansion and witness
 construction, with no coefficient copy for one chunk and one digit. The fold
-reuses bounded row packing and checks packed-index and accumulation bounds before
+reuses bounded row packing and checks term-index and accumulation bounds before
 dispatch. Its performance benefit remains to be measured; coefficient packing
 still uses the current CPU kernel.
 

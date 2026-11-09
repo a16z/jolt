@@ -5,7 +5,7 @@ use std::{
 
 use akita_error::{checked, AkitaError};
 use akita_metal::onehot::{DeviceK16Sources, OneHotCommitShape};
-use akita_metal::onehot_fold::{OneHotFoldShape, OneHotFoldWorkspace};
+use akita_metal::onehot_fold::{OneHotFoldChallenge, OneHotFoldShape, OneHotFoldWorkspace};
 use akita_metal::onehot_ntt::{DeviceOneHotNttKey, OneHotNttWorkspace};
 use akita_metal::AkitaMetal;
 use akita_pcs::custom_source::CommitInnerPlan;
@@ -86,11 +86,6 @@ impl TraceOneHotComputeKernel for MetalTraceCompute {
             || plan.ring_dimension() != D
             || plan.segment_rings() < plan.num_positions()
             || !plan.segment_rings().is_multiple_of(plan.num_positions())
-            || plan
-                .challenges()
-                .iter()
-                .flat_map(|challenge| &challenge.positions)
-                .any(|position| !position.is_multiple_of(8))
         {
             return Ok(None);
         }
@@ -99,7 +94,7 @@ impl TraceOneHotComputeKernel for MetalTraceCompute {
         if !(1..=64).contains(&columns) || prefix > rows.num_rows() {
             return Err(compute_error("invalid trace row extent"));
         }
-        if plan.challenges().len() > 1 << 26 {
+        if plan.challenges().len() >= 1 << 26 {
             return Ok(None);
         }
         // A fixed output coefficient receives each challenge term at most
@@ -123,24 +118,21 @@ impl TraceOneHotComputeKernel for MetalTraceCompute {
             }
         }
         let _span = tracing::info_span!("metal_trace_decompose_fold").entered();
-        let dense_len = checked::product([plan.challenges().len(), 64])
-            .ok_or_else(|| compute_error("dense challenge size overflows"))?;
-        let mut dense_challenges = vec![0i8; dense_len];
-        for (dense, challenge) in dense_challenges.chunks_exact_mut(64).zip(plan.challenges()) {
-            for (&position, &coefficient) in challenge.positions.iter().zip(&challenge.coeffs) {
-                let slot = dense
-                    .get_mut(position as usize / 8)
-                    .ok_or_else(|| compute_error("validated challenge exceeds subring"))?;
-                *slot = coefficient;
-            }
-        }
+        let challenges: Vec<_> = plan
+            .challenges()
+            .iter()
+            .map(|challenge| OneHotFoldChallenge {
+                positions: &challenge.positions,
+                coefficients: &challenge.coeffs,
+            })
+            .collect();
         let shape = OneHotFoldShape {
             num_positions: plan.num_positions(),
             blocks_per_column: plan.blocks_per_column(),
             num_columns: columns,
         };
         let mut workspace =
-            OneHotFoldWorkspace::new(&self.metal, shape, &dense_challenges, plan.chunk_ranges())
+            OneHotFoldWorkspace::new(&self.metal, shape, &challenges, plan.chunk_ranges())
                 .map_err(compute_error)?;
         let rows_per_block = checked::product([plan.num_positions(), D / K])
             .ok_or_else(|| compute_error("fold block size overflows"))?;
@@ -179,7 +171,15 @@ impl TraceOneHotComputeKernel for MetalTraceCompute {
         {
             return Ok(None);
         }
-        let _span = tracing::info_span!("metal_trace_commitment").entered();
+        let _span = tracing::info_span!(
+            "metal_trace_commitment",
+            columns = rows.num_columns(),
+            positions = plan.num_positions_per_block,
+            blocks = plan.num_live_blocks,
+            n_a = plan.n_a,
+            digits = plan.num_digits_inner,
+        )
+        .entered();
         let columns = rows.num_columns();
         let logical_rows = rows.num_rows();
         let prefix = rows.nonzero_prefix_len();
