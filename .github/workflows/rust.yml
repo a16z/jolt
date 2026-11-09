@@ -147,6 +147,22 @@ jobs:
         run: |
           cargo clippy -p jolt-crypto --all-targets --no-default-features --features lattice,parallel
           cargo clippy -p jolt-crypto --all-targets --no-default-features --features ont-static-base
+      # jolt-crypto's `sample` feature (the constant-time Gaussian sampler and
+      # rejection rule) is prover-only; no verifier graph may enable it.
+      - name: Check the verifier graph leaves out the Gaussian sampler
+        run: |
+          for features in "" "--features zk" "--features akita" "--all-features"; do
+            if cargo tree -p jolt-verifier $features -e normal,features --prefix none \
+                 | grep -E 'jolt-crypto feature "sample'; then
+              echo "jolt-verifier $features enables jolt-crypto/sample" >&2
+              exit 1
+            fi
+          done
+      # No workspace crate enables jolt-crypto's `sample` feature yet.
+      - name: cargo clippy -p jolt-crypto --features sample
+        run: cargo clippy -p jolt-crypto --all-targets --features sample
+      - name: cargo clippy -p jolt-crypto --no-default-features --features sample
+        run: cargo clippy -p jolt-crypto --all-targets --no-default-features --features sample
       # jolt-poly's and jolt-sumcheck's binary features gate the F8 sumcheck
       # domain. No workspace crate enables them, so build them explicitly.
       - name: cargo clippy -p jolt-poly -p jolt-sumcheck --features binary
@@ -870,6 +886,10 @@ jobs:
         run: |
           cargo nextest run -p jolt-crypto --no-default-features --features lattice,parallel --cargo-quiet
           cargo nextest run -p jolt-crypto --no-default-features --features ont-static-base --cargo-quiet -E 'test(/static_base/)'
+      # The shard loop above tests jolt-crypto without `sample`.
+      - name: Test jolt-crypto with the Gaussian sampler
+        if: matrix.shard == 2
+        run: cargo nextest run -p jolt-crypto --features sample --cargo-quiet
       - name: Test jolt-sumcheck with committed proofs
         if: matrix.shard == 0
         run: cargo nextest run -p jolt-sumcheck --features committed,prover --cargo-quiet
