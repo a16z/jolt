@@ -3,8 +3,9 @@ use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltReadWriteConfig};
 use jolt_crypto::{Commitment, VectorCommitment};
 use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
-use jolt_sumcheck::SumcheckProof;
+use jolt_sumcheck::{ClearProof, SumcheckProof};
 use jolt_zk::blindfold::BlindFoldProof;
+use jolt_zk::masking::MaskedMessages;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -38,13 +39,14 @@ pub type JointOpeningProof<PCS> = <PCS as CommitmentScheme>::Proof;
 #[expect(non_snake_case, reason = "Preserves the deployed proof field name.")]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound(
-    serialize = "PCS::Field: Serialize, ZkProof: Serialize",
-    deserialize = "PCS::Field: for<'a> Deserialize<'a>, ZkProof: serde::de::DeserializeOwned"
+    serialize = "PCS::Field: Serialize, ZkProof: Serialize, Opening: Serialize",
+    deserialize = "PCS::Field: for<'a> Deserialize<'a>, ZkProof: serde::de::DeserializeOwned, Opening: serde::de::DeserializeOwned"
 ))]
 pub struct JoltProof<
     PCS,
     VC,
-    ZkProof = BlindFoldProof<<PCS as CommitmentScheme>::Field, <VC as Commitment>::Output>,
+    ZkProof = BlindFoldZkProof<<PCS as CommitmentScheme>::Field, <VC as Commitment>::Output>,
+    Opening = JointOpeningProof<PCS>,
 > where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
@@ -52,7 +54,9 @@ pub struct JoltProof<
     pub protocol: JoltProtocolConfig,
     pub commitments: ProofCommitments<PCS>,
     pub stages: JoltStageProofs<PCS::Field, VC>,
-    pub joint_opening_proof: JointOpeningProof<PCS>,
+    /// The final joint opening. Only a ZK prover's pad-layout shell, built
+    /// before the opening exists, takes another type here (`()`).
+    pub joint_opening_proof: Opening,
     pub untrusted_advice_commitment: Option<PCS::Output>,
     /// Required RV64 increment commitment in Akita proofs.
     #[cfg(feature = "akita")]
@@ -129,7 +133,7 @@ where
     }
 }
 
-impl<PCS, VC, ZkProof> JoltProof<PCS, VC, ZkProof>
+impl<PCS, VC, ZkProof, Opening> JoltProof<PCS, VC, ZkProof, Opening>
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
@@ -141,17 +145,26 @@ where
         }
     }
 
-    #[cfg(not(feature = "akita"))]
-    pub(crate) fn blindfold_proof(&self) -> Result<&ZkProof, VerifierError> {
+    /// A masked proof's tape of masked messages and its back end's proof.
+    #[cfg_attr(
+        feature = "akita",
+        expect(dead_code, reason = "a clear Akita build reads no masked payload")
+    )]
+    pub(crate) fn masked_payload(
+        &self,
+    ) -> Result<(&MaskedMessages<PCS::Field>, &ZkProof), VerifierError> {
         match &self.claims {
             JoltProofClaims::Clear(_) => Err(VerifierError::MissingBlindFoldProof),
-            JoltProofClaims::Zk { blindfold_proof } => Ok(blindfold_proof),
+            JoltProofClaims::Zk { masked, zk_proof } => Ok((masked, zk_proof)),
         }
     }
 
     /// Replace the claims payload, retyping the `ZkProof` slot; every wire
     /// field carries over unchanged.
-    pub fn with_claims<Z>(self, claims: JoltProofClaims<PCS::Field, Z>) -> JoltProof<PCS, VC, Z> {
+    pub fn with_claims<Z>(
+        self,
+        claims: JoltProofClaims<PCS::Field, Z>,
+    ) -> JoltProof<PCS, VC, Z, Opening> {
         JoltProof {
             protocol: self.protocol,
             commitments: self.commitments,
@@ -239,13 +252,6 @@ impl<C> JoltCommitments<C> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(
-    not(feature = "akita"),
-    expect(
-        clippy::large_enum_variant,
-        reason = "clear claims stay inline on the standard verifier's common path"
-    )
-)]
 #[serde(bound(
     serialize = "F: Serialize, ZkProof: Serialize",
     deserialize = "F: for<'a> Deserialize<'a>, ZkProof: serde::de::DeserializeOwned"
@@ -255,7 +261,26 @@ where
     F: JoltField,
 {
     Clear(ClearProofClaims<F>),
-    Zk { blindfold_proof: ZkProof },
+    /// A masked proof: every masked message of stages 1–7 (and Jolt's
+    /// auxiliary block) on one tape, in transcript order, and the zero-knowledge
+    /// back end's proof of the residual relation over the pads.
+    Zk {
+        masked: MaskedMessages<F>,
+        zk_proof: ZkProof,
+    },
+}
+
+/// A masked Dory proof's back-end payload: BlindFold's Pedersen row
+/// commitments to the pads, absorbed after the trace commitments and before
+/// the first stage challenge, and BlindFold's proof of the residual relation.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(bound(
+    serialize = "F: Serialize, C: Serialize",
+    deserialize = "F: for<'a> Deserialize<'a>, C: serde::de::DeserializeOwned"
+))]
+pub struct BlindFoldZkProof<F: JoltField, C> {
+    pub pad_commitment: Vec<C>,
+    pub blindfold: BlindFoldProof<F, C>,
 }
 
 impl<F, ZkProof> JoltProofClaims<F, ZkProof>
@@ -332,4 +357,30 @@ where
     /// filled only where the site is visited and the challenge set needs proof
     /// of work, so a BN254 proof carries none.
     pub pow_nonces: StagePowNonces,
+}
+
+impl<F, VC> JoltStageProofs<F, VC>
+where
+    F: JoltField,
+    VC: VectorCommitment<Field = F>,
+{
+    /// The per-stage proofs of a masked proof, whose rounds travel on the
+    /// masked tape: every sumcheck proof empty, with the stage-level
+    /// proof-of-work nonces `pow_nonces` (none in a pad-layout shell).
+    pub fn masked(pow_nonces: StagePowNonces) -> Self {
+        let empty = || SumcheckProof::Clear(ClearProof::default());
+        Self {
+            stage1_uni_skip_first_round_proof: empty(),
+            stage1_sumcheck_proof: empty(),
+            stage2_uni_skip_first_round_proof: empty(),
+            stage2_sumcheck_proof: empty(),
+            stage3_sumcheck_proof: empty(),
+            stage4_sumcheck_proof: empty(),
+            stage5_sumcheck_proof: empty(),
+            stage6a_sumcheck_proof: empty(),
+            stage6b_sumcheck_proof: empty(),
+            stage7_sumcheck_proof: empty(),
+            pow_nonces,
+        }
+    }
 }

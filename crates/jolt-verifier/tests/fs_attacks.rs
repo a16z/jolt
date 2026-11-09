@@ -183,7 +183,7 @@ fn dory_clear_final_opening_batch_requires_commitment_binding() {
     );
 }
 
-#[cfg(all(not(feature = "akita"), feature = "zk"))]
+#[cfg(feature = "zk")]
 #[test]
 fn dory_zk_preprocessing_digest_requires_fiat_shamir_binding() {
     use support::verifier_fixtures::zk_muldiv_case;
@@ -237,7 +237,7 @@ fn dory_zk_preprocessing_digest_requires_fiat_shamir_binding() {
     );
 }
 
-#[cfg(all(not(feature = "akita"), feature = "zk"))]
+#[cfg(feature = "zk")]
 #[test]
 fn dory_zk_final_opening_batch_requires_commitment_binding() {
     use support::verifier_fixtures::zk_muldiv_case;

@@ -2,100 +2,176 @@
 //! object, with the mode carried entirely in `#[cfg(feature = "zk")]` types.
 //!
 //! Stage recipes stay mode-agnostic: they call [`ProofMode::recorder`] for
-//! the batch recorder and [`ProofMode::prove_uniskip`] for the uni-skip arm,
-//! and both return the clear or committed flavor depending on how the crate
-//! was compiled. There is no runtime flag to drift — the recorder type *is*
-//! the mode, exactly as the stage drivers were designed around
+//! the batch recorder, [`ProofMode::prove_uniskip`] for the uni-skip arm and
+//! [`ProofMode::send_private`] for private values sent outside a sumcheck,
+//! and each returns the clear or masked flavor depending on how the crate was
+//! compiled. There is no runtime flag to drift — the recorder type *is* the
+//! mode, exactly as the stage drivers were designed around
 //! (`specs/prover-stage-drivers.md`).
 
 #[cfg(not(feature = "zk"))]
 use core::marker::PhantomData;
 
+#[cfg(feature = "zk")]
+use jolt_crypto::Commitment;
 use jolt_crypto::VectorCommitment;
-use jolt_field::JoltField;
+use jolt_field::{Field, JoltField};
 use jolt_poly::UnivariatePoly;
-use jolt_sumcheck::SumcheckProof;
 #[cfg(not(feature = "zk"))]
-use jolt_sumcheck::{prove_uniskip_clear, ClearSumcheckRecorder};
+use jolt_sumcheck::prove_uniskip_clear;
 #[cfg(feature = "zk")]
-use jolt_sumcheck::{
-    prove_uniskip_committed, CommittedSumcheckRecorder, CommittedSumcheckWitness, RecordedSumcheck,
-};
+use jolt_sumcheck::{ClearProof, ClearSumcheckProof};
+use jolt_sumcheck::{ClearSumcheckRecorder, SumcheckProof};
+#[cfg(feature = "zk")]
+use jolt_transcript::PadSlots;
+#[cfg(not(feature = "zk"))]
+use jolt_transcript::PrivateChannel;
 use jolt_transcript::{Encoding, FieldTranscript, ProverTranscript};
+use jolt_verifier::stages::relations::ClaimRoutes;
 #[cfg(feature = "zk")]
-use rand_core::OsRng;
+use jolt_zk::blindfold::BlindFoldPadOpening;
+#[cfg(feature = "zk")]
+use jolt_zk::masking::{prove_uniskip_masked, CommittedPads, MaskedMessages, MaskingRecorder};
 
 use crate::ProverError;
+
+/// What opens the pad commitment: BlindFold's vector-commitment opening.
+#[cfg(feature = "zk")]
+type ModePadOpening<VC> =
+    BlindFoldPadOpening<<VC as VectorCommitment>::Field, <VC as Commitment>::Output>;
+
+/// The pads a ZK proof commits before its first challenge.
+#[cfg(feature = "zk")]
+pub type ModePads<VC> = CommittedPads<<VC as VectorCommitment>::Field, ModePadOpening<VC>>;
 
 /// The compiled mode's batch recorder: compressed clear proofs or committed
 /// proofs with retained witnesses for BlindFold.
 #[cfg(feature = "zk")]
 pub type ModeRecorder<'a, VC> =
-    CommittedSumcheckRecorder<'a, <VC as VectorCommitment>::Field, VC, OsRng>;
+    MaskingRecorder<'a, <VC as VectorCommitment>::Field, ModePadOpening<VC>>;
 #[cfg(not(feature = "zk"))]
 pub type ModeRecorder<'a, VC> = ClearSumcheckRecorder<<VC as VectorCommitment>::Field>;
 
+/// Which output-claim routes a recorder sends after a batch's rounds.
+pub trait ClaimRecorder {
+    /// Whether the recorder masks: a masked proof sends its output claims on
+    /// its wire routes instead of the clear curated absorb order.
+    const MASKED: bool;
+
+    /// The routes a proof in this recorder's mode sends on.
+    fn wire_routes(routes: ClaimRoutes) -> ClaimRoutes;
+}
+
+impl<F: Field> ClaimRecorder for ClearSumcheckRecorder<F> {
+    const MASKED: bool = false;
+
+    fn wire_routes(routes: ClaimRoutes) -> ClaimRoutes {
+        routes
+    }
+}
+
+/// A masked proof sends every runtime-aliased cell: the pad schedule is fixed
+/// before the challenges that decide the alias ([`ClaimRoutes::masked`]).
+#[cfg(feature = "zk")]
+impl<F, O> ClaimRecorder for MaskingRecorder<'_, F, O> {
+    const MASKED: bool = true;
+
+    fn wire_routes(routes: ClaimRoutes) -> ClaimRoutes {
+        routes.masked().0
+    }
+}
+
 /// A proved uni-skip round in the compiled mode: the wire proof, the
-/// reduction challenge, and the prover-internal output claim (absorbed by the
-/// clear arm, committed and retained by the ZK arm).
+/// reduction challenge, and the prover-internal output claim.
 pub struct ProvedUniskipMode<F: JoltField, C> {
     pub proof: SumcheckProof<F, C>,
     pub challenge: F,
     pub output_claim: F,
-    #[cfg(feature = "zk")]
-    pub witness: CommittedSumcheckWitness<F>,
 }
 
 /// The per-proof mode context. Clear builds carry nothing; ZK builds carry
-/// the vector-commitment setup every committed recorder and uni-skip commit
-/// against (the same setup the verifier validates in `CheckedInputs`).
-pub struct ProofMode<'a, VC: VectorCommitment> {
+/// the pads committed before the first challenge, which every recorder and
+/// private send masks with, and the proof's masked tape they write.
+pub struct ProofMode<VC: VectorCommitment> {
     #[cfg(feature = "zk")]
-    vc_setup: &'a VC::Setup,
+    pads: ModePads<VC>,
+    #[cfg(feature = "zk")]
+    tape: MaskedMessages<VC::Field>,
     #[cfg(not(feature = "zk"))]
-    _vc: PhantomData<&'a VC>,
+    _vc: PhantomData<VC>,
 }
 
-impl<'a, VC: VectorCommitment> ProofMode<'a, VC> {
-    /// `vc_setup` is the preprocessing's BlindFold vector-commitment setup;
-    /// required (and validated against) only in ZK builds.
-    pub fn new(vc_setup: Option<&'a VC::Setup>) -> Result<Self, ProverError<VC::Field>> {
-        #[cfg(feature = "zk")]
-        {
-            let vc_setup = vc_setup.ok_or(ProverError::Verifier(
-                jolt_verifier::VerifierError::MissingVectorCommitmentSetup,
-            ))?;
-            Ok(Self { vc_setup })
-        }
-        #[cfg(not(feature = "zk"))]
-        {
-            let _ = vc_setup;
-            Ok(Self { _vc: PhantomData })
+#[cfg(not(feature = "zk"))]
+impl<VC: VectorCommitment> ProofMode<VC> {
+    pub fn clear() -> Self {
+        Self { _vc: PhantomData }
+    }
+}
+
+#[cfg(feature = "zk")]
+impl<VC: VectorCommitment> ProofMode<VC> {
+    /// The masked mode over `pads`, with an empty masked tape.
+    pub fn masked(pads: ModePads<VC>) -> Self {
+        Self {
+            pads,
+            tape: MaskedMessages::default(),
         }
     }
 
+    /// The pads, for the residual proof once every masked message is sent,
+    /// and the masked tape the proof carries.
+    pub fn into_parts(self) -> (ModePads<VC>, MaskedMessages<VC::Field>) {
+        (self.pads, self.tape)
+    }
+
+    /// The masked tape so far.
+    pub fn tape(&self) -> &MaskedMessages<VC::Field> {
+        &self.tape
+    }
+}
+
+impl<VC: VectorCommitment> ProofMode<VC> {
     /// A fresh batch recorder for one stage.
-    pub fn recorder(&self) -> Result<ModeRecorder<'a, VC>, ProverError<VC::Field>> {
+    pub fn recorder(&mut self) -> ModeRecorder<'_, VC> {
         #[cfg(feature = "zk")]
         {
-            Ok(CommittedSumcheckRecorder::new(self.vc_setup, OsRng)?)
+            MaskingRecorder::new(&mut self.pads, &mut self.tape)
         }
         #[cfg(not(feature = "zk"))]
         {
-            let _ = self;
-            Ok(ClearSumcheckRecorder::new())
+            ClearSumcheckRecorder::new()
         }
     }
 
-    /// Prove a uni-skip first round in the compiled mode. The clear arm
-    /// absorbs the full labeled polynomial and the output claim; the ZK arm
-    /// commits the coefficients and the output claim and retains the witness.
+    /// Sends private values outside a sumcheck (stage 4's staged openings):
+    /// clear, or masked by the next pads.
+    pub fn send_private<T>(
+        &mut self,
+        values: &[VC::Field],
+        transcript: &mut T,
+    ) -> Result<(), ProverError<VC::Field>>
+    where
+        T: FieldTranscript<VC::Field> + ProverTranscript,
+    {
+        #[cfg(feature = "zk")]
+        {
+            let _: PadSlots = self.pads.send(values, &mut self.tape, transcript)?;
+        }
+        #[cfg(not(feature = "zk"))]
+        {
+            transcript.append_private(values);
+        }
+        Ok(())
+    }
+
+    /// Prove a uni-skip first round in the compiled mode: the full round
+    /// polynomial and the output claim, sent clear or masked.
     #[expect(
         clippy::type_complexity,
         reason = "the associated-type projections spell out one small struct"
     )]
     pub fn prove_uniskip<T>(
-        &self,
+        &mut self,
         round_poly: UnivariatePoly<VC::Field>,
         input_claim: VC::Field,
         degree: usize,
@@ -108,25 +184,24 @@ impl<'a, VC: VectorCommitment> ProofMode<'a, VC> {
     {
         #[cfg(feature = "zk")]
         {
-            let proved = prove_uniskip_committed::<VC::Field, VC, T, _>(
-                round_poly,
+            let _span = tracing::info_span!("prove_uniskip_masked").entered();
+            let proved = prove_uniskip_masked(
+                &mut self.pads,
+                &mut self.tape,
+                &round_poly,
                 input_claim,
                 degree,
                 domain_size,
-                self.vc_setup,
-                OsRng,
                 transcript,
             )?;
             Ok(ProvedUniskipMode {
-                proof: proved.proof,
+                proof: SumcheckProof::Clear(ClearProof::Full(ClearSumcheckProof::default())),
                 challenge: proved.challenge,
                 output_claim: proved.output_claim,
-                witness: proved.witness,
             })
         }
         #[cfg(not(feature = "zk"))]
         {
-            let _ = self;
             let proved = prove_uniskip_clear::<VC::Field, T>(
                 round_poly,
                 input_claim,
@@ -141,22 +216,4 @@ impl<'a, VC: VectorCommitment> ProofMode<'a, VC> {
             })
         }
     }
-}
-
-/// Split a recorded sumcheck into its wire proof and the ZK-retained
-/// witness; an absent witness is a recorder-contract violation in a ZK build.
-#[cfg(feature = "zk")]
-#[expect(
-    clippy::type_complexity,
-    reason = "the pair is the two halves of RecordedSumcheck, nothing more"
-)]
-pub(crate) fn split_recorded<F: JoltField, C>(
-    recorded: RecordedSumcheck<F, SumcheckProof<F, C>>,
-) -> Result<(SumcheckProof<F, C>, CommittedSumcheckWitness<F>), ProverError<F>> {
-    let witness = recorded
-        .committed_witness
-        .ok_or(ProverError::InvariantViolation {
-            reason: "the committed recorder retained no witness",
-        })?;
-    Ok((recorded.proof, witness))
 }

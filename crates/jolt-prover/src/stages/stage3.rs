@@ -13,8 +13,6 @@ use jolt_crypto::VectorCommitment;
 use jolt_field::JoltField;
 use jolt_kernels::{JoltBackend, KernelContext};
 use jolt_openings::CommitmentScheme;
-#[cfg(feature = "zk")]
-use jolt_sumcheck::CommittedSumcheckWitness;
 use jolt_sumcheck::SumcheckProof;
 use jolt_transcript::{FieldTranscript, ProverTranscript};
 use jolt_verifier::stages::pow::PowSite;
@@ -40,15 +38,13 @@ pub struct Stage3ProverOutput<F: JoltField, C> {
     pub sumcheck_proof: SumcheckProof<F, C>,
     pub claims: Stage3OutputClaims<F>,
     pub clear_output: Stage3ClearOutput<F>,
-    #[cfg(feature = "zk")]
-    pub committed_witness: CommittedSumcheckWitness<F>,
 }
 
 /// Prove stage 3 on `transcript` (positioned at the stage-2 boundary).
 #[tracing::instrument(skip_all)]
 pub fn prove_stage3<F, PCS, VC, T>(
     backend: &mut KernelContext<'_, F, JoltBackend<F, PCS>>,
-    mode: &ProofMode<'_, VC>,
+    mode: &mut ProofMode<VC>,
     config: &ProverConfig,
     stage1: &Stage1ClearOutput<F>,
     stage2: &Stage2ClearOutput<F>,
@@ -86,12 +82,9 @@ where
         &inputs,
         &input_points,
         &challenges,
-        mode.recorder()?,
+        mode.recorder(),
         transcript,
     )?;
-    #[cfg(feature = "zk")]
-    let (sumcheck_proof, committed_witness) = crate::recorder::split_recorded(proved.recorded)?;
-    #[cfg(not(feature = "zk"))]
     let sumcheck_proof = proved.recorded.proof.into();
 
     Ok(Stage3ProverOutput {
@@ -102,7 +95,5 @@ where
             output_values: proved.output_claims,
             output_points: proved.output_points,
         },
-        #[cfg(feature = "zk")]
-        committed_witness,
     })
 }

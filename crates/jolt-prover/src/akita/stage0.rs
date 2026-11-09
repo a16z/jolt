@@ -8,6 +8,7 @@ use jolt_crypto::VectorCommitment;
 use jolt_field::JoltField;
 use jolt_openings::{CommitmentScheme, GroupSetupMetadata, TransparentObjectSetup};
 use jolt_transcript::{Encoding, FieldTranscript, ProverInit};
+use jolt_verifier::config::ZkConfig;
 use jolt_verifier::{
     absorb_akita_commitments, validate_inputs_from_parts, CheckedInputs, JoltStatement,
     ProofTranscriptConfig, JOLT_SESSION,
@@ -105,7 +106,7 @@ where
         config.one_hot_config,
         trusted_advice.is_some(),
         untrusted_advice_present,
-        false,
+        ZkConfig::Transparent,
     )?;
 
     let mut transcript = T::init(

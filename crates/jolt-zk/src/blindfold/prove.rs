@@ -3,21 +3,22 @@ use jolt_field::JoltField;
 use jolt_poly::{BindingOrder, EqPolynomial, Polynomial, UnivariatePoly};
 use jolt_r1cs::{ConstraintMatrices, ConstraintMatrixEvalError, SparseRow};
 use jolt_sumcheck::{append_compressed_round, CompressedSumcheckProof};
-use jolt_transcript::{require_no_pow, Encoding, FieldTranscript, Transcript};
+use jolt_transcript::{require_no_pow, Encoding, FieldTranscript};
 use rand_core::RngCore;
 use rayon::prelude::*;
 
-use crate::blindfold::{BlindFoldProof, BlindFoldProtocol, ProverError, WitnessCoordinate};
-
-const OUTER_SUMCHECK_DEGREE: usize = 3;
-const INNER_SUMCHECK_DEGREE: usize = 2;
+use super::proof::{
+    append_opening, FoldedEvaluation, FoldingCommitments, OuterClaims, INNER_SUMCHECK_DEGREE,
+    OUTER_SUMCHECK_DEGREE,
+};
+use super::{BlindFoldProof, BlindFoldProtocol, ProverError, WitnessCoordinate};
 
 #[derive(Clone, Copy, Debug)]
 pub struct BlindFoldWitness<'a, F: JoltField> {
     pub rows: &'a [Vec<F>],
     pub blindings: &'a [F],
-    pub eval_outputs: &'a [F],
-    pub eval_blindings: &'a [F],
+    pub eval_output: F,
+    pub eval_blinding: F,
 }
 
 pub trait BlindFoldRowCommitter<F, VC>
@@ -149,6 +150,8 @@ where
     }
 }
 
+/// Proves the BlindFold statement, absorbing each message into `transcript`
+/// as it is produced.
 pub fn prove<F, VC, T, R>(
     setup: &VC::Setup,
     protocol: &BlindFoldProtocol<F, VC::Output>,
@@ -209,19 +212,17 @@ where
         )?,
         "auxiliary witness rows",
     )?;
-    let committed = protocol.committed_relaxed_instance(&auxiliary_row_commitments)?;
-    for (index, ((commitment, &output), &blinding)) in protocol
-        .eval_commitments
-        .iter()
-        .zip(witness.eval_outputs)
-        .zip(witness.eval_blindings)
-        .enumerate()
-    {
-        if !VC::verify(setup, commitment, &[output], &blinding) {
-            return Err(ProverError::EvalCommitmentMismatch { index });
-        }
+    if !VC::verify(
+        setup,
+        &protocol.eval_commitment,
+        &[witness.eval_output],
+        &witness.eval_blinding,
+    ) {
+        return Err(ProverError::EvalCommitmentMismatch { index: 0 });
     }
 
+    // The random satisfying instance: fresh uniform rows and blinds for every
+    // pad row and both dedicated rows, zero padding.
     let random_u = F::random(rng);
     let mut random_witness_rows = random_rows(
         protocol.dimensions.witness.row_count,
@@ -247,53 +248,23 @@ where
         *blinding = F::zero();
     }
 
-    let random_eval_outputs = (0..protocol.eval_commitments.len())
-        .map(|_| F::random(rng))
-        .collect::<Vec<_>>();
-    let random_eval_blindings = (0..protocol.eval_commitments.len())
-        .map(|_| F::random(rng))
-        .collect::<Vec<_>>();
-    let final_coordinates = protocol.final_opening_witness_coordinates()?;
-    ensure_len(
-        "final opening bindings",
-        protocol.eval_commitments.len(),
-        final_coordinates.len(),
-    )?;
-    let mut dedicated_rows = Vec::new();
-    for coordinates in &final_coordinates {
-        if let Some(coordinate) = coordinates.evaluation {
-            dedicated_rows.push(coordinate.row);
-        }
-        if let Some(coordinate) = coordinates.blinding {
-            dedicated_rows.push(coordinate.row);
-        }
-    }
-    dedicated_rows.sort_unstable();
-    dedicated_rows.dedup();
+    let random_eval_output = F::random(rng);
+    let random_eval_blinding = F::random(rng);
+    let coordinates = protocol.final_opening;
     #[expect(
         clippy::indexing_slicing,
-        reason = "dedicated rows come from final-opening coordinates, range-checked against the witness grid in witness_coordinate"
+        reason = "the final-opening coordinates are inside the witness grid by construction in BlindFoldProtocol::new"
     )]
-    for row in dedicated_rows {
+    {
         // Values only: the folded row must stay dedicated for the verifier's
         // opening check, while the row blinding stays random so the published
-        // row commitment hides the final evaluation and its Dory blinding.
-        random_witness_rows[row].fill(F::zero());
-    }
-    #[expect(
-        clippy::indexing_slicing,
-        reason = "final-opening coordinates are range-checked against the witness grid in witness_coordinate"
-    )]
-    for (coordinates, (&random_output, &random_blinding)) in final_coordinates
-        .iter()
-        .zip(random_eval_outputs.iter().zip(&random_eval_blindings))
-    {
-        if let Some(coordinate) = coordinates.evaluation {
-            random_witness_rows[coordinate.row][coordinate.column] = random_output;
-        }
-        if let Some(coordinate) = coordinates.blinding {
-            random_witness_rows[coordinate.row][coordinate.column] = random_blinding;
-        }
+        // row commitment hides the final evaluation and its blind.
+        random_witness_rows[coordinates.evaluation.row].fill(F::zero());
+        random_witness_rows[coordinates.blinding.row].fill(F::zero());
+        random_witness_rows[coordinates.evaluation.row][coordinates.evaluation.column] =
+            random_eval_output;
+        random_witness_rows[coordinates.blinding.row][coordinates.blinding.column] =
+            random_eval_blinding;
     }
 
     let random_error_rows = row_committer.compute_error_rows(
@@ -312,36 +283,13 @@ where
     let random_error_blindings = (0..protocol.dimensions.error.row_count)
         .map(|_| F::random(rng))
         .collect::<Vec<_>>();
-    let coefficient_range = protocol.dimensions.witness_rows.coefficients.clone();
-    let output_claim_range = protocol.dimensions.witness_rows.output_claims.clone();
+    let pad_range = protocol.dimensions.witness_rows.pads.clone();
     let auxiliary_range = protocol.dimensions.witness_rows.auxiliary.clone();
-    let random_round_commitments = row_committer.commit_rows(
+    let random_pad_row_commitments = row_committer.commit_rows(
         setup,
-        range_slice(
-            "random coefficient rows",
-            &random_witness_rows,
-            coefficient_range.clone(),
-        )?,
-        range_slice(
-            "random coefficient blindings",
-            &random_witness_blindings,
-            coefficient_range,
-        )?,
-        "random coefficient rows",
-    )?;
-    let random_output_claim_row_commitments = row_committer.commit_rows(
-        setup,
-        range_slice(
-            "random output-claim rows",
-            &random_witness_rows,
-            output_claim_range.clone(),
-        )?,
-        range_slice(
-            "random output-claim blindings",
-            &random_witness_blindings,
-            output_claim_range,
-        )?,
-        "random output-claim rows",
+        range_slice("random pad rows", &random_witness_rows, pad_range.clone())?,
+        range_slice("random pad blindings", &random_witness_blindings, pad_range)?,
+        "random pad rows",
     )?;
     let random_auxiliary_row_commitments = row_committer.commit_rows(
         setup,
@@ -363,25 +311,7 @@ where
         &random_error_blindings,
         "random error rows",
     )?;
-    let random_eval_rows = random_eval_outputs
-        .iter()
-        .copied()
-        .map(|output| vec![output])
-        .collect::<Vec<_>>();
-    let random_eval_commitments = row_committer.commit_rows(
-        setup,
-        &random_eval_rows,
-        &random_eval_blindings,
-        "random eval rows",
-    )?;
-    let random_instance = protocol.random_relaxed_instance(
-        &random_round_commitments,
-        &random_output_claim_row_commitments,
-        &random_auxiliary_row_commitments,
-        &random_error_row_commitments,
-        &random_eval_commitments,
-        random_u,
-    )?;
+    let random_eval_commitment = VC::commit(setup, &[random_eval_output], &random_eval_blinding);
 
     let cross_term_error_rows = row_committer.compute_cross_term_error_rows(
         &protocol.r1cs,
@@ -408,21 +338,16 @@ where
         "cross-term error rows",
     )?;
 
-    append_relaxed_instance(
-        transcript,
-        committed.u,
-        &committed.witness_row_commitments,
-        &committed.error_row_commitments,
-        &committed.eval_commitments,
-    );
-    append_relaxed_instance(
-        transcript,
+    let folding = FoldingCommitments {
+        auxiliary_rows: auxiliary_row_commitments,
         random_u,
-        &random_instance.witness_row_commitments,
-        &random_instance.error_row_commitments,
-        &random_instance.eval_commitments,
-    );
-    transcript.append_values(&cross_term_error_row_commitments);
+        random_pad_rows: random_pad_row_commitments,
+        random_auxiliary_rows: random_auxiliary_row_commitments,
+        random_error_rows: random_error_row_commitments,
+        random_eval: random_eval_commitment,
+        cross_term_error_rows: cross_term_error_row_commitments,
+    };
+    folding.append(transcript);
     let folding_challenge = transcript.challenge()?;
 
     let folded_u = F::one() + folding_challenge * random_u;
@@ -456,69 +381,47 @@ where
         folding_challenge,
         "folded error blindings",
     )?;
-    let folded_eval_outputs = row_committer.fold_scalars(
-        witness.eval_outputs,
-        &random_eval_outputs,
-        folding_challenge,
-        "folded eval outputs",
-    )?;
-    let folded_eval_blindings = row_committer.fold_scalars(
-        witness.eval_blindings,
-        &random_eval_blindings,
-        folding_challenge,
-        "folded eval blindings",
-    )?;
 
-    let mut folded_eval_output_openings = Vec::new();
-    let mut folded_eval_blinding_openings = Vec::new();
-    for (index, (coordinates, (&folded_output, &folded_blinding))) in final_coordinates
-        .iter()
-        .zip(folded_eval_outputs.iter().zip(&folded_eval_blindings))
-        .enumerate()
-    {
-        if let Some(coordinate) = coordinates.evaluation {
-            let (opening, opened) = open_witness_coordinate::<F, VC, C>(
-                setup,
-                row_committer,
-                &folded_witness_rows,
-                &folded_witness_blindings,
-                coordinate,
-                "folded eval output opening",
-            )?;
-            if opened != folded_output {
-                return Err(ProverError::EvalWitnessMismatch {
-                    kind: "output",
-                    index,
-                    expected: folded_output,
-                    actual: opened,
-                });
-            }
-            // Absorb per binding (output, then blinding), in the order the
-            // verifier reads them.
-            append_vector_opening(transcript, &opening);
-            folded_eval_output_openings.push(opening);
+    let output = witness.eval_output + folding_challenge * random_eval_output;
+    let blinding = witness.eval_blinding + folding_challenge * random_eval_blinding;
+    let mut openings = Vec::with_capacity(2);
+    for (coordinate, expected, kind) in [
+        (coordinates.evaluation, output, "output"),
+        (coordinates.blinding, blinding, "blinding"),
+    ] {
+        let (opening, opened) = open_witness_coordinate::<F, VC, C>(
+            setup,
+            row_committer,
+            &folded_witness_rows,
+            &folded_witness_blindings,
+            coordinate,
+            "folded eval opening",
+        )?;
+        if opened != expected {
+            return Err(ProverError::EvalWitnessMismatch {
+                kind,
+                index: 0,
+                expected,
+                actual: opened,
+            });
         }
-        if let Some(coordinate) = coordinates.blinding {
-            let (opening, opened) = open_witness_coordinate::<F, VC, C>(
-                setup,
-                row_committer,
-                &folded_witness_rows,
-                &folded_witness_blindings,
-                coordinate,
-                "folded eval blinding opening",
-            )?;
-            if opened != folded_blinding {
-                return Err(ProverError::EvalWitnessMismatch {
-                    kind: "blinding",
-                    index,
-                    expected: folded_blinding,
-                    actual: opened,
-                });
-            }
-            append_vector_opening(transcript, &opening);
-            folded_eval_blinding_openings.push(opening);
-        }
+        openings.push(opening);
     }
+    let [output_opening, blinding_opening]: [VectorCommitmentOpening<F>; 2] =
+        openings
+            .try_into()
+            .map_err(|_| ProverError::LengthMismatch {
+                name: "folded eval openings",
+                expected: 2,
+                actual: 0,
+            })?;
+    let folded_evaluation = FoldedEvaluation {
+        output,
+        blinding,
+        output_opening,
+        blinding_opening,
+    };
+    folded_evaluation.append(transcript);
 
     let outer_num_vars = log2_power_of_two("error row count", protocol.dimensions.error.row_count)?
         + log2_power_of_two("error row length", protocol.dimensions.error.row_len)?;
@@ -556,8 +459,11 @@ where
         "folded error row opening",
     )?;
 
-    transcript.append_values(&[az_rx, bz_rx, cz_rx]);
-    append_vector_opening(transcript, &error_opening);
+    let outer_claims = OuterClaims {
+        abc: [az_rx, bz_rx, cz_rx],
+        error_opening,
+    };
+    outer_claims.append(transcript);
 
     let ra = transcript.challenge()?;
     let rb = transcript.challenge()?;
@@ -597,26 +503,14 @@ where
         "folded witness row opening",
     )?;
 
+    append_opening(transcript, &witness_opening);
     Ok(BlindFoldProof {
-        auxiliary_row_commitments,
-        random_round_commitments,
-        random_output_claim_row_commitments,
-        random_auxiliary_row_commitments,
-        random_error_row_commitments,
-        random_eval_commitments,
-        random_u,
-        cross_term_error_row_commitments,
+        folding,
+        folded_evaluation,
         outer_sumcheck: outer_trace.proof,
-        az_rx,
-        bz_rx,
-        cz_rx,
+        outer_claims,
         inner_sumcheck: inner_trace.proof,
         witness_opening,
-        error_opening,
-        folded_eval_outputs,
-        folded_eval_blindings,
-        folded_eval_output_openings,
-        folded_eval_blinding_openings,
     })
 }
 
@@ -655,16 +549,6 @@ where
             });
         }
     }
-    ensure_len(
-        "final opening evaluation values",
-        protocol.eval_commitments.len(),
-        witness.eval_outputs.len(),
-    )?;
-    ensure_len(
-        "final opening blindings",
-        protocol.eval_commitments.len(),
-        witness.eval_blindings.len(),
-    )?;
     Ok(())
 }
 
@@ -778,8 +662,8 @@ where
 
 #[derive(Clone, Debug)]
 struct SumcheckTrace<F: JoltField> {
-    proof: CompressedSumcheckProof<F>,
     point: Vec<F>,
+    proof: CompressedSumcheckProof<F>,
 }
 
 fn prove_outer_sumcheck<F, T>(
@@ -814,10 +698,10 @@ where
     let mut eq_tau = Polynomial::new(EqPolynomial::<F>::evals(tau, None));
 
     let mut running_sum = F::zero();
-    let mut rounds = Vec::with_capacity(num_vars);
     let mut point = Vec::with_capacity(num_vars);
+    let mut rounds = Vec::with_capacity(num_vars);
 
-    for _ in 0..num_vars {
+    for _round in 0..num_vars {
         let half = az.len() / 2;
         let mut evals = [F::zero(); OUTER_SUMCHECK_DEGREE + 1];
         for i in 0..half {
@@ -864,6 +748,7 @@ where
         let compressed = round_poly.compress();
         append_compressed_round(transcript, compressed.coeffs_except_linear_term());
         let challenge = transcript.challenge()?;
+        rounds.push(compressed);
         running_sum = round_poly.evaluate(challenge);
         az.bind_with_order(challenge, BindingOrder::HighToLow);
         bz.bind_with_order(challenge, BindingOrder::HighToLow);
@@ -871,15 +756,14 @@ where
         e.bind_with_order(challenge, BindingOrder::HighToLow);
         eq_tau.bind_with_order(challenge, BindingOrder::HighToLow);
         point.push(challenge);
-        rounds.push(compressed);
     }
 
     Ok(SumcheckTrace {
+        point,
         proof: CompressedSumcheckProof {
             round_polynomials: rounds,
             pow_nonces: Vec::new(),
         },
-        point,
     })
 }
 
@@ -910,10 +794,10 @@ where
     let mut l_w = Polynomial::new(l_w);
     let mut witness = Polynomial::new(witness_values);
     let mut running_sum = claim;
-    let mut rounds = Vec::with_capacity(num_vars);
     let mut point = Vec::with_capacity(num_vars);
+    let mut rounds = Vec::with_capacity(num_vars);
 
-    for _ in 0..num_vars {
+    for _round in 0..num_vars {
         let half = l_w.len() / 2;
         let mut evals = [F::zero(); INNER_SUMCHECK_DEGREE + 1];
         for i in 0..half {
@@ -943,19 +827,19 @@ where
         let compressed = round_poly.compress();
         append_compressed_round(transcript, compressed.coeffs_except_linear_term());
         let challenge = transcript.challenge()?;
+        rounds.push(compressed);
         running_sum = round_poly.evaluate(challenge);
         l_w.bind_with_order(challenge, BindingOrder::HighToLow);
         witness.bind_with_order(challenge, BindingOrder::HighToLow);
         point.push(challenge);
-        rounds.push(compressed);
     }
 
     Ok(SumcheckTrace {
+        point,
         proof: CompressedSumcheckProof {
             round_polynomials: rounds,
             pow_nonces: Vec::new(),
         },
-        point,
     })
 }
 
@@ -1068,34 +952,6 @@ where
         &boolean_point(coordinate.column, entry_vars),
         name,
     )
-}
-
-fn append_relaxed_instance<F, C, T>(
-    transcript: &mut T,
-    u: F,
-    witness_commitments: &[C],
-    error_commitments: &[C],
-    eval_commitments: &[C],
-) where
-    F: Encoding,
-    C: Encoding,
-    T: Transcript,
-{
-    transcript.append(&u);
-    transcript.append_values(witness_commitments);
-    transcript.append_values(error_commitments);
-    transcript.append_values(eval_commitments);
-}
-
-fn append_vector_opening<F, T>(transcript: &mut T, opening: &VectorCommitmentOpening<F>)
-where
-    F: Encoding,
-    T: Transcript,
-{
-    // The prover chooses the vector's length, so a count word comes first.
-    transcript.append(&(opening.combined_vector.len() as u64));
-    transcript.append_values(&opening.combined_vector);
-    transcript.append(&opening.combined_blinding);
 }
 
 fn random_rows<F, R>(row_count: usize, row_len: usize, rng: &mut R) -> Vec<Vec<F>>

@@ -2,20 +2,19 @@ use super::*;
 
 use jolt_claims::protocols::jolt::relations::claim_reductions::bytecode::AddressPhase as BytecodeAddressPhase;
 
-pub(super) fn add_stage7<PCS, VC, ZkProof>(
-    input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
-    builder: Builder<PCS::Field, VC::Output>,
+pub(super) fn add_stage7<PCS, VC>(
+    input: &ResidualInputs<'_, PCS, VC>,
+    builder: ResidualBuilder<PCS::Field>,
     values: &mut SourceValues<PCS::Field>,
-) -> Result<Builder<PCS::Field, VC::Output>, VerifierError>
+) -> Result<ResidualBuilder<PCS::Field>, VerifierError>
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
-    VC::Output: Clone,
 {
     let formula_dimensions = formula_dimensions(input)?;
     let hamming_dimensions = hamming_weight::HammingWeightClaimReductionDimensions::new(
         formula_dimensions.ra_layout,
-        input.proof.one_hot_config.committed_chunk_bits(),
+        input.one_hot_config.committed_chunk_bits(),
     );
     let hamming_claims =
         relations::claim_reductions::hamming_weight::ClaimReduction::new(hamming_dimensions);
@@ -61,7 +60,7 @@ where
     }
     let hamming_point = input
         .stage7
-        .batch_consistency
+        .batch_rounds
         .try_instance_point(hamming_claims.rounds())
         .map_err(|error| {
             stage_sumcheck_error(JoltRelationId::HammingWeightClaimReduction, error)
@@ -100,7 +99,7 @@ where
     let address_phase_point = |rounds: usize, stage| {
         input
             .stage7
-            .batch_consistency
+            .batch_rounds
             .try_instance_point_at(0, rounds)
             .map_err(|error| stage_sumcheck_error(stage, error))
     };
@@ -128,34 +127,26 @@ where
         add_program_image_reduction_address_publics(input, values, layout, &point)?;
     }
 
-    let output_openings = hamming_weight::claim_reduction_output_openings(hamming_dimensions);
-    let mut output_ids = composite_ids(output_openings.all());
     let mut claims = vec![relation_claim(&hamming_claims)];
     if let Some(claim) = trusted_claims {
         claims.push(relation_claim(&claim));
-        output_ids.push(advice::final_advice_opening(JoltAdviceKind::Trusted).into());
     }
     if let Some(claim) = untrusted_claims {
         claims.push(relation_claim(&claim));
-        output_ids.push(advice::final_advice_opening(JoltAdviceKind::Untrusted).into());
     }
     if let Some(claim) = bytecode_reduction_claims {
         claims.push(relation_claim(&claim));
-        output_ids.push(bytecode_reduction::final_program_bytecode_opening().into());
     }
     if let Some(claim) = program_image_reduction_claims {
         claims.push(relation_claim(&claim));
-        output_ids.push(program_image::final_program_image_opening().into());
     }
     add_batched_stage(
         builder,
         "stage7.batch",
         hamming_claims.domain(),
         &claims,
-        &input.stage7.batch_consistency,
+        &input.stage7.batch_rounds,
         &input.stage7.batch_output_claims,
         values,
-        output_ids,
-        Vec::new(),
     )
 }

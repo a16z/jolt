@@ -2,20 +2,33 @@
 #[cfg(test)]
 use jolt_claims::protocols::composed::ComposedClaims;
 
+use jolt_claims::protocols::jolt::geometry::claim_reductions::bytecode::NUM_BYTECODE_VAL_STAGES;
+use jolt_claims::protocols::jolt::relations::booleanity::{
+    BooleanityAddressPhase, BooleanityCyclePhase,
+};
+use jolt_claims::protocols::jolt::relations::bytecode::{
+    ReadRafCyclePhase, ReadRafCyclePhaseCommitted,
+};
+use jolt_claims::protocols::jolt::relations::claim_reductions::increments::ClaimReduction as IncClaimReduction;
+use jolt_claims::protocols::jolt::relations::instruction::RaVirtualization as InstructionRaVirtualization;
+use jolt_claims::protocols::jolt::relations::ram::{
+    HammingBooleanity, RaVirtualization as RamRaVirtualization,
+};
+use jolt_claims::protocols::jolt::TraceDimensions;
+
 use super::*;
 
-pub(super) fn add_stage6a<PCS, VC, ZkProof>(
-    input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
-    builder: Builder<PCS::Field, VC::Output>,
+pub(super) fn add_stage6a<PCS, VC>(
+    input: &ResidualInputs<'_, PCS, VC>,
+    builder: ResidualBuilder<PCS::Field>,
     values: &mut SourceValues<PCS::Field>,
-) -> Result<Builder<PCS::Field, VC::Output>, VerifierError>
+) -> Result<ResidualBuilder<PCS::Field>, VerifierError>
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
-    VC::Output: Clone,
 {
     let log_t = crate::num::ilog2(input.checked.trace_length);
-    let trace_dimensions = jolt_claims::protocols::jolt::TraceDimensions::new(log_t);
+    let trace_dimensions = TraceDimensions::new(log_t);
     let formula_dimensions = formula_dimensions(input)?;
     let bytecode_reduction_layout = input.checked.precommitted.bytecode.clone();
     let program_image_reduction_layout = input.checked.precommitted.program_image.clone();
@@ -28,18 +41,15 @@ where
     let booleanity_dimensions = BooleanityDimensions::new(
         formula_dimensions.ra_layout,
         log_t,
-        input.proof.one_hot_config.committed_chunk_bits(),
+        input.one_hot_config.committed_chunk_bits(),
     );
-    let booleanity_address_claims =
-        relations::booleanity::BooleanityAddressPhase::new(booleanity_dimensions);
-    let booleanity_claims = relations::booleanity::BooleanityCyclePhase::new(booleanity_dimensions);
-    let ram_hamming_claims = relations::ram::HammingBooleanity::new(trace_dimensions);
-    let ram_ra_claims =
-        relations::ram::RaVirtualization::new(formula_dimensions.ram_ra_virtualization);
-    let instruction_ra_claims = relations::instruction::RaVirtualization::new(
-        formula_dimensions.instruction_ra_virtualization,
-    );
-    let inc_claims = relations::claim_reductions::increments::ClaimReduction::new(trace_dimensions);
+    let booleanity_address_claims = BooleanityAddressPhase::new(booleanity_dimensions);
+    let booleanity_claims = BooleanityCyclePhase::new(booleanity_dimensions);
+    let ram_hamming_claims = HammingBooleanity::new(trace_dimensions);
+    let ram_ra_claims = RamRaVirtualization::new(formula_dimensions.ram_ra_virtualization);
+    let instruction_ra_claims =
+        InstructionRaVirtualization::new(formula_dimensions.instruction_ra_virtualization);
+    let inc_claims = IncClaimReduction::new(trace_dimensions);
     let trusted_layout = input.checked.precommitted.advice(JoltAdviceKind::Trusted);
     let untrusted_layout = input.checked.precommitted.advice(JoltAdviceKind::Untrusted);
 
@@ -47,15 +57,15 @@ where
     // committed and uncommitted cycle-phase relations are distinct types, so pick
     // the active one's rounds here.
     let bytecode_rounds = if bytecode_reduction_layout.is_some() {
-        relations::bytecode::ReadRafCyclePhaseCommitted::new((
+        ReadRafCyclePhaseCommitted::new((
             formula_dimensions.bytecode_read_raf,
-            bytecode_reduction::NUM_BYTECODE_VAL_STAGES,
+            NUM_BYTECODE_VAL_STAGES,
         ))
         .rounds()
     } else {
-        relations::bytecode::ReadRafCyclePhase::new((
+        ReadRafCyclePhase::new((
             formula_dimensions.bytecode_read_raf,
-            bytecode_reduction::NUM_BYTECODE_VAL_STAGES,
+            NUM_BYTECODE_VAL_STAGES,
         ))
         .rounds()
     };
@@ -116,17 +126,6 @@ where
         add_program_image_reduction_cycle_publics(input, values, layout)?;
     }
 
-    let mut address_phase_output_ids: Vec<ComposedOpeningId> =
-        vec![bytecode::bytecode_read_raf_address_phase_opening().into()];
-    if bytecode_reduction_layout.is_some() {
-        address_phase_output_ids.extend(
-            (0..bytecode_reduction::NUM_BYTECODE_VAL_STAGES)
-                .map(bytecode_reduction::bytecode_val_stage_opening)
-                .map(ComposedOpeningId::from),
-        );
-    }
-    address_phase_output_ids.push(booleanity::booleanity_address_phase_opening().into());
-
     // Field op flags use the ordinary stage-1 circuit-flag fold. The composed
     // claim adds field-register access terms at the extended stage-4/5 powers,
     // referencing the same committed opening rows as the clear relation.
@@ -137,11 +136,9 @@ where
         "stage6.address_phase",
         bytecode_address_claims.domain(),
         &[bytecode_claim, relation_claim(&booleanity_address_claims)],
-        &input.stage6a.consistency,
+        &input.stage6a.rounds,
         &input.stage6a.output_claims,
         values,
-        address_phase_output_ids,
-        Vec::new(),
     )
 }
 

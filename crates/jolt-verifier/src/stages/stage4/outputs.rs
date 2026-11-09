@@ -1,15 +1,17 @@
 use jolt_field::JoltField;
-use jolt_sumcheck::BatchedCommittedSumcheckConsistency;
+use jolt_sumcheck::BatchedMaskedRounds;
 use jolt_transcript::{FieldTranscript, PrivateChannel};
 
-use crate::stages::relations::{OutputClaims, SumcheckBatch};
-use crate::stages::zk::outputs::CommittedOutputClaimOutput;
+use crate::stages::relations::{ClaimRoutes, MaskedClaims, OutputClaims, SumcheckBatch};
+use crate::VerifierError;
 
 #[cfg(feature = "field-inline")]
 pub use super::field_registers_read_write_checking::{
     FieldRegistersReadWriteChecking, FieldRegistersReadWriteOutputClaims,
 };
-use super::ram_val_check::{RamValCheck, RamValCheckInitialEvaluation, RamValCheckOutputClaims};
+use super::ram_val_check::{
+    RamValCheck, RamValCheckInitialEvaluation, RamValCheckOutputClaims, RamValCheckStagedOpenings,
+};
 use super::registers_read_write_checking::{
     RegistersReadWriteChecking, RegistersReadWriteOutputClaims,
 };
@@ -37,7 +39,7 @@ use super::registers_read_write_checking::{
 /// (see its `wire_output_openings` override), so the generated output-shape
 /// count/validator cover their presence and count.
 #[derive(SumcheckBatch)]
-#[sumcheck_batch(no_opening_values, crate = "crate")]
+#[sumcheck_batch(no_opening_values, routes, crate = "crate")]
 pub struct Stage4Sumchecks<F: JoltField> {
     pub registers_read_write: RegistersReadWriteChecking<F>,
     /// The field-inline Twist read/write instance over `T * 2^log_k`. Declaration position
@@ -111,6 +113,19 @@ impl<F: JoltField> Stage4OutputClaims<F> {
 }
 
 impl<F: JoltField> Stage4OutputPoints<F> {
+    /// The stage-4 claim routes: every staged advice / program-image cell is
+    /// [`ClaimRoute::Staged`](crate::stages::relations::ClaimRoute::Staged). A
+    /// masked proof sends those cells before the batch, so its post-round
+    /// claims are only the register and RAM value-check openings.
+    pub fn claim_routes(&self) -> Result<ClaimRoutes, VerifierError> {
+        Ok(RamValCheckStagedOpenings {
+            untrusted_advice: Some(Vec::<F>::new()),
+            trusted_advice: Some(Vec::new()),
+            program_image: Some(Vec::new()),
+        }
+        .claim_routes())
+    }
+
     /// The register read-write opening point (shared by all five register
     /// openings).
     pub fn registers_read_write_point(&self) -> &[F] {
@@ -145,10 +160,10 @@ pub struct Stage4ClearOutput<F: JoltField> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage4ZkOutput<F: JoltField, C> {
+pub struct Stage4ZkOutput<F: JoltField> {
     pub challenges: Stage4Challenges<F>,
-    pub batch_consistency: BatchedCommittedSumcheckConsistency<F, C>,
-    pub batch_output_claims: CommittedOutputClaimOutput<C>,
+    pub batch_rounds: BatchedMaskedRounds<F>,
+    pub batch_output_claims: MaskedClaims<F>,
     pub ram_val_check_public_eval: F,
     /// The produced opening points, the ZK counterpart of the clear path's
     /// `output_points`. Read through the same `*_point()` accessors. The advice /
@@ -158,12 +173,12 @@ pub struct Stage4ZkOutput<F: JoltField, C> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Stage4Output<F: JoltField, C> {
+pub enum Stage4Output<F: JoltField> {
     Clear(Stage4ClearOutput<F>),
-    Zk(Stage4ZkOutput<F, C>),
+    Zk(Stage4ZkOutput<F>),
 }
 
-impl<F: JoltField, C> Stage4Output<F, C> {
+impl<F: JoltField> Stage4Output<F> {
     /// The produced opening points, available regardless of proving mode.
     pub fn output_points(&self) -> &Stage4OutputPoints<F> {
         match self {
@@ -172,17 +187,17 @@ impl<F: JoltField, C> Stage4Output<F, C> {
         }
     }
 
-    pub fn clear(&self) -> Result<&Stage4ClearOutput<F>, crate::VerifierError> {
+    pub fn clear(&self) -> Result<&Stage4ClearOutput<F>, VerifierError> {
         match self {
             Self::Clear(output) => Ok(output),
-            Self::Zk(_) => Err(crate::VerifierError::ExpectedClearProof { field: "stage4" }),
+            Self::Zk(_) => Err(VerifierError::ExpectedClearProof { field: "stage4" }),
         }
     }
 
-    pub fn zk(&self) -> Result<&Stage4ZkOutput<F, C>, crate::VerifierError> {
+    pub fn zk(&self) -> Result<&Stage4ZkOutput<F>, VerifierError> {
         match self {
             Self::Zk(output) => Ok(output),
-            Self::Clear(_) => Err(crate::VerifierError::ExpectedCommittedProof { field: "stage4" }),
+            Self::Clear(_) => Err(VerifierError::ExpectedMaskedProof { field: "stage4" }),
         }
     }
 }

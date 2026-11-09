@@ -1,42 +1,39 @@
+use jolt_claims::protocols::jolt::relations::spartan::OuterUniskip;
+
 use super::*;
 
 // Binding the scalar field to a bare `F` parameter (rather than spelling
 // `PCS::Field`) lets clippy.toml's `arithmetic-side-effects-allowed = ["F"]`
 // recognize the side-effect-free field arithmetic in the body.
-pub(super) fn add_stage1<F, PCS, VC, ZkProof>(
-    input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
-    mut builder: Builder<F, VC::Output>,
+pub(super) fn add_stage1<F, PCS, VC>(
+    input: &ResidualInputs<'_, PCS, VC>,
+    mut builder: ResidualBuilder<F>,
     values: &mut SourceValues<F>,
-) -> Result<Builder<F, VC::Output>, VerifierError>
+) -> Result<ResidualBuilder<F>, VerifierError>
 where
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
     VC: VectorCommitment<Field = F>,
-    VC::Output: Clone,
 {
     let log_t = crate::num::ilog2(input.checked.trace_length);
     let dimensions = SpartanOuterDimensions::rv64(log_t);
-    let uniskip_rounds = 1;
-    let uniskip_degree = SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE;
-    let uniskip_domain = SumcheckDomain::centered_integer(SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE);
-    builder = add_stage(
+    builder = add_uniskip_stage(
         builder,
         "stage1.outer_uniskip",
-        SumcheckStatement::new(uniskip_rounds, uniskip_degree),
-        domain_spec(uniskip_domain),
-        input.stage1.uniskip_consistency.clone(),
-        &input.stage1.uniskip_output_claims,
+        UniskipRound {
+            degree: SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE,
+            domain: SumcheckDomain::centered_integer(SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE),
+            rounds: &input.stage1.uniskip_rounds,
+            output_claims: &input.stage1.uniskip_output_claims,
+        },
         values,
-        vec![outer_uniskip_opening().into()],
-        Vec::new(),
-        VerifierExpr::zero(),
-        opening(outer_uniskip_opening()),
+        relation_claim(&OuterUniskip::new(dimensions.clone())),
     )?;
 
     // The remainder sumcheck point is opening-derived: for the singleton remainder
-    // batch the committed round challenges are the raw (un-reversed) point that the
+    // batch the masked round challenges are the raw (un-reversed) point that the
     // clear path obtains from the bound remainder reduction.
-    let remainder_challenges = input.stage1.remainder_consistency.challenges();
+    let remainder_challenges = input.stage1.remainder_rounds.challenges();
     let remainder_formula = JoltSpartanOuterRemainder::new(JoltSpartanOuterRemainderChallenges {
         tau: &input.stage1.challenges.tau,
         uniskip: input.stage1.challenges.uniskip_challenge,
@@ -48,94 +45,26 @@ where
     })?;
     // Under `field-inline` this coefficient table is the COMPOSED one (50 columns): the same
     // source the clear path's factored check consumes, so the appended field-inline weight
-    // publics bake automatically.
+    // publics resolve automatically.
     for (id, value) in remainder_formula.public_coefficients() {
         values.public(VerifierPublicId::SpartanOuter(id), value)?;
     }
 
-    // The composed opening row order: the common value/flag openings in canonical order, then (under
-    // `field-inline`) the five field value/product columns in appended-column order — the clear path's
-    // absorb order exactly.
-    let opening_ids = stage1_spartan_outer_opening_ids(&dimensions);
-
-    #[expect(
-        clippy::arithmetic_side_effects,
-        reason = "log_t is an ilog2 result (< 64); 1 + log_t cannot overflow usize"
-    )]
-    let remainder_rounds = 1 + log_t;
-    let remainder_domain = SumcheckDomain::BooleanHypercube;
-    let [remainder_batching_coefficient] = input
-        .stage1
-        .remainder_consistency
-        .batching_coefficients
-        .as_slice()
-    else {
-        return Err(VerifierError::BlindFoldConstructionFailed {
-            reason: "stage1.outer_remainder: expected one batching coefficient".to_string(),
-        });
-    };
-    let remainder_extra_vars = input
-        .stage1
-        .remainder_consistency
-        .max_num_vars
-        .checked_sub(remainder_rounds)
-        .ok_or_else(|| VerifierError::BlindFoldConstructionFailed {
-            reason: format!(
-                "stage1.outer_remainder: {remainder_rounds} rounds exceed the batch's {} variables",
-                input.stage1.remainder_consistency.max_num_vars
-            ),
-        })?;
-    let input_claim = scale_expr(
-        opening(outer_uniskip_opening()),
-        *remainder_batching_coefficient * F::pow2(remainder_extra_vars),
-    );
-    let output_claim = scale_expr(
-        stage1_spartan_outer_output_expr(&dimensions),
-        *remainder_batching_coefficient,
-    );
-    add_stage(
+    add_batched_stage(
         builder,
         "stage1.outer_remainder",
-        SumcheckStatement::new(
-            input.stage1.remainder_consistency.max_num_vars,
-            input.stage1.remainder_consistency.max_degree,
-        ),
-        domain_spec(remainder_domain),
-        input.stage1.remainder_consistency.consistency.clone(),
+        SumcheckDomain::BooleanHypercube,
+        &[stage1_spartan_outer_claim(&dimensions)],
+        &input.stage1.remainder_rounds,
         &input.stage1.remainder_output_claims,
         values,
-        opening_ids,
-        Vec::new(),
-        input_claim,
-        output_claim,
     )
 }
 
-/// The composed stage-1 committed opening row order: the common Spartan-outer openings in
-/// canonical (`dimensions.variables()`) order, then — under `field-inline` — the five
-/// field value/product openings in appended-column order. This is exactly `stage1::verify`'s
-/// absorb/commit order.
-pub(super) fn stage1_spartan_outer_opening_ids(
-    dimensions: &SpartanOuterDimensions,
-) -> Vec<ComposedOpeningId> {
-    #[cfg_attr(not(feature = "field-inline"), expect(unused_mut))]
-    let mut opening_ids: Vec<ComposedOpeningId> = dimensions
-        .variables()
-        .iter()
-        .copied()
-        .map(|variable| outer_opening(variable).into())
-        .collect();
-    #[cfg(feature = "field-inline")]
-    opening_ids.extend(super::field_inline::stage1_appended_opening_ids());
-    opening_ids
-}
-
-fn stage1_spartan_outer_output_expr<F: JoltField>(
-    dimensions: &SpartanOuterDimensions,
-) -> VerifierExpr<F> {
+fn stage1_spartan_outer_claim<F: JoltField>(dimensions: &SpartanOuterDimensions) -> MemberClaim<F> {
     use crate::stages::relations::SymbolicOf;
     use crate::stages::stage1::outer_remainder::OuterRemainder;
-    map_expr(SymbolicOf::<F, OuterRemainder<F>>::new(dimensions.clone()).output_expression())
+    relation_claim(&SymbolicOf::<F, OuterRemainder<F>>::new(dimensions.clone()))
 }
 
 #[cfg(test)]
@@ -146,8 +75,37 @@ fn stage1_spartan_outer_output_expr<F: JoltField>(
 )]
 mod tests {
     use super::*;
+    use crate::stages::relations::MapCells;
+    use crate::stages::stage1::outer_remainder::OuterRemainder;
+    use crate::stages::stage1::outputs::Stage1BatchSumchecks;
+    use core::convert::Infallible;
+    use jolt_claims::protocols::jolt::geometry::spartan::outer_opening;
     use jolt_field::{Fr, Ring};
+    use num_traits::Zero;
     use std::collections::BTreeMap;
+
+    fn composed<I: Into<ComposedOpeningId>>(id: I) -> ComposedOpeningId {
+        id.into()
+    }
+
+    /// The stage-1 output cell ids, in canonical (wire) order.
+    fn stage1_committed_ids(log_t: usize) -> Vec<ComposedOpeningId> {
+        let dimensions = SpartanOuterDimensions::rv64(log_t);
+        let tau = vec![Fr::from_u64(2); log_t.saturating_add(2)];
+        let sumchecks = Stage1BatchSumchecks {
+            outer_remainder: OuterRemainder::new(dimensions, tau, Fr::from_u64(17)),
+        };
+        let challenges: Vec<Fr> = (0..=(log_t as u64)).map(Fr::from_u64).collect();
+        let points = sumchecks
+            .derive_opening_points(&challenges, &sumchecks.empty_input_points())
+            .unwrap();
+        let mut ids = Vec::new();
+        let _: Result<_, Infallible> = points.outer_remainder.try_map_cells(&mut |id, _| {
+            ids.push(composed(*id));
+            Ok(Fr::zero())
+        });
+        ids
+    }
 
     /// Resolve one of the coefficient-table publics from its `(id, value)`
     /// list; ids outside the SpartanOuter family resolve to zero (the stage-1
@@ -166,13 +124,14 @@ mod tests {
         }
     }
 
-    /// The composed opening row order is the clear absorb order: the common value/flag openings in
-    /// canonical order, then (with field-inline enabled) the five field value/product openings in
-    /// appended-column order, matching the composed R1CS column count.
+    /// The output cell order is the composed R1CS column order the factored
+    /// output formula consumes: the common value/flag openings in canonical
+    /// order, then (with field-inline enabled) the five field value/product
+    /// openings in appended-column order.
     #[test]
     fn stage1_opening_ids_follow_the_composed_column_order() {
         let dimensions = SpartanOuterDimensions::rv64(3);
-        let ids = stage1_spartan_outer_opening_ids(&dimensions);
+        let ids = stage1_committed_ids(3);
 
         let expected_len =
             jolt_claims::protocols::composed::r1cs::spartan_outer_opening_columns().len();
@@ -220,7 +179,7 @@ mod tests {
             remainder: &remainder,
         })
         .unwrap();
-        let opening_ids = stage1_spartan_outer_opening_ids(&dimensions);
+        let opening_ids = stage1_committed_ids(log_t);
         let openings: Vec<Fr> = (0..opening_ids.len() as u64)
             .map(|i| Fr::from_u64(1_000 + i))
             .collect();
@@ -232,11 +191,14 @@ mod tests {
             .copied()
             .zip(openings.iter().copied())
             .collect();
-        let lowered = stage1_spartan_outer_output_expr::<Fr>(&dimensions).evaluate(
-            |id| opening_values.get(id).copied().unwrap(),
-            |_| Fr::zero(),
-            |id| resolve_public(&publics, id),
-        );
+        let lowered = stage1_spartan_outer_claim::<Fr>(&dimensions)
+            .output
+            .expand()
+            .evaluate(
+                |id| opening_values.get(id).copied().unwrap(),
+                |_| Fr::zero(),
+                |id| resolve_public(&publics, id),
+            );
 
         assert_eq!(lowered, factored);
     }

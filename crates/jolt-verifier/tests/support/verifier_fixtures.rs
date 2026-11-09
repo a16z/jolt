@@ -30,8 +30,8 @@ use super::guest_fixtures::{fixture_witness, prepare_guest, PreparedGuest};
 
 static VERIFIER_FIXTURE_LOCK: Mutex<()> = Mutex::new(());
 // Bump whenever cached proofs stop verifying: cached ZK fixtures load without an
-// acceptance check.
-const FIXTURE_MAGIC: &[u8; 8] = b"JVCF0012";
+// acceptance check. JVCF0013: masked ZK proofs, BlindFold over committed pads.
+const FIXTURE_MAGIC: &[u8; 8] = b"JVCF0013";
 const REGENERATE_ARTIFACTS_ENV: &str = "JOLT_VERIFIER_REGENERATE_VERIFIER_FIXTURES";
 const VERIFIER_FIXTURE_LOCK_FILE: &str = "jolt-verifier-fixtures.lock";
 
@@ -240,6 +240,20 @@ pub fn zk_advice_consumer_case() -> ZkVerifierFixtureCase {
     zk_case_from_parts(fixture)
 }
 
+/// A ZK proof with both advice kinds and a committed program, generated
+/// once per test binary.
+#[cfg(feature = "zk")]
+pub fn zk_committed_advice_case() -> ZkVerifierFixtureCase {
+    use std::sync::OnceLock;
+
+    static CASE: OnceLock<ZkVerifierFixtureCase> = OnceLock::new();
+    CASE.get_or_init(|| {
+        let _guard = verifier_fixture_lock();
+        zk_case_from_parts(generate_committed_advice_consumer())
+    })
+    .clone()
+}
+
 #[cfg(not(feature = "zk"))]
 pub fn standard_advice_consumer_case() -> VerifierFixtureCase {
     let _guard = verifier_fixture_lock();
@@ -392,11 +406,13 @@ impl VerifierFixtureKind {
             // cache, so a ZK transcript change must rename them or stale cached
             // proofs fail verification instead of regenerating.
             #[cfg(feature = "zk")]
-            Self::ZkMulDivSmall => "zk-muldiv-small-word-aligned-sha3",
+            Self::ZkMulDivSmall => "zk-muldiv-small-masked-word-aligned-sha3",
             #[cfg(feature = "zk")]
-            Self::ZkCommittedMulDivSmall => "zk-committed-muldiv-small-word-aligned-sha3",
+            Self::ZkCommittedMulDivSmall => {
+                "zk-committed-muldiv-small-masked-shared-products-word-aligned-sha3"
+            }
             #[cfg(feature = "zk")]
-            Self::ZkAdviceConsumer => "zk-advice-consumer-word-aligned-sha3",
+            Self::ZkAdviceConsumer => "zk-advice-consumer-masked-word-aligned-sha3",
         }
     }
 }
@@ -605,7 +621,6 @@ fn generate_advice_consumer() -> GeneratedVerifierFixture {
     generate_advice_consumer_with_committed_program(false)
 }
 
-#[cfg(not(feature = "zk"))]
 fn generate_committed_advice_consumer() -> GeneratedVerifierFixture {
     generate_advice_consumer_with_committed_program(true)
 }

@@ -168,6 +168,10 @@ jobs:
           cargo clippy -p jolt-zk --all-targets --features whiteout-prover
           cargo clippy -p jolt-zk --all-targets --features whiteout-test-support
           cargo clippy -p jolt-zk --all-targets --features whiteout-diagnostics
+      # Feature additivity: enabling jolt-zk/whiteout must not break the
+      # verifier, which matches ZkError exhaustively.
+      - name: cargo clippy -p jolt-verifier --features jolt-zk/whiteout
+        run: cargo clippy -p jolt-verifier --all-targets --features jolt-zk/whiteout
       # The diagnostics feature alone must build the library (no dev-deps).
       - name: cargo check -p jolt-zk --features whiteout-diagnostics --lib
         run: cargo check -p jolt-zk --features whiteout-diagnostics --lib

@@ -1,9 +1,11 @@
 use jolt_claims::protocols::jolt::geometry::claim_reductions::bytecode::BytecodeOutputWeightInputs;
 use jolt_field::JoltField;
-use jolt_sumcheck::BatchedCommittedSumcheckConsistency;
+use jolt_sumcheck::BatchedMaskedRounds;
 
-use crate::stages::relations::SumcheckBatch;
-use crate::stages::zk::outputs::CommittedOutputClaimOutput;
+use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, JoltOpeningId, JoltRelationId};
+
+use crate::stages::relations::{ClaimRoute, ClaimRoutes, MaskedClaims, SumcheckBatch};
+use crate::VerifierError;
 
 // The per-relation produced-claim structs live in their relation modules
 // (cell-generic, `#[derive(OutputClaims)]`); re-export them so consumers and the
@@ -76,6 +78,7 @@ use super::ram_ra_virtualization::RamRaVirtualization;
     no_opening_values,
     no_draw_challenges,
     no_output_shape,
+    routes,
     crate = "crate"
 )]
 pub struct Stage6bSumchecks<F: JoltField> {
@@ -111,6 +114,34 @@ pub struct Stage6bSumchecks<F: JoltField> {
 /// `reverse(opening_point)` (see `cycle_phase_opening_point` in `jolt-claims`
 /// `claim_reductions::precommitted`).
 impl<F: JoltField> Stage6bOutputPoints<F> {
+    /// The stage-6b claim routes: a booleanity `bytecode_ra` cell whose point
+    /// equals the bytecode read-RAF point is an [`Alias`](ClaimRoute::Alias)
+    /// of that read-RAF opening. A clear proof absorbs it once, through its
+    /// curated order; a masked proof sends it with an equality row
+    /// ([`ClaimRoutes::masked`]).
+    pub fn claim_routes(&self) -> Result<ClaimRoutes, VerifierError> {
+        let booleanity_point = self.booleanity_opening_point().ok_or_else(|| {
+            VerifierError::StageClaimPublicInputFailed {
+                stage: JoltRelationId::Booleanity,
+                reason: "Stage 6 booleanity produced no opening point".to_string(),
+            }
+        })?;
+        let mut routes = ClaimRoutes::default();
+        for (index, point) in self.bytecode_read_raf.bytecode_ra.iter().enumerate() {
+            if point.as_slice() == booleanity_point {
+                let polynomial = JoltCommittedPolynomial::BytecodeRa(index);
+                routes.set(
+                    JoltOpeningId::committed(polynomial, JoltRelationId::Booleanity),
+                    ClaimRoute::Alias(
+                        JoltOpeningId::committed(polynomial, JoltRelationId::BytecodeReadRaf)
+                            .into(),
+                    ),
+                );
+            }
+        }
+        Ok(routes)
+    }
+
     /// The shared booleanity opening point (`r_address ++ r_cycle`); every
     /// produced booleanity RA opening uses it. `None` only if booleanity produced
     /// no openings (never in practice — at least one RA family is always present).
@@ -354,10 +385,10 @@ pub struct Stage6bClearOutput<F: JoltField> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage6bZkOutput<F: JoltField, C> {
+pub struct Stage6bZkOutput<F: JoltField> {
     pub challenges: Stage6bCarriedChallenges<F>,
-    pub batch_consistency: BatchedCommittedSumcheckConsistency<F, C>,
-    pub batch_output_claims: CommittedOutputClaimOutput<C>,
+    pub batch_rounds: BatchedMaskedRounds<F>,
+    pub batch_output_claims: MaskedClaims<F>,
     /// The produced opening *points*, the ZK counterpart of the clear path's
     /// `Stage6bClearOutput::output_points`. Stages 7/8 and BlindFold read each
     /// relation's opening point off these cells through the same
@@ -367,12 +398,12 @@ pub struct Stage6bZkOutput<F: JoltField, C> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Stage6bOutput<F: JoltField, C> {
+pub enum Stage6bOutput<F: JoltField> {
     Clear(Stage6bClearOutput<F>),
-    Zk(Stage6bZkOutput<F, C>),
+    Zk(Stage6bZkOutput<F>),
 }
 
-impl<F: JoltField, C> Stage6bOutput<F, C> {
+impl<F: JoltField> Stage6bOutput<F> {
     /// The produced opening *points*, available regardless of proving mode.
     pub fn output_points(&self) -> &Stage6bOutputPoints<F> {
         match self {
@@ -381,19 +412,17 @@ impl<F: JoltField, C> Stage6bOutput<F, C> {
         }
     }
 
-    pub fn clear(&self) -> Result<&Stage6bClearOutput<F>, crate::VerifierError> {
+    pub fn clear(&self) -> Result<&Stage6bClearOutput<F>, VerifierError> {
         match self {
             Self::Clear(output) => Ok(output),
-            Self::Zk(_) => Err(crate::VerifierError::ExpectedClearProof { field: "stage6b" }),
+            Self::Zk(_) => Err(VerifierError::ExpectedClearProof { field: "stage6b" }),
         }
     }
 
-    pub fn zk(&self) -> Result<&Stage6bZkOutput<F, C>, crate::VerifierError> {
+    pub fn zk(&self) -> Result<&Stage6bZkOutput<F>, VerifierError> {
         match self {
             Self::Zk(output) => Ok(output),
-            Self::Clear(_) => {
-                Err(crate::VerifierError::ExpectedCommittedProof { field: "stage6b" })
-            }
+            Self::Clear(_) => Err(VerifierError::ExpectedMaskedProof { field: "stage6b" }),
         }
     }
 }

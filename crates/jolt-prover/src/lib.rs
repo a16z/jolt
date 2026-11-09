@@ -30,12 +30,6 @@
 //! [`error`]: ProverError
 //! [`recorder`]: ProofMode
 
-// The Akita protocol is transparent-only: its native openings have no
-// hiding mode and the BlindFold tail has no Akita plumbing (the same
-// exclusion enforced by the public prover configuration).
-#[cfg(all(feature = "akita", feature = "zk"))]
-compile_error!("the `akita` and `zk` features are mutually exclusive");
-
 #[cfg(feature = "akita")]
 pub mod akita;
 #[cfg(feature = "zk")]
@@ -55,6 +49,8 @@ pub mod stages;
 
 #[cfg(feature = "akita")]
 pub use akita::prove;
+#[cfg(all(feature = "zk", feature = "prover-fixtures", not(feature = "akita")))]
+pub use blindfold::secrets as zk_secrets;
 pub use config::{CommittedProgramCandidates, ProverConfig};
 #[cfg(not(feature = "akita"))]
 pub use dory::prove;
@@ -65,4 +61,4 @@ pub use memory_budget::MemoryBudget;
 pub use preprocessing::{
     CommittedProgramProverData, JoltProverPreprocessing, JoltSharedPreprocessing,
 };
-pub use recorder::{ModeRecorder, ProofMode, ProvedUniskipMode};
+pub use recorder::{ModeRecorder, ProofMode};
