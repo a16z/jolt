@@ -152,10 +152,13 @@ impl TraceOneHotCommitKernel for MetalTraceCommitment {
             .map_err(compute_error)?;
             drop(masks);
             drop(pack_span);
-            let _dispatch = tracing::info_span!("metal_trace_commit_dispatch").entered();
-            let (result, _) = workspace
+            let dispatch =
+                tracing::info_span!("metal_trace_commit_dispatch", gpu_s = tracing::field::Empty);
+            let _dispatch = dispatch.enter();
+            let (result, gpu_time) = workspace
                 .commit(key, &sources, shape)
                 .map_err(compute_error)?;
+            let _ = dispatch.record("gpu_s", gpu_time.as_secs_f64());
             let result = result.read().map_err(compute_error)?;
             let per_column = blocks * block_coefficients;
             if result.len() != per_column * columns {

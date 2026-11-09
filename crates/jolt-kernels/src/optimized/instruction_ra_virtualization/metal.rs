@@ -139,7 +139,12 @@ impl MetalInstructionRaKernel {
         let need_zero = eq.current_linear_evals().0.is_zero() && !eq.current_scalar().is_zero();
         let mut totals = [AkitaField::zero(); 5];
         if pairs != 0 {
-            let _span = tracing::info_span!("metal_instruction_ra_dispatch", width).entered();
+            let span = tracing::info_span!(
+                "metal_instruction_ra_dispatch",
+                width,
+                gpu_s = tracing::field::Empty
+            );
+            let _span = span.enter();
             let dimensions = [
                 *prefix_len,
                 pairs,
@@ -207,7 +212,8 @@ impl MetalInstructionRaKernel {
                     )
                     .map_err(compute_error)?;
             }
-            let _ = batch.commit_and_wait().map_err(compute_error)?;
+            let gpu_time = batch.commit_and_wait().map_err(compute_error)?;
+            let _ = span.record("gpu_s", gpu_time.as_secs_f64());
             for partial in partials.read().map_err(compute_error)?.chunks_exact(5) {
                 for (total, value) in totals.iter_mut().zip(partial) {
                     *total += *value;

@@ -58,6 +58,23 @@ Workloads and default scales (`--scale <log2 trace length>` overrides):
 attribution is meaningful relatively — while `optimized` is the performance
 tier, slotting into the same instrumented seams.
 
+On macOS, `--features profiling,metal` also enables `--backend metal` for
+Akita. It starts from the optimized CPU backend and selects GPU kernels for
+supported shapes. Trace commitments preserve committed-zero masks and implicit
+padding; compact instruction-RA rounds keep the CPU binding and output checks.
+
+```bash
+cargo run --release -p jolt-prover --features profiling,metal -- \
+    profile --name fibonacci --backend metal --scale 27 --format chrome
+```
+
+The prover timer includes source packing, upload, and first-use transformed-key
+preparation. The `metal_trace_commit_dispatch` and
+`metal_instruction_ra_dispatch` spans record `gpu_s` from Metal command-buffer
+timestamps. Compare this with their wall time to distinguish GPU execution from
+host preparation and synchronization. Use `--format none` for throughput
+measurements; Chrome tracing adds overhead.
+
 `--memory-budget` (optimized backend only) is an explicit budget in bytes,
 with an optional binary suffix (`KiB`, `MiB`, `GiB` or `TiB`, e.g. `32GiB`).
 The profile reserves bytes against it in this order and exits with an error
