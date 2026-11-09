@@ -439,7 +439,7 @@ impl<F: JoltField> OptimizedBooleanityCycleKernel<F> {
                 BindingOrder::LowToHigh,
                 Some(address_scalar),
             ),
-            tables: LazyFoldedRa::new(
+            tables: Some(LazyFoldedRa::new(
                 tables,
                 BooleanityChunks {
                     prefix_len: rows.prefix_len(),
@@ -448,7 +448,7 @@ impl<F: JoltField> OptimizedBooleanityCycleKernel<F> {
                     instruction_chunks: dimensions.layout.instruction(),
                     chunk_bits: dimensions.log_k_chunk,
                 },
-            ),
+            )),
             gamma_powers,
             opening_unscale,
             openings: columns.openings,
@@ -477,7 +477,7 @@ struct OptimizedBooleanityCycleKernel<F: JoltField> {
     /// `eq(r_address, reference_address)` — together the reference's
     /// `EqAddressCycle` derived table.
     eq: GruenSplitEqPolynomial<F>,
-    tables: LazyFoldedRa<F, BooleanityChunks>,
+    tables: Option<LazyFoldedRa<F, BooleanityChunks>>,
     gamma_powers: Vec<F>,
     opening_unscale: Vec<F>,
     #[cfg_attr(feature = "allocative", allocative(visit = crate::backend::visit_heap_free_elements))]
@@ -485,9 +485,18 @@ struct OptimizedBooleanityCycleKernel<F: JoltField> {
 }
 
 impl<F: JoltField> OptimizedBooleanityCycleKernel<F> {
-    fn bind(&mut self, challenge: F) {
+    fn bind(&mut self, challenge: F) -> Result<(), SumcheckError<F>> {
+        self.tables
+            .as_mut()
+            .ok_or(SumcheckError::MissingEvaluationSource {
+                kind: "booleanity host state",
+            })?
+            .bind(challenge);
+        self.advance_bind(challenge);
+        Ok(())
+    }
+    fn advance_bind(&mut self, challenge: F) {
         self.eq.bind(challenge);
-        self.tables.bind(challenge);
         self.progress.advance();
     }
 }
@@ -680,13 +689,13 @@ impl<F: JoltField> ProveRounds<F> for OptimizedBooleanityCycleKernel<F> {
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
         if let Some(challenge) = bind {
-            self.bind(challenge);
+            self.bind(challenge)?;
         }
         self.message(round, previous_claim)
     }
 
     fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {
-        self.bind(bind);
+        self.bind(bind)?;
         Ok(())
     }
 }
@@ -697,9 +706,14 @@ impl<F: JoltField> OptimizedBooleanityCycleKernel<F> {
         round: usize,
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
-        let prefix_pairs = self.tables.prefix_len().div_ceil(2);
-        let tail = self
+        let folded = self
             .tables
+            .as_ref()
+            .ok_or(SumcheckError::MissingEvaluationSource {
+                kind: "booleanity host state",
+            })?;
+        let prefix_pairs = folded.prefix_len().div_ceil(2);
+        let tail = folded
             .tail_values()
             .iter()
             .zip(&self.gamma_powers)
@@ -713,7 +727,7 @@ impl<F: JoltField> OptimizedBooleanityCycleKernel<F> {
             factors: 1,
             source,
             ..
-        } = &self.tables
+        } = folded
         {
             if !tables.is_empty() {
                 let addresses = tables[0].len() / width;
@@ -756,7 +770,7 @@ impl<F: JoltField> OptimizedBooleanityCycleKernel<F> {
                 }
             }
         }
-        let tables = &self.tables;
+        let tables = folded;
         let gamma_powers = &self.gamma_powers;
         let num_polys = gamma_powers.len();
         let active_polys = gamma_powers.iter().take_while(|rho| !rho.is_zero()).count();
@@ -853,12 +867,18 @@ impl<F: JoltField> SumcheckKernel<F> for OptimizedBooleanityCycleKernel<F> {
         self.progress.require_complete()?;
         // Disabled columns were retained unscaled; the unit factor preserves
         // their opening values when gamma is zero.
+        let tables = self
+            .tables
+            .as_ref()
+            .ok_or(SumcheckKernelError::InvariantViolation {
+                reason: "booleanity host state missing at extraction",
+            })?;
         let values: BTreeMap<JoltOpeningId, F> = self
             .openings
             .iter()
             .copied()
             .enumerate()
-            .map(|(i, id)| (id, self.tables.value(i, 0) * self.opening_unscale[i]))
+            .map(|(i, id)| (id, tables.value(i, 0) * self.opening_unscale[i]))
             .collect();
         SumcheckOutputClaims::<F, Self::Relation>::from_opening_values(|id| values.get(id).copied())
             .map_err(SumcheckKernelError::from)

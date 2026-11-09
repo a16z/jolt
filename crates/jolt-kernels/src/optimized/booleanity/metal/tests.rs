@@ -109,7 +109,7 @@ fn compact_booleanity_matches_dense_rounds_and_releases_shared_rows() {
                 BindingOrder::LowToHigh,
                 Some(scalar),
             ),
-            tables: LazyFoldedRa::new(
+            tables: Some(LazyFoldedRa::new(
                 tables,
                 BooleanityChunks {
                     rows: Arc::clone(&rows),
@@ -118,7 +118,7 @@ fn compact_booleanity_matches_dense_rounds_and_releases_shared_rows() {
                     instruction_chunks: layout.instruction(),
                     chunk_bits: bits,
                 },
-            ),
+            )),
             gamma_powers: weights.clone(),
             opening_unscale: unscale,
             openings: layout.openings(JoltRelationId::Booleanity).collect(),
@@ -138,10 +138,14 @@ fn compact_booleanity_matches_dense_rounds_and_releases_shared_rows() {
         let mut kernel = MetalBooleanityKernel {
             cpu,
             rows: Some(owner),
+            device: None,
+            tail_rows: 32,
             gpu: Arc::clone(&gpu.0),
         };
         let mut claim = None;
-        let mut gpu_rounds = 0;
+        let mut saw_device = false;
+        let mut saw_dense_bind = false;
+        let mut pending_bind = None;
         for round in 0..log_t {
             let half = equality.evals().len() / 2;
             let samples: Vec<_> = (0..4)
@@ -169,12 +173,14 @@ fn compact_booleanity_matches_dense_rounds_and_releases_shared_rows() {
             let previous = claim.unwrap_or(samples[0] + samples[1]);
             assert_eq!(previous, samples[0] + samples[1]);
             let expected = UnivariatePoly::from_evals(&samples);
-            let actual = if let Some(message) = kernel.gpu_message(round, previous).unwrap() {
-                gpu_rounds += 1;
-                message
-            } else {
-                kernel.cpu.message(round, previous).unwrap()
-            };
+            saw_dense_bind |= kernel
+                .device
+                .as_ref()
+                .is_some_and(|state| state.prefix > kernel.tail_rows);
+            let actual = kernel
+                .round_with_cutoff(pending_bind, round, previous, 0)
+                .unwrap();
+            saw_device |= kernel.device.is_some();
             assert_eq!(
                 actual.coefficients(),
                 expected.coefficients(),
@@ -186,9 +192,13 @@ fn compact_booleanity_matches_dense_rounds_and_releases_shared_rows() {
                 polynomial.bind_with_order(challenge, BindingOrder::LowToHigh);
             }
             equality.bind_with_order(challenge, BindingOrder::LowToHigh);
-            kernel.cpu.bind(challenge);
+            pending_bind = Some(challenge);
         }
-        assert_eq!(gpu_rounds, if bits == 4 { 2 } else { 1 });
+        kernel.finish_rounds(pending_bind.unwrap()).unwrap();
+        assert!(saw_device);
+        if prefix > 4000 {
+            assert!(saw_dense_bind);
+        }
         assert!(kernel.rows.is_none());
         assert!(
             weak.upgrade().is_none(),

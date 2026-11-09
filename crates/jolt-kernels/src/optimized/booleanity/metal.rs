@@ -6,6 +6,7 @@ use jolt_metal::runtime::{
 use jolt_metal::shaders::FIELD_HEADERS;
 use jolt_metal::MetalError;
 
+use super::super::metal_ra::{DeviceRa, MetalRaFold, CPU_TAIL_ROWS};
 use super::super::metal_rows::ResidentInstructionRows;
 use super::*;
 
@@ -27,7 +28,11 @@ impl MetalBooleanity {
             )
             .instantiate::<AkitaField>("lazy_booleanity");
         let library = ShaderLibrary::compile(&device, &spec)?;
-        Ok(Self(Arc::new(BooleanityGpu { device, library })))
+        Ok(Self(Arc::new(BooleanityGpu {
+            device,
+            library,
+            fold: MetalRaFold::new()?,
+        })))
     }
 }
 
@@ -42,8 +47,8 @@ impl PrepareKernel<AkitaField, Booleanity<AkitaField>> for MetalBooleanity {
         KernelError<AkitaField>,
     > {
         let cpu = OptimizedBooleanityCycleKernel::prepare(session, witness, inputs)?;
-        let rows = match &cpu.tables {
-            LazyFoldedRa::Lazy { source, .. } => {
+        let rows = match cpu.tables.as_ref() {
+            Some(LazyFoldedRa::Lazy { source, .. }) => {
                 Some(ResidentInstructionRows::shared(session, &source.rows)?)
             }
             _ => None,
@@ -51,6 +56,8 @@ impl PrepareKernel<AkitaField, Booleanity<AkitaField>> for MetalBooleanity {
         Ok(Box::new(MetalBooleanityKernel {
             cpu,
             rows,
+            device: None,
+            tail_rows: CPU_TAIL_ROWS,
             gpu: Arc::clone(&self.0),
         }))
     }
@@ -59,6 +66,7 @@ impl PrepareKernel<AkitaField, Booleanity<AkitaField>> for MetalBooleanity {
 struct BooleanityGpu {
     device: Device,
     library: ShaderLibrary,
+    fold: MetalRaFold,
 }
 
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
@@ -66,6 +74,8 @@ struct MetalBooleanityKernel {
     cpu: OptimizedBooleanityCycleKernel<AkitaField>,
     #[cfg_attr(feature = "allocative", allocative(skip))]
     rows: Option<Arc<ResidentInstructionRows>>,
+    device: Option<DeviceRa>,
+    tail_rows: usize,
     #[cfg_attr(feature = "allocative", allocative(skip))]
     gpu: Arc<BooleanityGpu>,
 }
@@ -76,59 +86,80 @@ impl MetalBooleanityKernel {
         round: usize,
         claim: AkitaField,
     ) -> Result<Option<UnivariatePoly<AkitaField>>, SumcheckError<AkitaField>> {
-        let LazyFoldedRa::Lazy {
-            tables,
-            width,
-            factors: 1,
-            prefix_len,
-            source,
-            ..
-        } = &self.cpu.tables
-        else {
-            self.rows = None;
-            return Ok(None);
-        };
-        let radix = tables.first().map_or(0, |table| table.len() / width);
-        if !matches!(*width, 4 | 8) || !matches!(radix, 16 | 256) {
-            return Ok(None);
-        }
         let invalid = |reason: &str| MetalError::InvalidDispatch {
             pipeline: "lazy_booleanity".into(),
             reason: reason.into(),
         };
-        if tables.len() != source.num_columns()
-            || source.chunk_bits != radix.ilog2() as usize
-            || tables.iter().any(|table| table.len() != width * radix)
-        {
-            return Err(compute_error(invalid(
-                "branch tables disagree with the source geometry",
-            )));
-        }
         let active = self
             .cpu
             .gamma_powers
             .iter()
             .take_while(|rho| !rho.is_zero())
             .count();
-        let mut selectors = Vec::with_capacity(active);
-        for selector in source.selectors.iter().take(active) {
-            let (word, shift) = match selector {
-                ColumnSelector::Instruction(selector) => {
-                    let shift = selector.shift();
-                    if shift >= 128 {
-                        return Ok(None);
-                    }
-                    (u32::from(shift >= 64), shift % 64)
+        let (tables, width, radix, prefix, tails, selectors, columns) =
+            if let Some(device) = &self.device {
+                (
+                    &[][..],
+                    0,
+                    0,
+                    device.prefix,
+                    device.tails.as_slice(),
+                    Vec::new(),
+                    device.tails.len(),
+                )
+            } else {
+                let Some(LazyFoldedRa::Lazy {
+                    tables,
+                    width,
+                    factors: 1,
+                    prefix_len,
+                    source,
+                    tail,
+                    ..
+                }) = self.cpu.tables.as_ref()
+                else {
+                    self.rows = None;
+                    return Ok(None);
+                };
+                let radix = tables.first().map_or(0, |table| table.len() / width);
+                if !matches!(*width, 4 | 8) || !matches!(radix, 16 | 256) {
+                    return Ok(None);
                 }
-                ColumnSelector::Bytecode(selector) => (2, selector.shift()),
-                ColumnSelector::Ram(selector) => (3, selector.shift()),
+                if tables.len() != source.num_columns()
+                    || source.chunk_bits != radix.ilog2() as usize
+                    || tables.iter().any(|table| table.len() != width * radix)
+                {
+                    return Err(compute_error(invalid(
+                        "branch tables disagree with source geometry",
+                    )));
+                }
+                let Some(selectors) = Self::selectors(source) else {
+                    return Ok(None);
+                };
+                (
+                    tables.as_slice(),
+                    *width,
+                    radix,
+                    prefix_len.div_ceil(*width),
+                    tail.as_slice(),
+                    selectors,
+                    tables.len(),
+                )
             };
-            if shift + source.chunk_bits > 64 {
-                return Ok(None);
-            }
-            selectors.push([word, shift as u32]);
-        }
-        let pairs = self.cpu.tables.prefix_len().div_ceil(2);
+        let resident = if self.device.is_none() {
+            Some(
+                self.rows
+                    .as_ref()
+                    .ok_or_else(|| compute_error(invalid("missing source owner")))?
+                    .resident(&self.gpu.device)
+                    .map_err(compute_error)?,
+            )
+        } else {
+            None
+        };
+        let uploaded = resident.as_ref().and_then(|guard| guard.as_ref());
+        let source_prefix = uploaded.map_or(prefix, |rows| rows.prefix.len());
+        let pairs = prefix.div_ceil(2);
         let eq = &self.cpu.eq;
         let in_len = eq.e_in_current_len();
         if in_len == 0 || pairs.div_ceil(in_len) > eq.e_out_current_len() {
@@ -139,46 +170,52 @@ impl MetalBooleanityKernel {
         let need_one = eq.current_linear_evals().1.is_zero() && !eq.current_scalar().is_zero();
         let mut totals = [AkitaField::zero(); 3];
         if pairs != 0 {
-            let resident = self
-                .rows
-                .as_ref()
-                .ok_or_else(|| compute_error(invalid("missing source owner")))?
-                .resident(&self.gpu.device)
-                .map_err(compute_error)?;
-            let rows = resident
-                .as_ref()
-                .ok_or_else(|| compute_error(invalid("missing source")))?;
-            if rows.prefix.len() != *prefix_len {
-                return Err(compute_error(invalid(
-                    "resident source prefix disagrees with lazy state",
-                )));
-            }
             let span = tracing::info_span!(
                 "metal_booleanity_dispatch",
                 width,
                 gpu_s = tracing::field::Empty
             );
             let _span = span.enter();
-            let mut params = [0u32; 7];
+            let mut params = [0u32; 9];
             for (out, value) in params.iter_mut().zip([
-                *prefix_len,
+                source_prefix,
                 pairs,
-                *width,
+                width,
                 radix,
                 active,
                 in_len,
                 usize::from(need_one),
+                usize::from(self.device.is_some()),
+                columns,
             ]) {
                 *out = u32::try_from(value)
                     .map_err(|_| compute_error(invalid("shape exceeds 32-bit indexing")))?;
             }
             let flat: Vec<_> = tables.iter().take(active).flatten().copied().collect();
-            let tables =
-                DeviceBuffer::from_slice(&self.gpu.device, &flat).map_err(compute_error)?;
+            let placeholder = [AkitaField::zero()];
+            let tables = DeviceBuffer::from_slice(
+                &self.gpu.device,
+                if flat.is_empty() { &placeholder } else { &flat },
+            )
+            .map_err(compute_error)?;
+            let empty_rows =
+                DeviceBuffer::from_slice(&self.gpu.device, &[[0u64; 4]]).map_err(compute_error)?;
+            let device_tails =
+                DeviceBuffer::from_slice(&self.gpu.device, tails).map_err(compute_error)?;
+            let (rows, packed_tail) =
+                uploaded.map_or((&empty_rows, [0; 4]), |rows| (&rows.prefix, rows.tail));
+            let dense = self.device.as_ref().map_or(&tables, |state| &state.values);
             let rho = DeviceBuffer::from_slice(&self.gpu.device, &self.cpu.gamma_powers[..active])
                 .map_err(compute_error)?;
-            let selectors =
-                DeviceBuffer::from_slice(&self.gpu.device, &selectors).map_err(compute_error)?;
+            let selectors = DeviceBuffer::from_slice(
+                &self.gpu.device,
+                if selectors.is_empty() {
+                    &[[0u32; 2]][..]
+                } else {
+                    &selectors
+                },
+            )
+            .map_err(compute_error)?;
             let e_in = DeviceBuffer::from_slice(&self.gpu.device, eq.e_in_current())
                 .map_err(compute_error)?;
             let e_out = DeviceBuffer::from_slice(&self.gpu.device, eq.e_out_current())
@@ -216,7 +253,7 @@ impl MetalBooleanityKernel {
                     .dispatch_unchecked(
                         pipeline,
                         &[
-                            Binding::buffer(&rows.prefix),
+                            Binding::buffer(rows),
                             Binding::buffer(&tables),
                             Binding::buffer(&rho),
                             Binding::buffer(&selectors),
@@ -224,7 +261,9 @@ impl MetalBooleanityKernel {
                             Binding::buffer(&e_out),
                             Binding::buffer(&partials),
                             Binding::value(&params),
-                            Binding::value(&rows.tail),
+                            Binding::value(&packed_tail),
+                            Binding::buffer(dense),
+                            Binding::buffer(&device_tails),
                         ],
                         Grid::linear(groups * group_size, group_size),
                     )
@@ -238,10 +277,7 @@ impl MetalBooleanityKernel {
                 }
             }
         }
-        let tail = self
-            .cpu
-            .tables
-            .tail_values()
+        let tail = tails
             .iter()
             .zip(&self.cpu.gamma_powers)
             .take(active)
@@ -255,6 +291,127 @@ impl MetalBooleanityKernel {
     }
 }
 
+impl MetalBooleanityKernel {
+    fn selectors(source: &BooleanityChunks) -> Option<Vec<[u32; 2]>> {
+        source
+            .selectors
+            .iter()
+            .map(|selector| {
+                let (word, shift) = match selector {
+                    ColumnSelector::Instruction(selector) => {
+                        let shift = selector.shift();
+                        if shift >= 128 {
+                            return None;
+                        }
+                        (u32::from(shift >= 64), shift % 64)
+                    }
+                    ColumnSelector::Bytecode(selector) => (2, selector.shift()),
+                    ColumnSelector::Ram(selector) => (3, selector.shift()),
+                };
+                (shift + source.chunk_bits <= 64).then_some([word, shift as u32])
+            })
+            .collect()
+    }
+
+    fn restore_cpu(&mut self) -> Result<(), SumcheckError<AkitaField>> {
+        if let Some(device) = self.device.take() {
+            self.cpu.tables = Some(device.restore().map_err(compute_error)?);
+        }
+        Ok(())
+    }
+    fn try_materialize(
+        &mut self,
+        challenge: AkitaField,
+        minimum: usize,
+    ) -> Result<bool, SumcheckError<AkitaField>> {
+        let Some(folded) = self.cpu.tables.as_ref() else {
+            return Ok(false);
+        };
+        let Some(prefix) = folded.next_materialized_len() else {
+            return Ok(false);
+        };
+        let LazyFoldedRa::Lazy {
+            tables,
+            width,
+            factors: 1,
+            source,
+            prefix_len,
+            tail,
+            ..
+        } = folded
+        else {
+            return Ok(false);
+        };
+        if *prefix_len < minimum || !matches!(source.chunk_bits, 4 | 8) {
+            return Ok(false);
+        }
+        let Some(selectors) = Self::selectors(source) else {
+            return Ok(false);
+        };
+        let owner = self.rows.as_ref().ok_or_else(|| {
+            compute_error(MetalError::InvalidDispatch {
+                pipeline: "resident booleanity".into(),
+                reason: "missing compact rows".into(),
+            })
+        })?;
+        let resident = owner.resident(&self.gpu.device).map_err(compute_error)?;
+        let rows = resident.as_ref().ok_or_else(|| {
+            compute_error(MetalError::InvalidDispatch {
+                pipeline: "resident booleanity".into(),
+                reason: "missing uploaded rows".into(),
+            })
+        })?;
+        let device = self
+            .gpu
+            .fold
+            .materialize(rows, tables, *width, &selectors, prefix, tail, challenge)
+            .map_err(compute_error)?;
+        drop(resident);
+        crate::mem::drop_in_background_thread(self.cpu.tables.take());
+        self.device = Some(device);
+        self.rows = None;
+        self.cpu.advance_bind(challenge);
+        Ok(true)
+    }
+    fn round_with_cutoff(
+        &mut self,
+        bind: Option<AkitaField>,
+        round: usize,
+        claim: AkitaField,
+        minimum: usize,
+    ) -> Result<UnivariatePoly<AkitaField>, SumcheckError<AkitaField>> {
+        if self
+            .device
+            .as_ref()
+            .is_some_and(|state| state.prefix <= self.tail_rows)
+        {
+            self.restore_cpu()?;
+        }
+        if let Some(challenge) = bind {
+            if let Some(device) = &self.device {
+                self.device = Some(
+                    self.gpu
+                        .fold
+                        .bind(device, challenge)
+                        .map_err(compute_error)?,
+                );
+                self.cpu.advance_bind(challenge);
+            } else if !self.try_materialize(challenge, minimum)? {
+                self.cpu.bind(challenge)?;
+            }
+        }
+        let admitted = self.device.is_some()
+            || matches!(self.cpu.tables.as_ref(), Some(LazyFoldedRa::Lazy { prefix_len, .. }) if *prefix_len >= minimum);
+        if admitted {
+            if let Some(message) = self.gpu_message(round, claim)? {
+                return Ok(message);
+            }
+        } else {
+            self.rows = None;
+        }
+        self.cpu.message(round, claim)
+    }
+}
 impl ProveRounds<AkitaField> for MetalBooleanityKernel {
     fn num_rounds(&self) -> usize {
         self.cpu.num_rounds()
@@ -263,22 +420,12 @@ impl ProveRounds<AkitaField> for MetalBooleanityKernel {
         &mut self,
         bind: Option<AkitaField>,
         round: usize,
-        previous_claim: AkitaField,
+        claim: AkitaField,
     ) -> Result<UnivariatePoly<AkitaField>, SumcheckError<AkitaField>> {
-        if let Some(challenge) = bind {
-            self.cpu.bind(challenge);
-        }
-        match &self.cpu.tables {
-            LazyFoldedRa::Lazy { prefix_len, .. } if *prefix_len >= MIN_GPU_PREFIX => {
-                if let Some(message) = self.gpu_message(round, previous_claim)? {
-                    return Ok(message);
-                }
-            }
-            _ => self.rows = None,
-        }
-        self.cpu.message(round, previous_claim)
+        self.round_with_cutoff(bind, round, claim, MIN_GPU_PREFIX)
     }
     fn finish_rounds(&mut self, bind: AkitaField) -> Result<(), SumcheckError<AkitaField>> {
+        self.restore_cpu()?;
         self.rows = None;
         self.cpu.finish_rounds(bind)
     }

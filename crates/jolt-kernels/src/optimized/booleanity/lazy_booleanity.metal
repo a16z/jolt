@@ -1,5 +1,5 @@
 struct BooleanityParams {
-    uint prefix, pairs, width, radix, columns, in_len, need_one;
+    uint prefix, pairs, width, radix, columns, in_len, need_one, dense, stride;
 };
 
 uint booleanity_index(ulong4 row, uint2 selector, uint radix) {
@@ -23,6 +23,8 @@ kernel void lazy_booleanity(
     device F* partials [[buffer(6)]],
     constant BooleanityParams& p [[buffer(7)]],
     constant ulong4& tail [[buffer(8)]],
+    device const F* dense [[buffer(9)]],
+    device const F* tails [[buffer(10)]],
     uint group [[threadgroup_position_in_grid]],
     ushort lane [[thread_index_in_simdgroup]],
     ushort simdgroup [[simdgroup_index_in_threadgroup]],
@@ -41,6 +43,10 @@ kernel void lazy_booleanity(
         for (uint k = 0; k < 3; k++) values[k] = Acc::zero();
         for (uint column = lane; column < p.columns; column += simdwidth) {
             F lo = F::zero(), hi = F::zero();
+            if (p.dense) {
+                lo = 2 * pair < p.prefix ? dense[2 * pair * p.stride + column] : tails[column];
+                hi = 2 * pair + 1 < p.prefix ? dense[(2 * pair + 1) * p.stride + column] : tails[column];
+            } else {
             for (uint branch = 0; branch < p.width; branch++) {
                 ulong lo_row = 2 * pair * p.width + branch, hi_row = lo_row + p.width;
                 uint l = booleanity_index(lo_row < p.prefix ? rows[lo_row] : tail, selectors[column], p.radix);
@@ -48,6 +54,7 @@ kernel void lazy_booleanity(
                 uint base = (column * p.width + branch) * p.radix;
                 if (l < p.radix) lo = lo + tables[base + l];
                 if (h < p.radix) hi = hi + tables[base + h];
+            }
             }
             F delta = hi - lo;
             values[0].fmadd(lo, lo - rho[column]);
