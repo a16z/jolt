@@ -12,8 +12,11 @@ use crate::{KernelError, ProofSession};
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct SharedMetalRows(Weak<ResidentInstructionRows>);
 
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
+struct NextMetalRows(Arc<ResidentInstructionRows>);
+
 /// Proof-owned compact selectors. The session retains only a weak reference;
-/// the last lazy kernel releases the device buffer after materialization.
+/// a producer may carry it to the next stage; consumers release it after materialization.
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(crate) struct ResidentInstructionRows {
     source: Weak<ConstantSuffix<InstructionCycleRow>>,
@@ -22,7 +25,8 @@ pub(crate) struct ResidentInstructionRows {
 }
 
 pub(crate) struct UploadedRows {
-    /// Lookup low/high limbs, PC, and RAM-address-plus-one, in that order.
+    /// Lookup limbs, PC in low 56 bits plus claim byte in high 8 bits,
+    /// then RAM-address-plus-one. PC consumers must mask off the claim byte.
     pub(crate) prefix: DeviceBuffer<[u64; 4]>,
     pub(crate) tail: [u64; 4],
 }
@@ -33,6 +37,15 @@ impl ResidentInstructionRows {
         rows: &Arc<ConstantSuffix<InstructionCycleRow>>,
     ) -> Result<Arc<Self>, KernelError<AkitaField>> {
         let source = Arc::downgrade(rows);
+        if let Some(carry) = session.take::<NextMetalRows>() {
+            if !Weak::ptr_eq(&carry.0.source, &source) {
+                return Err(KernelError::InvariantViolation {
+                    reason: "Metal next-stage rows changed source owner",
+                });
+            }
+            session.park(SharedMetalRows(Arc::downgrade(&carry.0)));
+            return Ok(carry.0);
+        }
         if let Some(owner) = session
             .state::<SharedMetalRows>()
             .and_then(|carry| carry.0.upgrade())
@@ -50,6 +63,10 @@ impl ResidentInstructionRows {
         });
         session.park(SharedMetalRows(Arc::downgrade(&owner)));
         Ok(owner)
+    }
+
+    pub(crate) fn carry_to_next_stage(self: Arc<Self>, session: &mut ProofSession) {
+        session.park(NextMetalRows(self));
     }
 
     pub(crate) fn resident(
@@ -75,7 +92,7 @@ impl ResidentInstructionRows {
                 [
                     index as u64,
                     (index >> 64) as u64,
-                    row.bytecode_pc() as u64,
+                    row.bytecode_pc() as u64 | (u64::from(row.claim_byte()) << 56),
                     row.remapped_ram_address().map_or(0, |address| address + 1),
                 ]
             };

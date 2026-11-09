@@ -183,6 +183,10 @@ pub(super) enum LazyBind {
 }
 
 impl LazyBind {
+    fn materialized_rows(self, prefix: usize, width: usize) -> Option<usize> {
+        (self != Self::Double).then(|| prefix.div_ceil(width * 2))
+    }
+
     /// The step for branch tables of `table_lens` entries, in polynomial
     /// order with `factors` tables per polynomial (only each polynomial's
     /// first table doubles), over `cycles` cycles at `width` of at most
@@ -429,6 +433,32 @@ impl<F: JoltField, S: ChunkIndexSource> LazyFoldedRa<F, S> {
         (0..self.num_polys()).map(|i| self.value(i, 0)).collect()
     }
 
+    /// Explicit rows produced by the next bind when it leaves lazy storage.
+    /// Device backends use the same policy and prefix sizing as the CPU bind.
+    #[cfg(feature = "metal")]
+    pub(super) fn next_materialized_len(&self) -> Option<usize> {
+        let Self::Lazy {
+            tables,
+            width,
+            max_width,
+            factors,
+            prefix_len,
+            source,
+            ..
+        } = self
+        else {
+            return None;
+        };
+        LazyBind::new(
+            *width,
+            *max_width,
+            *factors,
+            source.cycles(),
+            tables.iter().map(Vec::len),
+        )
+        .materialized_rows(*prefix_len, *width)
+    }
+
     /// Bind the next cycle variable `LowToHigh`: re-scale the branch tables
     /// until the bind past `max_width` materializes dense, then use plain
     /// multilinear binds.
@@ -451,19 +481,8 @@ impl<F: JoltField, S: ChunkIndexSource> LazyFoldedRa<F, S> {
                     source.cycles(),
                     tables.iter().map(Vec::len),
                 );
-                if step == LazyBind::Double {
-                    Self::Lazy {
-                        tables: double_branches(tables, factors, challenge),
-                        width: next_width,
-                        max_width,
-                        factors,
-                        prefix_len,
-                        tail,
-                        source,
-                    }
-                } else {
+                if let Some(materialized_rows) = step.materialized_rows(prefix_len, width) {
                     let log_t = source.cycles().ilog2() as usize;
-                    // Gather and bind directly before a wide address table would expand.
                     let (tables, branches, bind) = if step == LazyBind::FusedMaterialize {
                         (tables, width, Some(challenge))
                     } else {
@@ -473,7 +492,6 @@ impl<F: JoltField, S: ChunkIndexSource> LazyFoldedRa<F, S> {
                             None,
                         )
                     };
-                    let materialized_rows = prefix_len.div_ceil(next_width);
                     let dense = if tables.len() >= ROW_ORDER_MIN_POLYS
                         && can_pair_materialize(&tables, factors, branches, materialized_rows, bind)
                     {
@@ -488,7 +506,7 @@ impl<F: JoltField, S: ChunkIndexSource> LazyFoldedRa<F, S> {
                                 factors,
                                 &source,
                                 branches,
-                                prefix_len.div_ceil(next_width),
+                                materialized_rows,
                                 bind,
                             ),
                             tail,
@@ -500,6 +518,16 @@ impl<F: JoltField, S: ChunkIndexSource> LazyFoldedRa<F, S> {
                     crate::mem::drop_in_background_thread(source);
                     crate::mem::purge_retained_memory(log_t);
                     dense
+                } else {
+                    Self::Lazy {
+                        tables: double_branches(tables, factors, challenge),
+                        width: next_width,
+                        max_width,
+                        factors,
+                        prefix_len,
+                        tail,
+                        source,
+                    }
                 }
             }
             Self::Dense(mut polys) => {

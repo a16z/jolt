@@ -4,6 +4,7 @@ struct BooleanityParams {
 
 uint booleanity_index(ulong4 row, uint2 selector, uint radix) {
     ulong value = row[selector.x];
+    if (selector.x == 2) value &= 0x00FFFFFFFFFFFFFFul;
     if (selector.x == 3) {
         if (value == 0) return radix;
         value--;

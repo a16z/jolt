@@ -37,6 +37,8 @@
 //!   streaming witnesses retain it to avoid replaying execution.
 
 mod cycle_groups;
+#[cfg(feature = "metal")]
+pub(crate) mod metal;
 
 use cycle_groups::CyclePairGroups;
 use std::num::NonZeroU16;
@@ -152,6 +154,12 @@ impl InstructionCycleRow {
     #[inline(always)]
     pub(crate) fn lookup_index(&self) -> u128 {
         u128::from(self.lookup_index_lo) | (u128::from(self.lookup_index_hi) << 64)
+    }
+
+    #[inline]
+    pub(crate) fn claim_byte(&self) -> u8 {
+        let table = self.table_index().map_or(0, |index| index as u8 + 1);
+        table | (u8::from(self.raf_flag()) << 7)
     }
 
     #[inline]
@@ -528,16 +536,8 @@ impl<F: JoltField> PrepareKernel<F, InstructionReadRaf<F>> for OptimizedInstruct
         witness: &dyn JoltWitnessPlane<F>,
         inputs: ProverInputs<'_, F, InstructionReadRaf<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = InstructionReadRaf<F>>>, KernelError<F>> {
-        let dimensions = inputs.relation.dimensions();
-        let rows: Arc<ConstantSuffix<InstructionCycleRow>> = Arc::new(
-            InstructionCycleRow::collect(witness, 1 << dimensions.log_t())?,
-        );
-        session.park(SharedInstructionRows(Arc::clone(&rows)));
-        Ok(Box::new(OptimizedInstructionReadRafKernel::new(
-            dimensions,
-            &inputs.points.lookup_output,
-            rows,
-            inputs.challenges.gamma,
+        Ok(Box::new(OptimizedInstructionReadRafKernel::prepare(
+            session, witness, inputs,
         )?))
     }
 }
@@ -1312,6 +1312,25 @@ pub struct OptimizedInstructionReadRafKernel<F: JoltField> {
 }
 
 impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
+    fn prepare(
+        session: &mut ProofSession,
+        witness: &dyn JoltWitnessPlane<F>,
+        inputs: ProverInputs<'_, F, InstructionReadRaf<F>>,
+    ) -> Result<Self, KernelError<F>> {
+        let dimensions = inputs.relation.dimensions();
+        let rows = Arc::new(InstructionCycleRow::collect(
+            witness,
+            1 << dimensions.log_t(),
+        )?);
+        session.park(SharedInstructionRows(Arc::clone(&rows)));
+        Self::new(
+            dimensions,
+            &inputs.points.lookup_output,
+            rows,
+            inputs.challenges.gamma,
+        )
+    }
+
     pub(crate) fn new(
         dimensions: InstructionReadRafDimensions,
         r_reduction: &[F],
@@ -1837,11 +1856,7 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
             );
         }
         let claim_columns = Arc::new(ConstantSuffix::new(
-            map_indices(rows.len(), |j| {
-                let row = &rows[j];
-                let table = row.table_index().map_or(0, |index| index as u8 + 1);
-                table | (u8::from(row.raf_flag()) << 7)
-            }),
+            map_indices(rows.len(), |j| rows[j].claim_byte()),
             self.rows.len(),
         ));
         self.claim_columns = Arc::clone(&claim_columns);
@@ -1961,10 +1976,16 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
             cycle.gruen.bind(challenge);
             cycle.combined_val.bind(challenge);
             cycle.ra.bind(challenge);
-            self.cycle_challenges.push(challenge);
+            self.record_cycle_bind(challenge);
+            return Ok(());
         }
         self.progress.advance();
         Ok(())
+    }
+
+    fn record_cycle_bind(&mut self, challenge: F) {
+        self.cycle_challenges.push(challenge);
+        self.progress.advance();
     }
 }
 
@@ -2095,7 +2116,7 @@ mod tests {
         ScanBlock, SCAN_BLOCK,
     };
 
-    fn pack(rows: &[InstructionReadRafWitness]) -> Vec<InstructionCycleRow> {
+    pub(super) fn pack(rows: &[InstructionReadRafWitness]) -> Vec<InstructionCycleRow> {
         rows.iter()
             .map(|row| {
                 InstructionCycleRow::new(
@@ -2115,7 +2136,7 @@ mod tests {
         Fr::from_u64(value)
     }
 
-    fn challenge<F: JoltField>(round: usize) -> F {
+    pub(super) fn challenge<F: JoltField>(round: usize) -> F {
         F::from_u64(
             0x9E37_79B9_7F4A_7C15 ^ (round as u64).wrapping_mul(0xBF58_476D_1CE4_E5B9) ^ 0x11,
         )
@@ -2129,7 +2150,7 @@ mod tests {
         z ^ (z >> 31)
     }
 
-    fn fixture_rows(log_t: usize, seed: u64) -> Vec<InstructionReadRafWitness> {
+    pub(super) fn fixture_rows(log_t: usize, seed: u64) -> Vec<InstructionReadRafWitness> {
         let tables = [
             LookupTableKind::<RISCV_XLEN>::And(Default::default()).index(),
             LookupTableKind::<RISCV_XLEN>::Andn(Default::default()).index(),
@@ -2297,7 +2318,7 @@ mod tests {
     /// point-mass `ra` collapsed at each cycle's lookup index. Pins both
     /// kernels to the protocol, not merely to each other (each kernel's own
     /// `s(0) + s(1) = claim` self-check would reject a drifted round 0).
-    fn input_claim<F: JoltField>(
+    pub(super) fn input_claim<F: JoltField>(
         rows: &[InstructionReadRafWitness],
         r_reduction: &[F],
         gamma: F,

@@ -17,7 +17,7 @@ fn compact_booleanity_matches_dense_rounds_and_releases_shared_rows() {
         (8, 14, 253, 13, true, true),
     ] {
         let cycles = 1 << log_t;
-        let layout = JoltRaPolynomialLayout::new(128 / bits, 3, 4).unwrap();
+        let layout = JoltRaPolynomialLayout::new(128 / bits, 8, 4).unwrap();
         let selectors: Vec<_> = layout
             .polynomials()
             .map(|polynomial| match polynomial {
@@ -38,9 +38,9 @@ fn compact_booleanity_matches_dense_rounds_and_releases_shared_rows() {
                 state = state.wrapping_mul(0xda94_2042_e4dd_58b5).wrapping_add(1);
                 InstructionCycleRow::new(
                     state,
-                    None,
-                    false,
-                    (row * 31) & ((1 << (3 * bits)) - 1),
+                    Some(row % LookupTableKind::<RISCV_XLEN>::COUNT),
+                    row % 2 != 0,
+                    ((1usize << 55) | (row * 31)) & ((1usize << 56) - 1),
                     (row % 3 != 0).then_some((state as u64) & ((1 << (4 * bits)) - 1)),
                     FusedInc::default(),
                 )

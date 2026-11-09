@@ -13,6 +13,11 @@ pub(crate) struct TailFactorProducts<F: JoltField> {
 }
 
 impl<F: JoltField> TailFactorProducts<F> {
+    #[cfg(feature = "metal")]
+    pub(crate) fn products(&self) -> &[F; 256] {
+        &self.products
+    }
+
     pub(crate) fn new(values: &[F]) -> Option<Self> {
         let values: [F; 8] = values.try_into().ok()?;
         let mut products = [F::one(); 256];
