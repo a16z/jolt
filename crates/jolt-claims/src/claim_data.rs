@@ -108,6 +108,25 @@ pub trait OutputClaims<F: JoltField, O = JoltOpeningId> {
         O: core::fmt::Debug;
 }
 
+/// A produced-claim struct over cell type `A`, mapped cell by cell into the
+/// same struct over cell type `B`.
+///
+/// Cells are visited in canonical (field-declaration) order, each with its
+/// opening id, and the result has exactly the source's shape: every `Vec`
+/// family keeps its length and every `Option` cell its presence. The masked
+/// verifier uses it to read masked claims in the shape of its derived output
+/// points. `#[derive(OutputClaims)]` implements it.
+pub trait MapCells<A, B, O = JoltOpeningId> {
+    /// The same struct over cell type `B`.
+    type Mapped;
+
+    /// Map every cell through `f`, stopping at the first error.
+    fn try_map_cells<E>(
+        &self,
+        f: &mut impl FnMut(&O, &A) -> Result<B, E>,
+    ) -> Result<Self::Mapped, E>;
+}
+
 /// The input-formula resolver for a relation's *consumed* opening-claim struct
 /// (populated by explicit cross-stage wiring).
 ///
@@ -262,11 +281,12 @@ mod sumcheck_challenges_tests {
 }
 
 #[cfg(test)]
+#[expect(clippy::unwrap_used, reason = "test code")]
 mod opening_family_tests {
     use crate::protocols::jolt::{
         JoltCommittedPolynomial, JoltOpeningId, JoltRelationId, JoltVirtualPolynomial,
     };
-    use crate::{InputClaims, OutputClaims};
+    use crate::{InputClaims, MapCells, OutputClaims};
     use jolt_field::{Fr, Ring};
 
     #[derive(OutputClaims)]
@@ -323,5 +343,58 @@ mod opening_family_tests {
                 );
             }
         }
+    }
+
+    #[derive(Debug, PartialEq, Eq, OutputClaims)]
+    #[relation(RamValCheck)]
+    struct Mixed<C> {
+        #[opening(untrusted_advice)]
+        untrusted_advice: Option<C>,
+        #[opening(trusted_advice)]
+        trusted_advice: Option<C>,
+        #[opening(RamRa)]
+        ram_ra: C,
+        #[opening(committed = InstructionRa)]
+        instruction_ra: Vec<C>,
+    }
+
+    /// `try_map_cells` visits cells in `canonical_order`, keeps every family's
+    /// length and every optional cell's presence, and stops at the first error.
+    #[test]
+    fn map_cells_follows_canonical_order_and_keeps_shape() {
+        let source = Mixed {
+            untrusted_advice: None,
+            trusted_advice: Some(Fr::from_u64(1)),
+            ram_ra: Fr::from_u64(2),
+            instruction_ra: vec![Fr::from_u64(3), Fr::from_u64(4)],
+        };
+        let mut visited = Vec::new();
+        let mapped = source
+            .try_map_cells(&mut |id, value| {
+                visited.push(*id);
+                Ok::<u64, ()>(visited.len() as u64 * 10 + u64::from(*value == Fr::from_u64(1)))
+            })
+            .unwrap();
+        assert_eq!(visited, source.canonical_order());
+        assert_eq!(
+            mapped,
+            Mixed {
+                untrusted_advice: None,
+                trusted_advice: Some(11),
+                ram_ra: 20,
+                instruction_ra: vec![30, 40],
+            }
+        );
+
+        let mut calls = 0;
+        let failed = source.try_map_cells(&mut |_, _| {
+            calls += 1;
+            if calls == 2 {
+                Err(calls)
+            } else {
+                Ok(0u64)
+            }
+        });
+        assert_eq!(failed, Err(2));
     }
 }
