@@ -326,10 +326,11 @@ impl DeviceAddressScan {
         if !previous.is_empty() && previous.len() != CHUNK_SIZE {
             return Err(invalid("wrong address equality width"));
         }
+        let zero_previous = [AkitaField::zero()];
         let previous = DeviceBuffer::from_slice(
             &self.gpu.device,
             if previous.is_empty() {
-                &[AkitaField::zero()][..]
+                &zero_previous[..]
             } else {
                 previous
             },

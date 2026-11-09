@@ -1660,6 +1660,14 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
     /// through the same `from_evals` constructor as the reference.
     fn address_message(&self, previous_claim: F) -> UnivariatePoly<F> {
         let half = self.raf_left.prefix.evals().len() / 2;
+        let prefix_count = self.prefix_checkpoints.len();
+        let prefix_indices = &self.prefix_indices;
+        let prefix_tables = &self.prefix_tables;
+        let suffix_tables = &self.suffix_tables;
+        let raf_left = &self.raf_left;
+        let raf_right = &self.raf_right;
+        let raf_identity = &self.raf_identity;
+        let raf_upper_all_ones = &self.raf_upper_all_ones;
         let sums = map_reduce_chunks(
             half,
             (half / 8).max(8),
@@ -1668,17 +1676,17 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
                 // Per-thread scratch: full prefix eval rows (indexed by the
                 // `Prefixes` discriminant, as `combine` expects) plus suffix
                 // eval rows reused across tables.
-                let mut p0 = vec![PrefixEval::from(F::zero()); self.prefix_checkpoints.len()];
-                let mut p2 = vec![PrefixEval::from(F::zero()); self.prefix_checkpoints.len()];
+                let mut p0 = vec![PrefixEval::from(F::zero()); prefix_count];
+                let mut p2 = vec![PrefixEval::from(F::zero()); prefix_count];
                 let mut s0: Vec<SuffixEval<F>> = Vec::new();
                 let mut s2: Vec<SuffixEval<F>> = Vec::new();
                 for b in range {
-                    for (&index, table) in self.prefix_indices.iter().zip(&self.prefix_tables) {
+                    for (&index, table) in prefix_indices.iter().zip(prefix_tables) {
                         let (lo, ext) = extension_pair(table.evals(), b, half);
                         p0[index] = PrefixEval::from(lo);
                         p2[index] = PrefixEval::from(ext);
                     }
-                    for (table, suffixes) in &self.suffix_tables {
+                    for (table, suffixes) in suffix_tables {
                         s0.clear();
                         s2.clear();
                         for q in suffixes {
@@ -1689,9 +1697,9 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
                         sums[0] += table.combine(&p0, &s0);
                         sums[1] += table.combine(&p2, &s2);
                     }
-                    let (left0, left2) = self.raf_left.message_evals(b, half);
-                    let (right0, right2) = self.raf_right.message_evals(b, half);
-                    let (id0, id2) = self.raf_identity.message_evals(b, half);
+                    let (left0, left2) = raf_left.message_evals(b, half);
+                    let (right0, right2) = raf_right.message_evals(b, half);
+                    let (id0, id2) = raf_identity.message_evals(b, half);
                     sums[2] += left0;
                     sums[3] += left2;
                     sums[4] += right0;
@@ -1699,7 +1707,7 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
                     sums[6] += id0;
                     sums[7] += id2;
                     if CANONICAL_INSTRUCTION_ADDRESS {
-                        let (upper0, upper2) = self.raf_upper_all_ones.message_evals(b, half);
+                        let (upper0, upper2) = raf_upper_all_ones.message_evals(b, half);
                         sums[8] += upper0;
                         sums[9] += upper2;
                     }
