@@ -34,6 +34,10 @@ enum NttKernelKind {
         expect(dead_code, reason = "selected only on x86")
     )]
     Avx512,
+    /// The 64-point `i32` forward NTT and lazy pointwise dot registered through
+    /// [`ntt64_backend!`](crate::ntt64_backend).
+    #[cfg(all(feature = "ntt64-backend", target_arch = "riscv64"))]
+    External,
 }
 
 impl NttKernelPlan {
@@ -41,6 +45,11 @@ impl NttKernelPlan {
 
     /// Detect the best enabled plan for residue width `W`.
     pub fn detect<W: PrimeWidth>() -> Self {
+        #[cfg(all(feature = "ntt64-backend", target_arch = "riscv64"))]
+        if W::R_LOG == 32 {
+            return Self(NttKernelKind::External);
+        }
+
         #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
         {
             if matches!(core::mem::size_of::<W>(), 2 | 4) && super::avx::use_avx2_transform_ntt() {
@@ -87,5 +96,10 @@ impl NttKernelPlan {
     #[cfg(target_arch = "aarch64")]
     pub(crate) const fn uses_neon(self) -> bool {
         matches!(self.0, NttKernelKind::Neon)
+    }
+
+    #[cfg(all(feature = "ntt64-backend", target_arch = "riscv64"))]
+    pub(crate) const fn uses_external(self) -> bool {
+        matches!(self.0, NttKernelKind::External)
     }
 }

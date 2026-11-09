@@ -45,7 +45,12 @@ pub struct NttTwiddles<W: PrimeWidth, const D: usize> {
     /// Fused conversion factors `psi^i * R^2 mod p`, in centered raw form.
     /// Multiplying a canonical coefficient by this table enters Montgomery
     /// form and applies the negacyclic twist in one Montgomery product.
-    #[cfg(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64"))]
+    #[cfg(any(
+        target_arch = "aarch64",
+        target_arch = "x86",
+        target_arch = "x86_64",
+        all(feature = "ntt64-backend", any(target_arch = "riscv64", test))
+    ))]
     pub(crate) psi_pows_r2: [W; D],
     /// Untwist factors `psi^{-i}`, in Montgomery form.
     pub(crate) psi_inv_pows: [MontCoeff<W>; D],
@@ -93,14 +98,24 @@ impl<W: PrimeWidth, const D: usize> NttTwiddles<W, D> {
 
         let psi_inv = pow_mod(psi, p - 2, p);
         let mut psi_pows = [MontCoeff::from_raw(W::default()); D];
-        #[cfg(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64"))]
+        #[cfg(any(
+            target_arch = "aarch64",
+            target_arch = "x86",
+            target_arch = "x86_64",
+            all(feature = "ntt64-backend", any(target_arch = "riscv64", test))
+        ))]
         let mut psi_pows_r2 = [W::default(); D];
         let mut psi_inv_pows = [MontCoeff::from_raw(W::default()); D];
         let mut cur = 1i64;
         let mut cur_inv = 1i64;
         for i in 0..D {
             psi_pows[i] = prime.from_canonical(W::from_i64(cur));
-            #[cfg(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64"))]
+            #[cfg(any(
+                target_arch = "aarch64",
+                target_arch = "x86",
+                target_arch = "x86_64",
+                all(feature = "ntt64-backend", any(target_arch = "riscv64", test))
+            ))]
             {
                 psi_pows_r2[i] = prime.center(
                     prime
@@ -175,7 +190,12 @@ impl<W: PrimeWidth, const D: usize> NttTwiddles<W, D> {
             fwd_wlen,
             inv_wlen,
             psi_pows,
-            #[cfg(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64"))]
+            #[cfg(any(
+                target_arch = "aarch64",
+                target_arch = "x86",
+                target_arch = "x86_64",
+                all(feature = "ntt64-backend", any(target_arch = "riscv64", test))
+            ))]
             psi_pows_r2,
             psi_inv_pows,
             d_inv_psi_inv,
@@ -197,8 +217,16 @@ impl<W: PrimeWidth, const D: usize> NttTwiddles<W, D> {
 /// evaluation form. Both outputs of each butterfly are range-reduced
 /// to prevent overflow.
 #[cfg_attr(
-    not(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64")),
-    expect(unused_variables, reason = "the kernel plan selects only SIMD kernels")
+    not(any(
+        target_arch = "aarch64",
+        target_arch = "x86",
+        target_arch = "x86_64",
+        all(feature = "ntt64-backend", target_arch = "riscv64")
+    )),
+    expect(
+        unused_variables,
+        reason = "the kernel plan selects only SIMD or external kernels"
+    )
 )]
 pub fn forward_ntt<W: PrimeWidth, const D: usize>(
     a: &mut [MontCoeff<W>; D],
@@ -206,6 +234,12 @@ pub fn forward_ntt<W: PrimeWidth, const D: usize>(
     tw: &NttTwiddles<W, D>,
     plan: NttKernelPlan,
 ) {
+    #[cfg(all(feature = "ntt64-backend", target_arch = "riscv64"))]
+    if super::external::selected::<W, D>(plan) {
+        super::external::forward_ntt(a, prime, tw);
+        return;
+    }
+
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     if use_x86_transform_ntt::<D>(plan) {
         // SAFETY: the plan proves AVX2 (and AVX-512 when selected) and
