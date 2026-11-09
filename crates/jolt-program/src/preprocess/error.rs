@@ -3,6 +3,9 @@ use crate::field_inline::FieldInlineInstructionError;
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum PreprocessingError {
+    #[cfg(feature = "pcall-keccakf")]
+    #[error("invalid PCALL expansion at bytecode row {bytecode_index}")]
+    InvalidPcallSequence { bytecode_index: usize },
     #[error("bytecode instruction is not legal in the selected target profile: {0:?}")]
     IllegalTargetInstruction(jolt_riscv::JoltInstructionKind),
     #[error("bytecode instruction address is invalid for bytecode indexing: {0:#x}")]

@@ -61,6 +61,7 @@ impl GuestConfig for Secp256k1EcdsaVerify {
             stack_size: 4096,
             heap_size: 100000,
             program_size: None,
+            ..Default::default()
         }
     }
     fn label(&self) -> String {

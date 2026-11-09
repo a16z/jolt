@@ -310,6 +310,7 @@ impl GuestProgram {
             },
             stack_size: 33554432,
             program_size: None,
+            ..Default::default()
         }
     }
 

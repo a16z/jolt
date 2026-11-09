@@ -13,6 +13,7 @@ workspace = true
 
 [features]
 default = ["host"]
+pcall-keccakf = ["tracer/pcall-keccakf"]
 host = [
   "jolt-inlines-bigint/host",
   "jolt-inlines-blake2/host",

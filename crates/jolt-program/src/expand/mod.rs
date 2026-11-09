@@ -23,12 +23,14 @@ mod materialize;
 mod memory;
 mod metadata;
 mod operands;
+#[cfg(feature = "pcall-keccakf")]
+mod pcall;
 mod shifts;
 #[cfg(test)]
 mod tests;
 
 pub use allocator::ExpansionAllocator;
-pub use error::ExpansionError;
+pub use error::{ExpansionError, InlineRegistryError};
 pub use grammar::{is_source_only, ExpandedInstructionSequence};
 pub use inline::{InlineExpansionBuilder, InlineOperands, InlineRegister, Value};
 
@@ -48,6 +50,7 @@ use grammar::{reg, ExpansionBuilder, RegisterOperand, TempId};
 use jolt_riscv::{
     JoltInstruction, JoltInstructionKind, JoltInstructionProfile, JoltInstructionRow,
     NormalizedOperands, SourceInstruction, SourceInstructionKind, SourceInstructionRow,
+    PCALL_FUNCT7, PCALL_OPCODE,
 };
 use materialize::ExpansionState;
 use memory::*;
@@ -129,6 +132,34 @@ fn expand_source_instruction_with_provider<P: InlineExpansionProvider + ?Sized>(
     inline_provider: &mut P,
     profile: JoltInstructionProfile,
 ) -> Result<Vec<JoltInstruction>, ExpansionError> {
+    if instruction.kind() == SourceInstructionKind::Inline
+        && instruction.row().inline.is_some_and(|key| {
+            key.opcode as u32 == PCALL_OPCODE && key.funct7 as u32 == PCALL_FUNCT7
+        })
+    {
+        #[cfg(not(feature = "pcall-keccakf"))]
+        return Err(ExpansionError::UnsupportedPrecompile);
+        #[cfg(feature = "pcall-keccakf")]
+        {
+            let source = *instruction.row();
+            let key = source.inline.ok_or(ExpansionError::UnsupportedPrecompile)?;
+            if !profile.supports_precompiles() {
+                return Err(ExpansionError::UnsupportedPrecompile);
+            }
+            debug_assert!(key.funct3 <= 1 && !source.is_compressed);
+            let sequence = pcall::build_sequence(
+                InlineExpansionBuilder::new(source),
+                InlineOperands::from_source_row(source)?,
+                key.funct3 == 1,
+            )?;
+            let mut state = ExpansionState::new(std::mem::take(allocator), profile);
+            let result = state
+                .materialize_inline(sequence)
+                .and_then(|rows| final_rows_to_instructions(rows, profile));
+            *allocator = state.into_allocator();
+            return result;
+        }
+    }
     let rewritten_source;
     let mut allocated_rd_zero_register = None;
     let instruction = if instruction.row().operands.rd == Some(0)

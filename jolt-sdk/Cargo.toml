@@ -16,6 +16,14 @@ edition = "2021"
 
 [features]
 default = ["jolt-platform/random"]
+pcall-keccakf = [
+  "akita",
+  "jolt-prover?/pcall-keccakf",
+  "jolt-verifier?/pcall-keccakf",
+  "jolt-program?/pcall-keccakf",
+  "jolt-host?/pcall-keccakf",
+  "tracer?/pcall-keccakf",
+]
 # std guests: route Rust allocations to jolt-platform's O(1) size-class
 # arena instead of musl's malloc over ZeroOS's first-fit heap.
 guest-size-class-alloc = []

@@ -440,8 +440,13 @@ mod matrix {
                 &config,
                 trusted.as_ref(),
                 &public_io,
-            )
-            .expect("Akita proof");
+            );
+            if cfg!(feature = "pcall-keccakf") {
+                use jolt_prover::ProverError;
+                assert!(matches!(proof, Err(ProverError::Unsupported { .. })));
+                return;
+            }
+            let proof = proof.expect("Akita proof");
             jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, VerifierState<'_, Keccak>>(
                 &preprocessing.verifier,
                 &public_io,

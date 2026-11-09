@@ -40,6 +40,19 @@ pub trait JoltInstructionMeta {
 }
 
 macro_rules! source_extension_for_marker {
+    (PcallCall) => {
+        None
+    };
+    (PcallRead) => {
+        None
+    };
+    (PcallWrite) => {
+        None
+    };
+    (PcallReturn) => {
+        None
+    };
+
     (Add) => {
         Some(SourceExtension::Rv64I)
     };
@@ -532,6 +545,19 @@ macro_rules! source_extension_for_marker {
 }
 
 macro_rules! source_side_effects_for_marker {
+    (PcallCall) => {
+        true
+    };
+    (PcallRead) => {
+        true
+    };
+    (PcallWrite) => {
+        true
+    };
+    (PcallReturn) => {
+        true
+    };
+
     (AdviceLb) => {
         true
     };
@@ -1027,6 +1053,19 @@ macro_rules! source_side_effects_for_marker {
 }
 
 macro_rules! jolt_target_extension_for_marker {
+    (PcallCall) => {
+        Some(JoltTargetExtension::Precompile)
+    };
+    (PcallRead) => {
+        Some(JoltTargetExtension::Precompile)
+    };
+    (PcallWrite) => {
+        Some(JoltTargetExtension::Precompile)
+    };
+    (PcallReturn) => {
+        Some(JoltTargetExtension::Precompile)
+    };
+
     (Add) => {
         Some(JoltTargetExtension::IntegerCore)
     };
@@ -1333,6 +1372,19 @@ macro_rules! jolt_target_extension_for_marker {
 }
 
 macro_rules! jolt_side_effects_for_marker {
+    (PcallCall) => {
+        true
+    };
+    (PcallRead) => {
+        true
+    };
+    (PcallWrite) => {
+        true
+    };
+    (PcallReturn) => {
+        true
+    };
+
     (Beq) => {
         true
     };

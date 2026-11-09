@@ -640,3 +640,47 @@ fn field_inline_opcode_is_unknown_without_feature() {
         Err(ProgramError::MalformedImage("unknown RV64 opcode"))
     ));
 }
+
+#[test]
+fn reserved_precompile_block_requires_opt_in_profile() {
+    use jolt_riscv::RV64IMAC_JOLT_ALL_INLINES;
+    for flavour in 0..8 {
+        let word = (PCALL_FUNCT7 << 25) | (flavour << 12) | (10 << 15) | PCALL_OPCODE;
+        assert!(matches!(
+            decode_instruction(word, 0x80000000, false, RV64IMAC_JOLT_ALL_INLINES),
+            Err(ProgramError::IllegalSourceInstruction(_))
+        ));
+        #[cfg(feature = "pcall-keccakf")]
+        {
+            use jolt_riscv::RV64IMAC_JOLT_PRECOMPILES;
+            let profile = RV64IMAC_JOLT_PRECOMPILES;
+            let decoded = decode_instruction(word, 0x80000000, false, profile);
+            if flavour < 2 {
+                assert!(decoded.is_ok());
+            } else {
+                assert!(matches!(
+                    decoded,
+                    Err(ProgramError::IllegalSourceInstruction(
+                        SourceInstructionKind::Inline
+                    ))
+                ));
+            }
+            for (malformed, compressed) in [(word | (1 << 7), false), (word, true)] {
+                assert!(matches!(
+                    decode_instruction(malformed, 0x80000000, compressed, profile),
+                    Err(ProgramError::IllegalSourceInstruction(
+                        SourceInstructionKind::Inline
+                    ))
+                ));
+            }
+            if flavour == 0 {
+                assert!(matches!(
+                    decode_instruction(word | (1 << 20), 0x80000000, false, profile),
+                    Err(ProgramError::IllegalSourceInstruction(
+                        SourceInstructionKind::Inline
+                    ))
+                ));
+            }
+        }
+    }
+}

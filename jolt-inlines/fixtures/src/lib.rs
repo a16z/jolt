@@ -251,27 +251,14 @@ mod tests {
 
     #[test]
     fn linked_inline_registration_keys_are_unique() {
-        let registrations = registrations();
-        let mut keys = registrations
-            .iter()
-            .map(|registration| {
-                (
-                    registration.opcode,
-                    registration.funct3,
-                    registration.funct7,
-                    registration.name,
-                )
-            })
-            .collect::<Vec<_>>();
-        keys.sort_unstable();
-        for pair in keys.windows(2) {
-            assert_ne!(
-                (pair[0].0, pair[0].1, pair[0].2),
-                (pair[1].0, pair[1].1, pair[1].2),
-                "duplicate inline key for {} and {}",
-                pair[0].3,
-                pair[1].3
+        assert!(tracer::validate_inline_registry().is_ok());
+        for registration in registrations() {
+            let found = tracer::instruction::inline::find_inline_registration(
+                registration.opcode,
+                registration.funct3,
+                registration.funct7,
             );
+            assert!(found.is_some_and(|found| std::ptr::eq(found, registration)));
         }
     }
 }

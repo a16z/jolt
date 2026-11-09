@@ -283,6 +283,21 @@ impl InlineExpansionBuilder {
         );
     }
 
+    /// Emit a PCALL port without a destination or second source register.
+    #[cfg(feature = "pcall-keccakf")]
+    pub fn emit_pcall(&mut self, instruction_kind: Kind, rs1: u8, imm: u64) {
+        use crate::expand::grammar::{RowTemplate, TemplateOperands};
+        self.inner.emit(RowTemplate {
+            instruction_kind,
+            operands: TemplateOperands {
+                rd: None,
+                rs1: Some(Self::register_operand(rs1)),
+                rs2: None,
+                imm: imm as i128,
+            },
+        });
+    }
+
     /// Emit or constant-fold a binary operation.
     ///
     /// Register/register operands use `register_kind`, register/immediate

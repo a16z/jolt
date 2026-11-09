@@ -15,6 +15,7 @@ workspace = true
 default = []
 test-utils = []
 parallel = ["dep:rayon", "jolt-utils/parallel"]
+pcall-keccakf = ["jolt-riscv/pcall-keccakf", "jolt-lookup-tables/pcall-keccakf"]
 field-inline = [
   "dep:rayon",
   "jolt-claims/field-inline",

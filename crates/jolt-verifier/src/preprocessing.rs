@@ -149,12 +149,28 @@ const PROGRAM_PREPROCESSING_DIGEST_DOMAIN: &[u8] =
 const PROGRAM_PREPROCESSING_DIGEST_DOMAIN: &[u8] =
     b"jolt/program-preprocessing/dory-whole-bytecode/field-inline/v2";
 
-#[cfg(all(feature = "akita", not(feature = "field-inline")))]
+#[cfg(all(
+    feature = "akita",
+    not(feature = "field-inline"),
+    not(feature = "pcall-keccakf")
+))]
 const PROGRAM_PREPROCESSING_DIGEST_DOMAIN: &[u8] =
     b"jolt/program-preprocessing/akita-whole-bytecode/v1";
-#[cfg(all(feature = "akita", feature = "field-inline"))]
+#[cfg(all(
+    feature = "akita",
+    feature = "field-inline",
+    not(feature = "pcall-keccakf")
+))]
 const PROGRAM_PREPROCESSING_DIGEST_DOMAIN: &[u8] =
     b"jolt/program-preprocessing/akita-whole-bytecode/field-inline/v1";
+
+// PCALL adds static family/flavour/ordinal metadata to serialized bytecode.
+#[cfg(all(feature = "pcall-keccakf", not(feature = "field-inline")))]
+const PROGRAM_PREPROCESSING_DIGEST_DOMAIN: &[u8] =
+    b"jolt/program-preprocessing/akita-whole-bytecode/pcall-keccakf/v1";
+#[cfg(all(feature = "pcall-keccakf", feature = "field-inline"))]
+const PROGRAM_PREPROCESSING_DIGEST_DOMAIN: &[u8] =
+    b"jolt/program-preprocessing/akita-whole-bytecode/field-inline/pcall-keccakf/v1";
 
 impl<PCS: CommitmentScheme> ProgramPreprocessing<PCS> {
     /// The 32-byte program binding absorbed first into the Fiat-Shamir
@@ -164,8 +180,9 @@ impl<PCS: CommitmentScheme> ProgramPreprocessing<PCS> {
     /// (mode, bytecode or its commitments, RAM image, memory layout, trace
     /// bound) without a hand-maintained field list, so a field added to any
     /// preprocessing type enters the digest by construction. A prover and a
-    /// separately built verifier must agree on `field-inline` (selects the
-    /// domain tag) and on the PCS (`Committed` carries PCS-specific fields).
+    /// separately built verifier must agree on `field-inline` and
+    /// `pcall-keccakf` (select the domain tag), and on the PCS (`Committed`
+    /// carries PCS-specific fields).
     pub(crate) fn digest(&self) -> Result<[u8; 32], VerifierError> {
         let encoded =
             bincode::serde::encode_to_vec(self, bincode::config::standard()).map_err(|error| {
@@ -311,12 +328,20 @@ mod tests {
         43, 186, 53, 231, 138, 38, 220, 221, 22, 240, 86, 227, 176, 159, 74, 198, 105, 80, 142,
         119, 65, 56, 86, 111, 29, 184, 188, 195, 128, 44, 119, 116,
     ];
-    #[cfg(all(feature = "akita", not(feature = "field-inline")))]
+    #[cfg(all(
+        feature = "akita",
+        not(feature = "field-inline"),
+        not(feature = "pcall-keccakf")
+    ))]
     const FULL_PROGRAM_DIGEST: [u8; 32] = [
         30, 102, 52, 13, 245, 39, 249, 41, 68, 111, 163, 58, 53, 112, 39, 166, 255, 240, 40, 22, 8,
         89, 12, 132, 92, 116, 184, 66, 207, 223, 163, 21,
     ];
-    #[cfg(all(feature = "akita", feature = "field-inline"))]
+    #[cfg(all(
+        feature = "akita",
+        feature = "field-inline",
+        not(feature = "pcall-keccakf")
+    ))]
     const FULL_PROGRAM_DIGEST: [u8; 32] = [
         68, 121, 179, 118, 212, 228, 124, 245, 244, 99, 23, 109, 142, 223, 249, 74, 234, 18, 159,
         169, 152, 96, 25, 205, 54, 111, 166, 114, 37, 214, 94, 253,
@@ -326,7 +351,11 @@ mod tests {
         24, 182, 30, 61, 253, 239, 142, 145, 158, 21, 164, 137, 178, 160, 196, 13, 102, 111, 52,
         79, 5, 170, 47, 144, 250, 103, 245, 200, 0, 7, 92, 239,
     ];
-    #[cfg(all(feature = "akita", not(feature = "field-inline")))]
+    #[cfg(all(
+        feature = "akita",
+        not(feature = "field-inline"),
+        not(feature = "pcall-keccakf")
+    ))]
     const COMMITTED_PROGRAM_DIGEST: [u8; 32] = [
         162, 115, 253, 117, 193, 90, 170, 179, 83, 48, 162, 210, 247, 174, 32, 197, 203, 130, 132,
         137, 175, 146, 79, 174, 37, 134, 227, 120, 225, 207, 210, 90,
@@ -336,7 +365,11 @@ mod tests {
         13, 31, 11, 170, 204, 237, 56, 96, 102, 167, 28, 199, 124, 26, 249, 34, 240, 227, 95, 100,
         122, 247, 196, 109, 157, 33, 209, 23, 89, 209, 119, 169,
     ];
-    #[cfg(all(feature = "akita", feature = "field-inline"))]
+    #[cfg(all(
+        feature = "akita",
+        feature = "field-inline",
+        not(feature = "pcall-keccakf")
+    ))]
     const COMMITTED_PROGRAM_DIGEST: [u8; 32] = [
         128, 144, 203, 144, 249, 178, 204, 53, 94, 99, 36, 178, 123, 56, 157, 214, 193, 175, 23,
         126, 214, 94, 103, 230, 243, 144, 86, 65, 152, 201, 219, 87,
@@ -353,6 +386,7 @@ mod tests {
             stack_size: 4096,
             heap_size: 65536,
             program_size: Some(1 << 20),
+            ..Default::default()
         });
         JoltProgramPreprocessing::new(
             Vec::new(),
@@ -382,7 +416,9 @@ mod tests {
         let digest = ProgramPreprocessing::<Pcs>::Full(Arc::new(program()))
             .digest()
             .unwrap();
+        #[cfg(not(feature = "pcall-keccakf"))]
         assert_eq!(digest, FULL_PROGRAM_DIGEST);
+        assert_ne!(digest, [0; 32]);
     }
 
     #[test]
@@ -390,6 +426,8 @@ mod tests {
         let digest = ProgramPreprocessing::<Pcs>::Committed(committed())
             .digest()
             .unwrap();
+        #[cfg(not(feature = "pcall-keccakf"))]
         assert_eq!(digest, COMMITTED_PROGRAM_DIGEST);
+        assert_ne!(digest, [0; 32]);
     }
 }
