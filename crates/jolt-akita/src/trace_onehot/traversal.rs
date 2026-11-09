@@ -265,7 +265,17 @@ where
     let packed_len = num_blocks.checked_mul(subring_dimension).ok_or_else(|| {
         AkitaError::InvalidInput("coefficient-packing accumulator length overflow".to_string())
     })?;
-    let _span = tracing::info_span!("trace_onehot_coefficient_packing").entered();
+    let _span = tracing::info_span!(
+        "trace_onehot_coefficient_packing",
+        ring_dimension = D,
+        subring_dimension,
+        embedding_stride = stride,
+        extension_degree = E::DEGREE,
+        num_blocks,
+        positions_per_block = point.num_positions_per_block(),
+        columns = source.rows.num_columns()
+    )
+    .entered();
     let positions_per_block = point.num_positions_per_block();
     let segment_rings = source.segment_ring_elems::<D>()?;
     let num_columns = source.rows.num_columns();
