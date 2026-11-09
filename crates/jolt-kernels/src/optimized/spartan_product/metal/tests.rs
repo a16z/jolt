@@ -2,6 +2,7 @@ use super::super::tests::{fixed_backend_from_rows, uniskip_input_claims};
 use super::*;
 use crate::reference::spartan_product::{ReferenceProductRemainder, SpartanProductKernel};
 use crate::ReferenceBackend;
+use jolt_field::One;
 use jolt_verifier::stages::stage2::product_remainder::product_remainder_input_values_from_uniskip_output;
 use jolt_witness::testing::with_sample_backend;
 

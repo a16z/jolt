@@ -376,7 +376,10 @@ remainder production; no precomputed field planes are uploaded. CPU code owns
 the split equality, challenge sequence, odd boundary pair, and final opening
 recipe. Device columns restore to CPU at 2^12 rows. The three native source passes
 (uniskip, preparation, openings), allocations, upload, waits, and restoration
-must all be measured. This source-only candidate has no performance claim yet.
+must all be measured. The focused reference comparison covers uniskip, every
+round, and final openings across a tile boundary, odd prefix, exceptional
+equality challenges, and CPU handoff; it also passes Metal shader validation.
+Full-proof integration and performance remain to be measured.
 The outer path retains its current guard aggregation and typed coefficient
 folds until a separate compact producer is justified. Raw `JoltTraceRow` bytes
 are not a public GPU decoding interface.

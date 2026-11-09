@@ -2,7 +2,7 @@
 //! only the shrinking remainder fields remain resident between challenges.
 use std::time::Duration;
 
-use bytemuck::{Pod, Zeroable};
+use bytemuck_derive::{NoUninit, Pod, Zeroable};
 use jolt_akita::AkitaField;
 use jolt_field::{Ring, Zero};
 use jolt_metal::runtime::{
@@ -67,6 +67,17 @@ struct Params {
     pairs: u32,
     need_one: u32,
 }
+
+// Matches the shader's ProductTails<F>: two canonical field elements, with
+// no padding. Fp128 is NoUninit, but deliberately not Pod (not all bits are
+// canonical), so its inline pair uses an explicit NoUninit wrapper.
+#[repr(C)]
+#[derive(Clone, Copy, NoUninit)]
+struct ProductTails {
+    left: AkitaField,
+    right: AkitaField,
+}
+const _: () = assert!(size_of::<ProductTails>() == 32);
 
 struct ProductGpu {
     device: Device,
@@ -363,7 +374,7 @@ impl ProductCompute<AkitaField> for MetalProductUniskip {
         // Admission precedes uniskip/device ownership. Allocation failures from
         // competing live buffers still propagate, rather than changing backends.
         prefix >= MIN_PREFIX
-            && prefix <= u32::MAX as usize - 1
+            && prefix < u32::MAX as usize
             && log_t <= 32
             && DOMAIN >= 3
             && EXTENSION_SIZE <= 8
@@ -534,6 +545,10 @@ impl ProductDeviceColumns<AkitaField> for DeviceProduct {
         )
         .map_err(compute_error)?;
         let prefix = word(self.prefix).map_err(compute_error)?;
+        let tails = ProductTails {
+            left: self.tails[0],
+            right: self.tails[1],
+        };
         let mut batch = Batch::new(&self.gpu.device).map_err(compute_error)?;
         // SAFETY: one thread writes one pair into a separate output buffer;
         // missing input rows use the canonical constant tail.
@@ -547,7 +562,7 @@ impl ProductDeviceColumns<AkitaField> for DeviceProduct {
                     &[
                         Binding::buffer(&self.values),
                         Binding::buffer(&output),
-                        Binding::value(&self.tails),
+                        Binding::value(&tails),
                         Binding::value(&challenge),
                         Binding::value(&prefix),
                     ],
@@ -607,6 +622,10 @@ impl ProductDeviceColumns<AkitaField> for DeviceProduct {
             pairs: word(pairs).map_err(compute_error)?,
             need_one: u32::from(need_one),
         };
+        let tails = ProductTails {
+            left: self.tails[0],
+            right: self.tails[1],
+        };
         let mut batch = Batch::new(&self.gpu.device).map_err(compute_error)?;
         // SAFETY: groups cover exactly the live pairs. Each input access checks
         // prefix and substitutes its constant tail; partial writes are disjoint.
@@ -622,7 +641,7 @@ impl ProductDeviceColumns<AkitaField> for DeviceProduct {
                         Binding::buffer(&equality.inner),
                         Binding::buffer(&equality.outer),
                         Binding::buffer(&partials),
-                        Binding::value(&self.tails),
+                        Binding::value(&tails),
                         Binding::value(&params),
                     ],
                     Grid::linear(groups * THREADS, THREADS),

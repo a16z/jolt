@@ -85,7 +85,8 @@ kernel void spartan_product_native(
 
 template <typename F>
 F product_dense(device const F* values, constant F* tails, uint prefix, ulong row, uint column) {
-    return row < prefix ? values[row * 2 + column] : tails[column];
+    if (row < prefix) return values[row * 2 + column];
+    return tails[column];
 }
 
 template <typename F>
