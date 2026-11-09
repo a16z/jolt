@@ -36,6 +36,10 @@ use common::constants::{DEFAULT_HEAP_SIZE, RAM_START_ADDRESS};
 use std::io::Write;
 use std::path::Path;
 
+/// The endcode [`Emulator::run_test`] returns when a test guest stalls after
+/// writing a value to `tohost` that is not an HTIF exit command.
+const UNRECOGNIZED_TOHOST_ENDCODE: u64 = 1;
+
 #[derive(Clone, Debug)]
 pub struct Emulator {
     pub elf_path: Option<std::path::PathBuf>,
@@ -94,11 +98,14 @@ impl Emulator {
 
     /// Method for running [`riscv-tests`](https://github.com/riscv/riscv-tests) program.
     ///
-    /// Returns the HTIF termination code extracted from the `tohost` write:
-    /// * `0` — clean exit (RVMODEL_HALT_PASS, or PC-stall termination used by
-    ///   Jolt guests that call `platform_exit()`)
-    /// * non-zero — `tohost payload >> 1` from RVMODEL_HALT_FAIL (gp-derived,
-    ///   ACT4 uses this for signature-mismatch failures)
+    /// Returns the HTIF termination code:
+    /// * `payload >> 1` for an HTIF exit command (device 0, command 0,
+    ///   payload bit 0 set): `0` for RVMODEL_HALT_PASS, `1` for ACT4's
+    ///   RVMODEL_HALT_FAIL, the failing test number for riscv-tests;
+    /// * `0` for a PC stall with `tohost` untouched (Jolt guests that call
+    ///   `platform_exit()`);
+    /// * `UNRECOGNIZED_TOHOST_ENDCODE` (1) for a PC stall after any other
+    ///   non-zero `tohost` write, such as a non-zero command or device byte.
     ///
     /// Callers typically collapse this to 0/1 for the OS exit status; see
     /// `tracer/src/main.rs`.
@@ -113,8 +120,23 @@ impl Emulator {
             }
 
             // Jolt guests terminate via `j .`: jolt-platform's platform_exit()
-            // enters this loop for clean termination.
+            // enters this loop for clean termination. A test ELF halts instead
+            // by writing an HTIF exit command to `tohost`, which the check
+            // after each tick below catches. A guest that spins after writing
+            // any other non-zero value there tried to halt with a command this
+            // emulator does not recognize, so its outcome is unknown and must
+            // not read as a pass.
             if self.cpu.has_stalled() {
+                if self.tohost_addr != 0 {
+                    let tohost_value = self.cpu.get_mut_mmu().load_doubleword_raw(self.tohost_addr);
+                    if tohost_value != 0 {
+                        tracing::error!(
+                            "Program stalled after writing {tohost_value:#x} to tohost, \
+                             which is not an HTIF exit command"
+                        );
+                        return UNRECOGNIZED_TOHOST_ENDCODE;
+                    }
+                }
                 tracing::info!("Program exited successfully (code 0) after {cycle_count} cycles");
                 return 0;
             }
@@ -131,12 +153,13 @@ impl Emulator {
                 // cmd     : 55 .. 48
                 // payload : 47 .. 0
                 let device = (tohost_value >> 56) & 0xFF;
-                let _cmd = (tohost_value >> 48) & 0xFF;
+                let cmd = (tohost_value >> 48) & 0xFF;
                 let payload = tohost_value & 0xFFFFFFFFFFFF;
 
-                // Check if this is a syscall-proxy command (device 0x00)
-                // and if the LSB of payload is set (indicating program done)
-                if device == 0x00 && (payload & 1) == 1 {
+                // An exit is the syscall-proxy device's (0) command 0 with
+                // payload bit 0 set. Anything else is not an exit; if the
+                // guest then spins, the stall check above reports a failure.
+                if device == 0 && cmd == 0 && (payload & 1) == 1 {
                     // Extract exit code by shifting payload right by 1
                     let endcode = payload >> 1;
                     match endcode {
@@ -404,6 +427,56 @@ mod tests {
             emulator.get_address_of_symbol(&"_start".to_string()),
             Some(0x8000_0000)
         );
+    }
+
+    fn run(text: &[u32], gp: i64) -> (u64, u64) {
+        let mut emulator = emulator_with(text, &tohost_symbols(), StrtabOrder::GnuLd);
+        emulator.get_mut_cpu().x[3] = gp;
+        let endcode = emulator.run_test(false, false);
+        let tohost = emulator
+            .get_mut_cpu()
+            .get_mut_mmu()
+            .load_doubleword_raw(TOHOST_ADDR);
+        (endcode, tohost)
+    }
+
+    #[test]
+    fn run_test_returns_the_htif_exit_code() {
+        assert_eq!(run(&tohost_program(1), 0), (0, 1));
+        assert_eq!(run(&tohost_program(3), 0), (1, 3));
+        assert_eq!(run(&tohost_program(5), 0), (2, 5));
+    }
+
+    #[test]
+    fn run_test_reports_a_spin_without_a_tohost_write_as_success() {
+        assert_eq!(run(&[0x0000_006f], 0), (0, 0)); // jal x0, 0
+    }
+
+    /// The halt sequence ACT4's `Zalrsc-sc.d-00` ran when it failed: it wrote
+    /// `(gp << 1) | 1` and spun. With gp = 0x1cadd5ae9e2ac9c5 (that test's
+    /// value) the write sets the HTIF device byte; with gp = 2^47 it sets
+    /// command 1 with payload 1. Neither is an exit command, so neither run
+    /// may count as a pass.
+    #[test]
+    fn run_test_fails_a_spin_after_a_tohost_write_that_is_not_an_exit_command() {
+        let halt_with_wide_code = [
+            0x0011_9293, // slli x5, x3, 1
+            0x0012_e293, // ori  x5, x5, 1
+            0x8000_3337, // lui  x6, 0x80003
+            0x0203_1313, // slli x6, x6, 32
+            0x0203_5313, // srli x6, x6, 32
+            0x0053_3023, // sd   x5, 0(x6)
+            0x0000_006f, // jal  x0, 0
+        ];
+        assert_eq!(
+            run(&halt_with_wide_code, 0x1cad_d5ae_9e2a_c9c5),
+            (UNRECOGNIZED_TOHOST_ENDCODE, 0x395b_ab5d_3c55_938b)
+        );
+        assert_eq!(
+            run(&halt_with_wide_code, 1 << 47),
+            (UNRECOGNIZED_TOHOST_ENDCODE, 0x0001_0000_0000_0001)
+        );
+        assert_ne!(UNRECOGNIZED_TOHOST_ENDCODE, 0);
     }
 
     #[test]

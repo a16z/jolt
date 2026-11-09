@@ -40,13 +40,16 @@
 1:  j 1b;
 
 // ---------------------------------------------------------------------------
-// Halt with fail — gp holds the failing test number (non-zero).
-// Encodes endcode = gp in the payload ((gp << 1) | 1), spins. jolt-emu
-// detects the write and exits with gp (non-zero).
+// Halt with fail — gp != 1.
+// Encodes endcode 1 in the payload ((1 << 1) | 1 == 3), spins. jolt-emu
+// detects the write and exits non-zero. The endcode is a constant rather than
+// gp because gp need not fit the 47-bit endcode field. For gp >= 2^47,
+// (gp << 1) | 1 spills into the HTIF command or device byte, so the write is
+// not an exit command; and since the shift drops gp's top bit, a gp with only
+// that bit set (2^63) would even encode a clean exit.
 // ---------------------------------------------------------------------------
 #define RVMODEL_HALT_FAIL                                                      \
-    slli t0, gp, 1;                                                            \
-    ori  t0, t0, 1;                                                            \
+    li   t0, 3;                                                                \
     la   t1, tohost;                                                           \
     sd   t0, 0(t1);                                                            \
 1:  j 1b;
