@@ -61,7 +61,8 @@ tier, slotting into the same instrumented seams.
 On macOS, `--features profiling,metal` also enables `--backend metal` for
 Akita. It starts from the optimized CPU backend and selects GPU kernels for
 supported shapes. Trace commitments preserve committed-zero masks and implicit
-padding; compact instruction-RA rounds keep the CPU binding and output checks.
+padding. Instruction-RA and Booleanity cycle rounds share compact device rows,
+while retaining CPU categorical startup, binding, and output checks.
 
 ```bash
 cargo run --release -p jolt-prover --features profiling,metal -- \
@@ -70,7 +71,7 @@ cargo run --release -p jolt-prover --features profiling,metal -- \
 
 The prover timer includes source packing, upload, and first-use transformed-key
 preparation. The `metal_trace_commit_dispatch`, `metal_instruction_ra_dispatch`,
-and `metal_outer_dispatch` spans record `gpu_s` from Metal command-buffer
+and `metal_booleanity_dispatch` spans record `gpu_s` from Metal command-buffer
 timestamps. Compare this with their wall time to distinguish GPU execution from
 host preparation and synchronization. Use `--format none` for throughput
 measurements; Chrome tracing adds overhead.

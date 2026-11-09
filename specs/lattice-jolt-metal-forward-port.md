@@ -262,13 +262,15 @@ identify its callers and replace a concrete duplication or serialization cost.
 It must not put Metal types, relation formulas, or transcript logic into
 `jolt-sumcheck`.
 
-Use Spartan outer remainder as the initial contained sumcheck consumer: retain
-current CPU preparation and uniskip, then accelerate its weighted product rounds
-and fused binds. Factor shared preparation and host algebra into crate-private
-data consumed by CPU and Metal. Keep existing relation geometry and derived-table
-checks. This establishes a complete production path without first importing the
-donor's cross-stage storage graph; it is an architectural starting point, not a
-claim that this stage dominates runtime.
+Instruction RA and Booleanity retain the CPU's lazy branch tables, binding,
+categorical startup, and output checks while offloading qualified round
+reductions. They share one proof-owned compact device row buffer. The session
+keeps a weak reference, so materialization by the last consumer releases it.
+
+Spartan outer remainder stays on the optimized CPU path. Its initial GPU port
+was correct, but upload and buffer preparation alone exceeded the measured CPU
+round cost. Reconsider it when an integrated GPU producer can supply its inputs
+and the complete path improves prover time.
 
 Introduce device-neutral compute-error propagation only where the first GPU
 round requires it. Keep Metal types out of `SumcheckError` and the verifier's
