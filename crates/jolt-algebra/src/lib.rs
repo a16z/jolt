@@ -50,7 +50,7 @@
 //!
 //! - `bn254` (default) — the arkworks-backed BN254 backend.
 //! - `solinas` — the pseudo-Mersenne backend (scalar, extension, unreduced,
-//!   packed).
+//!   packed), and the ring and FFT modules built on it.
 //! - `binary` — the binary-field backend, off by default.
 //! - `asm` — opts into architecture-specific Fp128 assembly kernels on
 //!   AArch64 and x86-64. Without it, Fp128 uses portable Rust.
@@ -111,6 +111,8 @@ pub mod checked;
 mod encoding;
 mod extension;
 #[cfg(feature = "solinas")]
+pub mod fft;
+#[cfg(feature = "solinas")]
 mod fp128_accumulators;
 mod limbs;
 pub mod narrowing;
@@ -130,6 +132,8 @@ pub use algebra::{
     Accumulator, AdditiveGroup, CanonicalBytes, CanonicalEncoding, Field, JoltField,
     MaybeAllocative, MaybeEncoding, NaiveAccumulator, PseudoMersenne, Ring, WithAccumulator,
 };
+#[cfg(feature = "solinas")]
+pub use fft::SmoothFftField;
 #[cfg(feature = "solinas")]
 pub use ring::{balanced_decompose_coefficients_pow2_i8_into, CyclotomicRing};
 #[cfg(all(feature = "field-inline-guest", target_arch = "riscv64"))]
