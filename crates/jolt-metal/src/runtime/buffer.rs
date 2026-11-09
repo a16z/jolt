@@ -48,6 +48,8 @@ impl BufferAccess {
 /// checker rules out a host view while the call is active. If the runtime
 /// cannot confirm completion, the buffer remains unavailable to host reads
 /// and later dispatches.
+/// Ownership may move between threads when `T: Send`; host views still require
+/// an exclusive borrow and confirmed GPU completion.
 pub struct DeviceBuffer<T> {
     pub(crate) sys: RawBuffer,
     pub(crate) access: BufferAccess,

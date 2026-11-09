@@ -255,6 +255,13 @@ pub(crate) struct RawBuffer {
     allocated: usize,
 }
 
+// SAFETY: this owns a retained, shared-storage Metal allocation with no
+// thread affinity. Moving it preserves the stable contents pointer and does
+// not create another host owner. Host views require an exclusive borrow and
+// DeviceBuffer checks GPU completion before exposing them. RawBuffer remains
+// !Sync, so this does not permit simultaneous host access from several threads.
+unsafe impl Send for RawBuffer {}
+
 impl RawBuffer {
     fn new(raw: Retained<ProtocolObject<dyn MTLBuffer>>) -> Result<Self, MetalError> {
         let (contents, allocated) = objc("buffer contents", || (raw.contents(), raw.length()))?;

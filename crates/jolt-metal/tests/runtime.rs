@@ -119,7 +119,10 @@ mod gpu {
             .zip(&b32)
             .map(|(x, y)| x.wrapping_add(*y))
             .collect();
-        assert_eq!(out.read().unwrap(), expected);
+        let actual = std::thread::spawn(move || out.read().unwrap().to_vec())
+            .join()
+            .unwrap();
+        assert_eq!(actual, expected);
         assert_eq!(out32.read().unwrap(), expected32);
     }
 
