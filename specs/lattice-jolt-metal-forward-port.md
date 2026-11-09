@@ -559,3 +559,38 @@ other running work. This does not block spec review.
 - [Donor Metal backend](https://github.com/a16z/jolt/tree/7aa549cc9ffce0abe1578609b233d8133d6c14f8/crates/jolt-kernels/src/metal)
 - [Donor benchmark suite](https://github.com/a16z/jolt/blob/7aa549cc9ffce0abe1578609b233d8133d6c14f8/scripts/akita_metal_matrix.py)
 - CPU padding improvements: `31e115820` (#2141), `e1d8e02b5` (#2182).
+
+
+## InstructionInput native producer candidate
+
+The candidate keeps CPU native round 0 and replaces first-bind operand
+materialization plus subsequent packed/dense rounds. Its source is the canonical
+`InstructionInputRow` extraction: four u64 operands and two raw immediate limbs
+in a padding-free 48-byte record, plus one canonical u16 flag code per original
+row pair. A bounded tile writes directly to shared `MaybeUninit` storage; there
+is no host field-vector mirror or source-copy upload. First-bind output is
+initialized once by disjoint completed tiles before it becomes a typed field
+buffer. Later binds use distinct input/output allocations.
+
+The CPU and GPU use the same flag-LUT owner. Packed words progress through
+2/4/8/16 bits per flag; the fifth bind decodes the existing 16-bit LUT and writes
+five dense flag columns. Dense GPU execution continues to a 4096-row CPU tail.
+The fused reductions return q(0), the quadratic coefficient, and q(1) only when
+the current equality endpoint requires it. Host code adds the constant suffix,
+checks the cubic through the existing Gruen routine, and advances progress once.
+
+At a full T27 prefix, compact source writes total about 6.125 GiB, initial
+resident fields/words occupy 6 GiB, and the largest old/new bind overlap is
+9 GiB. Source staging is normally bounded to 49 MiB. Admission checks single
+buffer and working-set bounds; runtime allocation still accounts for other live
+buffers. Setup owns only the device, pipelines and typed unused bindings.
+Witness-derived storage belongs to this member and is released at CPU handoff.
+
+The reusable typed initialization runtime change is independent of register
+kernel routing. Signed-i128 conversion stays private to InstructionInput until
+another active consumer requires that API. One existing reference-parity helper
+covers multiple source tiles, an odd prefix, a nonzero tail, independent flags,
+MIN/MAX immediates, every packed width, dense continuation, an exceptional GPU
+equality endpoint, and the CPU handoff. Compilation, Metal validation and an
+inclusive full-proof timing must pass before accepting this candidate; no
+performance gain is inferred from its buffer sizes.

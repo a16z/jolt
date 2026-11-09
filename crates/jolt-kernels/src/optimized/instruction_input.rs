@@ -9,7 +9,11 @@
 //! against the verifier.
 
 mod flags;
-use flags::PackedFlags;
+use flags::{FlagTable, PackedFlags};
+use std::sync::Arc;
+
+#[cfg(feature = "metal")]
+pub(crate) mod metal;
 
 use jolt_claims::protocols::jolt::relations::instruction::InstructionInputOutputClaims;
 use jolt_claims::protocols::jolt::{InstructionInputPublic, JoltDerivedId};
@@ -122,7 +126,7 @@ impl OptimizedInstructionInput {
         };
         let mut len = prefix_cycles.div_ceil(2);
         let capacity = len;
-        let mut bits = PackedFlags::<F>::FIRST_BITS;
+        let mut bits = FlagTable::<F>::FIRST_BITS;
         let mut peak = 0usize;
         loop {
             let lut = 1usize << bits;
@@ -130,7 +134,7 @@ impl OptimizedInstructionInput {
             let buffer = len.div_ceil(2);
             let operands = capacity.checked_mul(NUM_TABLES / 2)?;
             peak = peak.max(bytes(operands.checked_add(buffer)?.checked_add(lut)?, len)?);
-            if bits == PackedFlags::<F>::SATURATED_BITS {
+            if bits == FlagTable::<F>::SATURATED_BITS {
                 let flags = bound.checked_mul(NUM_TABLES / 2)?;
                 return Some(peak.max(bytes(operands.checked_add(flags)?.checked_add(lut)?, len)?));
             }
@@ -159,6 +163,39 @@ impl<F: JoltField> PrepareKernel<F, InstructionInput<F>> for OptimizedInstructio
     }
 }
 
+struct InputPrepared<F: JoltField> {
+    device: Box<dyn InputDevice<F>>,
+    terms: [F; 3],
+}
+
+/// Optional arithmetic owner; canonical extraction, flag tables, Gruen
+/// checks and opening order remain in the instruction-input implementation.
+trait InputCompute<F: JoltField>: Send + Sync {
+    fn admits(&self, prefix: usize, log_t: usize) -> bool;
+    fn materialize(
+        &self,
+        rows: &BundleStore<InstructionInputRow>,
+        prefix: usize,
+        challenge: F,
+        tail: [F; NUM_TABLES],
+        eq: &GruenSplitEqPolynomial<F>,
+        gamma: F,
+    ) -> Result<InputPrepared<F>, SumcheckError<F>>;
+}
+
+struct InputStep<F: JoltField> {
+    terms: [F; 3],
+    dense: Option<Vec<Vec<F>>>,
+}
+
+trait InputDevice<F: JoltField>: crate::MaybeAllocative + Send {
+    fn bind_round(
+        &mut self,
+        challenge: F,
+        eq: &GruenSplitEqPolynomial<F>,
+    ) -> Result<InputStep<F>, SumcheckError<F>>;
+}
+
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 enum InputState<F: JoltField> {
     Native(BundleStore<InstructionInputRow>),
@@ -167,6 +204,7 @@ enum InputState<F: JoltField> {
         flags: PackedFlags<F>,
     },
     Dense(Vec<Vec<F>>),
+    Device(Box<dyn InputDevice<F>>),
 }
 
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
@@ -175,6 +213,8 @@ pub struct OptimizedInstructionInputKernel<F: JoltField> {
     #[cfg_attr(feature = "allocative", allocative(skip))]
     gamma: F,
     state: InputState<F>,
+    #[cfg_attr(feature = "allocative", allocative(skip))]
+    compute: Option<Arc<dyn InputCompute<F>>>,
     prefix_len: usize,
     #[cfg_attr(feature = "allocative", allocative(skip))]
     tail: [F; NUM_TABLES],
@@ -221,6 +261,7 @@ impl<F: JoltField> OptimizedInstructionInputKernel<F> {
             progress: RoundProgress::new(log_t),
             gamma,
             state: InputState::Native(rows),
+            compute: None,
             gruen: GruenSplitEqPolynomial::new(r_product, BindingOrder::LowToHigh),
         })
     }
@@ -410,6 +451,10 @@ impl<F: JoltField> OptimizedInstructionInputKernel<F> {
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
         match &self.state {
+            InputState::Device(_) => Err(SumcheckError::Compute {
+                backend: "instruction input",
+                reason: "resident round requires its fused bind terms".into(),
+            }),
             InputState::Native(rows) => {
                 let suffix = self.gruen.suffix_weight(self.prefix_len.div_ceil(2))
                     * self.operand_product(&self.tail);
@@ -531,17 +576,42 @@ impl<F: JoltField> OptimizedInstructionInputKernel<F> {
         })
     }
 
-    fn bind(&mut self, challenge: F) -> Result<(), SumcheckError<F>> {
+    fn bind(&mut self, challenge: F) -> Result<Option<[F; 3]>, SumcheckError<F>> {
+        let mut terms = None;
         self.gruen.bind(challenge);
         match &mut self.state {
+            InputState::Device(device) => {
+                let step = device.bind_round(challenge, &self.gruen)?;
+                terms = Some(step.terms);
+                if let Some(dense) = step.dense {
+                    self.state = InputState::Dense(dense);
+                }
+            }
             InputState::Native(rows) => {
-                self.state = Self::materialize_half(
-                    rows,
-                    challenge,
-                    self.prefix_len.div_ceil(2),
-                    core::array::from_fn(|i| self.tail[2 * i] == F::one()),
-                )
-                .map_err(row_extraction_error)?;
+                if let Some(compute) = self
+                    .compute
+                    .as_ref()
+                    .filter(|compute| compute.admits(self.prefix_len, self.progress.total()))
+                {
+                    let prepared = compute.materialize(
+                        rows,
+                        self.prefix_len,
+                        challenge,
+                        self.tail,
+                        &self.gruen,
+                        self.gamma,
+                    )?;
+                    self.state = InputState::Device(prepared.device);
+                    terms = Some(prepared.terms);
+                } else {
+                    self.state = Self::materialize_half(
+                        rows,
+                        challenge,
+                        self.prefix_len.div_ceil(2),
+                        core::array::from_fn(|i| self.tail[2 * i] == F::one()),
+                    )
+                    .map_err(row_extraction_error)?;
+                }
                 purge_retained_memory(self.progress.total());
             }
             InputState::Packed { operands, flags } => {
@@ -573,11 +643,15 @@ impl<F: JoltField> OptimizedInstructionInputKernel<F> {
         }
         self.prefix_len = self.prefix_len.div_ceil(2);
         self.progress.advance();
-        Ok(())
+        Ok(terms)
     }
 
     fn final_values(&self) -> Result<[F; NUM_TABLES], WitnessError> {
         match &self.state {
+            InputState::Device(_) => Err(WitnessError::InvalidWitnessData {
+                label: "instruction input",
+                reason: "resident input must hand off before final claims".into(),
+            }),
             InputState::Native(rows) => Ok(rows.access().row(0)?.field_values()),
             InputState::Packed { operands, flags } => Ok(core::array::from_fn(|i| {
                 if i % 2 == 0 {
@@ -605,13 +679,19 @@ impl<F: JoltField> ProveRounds<F> for OptimizedInstructionInputKernel<F> {
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
         if let Some(challenge) = bind {
-            self.bind(challenge)?;
+            if let Some([q0, q2, q1]) = self.bind(challenge)? {
+                let suffix = self.gruen.suffix_weight(self.prefix_len.div_ceil(2))
+                    * self.operand_product(&self.tail);
+                return self
+                    .gruen
+                    .checked_cubic(q0 + suffix, q2, previous_claim, round, || q1 + suffix);
+            }
         }
         self.message(round, previous_claim)
     }
 
     fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {
-        self.bind(bind)
+        self.bind(bind).map(|_| ())
     }
 }
 
@@ -700,15 +780,25 @@ mod tests {
     }
 
     fn assert_parity(log_t: usize, seed: u64, prefix: usize, boolean_challenges: bool) {
-        assert_parity_field::<Fr>(log_t, seed, prefix, boolean_challenges, 0xDADA_CAFE);
+        assert_parity_field::<Fr>(
+            log_t,
+            seed,
+            prefix,
+            boolean_challenges,
+            0xDADA_CAFE,
+            None,
+            None,
+        );
     }
 
-    fn assert_parity_field<F: JoltField>(
+    pub(super) fn assert_parity_field<F: JoltField>(
         log_t: usize,
         seed: u64,
         prefix: usize,
         boolean_challenges: bool,
         gamma_value: u64,
+        compute: Option<std::sync::Arc<dyn super::InputCompute<F>>>,
+        exceptional_round: Option<usize>,
     ) {
         let fr = F::from_u64;
         let mut state = seed;
@@ -759,7 +849,7 @@ mod tests {
                     .collect()
             })
             .collect();
-        let r_product: Vec<F> = (0..log_t)
+        let mut r_product: Vec<F> = (0..log_t)
             .map(|i| {
                 if boolean_challenges {
                     fr((i % 2) as u64)
@@ -768,6 +858,9 @@ mod tests {
                 }
             })
             .collect();
+        if let Some(round) = exceptional_round {
+            r_product[log_t - 1 - round] = F::zero();
+        }
         let gamma = fr(gamma_value);
         let relation = InstructionInput::<F>::new(TraceDimensions::new(log_t), r_product.clone());
 
@@ -819,6 +912,8 @@ mod tests {
             OptimizedInstructionInputKernel::new(&r_product, BundleStore::Retained(rows), gamma)
                 .unwrap();
 
+        let require_device = compute.is_some();
+        optimized.compute = compute;
         let eq = eq_table(&r_product);
         let mut claim = fr(0);
         for j in 0..1usize << log_t {
@@ -835,6 +930,13 @@ mod tests {
             let bind = round.checked_sub(1).map(challenge);
             let reference_poly = reference.prove_round(bind, round, claim).unwrap();
             let optimized_poly = optimized.prove_round(bind, round, claim).unwrap();
+            if require_device && round == 1 {
+                assert!(matches!(&optimized.state, super::InputState::Device(_)));
+            }
+            if require_device && round == 5 {
+                // The GPU continues through the packed-to-dense transition.
+                assert!(matches!(&optimized.state, super::InputState::Device(_)));
+            }
             assert_eq!(
                 reference_poly.coefficients(),
                 optimized_poly.coefficients(),
@@ -844,6 +946,9 @@ mod tests {
         }
         reference.finish_rounds(challenge(rounds - 1)).unwrap();
         optimized.finish_rounds(challenge(rounds - 1)).unwrap();
+        if require_device {
+            assert!(matches!(&optimized.state, super::InputState::Dense(_)));
+        }
 
         let reference_outputs = reference.output_claims(&input_claims).unwrap();
         let optimized_outputs = optimized.output_claims(&input_claims).unwrap();
@@ -907,6 +1012,8 @@ mod tests {
                             prefix,
                             exceptional,
                             gamma,
+                            None,
+                            None,
                         );
                     }
                 }

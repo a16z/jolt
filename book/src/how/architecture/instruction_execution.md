@@ -222,6 +222,24 @@ Due to their similarities, we batch the read-checking and these $\widetilde{\tex
 
 ## Other sumchecks
 
+### Instruction input virtualization
+
+The instruction-input sumcheck keeps five operand/flag pairs separate. Folding
+an already-multiplied pair would lose the quadratic term needed by later round
+messages. The optimized CPU kernel evaluates the first round from native rows,
+then stores the operands as fields and the flags as 2-, 4-, 8-, and 16-bit
+patterns. One challenge-dependent lookup table evaluates every flag pattern.
+The next bind materializes the five flags as ordinary field columns.
+
+The Metal backend preserves that progression. After the CPU first round, a
+bounded producer writes canonical native operands and paired flag codes directly
+into shared device storage. The GPU materializes the first bound operand columns
+and combines each later bind with its next round-message reduction. It retains
+the dense columns until at most 4096 rows remain, then restores the CPU state.
+The constant suffix stays implicit; its equality-weighted contribution and
+Gruen checks remain on the host. Full signed 128-bit immediates and all ten
+opening claims are preserved.
+
 ### ra virtualization
 
 The lookup tables used for instruction execution are of size $K = 2^{128}$, so we set $d = 16$ as our decomposition parameter such that $K^{1/d} = 2^8$.
