@@ -1,5 +1,5 @@
 struct LazyRaParams {
-    uint prefix, pairs, width, columns, chunk_bits, active_virtuals, in_len, need_zero;
+    uint prefix, pairs, width, columns, chunk_bits, active_virtuals, in_len, need_zero, dense;
 };
 
 uint ra_chunk(ulong2 index, uint column, constant LazyRaParams& p) {
@@ -18,6 +18,8 @@ kernel void lazy_ra_product(
     device F* partials [[buffer(4)]],
     constant LazyRaParams& p [[buffer(5)]],
     constant ulong4& tail [[buffer(6)]],
+    device const F* dense [[buffer(7)]],
+    device const F* tails [[buffer(8)]],
     uint group [[threadgroup_position_in_grid]],
     uint local [[thread_index_in_threadgroup]],
     uint threads [[threads_per_threadgroup]],
@@ -39,6 +41,13 @@ kernel void lazy_ra_product(
         for (uint batch = 0; batch < p.active_virtuals; batch++) {
             F low[4], high[4];
             for (uint f = 0; f < 4; f++) { low[f] = F::zero(); high[f] = F::zero(); }
+            if (p.dense) {
+                for (uint f = 0; f < 4; f++) {
+                    uint column = 4 * batch + f;
+                    low[f] = 2 * pair < p.prefix ? dense[2 * pair * p.columns + column] : tails[column];
+                    high[f] = 2 * pair + 1 < p.prefix ? dense[(2 * pair + 1) * p.columns + column] : tails[column];
+                }
+            } else {
             for (uint branch = 0; branch < p.width; branch++) {
                 ulong lo_row = 2 * pair * p.width + branch;
                 ulong hi_row = lo_row + p.width;
@@ -51,6 +60,7 @@ kernel void lazy_ra_product(
                     low[f] = low[f] + tables[base + ra_chunk(lo, column, p)];
                     high[f] = high[f] + tables[base + ra_chunk(hi, column, p)];
                 }
+            }
             }
             F delta[4];
             for (uint f = 0; f < 4; f++) delta[f] = high[f] - low[f];

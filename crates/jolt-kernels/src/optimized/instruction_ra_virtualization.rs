@@ -94,7 +94,7 @@ pub struct OptimizedInstructionRaVirtualizationKernel<F: JoltField> {
     /// batch's first table pre-scaled by `γ^v` so the round loop needs no
     /// batching multiplies — served lazily off the shared rows for the
     /// first four binds instead of `N × T` dense.
-    folded_ra: LazyFoldedRa<F, LookupIndexChunks>,
+    folded_ra: Option<LazyFoldedRa<F, LookupIndexChunks>>,
     gruen: GruenSplitEqPolynomial<F>,
 }
 
@@ -206,7 +206,7 @@ impl<F: JoltField> OptimizedInstructionRaVirtualizationKernel<F> {
                 .iter()
                 .take_while(|power| !power.is_zero())
                 .count(),
-            folded_ra,
+            folded_ra: Some(folded_ra),
             gruen: GruenSplitEqPolynomial::new(instruction_read_raf_cycle, BindingOrder::LowToHigh),
         })
     }
@@ -228,8 +228,13 @@ impl<F: JoltField> OptimizedInstructionRaVirtualizationKernel<F> {
         if n < 2 {
             return self.message_single_factor(round, previous_claim);
         }
-        let num_committed = self.folded_ra.num_polys();
-        let folded_ra = &self.folded_ra;
+        let folded_ra = self
+            .folded_ra
+            .as_ref()
+            .ok_or(SumcheckError::MissingEvaluationSource {
+                kind: "instruction RA host state",
+            })?;
+        let num_committed = folded_ra.num_polys();
         let paired = folded_ra.paired_lo_hi(num_committed);
         let gather = |row, pairs: &mut [(F, F)]| {
             if let Some(paired) = &paired {
@@ -376,8 +381,13 @@ impl<F: JoltField> OptimizedInstructionRaVirtualizationKernel<F> {
         round: usize,
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
-        let num_committed = self.folded_ra.num_polys();
-        let folded_ra = &self.folded_ra;
+        let folded_ra = self
+            .folded_ra
+            .as_ref()
+            .ok_or(SumcheckError::MissingEvaluationSource {
+                kind: "instruction RA host state",
+            })?;
+        let num_committed = folded_ra.num_polys();
         let prefix_pairs = folded_ra.prefix_len().div_ceil(2);
         let tail = folded_ra
             .tail_values()
@@ -424,9 +434,19 @@ impl<F: JoltField> OptimizedInstructionRaVirtualizationKernel<F> {
             .checked_round_poly(&mut q_evals, previous_claim, round)
     }
 
-    fn bind(&mut self, challenge: F) {
+    fn bind(&mut self, challenge: F) -> Result<(), SumcheckError<F>> {
+        self.folded_ra
+            .as_mut()
+            .ok_or(SumcheckError::MissingEvaluationSource {
+                kind: "instruction RA host state",
+            })?
+            .bind(challenge);
+        self.advance_bind(challenge);
+        Ok(())
+    }
+
+    fn advance_bind(&mut self, challenge: F) {
         self.gruen.bind(challenge);
-        self.folded_ra.bind(challenge);
         self.progress.advance();
     }
 }
@@ -443,13 +463,13 @@ impl<F: JoltField> ProveRounds<F> for OptimizedInstructionRaVirtualizationKernel
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
         if let Some(challenge) = bind {
-            self.bind(challenge);
+            self.bind(challenge)?;
         }
         self.message(round, previous_claim)
     }
 
     fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {
-        self.bind(bind);
+        self.bind(bind)?;
         Ok(())
     }
 }
@@ -464,7 +484,13 @@ impl<F: JoltField> SumcheckKernel<F> for OptimizedInstructionRaVirtualizationKer
         self.progress.require_complete()?;
         // Unscale the batch-first tables' γ^v pre-scaling back to the
         // committed polynomials' claims.
-        let mut committed_instruction_ra = self.folded_ra.final_values();
+        let mut committed_instruction_ra = self
+            .folded_ra
+            .as_ref()
+            .ok_or(SumcheckKernelError::InvariantViolation {
+                reason: "instruction RA host state missing at extraction",
+            })?
+            .final_values();
         for (index, value) in committed_instruction_ra.iter_mut().enumerate() {
             if index % self.num_committed_per_virtual == 0 {
                 *value *= self.opening_unscale[index / self.num_committed_per_virtual];

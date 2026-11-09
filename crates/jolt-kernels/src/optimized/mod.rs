@@ -211,3 +211,6 @@ pub(crate) mod field_registers_testing;
 pub(crate) mod parity;
 #[cfg(test)]
 pub(crate) mod testing;
+
+#[cfg(feature = "metal")]
+mod metal_ra;

@@ -9,6 +9,7 @@ use jolt_metal::shaders::FIELD_HEADERS;
 use jolt_metal::MetalError;
 
 use super::super::lazy_ra::ChunkIndexSource;
+use super::super::metal_ra::{DeviceRa, MetalRaFold, CPU_TAIL_ROWS};
 use super::super::metal_rows::ResidentInstructionRows;
 use super::*;
 
@@ -27,7 +28,11 @@ impl MetalInstructionRa {
             .source("lazy_product.metal", include_str!("lazy_product.metal"))
             .instantiate::<AkitaField>("lazy_ra_product");
         let library = ShaderLibrary::compile(&device, &spec)?;
-        Ok(Self(Arc::new(RaGpu { device, library })))
+        Ok(Self(Arc::new(RaGpu {
+            device,
+            library,
+            fold: MetalRaFold::new()?,
+        })))
     }
 }
 
@@ -42,8 +47,8 @@ impl PrepareKernel<AkitaField, InstructionRaVirtualization<AkitaField>> for Meta
         KernelError<AkitaField>,
     > {
         let cpu = OptimizedInstructionRaVirtualizationKernel::prepare(session, witness, inputs)?;
-        let indices = match &cpu.folded_ra {
-            LazyFoldedRa::Lazy { source, .. } => {
+        let indices = match cpu.folded_ra.as_ref() {
+            Some(LazyFoldedRa::Lazy { source, .. }) => {
                 Some(ResidentInstructionRows::shared(session, source.rows())?)
             }
             _ => None,
@@ -51,6 +56,8 @@ impl PrepareKernel<AkitaField, InstructionRaVirtualization<AkitaField>> for Meta
         Ok(Box::new(MetalInstructionRaKernel {
             cpu,
             indices,
+            device: None,
+            tail_rows: CPU_TAIL_ROWS,
             gpu: Arc::clone(&self.0),
         }))
     }
@@ -59,6 +66,7 @@ impl PrepareKernel<AkitaField, InstructionRaVirtualization<AkitaField>> for Meta
 struct RaGpu {
     device: Device,
     library: ShaderLibrary,
+    fold: MetalRaFold,
 }
 
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
@@ -66,6 +74,8 @@ struct MetalInstructionRaKernel {
     cpu: OptimizedInstructionRaVirtualizationKernel<AkitaField>,
     #[cfg_attr(feature = "allocative", allocative(skip))]
     indices: Option<Arc<ResidentInstructionRows>>,
+    device: Option<DeviceRa>,
+    tail_rows: usize,
     #[cfg_attr(feature = "allocative", allocative(skip))]
     gpu: Arc<RaGpu>,
 }
@@ -76,52 +86,71 @@ impl MetalInstructionRaKernel {
         round: usize,
         previous_claim: AkitaField,
     ) -> Result<Option<UnivariatePoly<AkitaField>>, SumcheckError<AkitaField>> {
-        let LazyFoldedRa::Lazy {
-            tables,
-            width,
-            factors: 1,
-            prefix_len,
-            source,
-            ..
-        } = &self.cpu.folded_ra
-        else {
-            self.indices = None;
-            return Ok(None);
-        };
-        let radix = tables.first().map_or(0, |table| table.len() / width);
-        if self.cpu.num_committed_per_virtual != 4
-            || !matches!(*width, 2 | 4 | 8)
-            || !matches!(radix, 16 | 256)
-            || tables.len() * radix.ilog2() as usize > 128
-        {
-            return Ok(None);
-        }
         let invalid = |reason: &str| MetalError::InvalidDispatch {
             pipeline: "lazy_ra_product".into(),
             reason: reason.into(),
         };
-        if tables.len() != source.num_columns()
-            || tables.iter().any(|table| table.len() != width * radix)
-        {
-            return Err(compute_error(invalid(
-                "branch tables disagree with the source geometry",
-            )));
-        }
-        let resident = self
-            .indices
-            .as_ref()
-            .ok_or_else(|| compute_error(invalid("missing source owner")))?
-            .resident(&self.gpu.device)
-            .map_err(compute_error)?;
-        let indices = resident
-            .as_ref()
-            .ok_or_else(|| compute_error(invalid("missing source")))?;
-        if indices.prefix.len() != *prefix_len {
-            return Err(compute_error(invalid(
-                "resident source prefix disagrees with lazy state",
-            )));
-        }
-        let pairs = self.cpu.folded_ra.prefix_len().div_ceil(2);
+        let (tables, width, bits, prefix, tails, columns) = if let Some(device) = &self.device {
+            (
+                &[][..],
+                0,
+                0,
+                device.prefix,
+                device.tails.as_slice(),
+                device.tails.len(),
+            )
+        } else {
+            let Some(LazyFoldedRa::Lazy {
+                tables,
+                width,
+                factors: 1,
+                prefix_len,
+                source,
+                tail,
+                ..
+            }) = self.cpu.folded_ra.as_ref()
+            else {
+                self.indices = None;
+                return Ok(None);
+            };
+            let radix = tables.first().map_or(0, |table| table.len() / width);
+            if self.cpu.num_committed_per_virtual != 4
+                || !matches!(*width, 2 | 4 | 8)
+                || !matches!(radix, 16 | 256)
+                || tables.len() * radix.ilog2() as usize > 128
+            {
+                return Ok(None);
+            }
+            if tables.len() != source.num_columns()
+                || tables.iter().any(|table| table.len() != width * radix)
+            {
+                return Err(compute_error(invalid(
+                    "branch tables disagree with source geometry",
+                )));
+            }
+            (
+                tables.as_slice(),
+                *width,
+                radix.ilog2() as usize,
+                prefix_len.div_ceil(*width),
+                tail.as_slice(),
+                tables.len(),
+            )
+        };
+        let resident = if self.device.is_none() {
+            Some(
+                self.indices
+                    .as_ref()
+                    .ok_or_else(|| compute_error(invalid("missing source owner")))?
+                    .resident(&self.gpu.device)
+                    .map_err(compute_error)?,
+            )
+        } else {
+            None
+        };
+        let uploaded = resident.as_ref().and_then(|guard| guard.as_ref());
+        let source_prefix = uploaded.map_or(prefix, |rows| rows.prefix.len());
+        let pairs = prefix.div_ceil(2);
         let eq = &self.cpu.gruen;
         let in_len = eq.e_in_current_len();
         if in_len == 0 || pairs.div_ceil(in_len) > eq.e_out_current_len() {
@@ -139,23 +168,35 @@ impl MetalInstructionRaKernel {
             );
             let _span = span.enter();
             let dimensions = [
-                *prefix_len,
+                source_prefix,
                 pairs,
-                *width,
-                tables.len(),
-                radix.ilog2() as usize,
+                width,
+                columns,
+                bits,
                 self.cpu.active_virtuals,
                 in_len,
                 usize::from(need_zero),
+                usize::from(self.device.is_some()),
             ];
-            let mut parameters = [0u32; 8];
+            let mut parameters = [0u32; 9];
             for (out, value) in parameters.iter_mut().zip(dimensions) {
                 *out = u32::try_from(value)
                     .map_err(|_| compute_error(invalid("shape exceeds 32-bit indexing")))?;
             }
             let flat: Vec<_> = tables.iter().flatten().copied().collect();
-            let tables =
-                DeviceBuffer::from_slice(&self.gpu.device, &flat).map_err(compute_error)?;
+            let placeholder = [AkitaField::zero()];
+            let tables = DeviceBuffer::from_slice(
+                &self.gpu.device,
+                if flat.is_empty() { &placeholder } else { &flat },
+            )
+            .map_err(compute_error)?;
+            let empty_rows =
+                DeviceBuffer::from_slice(&self.gpu.device, &[[0u64; 4]]).map_err(compute_error)?;
+            let device_tails =
+                DeviceBuffer::from_slice(&self.gpu.device, tails).map_err(compute_error)?;
+            let (indices, packed_tail) =
+                uploaded.map_or((&empty_rows, [0; 4]), |rows| (&rows.prefix, rows.tail));
+            let dense = self.device.as_ref().map_or(&tables, |state| &state.values);
             let e_in = DeviceBuffer::from_slice(&self.gpu.device, eq.e_in_current())
                 .map_err(compute_error)?;
             let e_out = DeviceBuffer::from_slice(&self.gpu.device, eq.e_out_current())
@@ -193,13 +234,15 @@ impl MetalInstructionRaKernel {
                     .dispatch_unchecked(
                         pipeline,
                         &[
-                            Binding::buffer(&indices.prefix),
+                            Binding::buffer(indices),
                             Binding::buffer(&tables),
                             Binding::buffer(&e_in),
                             Binding::buffer(&e_out),
                             Binding::buffer(&partials),
                             Binding::value(&parameters),
-                            Binding::value(&indices.tail),
+                            Binding::value(&packed_tail),
+                            Binding::buffer(dense),
+                            Binding::buffer(&device_tails),
                         ],
                         Grid::linear(groups * group_size, group_size),
                     )
@@ -214,10 +257,7 @@ impl MetalInstructionRaKernel {
             }
         }
         let suffix = eq.suffix_weight(pairs)
-            * self
-                .cpu
-                .folded_ra
-                .tail_values()
+            * tails
                 .chunks_exact(4)
                 .take(self.cpu.active_virtuals)
                 .map(|group| group.iter().copied().product::<AkitaField>())
@@ -231,32 +271,130 @@ impl MetalInstructionRaKernel {
     }
 }
 
-impl ProveRounds<AkitaField> for MetalInstructionRaKernel {
-    fn num_rounds(&self) -> usize {
-        self.cpu.num_rounds()
+impl MetalInstructionRaKernel {
+    fn restore_cpu(&mut self) -> Result<(), SumcheckError<AkitaField>> {
+        if let Some(device) = self.device.take() {
+            self.cpu.folded_ra = Some(device.restore().map_err(compute_error)?);
+        }
+        Ok(())
     }
 
-    fn prove_round(
+    fn try_materialize(
+        &mut self,
+        challenge: AkitaField,
+        minimum: usize,
+    ) -> Result<bool, SumcheckError<AkitaField>> {
+        let Some(folded) = self.cpu.folded_ra.as_ref() else {
+            return Ok(false);
+        };
+        let Some(prefix) = folded.next_materialized_len() else {
+            return Ok(false);
+        };
+        let LazyFoldedRa::Lazy {
+            tables,
+            width,
+            factors: 1,
+            source,
+            prefix_len,
+            tail,
+            ..
+        } = folded
+        else {
+            return Ok(false);
+        };
+        if *prefix_len < minimum
+            || self.cpu.num_committed_per_virtual != 4
+            || !matches!(source.chunk_bits, 4 | 8)
+            || source.chunks != tables.len()
+        {
+            return Ok(false);
+        }
+        let selectors: Vec<_> = (0..tables.len())
+            .map(|column| {
+                let shift = (tables.len() - 1 - column) * source.chunk_bits;
+                [u32::from(shift >= 64), (shift % 64) as u32]
+            })
+            .collect();
+        let owner = self.indices.as_ref().ok_or_else(|| {
+            compute_error(MetalError::InvalidDispatch {
+                pipeline: "resident RA".into(),
+                reason: "missing compact rows".into(),
+            })
+        })?;
+        let resident = owner.resident(&self.gpu.device).map_err(compute_error)?;
+        let rows = resident.as_ref().ok_or_else(|| {
+            compute_error(MetalError::InvalidDispatch {
+                pipeline: "resident RA".into(),
+                reason: "missing uploaded rows".into(),
+            })
+        })?;
+        let device = self
+            .gpu
+            .fold
+            .materialize(rows, tables, *width, &selectors, prefix, tail, challenge)
+            .map_err(compute_error)?;
+        drop(resident);
+        crate::mem::drop_in_background_thread(self.cpu.folded_ra.take());
+        self.device = Some(device);
+        self.indices = None;
+        self.cpu.advance_bind(challenge);
+        Ok(true)
+    }
+
+    fn round_with_cutoff(
         &mut self,
         bind: Option<AkitaField>,
         round: usize,
-        previous_claim: AkitaField,
+        claim: AkitaField,
+        minimum: usize,
     ) -> Result<UnivariatePoly<AkitaField>, SumcheckError<AkitaField>> {
-        if let Some(challenge) = bind {
-            self.cpu.bind(challenge);
+        if self
+            .device
+            .as_ref()
+            .is_some_and(|state| state.prefix <= self.tail_rows)
+        {
+            self.restore_cpu()?;
         }
-        let admitted = matches!(&self.cpu.folded_ra, LazyFoldedRa::Lazy { prefix_len, .. } if *prefix_len >= MIN_GPU_PREFIX);
+        if let Some(challenge) = bind {
+            if let Some(device) = &self.device {
+                self.device = Some(
+                    self.gpu
+                        .fold
+                        .bind(device, challenge)
+                        .map_err(compute_error)?,
+                );
+                self.cpu.advance_bind(challenge);
+            } else if !self.try_materialize(challenge, minimum)? {
+                self.cpu.bind(challenge)?;
+            }
+        }
+        let admitted = self.device.is_some()
+            || matches!(self.cpu.folded_ra.as_ref(), Some(LazyFoldedRa::Lazy { prefix_len, .. }) if *prefix_len >= minimum);
         if admitted {
-            if let Some(message) = self.gpu_message(round, previous_claim)? {
+            if let Some(message) = self.gpu_message(round, claim)? {
                 return Ok(message);
             }
         } else {
             self.indices = None;
         }
-        self.cpu.message(round, previous_claim)
+        self.cpu.message(round, claim)
     }
+}
 
+impl ProveRounds<AkitaField> for MetalInstructionRaKernel {
+    fn num_rounds(&self) -> usize {
+        self.cpu.num_rounds()
+    }
+    fn prove_round(
+        &mut self,
+        bind: Option<AkitaField>,
+        round: usize,
+        claim: AkitaField,
+    ) -> Result<UnivariatePoly<AkitaField>, SumcheckError<AkitaField>> {
+        self.round_with_cutoff(bind, round, claim, MIN_GPU_PREFIX)
+    }
     fn finish_rounds(&mut self, bind: AkitaField) -> Result<(), SumcheckError<AkitaField>> {
+        self.restore_cpu()?;
         self.indices = None;
         self.cpu.finish_rounds(bind)
     }

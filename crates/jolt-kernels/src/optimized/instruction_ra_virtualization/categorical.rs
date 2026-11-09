@@ -37,13 +37,14 @@ impl<F: JoltField> OptimizedInstructionRaVirtualizationKernel<F> {
         if self.num_committed_per_virtual != 4 {
             return None;
         }
+        let folded_ra = self.folded_ra.as_ref()?;
         let LazyFoldedRa::Lazy {
             tables,
             width: 1,
             factors: 1,
             source,
             ..
-        } = &self.folded_ra
+        } = folded_ra
         else {
             return None;
         };
@@ -70,7 +71,7 @@ impl<F: JoltField> OptimizedInstructionRaVirtualizationKernel<F> {
                             .collect()
                     }),
                     tail_index: ((tail_index >> shift) & group_mask) as usize,
-                    tail_value: self.folded_ra.tail_values()[4 * g..4 * g + 4]
+                    tail_value: folded_ra.tail_values()[4 * g..4 * g + 4]
                         .iter()
                         .copied()
                         .product(),
