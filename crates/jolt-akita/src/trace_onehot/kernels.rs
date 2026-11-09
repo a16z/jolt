@@ -57,6 +57,16 @@ impl ExternalInnerCommitmentOperation<AkitaField> for TraceOneHotColumnCommitOpe
             .map(|source| source.payload::<TraceOneHotColumn>())
             .collect::<Result<Vec<_>, _>>()?;
         validate_batch(&sources)?;
+        if let Some(kernel) = &sources[0].commit_kernel {
+            if let Some(commitments) = kernel.commit(
+                prepared.expanded(),
+                sources[0].rows.as_ref(),
+                sources[0].one_hot_k,
+                *plan,
+            )? {
+                return Ok(commitments);
+            }
+        }
         dispatch_for_field!(
             ProtocolDispatchSlot::Role(RingRole::Inner),
             AkitaField,

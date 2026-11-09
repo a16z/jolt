@@ -1137,6 +1137,8 @@ fn prove_workload(
     use jolt_transcript::{Keccak, ProverState, VerifierState};
     use jolt_verifier::{JoltVerifierPreprocessing, ProgramPreprocessing};
 
+    #[cfg(feature = "metal")]
+    let use_metal = backend == BackendKind::Metal;
     let backend = match backend {
         BackendKind::Reference => JoltBackend::reference(),
         BackendKind::Optimized => JoltBackend::optimized(),
@@ -1197,6 +1199,15 @@ fn prove_workload(
             }
         }
         None => AkitaScheme::setup(params)?,
+    };
+    #[cfg(feature = "metal")]
+    let pcs_setup = if use_metal {
+        use jolt_kernels::MetalTraceCommitment;
+        pcs_setup.with_trace_commit_kernel(|expanded| {
+            Ok(Arc::new(MetalTraceCommitment::new(expanded)?))
+        })?
+    } else {
+        pcs_setup
     };
     let setup_duration = setup_now.elapsed();
     drop(setup_guard);

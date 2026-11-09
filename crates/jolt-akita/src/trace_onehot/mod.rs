@@ -31,7 +31,7 @@ mod traversal;
 #[cfg(test)]
 mod tests;
 
-pub use source::{no_selected_row, TraceOneHotColumn, TraceOneHotRows};
+pub use source::{no_selected_row, TraceOneHotColumn, TraceOneHotCommitKernel, TraceOneHotRows};
 
 #[cfg(test)]
 use decomposition::{decompose_fold_columns_with_mode, DecomposeRotationMode};

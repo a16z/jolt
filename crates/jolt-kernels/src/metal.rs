@@ -5,6 +5,9 @@ use jolt_openings::CommitmentScheme;
 use crate::optimized::spartan_outer::metal::MetalOuterRemainder;
 use crate::JoltBackend;
 
+mod trace_commitment;
+pub use trace_commitment::MetalTraceCommitment;
+
 impl<PCS: CommitmentScheme<Field = AkitaField>> JoltBackend<AkitaField, PCS> {
     /// Use Metal for large Spartan outer remainder rounds, retaining the
     /// current slots for preparation, commitments, openings and other rounds.

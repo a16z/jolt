@@ -70,7 +70,9 @@ pub use schedule_registry::{DenseGroupLayout, GroupedScheduleParams};
 pub use scheme::{
     AkitaProverTranscript, AkitaScheme, AkitaVerifierTranscript, TraceOneHotCommitment,
 };
-pub use trace_onehot::{no_selected_row, TraceOneHotColumn, TraceOneHotRows};
+pub use trace_onehot::{
+    no_selected_row, TraceOneHotColumn, TraceOneHotCommitKernel, TraceOneHotRows,
+};
 
 /// Jolt↔Akita basis-order bridging, exposed so benchmarks measuring the raw
 /// backend use the exact transform the adapter uses.
