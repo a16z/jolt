@@ -162,24 +162,25 @@ kernel void rw_seed_bind(
     device uint* codes [[buffer(7)]],
     device F* inc [[buffer(8)]],
     constant uint* p [[buffer(9)]],
-    constant F* challenges [[buffer(10)]],
+    constant F& r1 [[buffer(10)]],
+    constant F& r2 [[buffer(11)]],
     uint row [[thread_position_in_grid]]) {
     if (row >= p[0]) return;
     uint begin=offsets[row],end=offsets[row+1], index=out_offsets[row];
     uint4 mask=masks[row];
     while(register_any(mask)) {
         uint col=register_next(mask);
-        RegisterCell<F> even=register_seed_pair<F>(entries,begin,end,4*row,col,challenges[0]);
-        RegisterCell<F> odd=register_seed_pair<F>(entries,begin,end,4*row+2,col,challenges[0]);
-        RegisterCell<F> cell=register_bind_cell(even,odd,challenges[1],4,2,false);
+        RegisterCell<F> even=register_seed_pair<F>(entries,begin,end,4*row,col,r1);
+        RegisterCell<F> odd=register_seed_pair<F>(entries,begin,end,4*row+2,col,r1);
+        RegisterCell<F> cell=register_bind_cell(even,odd,r2,4,2,false);
         values[index]=cell.val; boundaries[index]=ulong2(cell.prev,cell.next);
         codes[index]=(cell.wa_code<<16)|cell.ra_code; index++;
     }
     if (row < ((p[1]>>2)+uint((p[1]&3)!=0))) {
         F a=register_raw_inc<F>(raw_inc,p[1],4*row),b=register_raw_inc<F>(raw_inc,p[1],4*row+1);
         F c=register_raw_inc<F>(raw_inc,p[1],4*row+2),d=register_raw_inc<F>(raw_inc,p[1],4*row+3);
-        F lo=a+challenges[0]*(b-a),hi=c+challenges[0]*(d-c);
-        inc[row]=lo+challenges[1]*(hi-lo);
+        F lo=a+r1*(b-a),hi=c+r1*(d-c);
+        inc[row]=lo+r2*(hi-lo);
     }
 }
 

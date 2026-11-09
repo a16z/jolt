@@ -33,10 +33,10 @@ impl Topology {
     }
     fn bound(&self, gpu: &RegisterGpu) -> Result<Self, MetalError> {
         let _span = tracing::info_span!("metal_registers_topology").entered();
-        let masks =
-            super::super::super::support::map_indices(self.masks.len().div_ceil(2), |row| {
-                self.masks[2 * row] | self.masks.get(2 * row + 1).copied().unwrap_or(0)
-            });
+        let source = self.masks.as_slice();
+        let masks = super::super::super::support::map_indices(source.len().div_ceil(2), |row| {
+            source[2 * row] | source.get(2 * row + 1).copied().unwrap_or(0)
+        });
         Self::new(gpu, masks)
     }
     fn entries(&self) -> usize {
@@ -225,11 +225,9 @@ impl DeviceCycle {
                     u32_shape(seed.raw_inc.len())?,
                 ];
                 let next = Sparse::new(gpu, seed.topology, seed.raw_inc.len().div_ceil(4), false)?;
-                let challenges = [
-                    seed.first
-                        .ok_or_else(|| invalid("second bind lacks first challenge"))?,
-                    r,
-                ];
+                let first = seed
+                    .first
+                    .ok_or_else(|| invalid("second bind lacks first challenge"))?;
                 gpu.dispatch(
                     "rw_seed_bind",
                     &[
@@ -243,7 +241,8 @@ impl DeviceCycle {
                         next.codes(),
                         Binding::buffer(&next.inc),
                         Binding::value(&params),
-                        Binding::value(&challenges),
+                        Binding::value(&first),
+                        Binding::value(&r),
                     ],
                     next.topology.masks.len(),
                 )?;
@@ -408,7 +407,7 @@ impl DeviceCycle {
         let mut sums = [F::zero(); 3];
         for part in partials.read()?.chunks_exact(3) {
             for (sum, value) in sums.iter_mut().zip(part) {
-                *sum += value;
+                *sum += *value;
             }
         }
         Ok(sums)
