@@ -12,7 +12,7 @@ pub(super) const KERNELS: [&str; 5] = [
 const THREADS: usize = 256;
 const JOB_ROWS: usize = 1 << 16;
 const JOB_BATCH: usize = 256;
-const LANES: usize = 6;
+pub(super) const JOB_LANES: usize = 3;
 const NONE: u32 = u32::MAX;
 
 /// Explicit adapter; never interpret a protocol enum discriminant in Metal.
@@ -104,7 +104,7 @@ pub(super) struct DeviceAddressScan {
     partials: DeviceBuffer<AkitaField>,
     #[cfg_attr(feature = "allocative", allocative(skip))]
     output: DeviceBuffer<AkitaField>,
-    jobs: Vec<[u32; 14]>,
+    jobs: Vec<[u32; 5 + 2 * JOB_LANES]>,
     table_lanes: Vec<Option<(usize, usize)>>,
     caches: usize,
     cache_outputs: [u32; 5],
@@ -139,7 +139,7 @@ impl DeviceAddressScan {
         if host.weights.len() < minimum || CHUNK_SIZE != 256 || RISCV_XLEN != 64 {
             return Ok(None);
         }
-        let mut present = vec![false; LookupTableKind::<RISCV_XLEN>::COUNT];
+        let mut present = [false; LookupTableKind::<RISCV_XLEN>::COUNT];
         for block in &host.blocks.layout {
             for (class, endpoints) in block.starts.windows(2).enumerate() {
                 if endpoints[0] != endpoints[1] {
@@ -152,7 +152,7 @@ impl DeviceAddressScan {
         let tables: Vec<_> = LookupTableKind::<RISCV_XLEN>::iter().collect();
         let mut table_lanes = vec![None; tables.len()];
         let mut opcodes = vec![Vec::new(); tables.len()];
-        let mut lanes = LANES;
+        let mut lanes = 6;
         for (index, table) in tables.iter().enumerate().filter(|(i, _)| present[*i]) {
             for &suffix in table.suffixes() {
                 opcodes[index].push(suffix_opcode(suffix));
@@ -215,34 +215,40 @@ impl DeviceAddressScan {
                 .checked_sub(1)
                 .map(|table| (table, &opcodes[table]));
             let suffix_count = suffixes.map_or(0, |(_, codes)| codes.len());
-            for suffix_batch in (0..suffix_count.max(1)).step_by(3) {
+            for part in 0..=suffix_count.div_ceil(JOB_LANES) {
+                let emit_raf = part == 0;
+                let suffix_batch = part.saturating_sub(1) * JOB_LANES;
                 for start in (class_start..records.len()).step_by(JOB_ROWS) {
                     // start/end/flag/RAF-present/suffix-count, three opcodes,
-                    // then six logical output lanes. Metal uses the same uint layout.
-                    let mut job = [NONE; 14];
+                    // then three logical output lanes. RAF and suffix jobs share scratch.
+                    let mut job = [NONE; 5 + 2 * JOB_LANES];
                     job[..5].copy_from_slice(&[
                         u32_len(start)?,
                         u32_len((start + JOB_ROWS).min(records.len()))?,
                         (class % 2) as u32,
-                        u32::from(suffix_batch == 0),
-                        u32_len(suffix_count.saturating_sub(suffix_batch).min(3))?,
+                        u32::from(emit_raf),
+                        if emit_raf {
+                            0
+                        } else {
+                            u32_len(suffix_count.saturating_sub(suffix_batch).min(JOB_LANES))?
+                        },
                     ]);
-                    if suffix_batch == 0 {
+                    if emit_raf {
                         let raf = if class.is_multiple_of(2) {
                             [0, 1, 2]
                         } else {
                             [3, 4, 5]
                         };
                         job[8..11].copy_from_slice(&raf);
-                    }
-                    if let Some((table, codes)) = suffixes {
+                    } else if let Some((table, codes)) = suffixes {
                         let first_lane = table_lanes[table]
                             .ok_or_else(|| invalid("missing suffix output layout"))?
                             .0;
-                        for (local, &opcode) in codes.iter().skip(suffix_batch).take(3).enumerate()
+                        for (local, &opcode) in
+                            codes.iter().skip(suffix_batch).take(JOB_LANES).enumerate()
                         {
                             job[5 + local] = opcode;
-                            job[11 + local] = u32_len(first_lane + suffix_batch + local)?;
+                            job[8 + local] = u32_len(first_lane + suffix_batch + local)?;
                         }
                     }
                     jobs.push(job);
@@ -281,7 +287,7 @@ impl DeviceAddressScan {
         let cache_valid = DeviceBuffer::zeroed(device, caches.max(1))?;
         let partials = DeviceBuffer::zeroed(
             device,
-            jobs.len().min(JOB_BATCH).max(1) * LANES * CHUNK_SIZE,
+            jobs.len().clamp(1, JOB_BATCH) * JOB_LANES * CHUNK_SIZE,
         )?;
         let output = DeviceBuffer::zeroed(device, lanes * CHUNK_SIZE)?;
         tracing::info!(

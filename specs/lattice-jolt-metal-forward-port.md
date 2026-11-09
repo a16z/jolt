@@ -298,7 +298,12 @@ reference, so materialization by the last consumer releases it. Independent
 round oracles and Metal validation passed in isolation; combined full-proof
 measurements are pending.
 
-ReadRAF retains CPU address rounds and its grouped first cycle message. It
+ReadRAF keeps its canonical address-phase schedule and grouped first cycle
+message. Qualified address scans retain coalesced representatives and weights
+on the device; three-lane histograms handle RAF and suffix jobs separately,
+within the device's shared-memory limit even under Metal validation. The
+canonical CPU scalar suffix definitions remain the independent test oracle.
+Full-proof measurements of this address path are pending. The cycle path
 offloads lazy width-two/four messages, materializes directly at the existing
 lazy-policy crossover, and keeps subsequent shrinking prefixes on the device
 until the small CPU tail. Separate claim and selector extents retain their

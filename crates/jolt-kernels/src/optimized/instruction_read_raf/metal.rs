@@ -34,7 +34,10 @@ impl MetalInstructionReadRaf {
             .instantiate::<AkitaField>("read_raf_round17");
         spec = spec.source(
             "address_geometry",
-            &format!("#define ADDRESS_BINS {CHUNK_SIZE}u"),
+            &format!(
+                "#define ADDRESS_BINS {CHUNK_SIZE}u\n#define ADDRESS_JOB_LANES {}u",
+                address::JOB_LANES
+            ),
         );
         spec = spec.source("address.metal", include_str!("metal/address.metal"));
         for name in address::KERNELS {

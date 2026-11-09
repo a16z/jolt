@@ -6,8 +6,8 @@ struct AddressParams {
 };
 struct AddressJob {
     uint start, end, raf_flag, emit_raf, suffix_count;
-    uint opcodes[3];
-    uint outputs[6];
+    uint opcodes[ADDRESS_JOB_LANES];
+    uint outputs[ADDRESS_JOB_LANES];
 };
 struct AddressWindow { uint jobs, first; };
 struct AddressCacheOutputs { uint lanes[5]; };
@@ -234,10 +234,10 @@ kernel void address_histogram(
     device const uint4* metadata [[buffer(4)]], device const AddressJob* jobs [[buffer(5)]],
     device F* partials [[buffer(6)]], constant AddressParams& p [[buffer(7)]],
     uint group [[threadgroup_position_in_grid]], uint tid [[thread_index_in_threadgroup]]) {
-    // This is the only threadgroup allocation: 6*256*5*4=30,720 bytes.
-    // Pipeline static storage is checked against the device limit at admission.
-    threadgroup metal::atomic_uint bins[6 * ADDRESS_BINS * 5];
-    for (uint i = tid; i < 6 * ADDRESS_BINS * 5; i += 256) metal::atomic_store_explicit(&bins[i], 0, metal::memory_order_relaxed);
+    // Three lanes use 15,360 bytes; Metal validation doubles this allocation.
+    // RAF and suffix jobs reuse the same bounded histogram layout.
+    threadgroup metal::atomic_uint bins[ADDRESS_JOB_LANES * ADDRESS_BINS * 5];
+    for (uint i = tid; i < ADDRESS_JOB_LANES * ADDRESS_BINS * 5; i += 256) metal::atomic_store_explicit(&bins[i], 0, metal::memory_order_relaxed);
     metal::threadgroup_barrier(metal::mem_flags::mem_threadgroup);
     AddressJob job = jobs[group];
     for (uint i = job.start + tid; i < job.end; i += 256) {
@@ -261,12 +261,12 @@ kernel void address_histogram(
         }
         for (uint k = 0; k < job.suffix_count; k++) {
             ulong scalar = address_scalar(job.opcodes[k], suffix, operands, p.suffix_bits);
-            if (scalar) address_atomic_add(bins, (3 + k) * ADDRESS_BINS + chunk, scalar == 1 ? weight : mul_u64(weight, scalar));
+            if (scalar) address_atomic_add(bins, k * ADDRESS_BINS + chunk, scalar == 1 ? weight : mul_u64(weight, scalar));
         }
     }
     metal::threadgroup_barrier(metal::mem_flags::mem_threadgroup);
-    for (uint i = tid; i < 6 * ADDRESS_BINS; i += 256)
-        partials[group * 6 * ADDRESS_BINS + i] = address_atomic_reduce(bins, i, F::zero());
+    for (uint i = tid; i < ADDRESS_JOB_LANES * ADDRESS_BINS; i += 256)
+        partials[group * ADDRESS_JOB_LANES * ADDRESS_BINS + i] = address_atomic_reduce(bins, i, F::zero());
 }
 
 template <typename F>
@@ -278,8 +278,8 @@ kernel void address_combine(
     uint lane = i / ADDRESS_BINS, bin = i % ADDRESS_BINS;
     F sum = window.first ? F::zero() : output[i];
     for (uint job = 0; job < window.jobs; job++)
-        for (uint k = 0; k < 6; k++)
-            if (jobs[job].outputs[k] == lane) sum = sum + partials[(job * 6 + k) * ADDRESS_BINS + bin];
+        for (uint k = 0; k < ADDRESS_JOB_LANES; k++)
+            if (jobs[job].outputs[k] == lane) sum = sum + partials[(job * ADDRESS_JOB_LANES + k) * ADDRESS_BINS + bin];
     output[i] = sum;
 }
 
