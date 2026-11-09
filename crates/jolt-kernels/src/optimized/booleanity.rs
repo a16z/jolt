@@ -379,6 +379,18 @@ impl<F: JoltField> PrepareKernel<F, Booleanity<F>> for OptimizedBooleanityCycle 
         witness: &dyn JoltWitnessPlane<F>,
         inputs: ProverInputs<'_, F, Booleanity<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = Booleanity<F>>>, KernelError<F>> {
+        Ok(Box::new(OptimizedBooleanityCycleKernel::prepare(
+            session, witness, inputs,
+        )?))
+    }
+}
+
+impl<F: JoltField> OptimizedBooleanityCycleKernel<F> {
+    fn prepare(
+        session: &mut ProofSession,
+        witness: &dyn JoltWitnessPlane<F>,
+        inputs: ProverInputs<'_, F, Booleanity<F>>,
+    ) -> Result<Self, KernelError<F>> {
         let relation = inputs.relation;
         let dimensions = relation.dimensions();
         let r_address = relation.r_address();
@@ -420,7 +432,7 @@ impl<F: JoltField> PrepareKernel<F, Booleanity<F>> for OptimizedBooleanityCycle 
             })
             .collect();
 
-        Ok(Box::new(OptimizedBooleanityCycleKernel {
+        Ok(Self {
             progress: RoundProgress::new(relation.rounds()),
             eq: GruenSplitEqPolynomial::new_with_scaling(
                 reference_cycle,
@@ -440,7 +452,7 @@ impl<F: JoltField> PrepareKernel<F, Booleanity<F>> for OptimizedBooleanityCycle 
             gamma_powers,
             opening_unscale,
             openings: columns.openings,
-        }))
+        })
     }
 }
 
@@ -455,6 +467,8 @@ struct BooleanityChunks {
 }
 
 mod bulk;
+#[cfg(feature = "metal")]
+pub(crate) mod metal;
 
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct OptimizedBooleanityCycleKernel<F: JoltField> {
@@ -668,6 +682,21 @@ impl<F: JoltField> ProveRounds<F> for OptimizedBooleanityCycleKernel<F> {
         if let Some(challenge) = bind {
             self.bind(challenge);
         }
+        self.message(round, previous_claim)
+    }
+
+    fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {
+        self.bind(bind);
+        Ok(())
+    }
+}
+
+impl<F: JoltField> OptimizedBooleanityCycleKernel<F> {
+    fn message(
+        &self,
+        round: usize,
+        previous_claim: F,
+    ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
         let prefix_pairs = self.tables.prefix_len().div_ceil(2);
         let tail = self
             .tables
@@ -811,11 +840,6 @@ impl<F: JoltField> ProveRounds<F> for OptimizedBooleanityCycleKernel<F> {
                     )
             },
         )
-    }
-
-    fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {
-        self.bind(bind);
-        Ok(())
     }
 }
 

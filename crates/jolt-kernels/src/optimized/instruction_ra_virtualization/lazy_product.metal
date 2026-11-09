@@ -11,13 +11,13 @@ uint ra_chunk(ulong2 index, uint column, constant LazyRaParams& p) {
 // A group owns one E_out block, so its weight is applied after reduction.
 template <typename F>
 kernel void lazy_ra_product(
-    device const ulong2* indices [[buffer(0)]],
+    device const ulong4* indices [[buffer(0)]],
     device const F* tables [[buffer(1)]],
     device const F* e_in [[buffer(2)]],
     device const F* e_out [[buffer(3)]],
     device F* partials [[buffer(4)]],
     constant LazyRaParams& p [[buffer(5)]],
-    constant ulong2& tail [[buffer(6)]],
+    constant ulong4& tail [[buffer(6)]],
     uint group [[threadgroup_position_in_grid]],
     uint local [[thread_index_in_threadgroup]],
     uint threads [[threads_per_threadgroup]],
@@ -42,8 +42,8 @@ kernel void lazy_ra_product(
             for (uint branch = 0; branch < p.width; branch++) {
                 ulong lo_row = 2 * pair * p.width + branch;
                 ulong hi_row = lo_row + p.width;
-                ulong2 lo = lo_row < p.prefix ? indices[lo_row] : tail;
-                ulong2 hi = hi_row < p.prefix ? indices[hi_row] : tail;
+                ulong2 lo = lo_row < p.prefix ? indices[lo_row].xy : tail.xy;
+                ulong2 hi = hi_row < p.prefix ? indices[hi_row].xy : tail.xy;
                 #pragma unroll
                 for (uint f = 0; f < 4; f++) {
                     uint column = 4 * batch + f;

@@ -64,6 +64,8 @@ pub mod instruction_input;
 pub mod instruction_ra_virtualization;
 pub mod instruction_read_raf;
 mod lazy_ra;
+#[cfg(feature = "metal")]
+mod metal_rows;
 mod one_hot_histograms;
 #[cfg(not(feature = "akita"))]
 pub mod opening;

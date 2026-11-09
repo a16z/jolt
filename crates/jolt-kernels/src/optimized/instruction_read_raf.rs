@@ -350,6 +350,11 @@ pub(crate) struct LookupIndexChunks {
 }
 
 impl LookupIndexChunks {
+    #[cfg(feature = "metal")]
+    pub(crate) fn rows(&self) -> &Arc<ConstantSuffix<InstructionCycleRow>> {
+        &self.rows
+    }
+
     /// The packed address before extracting the committed selector chunks.
     #[inline]
     pub(crate) fn packed_index(&self, cycle: usize) -> u128 {

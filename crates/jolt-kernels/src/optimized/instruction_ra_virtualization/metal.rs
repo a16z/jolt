@@ -9,6 +9,7 @@ use jolt_metal::shaders::FIELD_HEADERS;
 use jolt_metal::MetalError;
 
 use super::super::lazy_ra::ChunkIndexSource;
+use super::super::metal_rows::ResidentInstructionRows;
 use super::*;
 
 const MIN_GPU_PREFIX: usize = 1 << 16;
@@ -40,9 +41,16 @@ impl PrepareKernel<AkitaField, InstructionRaVirtualization<AkitaField>> for Meta
         Box<dyn SumcheckKernel<AkitaField, Relation = InstructionRaVirtualization<AkitaField>>>,
         KernelError<AkitaField>,
     > {
+        let cpu = OptimizedInstructionRaVirtualizationKernel::prepare(session, witness, inputs)?;
+        let indices = match &cpu.folded_ra {
+            LazyFoldedRa::Lazy { source, .. } => {
+                Some(ResidentInstructionRows::shared(session, source.rows())?)
+            }
+            _ => None,
+        };
         Ok(Box::new(MetalInstructionRaKernel {
-            cpu: OptimizedInstructionRaVirtualizationKernel::prepare(session, witness, inputs)?,
-            indices: None,
+            cpu,
+            indices,
             gpu: Arc::clone(&self.0),
         }))
     }
@@ -53,31 +61,11 @@ struct RaGpu {
     library: ShaderLibrary,
 }
 
-struct ResidentIndices {
-    prefix: DeviceBuffer<[u64; 2]>,
-    tail: [u64; 2],
-}
-
-impl ResidentIndices {
-    fn upload(gpu: &RaGpu, source: &LookupIndexChunks, prefix: usize) -> Result<Self, MetalError> {
-        let _span = tracing::info_span!("metal_instruction_ra_upload").entered();
-        let values = map_indices(prefix, |row| {
-            let index = source.packed_index(row);
-            [index as u64, (index >> 64) as u64]
-        });
-        let tail = source.packed_index(source.cycles() - 1);
-        Ok(Self {
-            prefix: DeviceBuffer::from_slice(&gpu.device, &values)?,
-            tail: [tail as u64, (tail >> 64) as u64],
-        })
-    }
-}
-
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct MetalInstructionRaKernel {
     cpu: OptimizedInstructionRaVirtualizationKernel<AkitaField>,
     #[cfg_attr(feature = "allocative", allocative(skip))]
-    indices: Option<ResidentIndices>,
+    indices: Option<Arc<ResidentInstructionRows>>,
     #[cfg_attr(feature = "allocative", allocative(skip))]
     gpu: Arc<RaGpu>,
 }
@@ -119,15 +107,20 @@ impl MetalInstructionRaKernel {
                 "branch tables disagree with the source geometry",
             )));
         }
-        if self.indices.is_none() {
-            self.indices = Some(
-                ResidentIndices::upload(&self.gpu, source, *prefix_len).map_err(compute_error)?,
-            );
-        }
-        let indices = self
+        let resident = self
             .indices
             .as_ref()
+            .ok_or_else(|| compute_error(invalid("missing source owner")))?
+            .resident(&self.gpu.device)
+            .map_err(compute_error)?;
+        let indices = resident
+            .as_ref()
             .ok_or_else(|| compute_error(invalid("missing source")))?;
+        if indices.prefix.len() != *prefix_len {
+            return Err(compute_error(invalid(
+                "resident source prefix disagrees with lazy state",
+            )));
+        }
         let pairs = self.cpu.folded_ra.prefix_len().div_ceil(2);
         let eq = &self.cpu.gruen;
         let in_len = eq.e_in_current_len();

@@ -2,6 +2,7 @@ use jolt_akita::AkitaField;
 use jolt_metal::MetalError;
 use jolt_openings::CommitmentScheme;
 
+use crate::optimized::booleanity::metal::MetalBooleanity;
 use crate::optimized::instruction_ra_virtualization::metal::MetalInstructionRa;
 use crate::optimized::spartan_outer::metal::MetalOuterRemainder;
 use crate::JoltBackend;
@@ -17,6 +18,7 @@ impl<PCS: CommitmentScheme<Field = AkitaField>> JoltBackend<AkitaField, PCS> {
     pub fn with_metal_compute(mut self) -> Result<Self, MetalError> {
         self.spartan_outer_remainder = Box::new(MetalOuterRemainder::new()?);
         self.instruction_ra_virtualization = Box::new(MetalInstructionRa::new()?);
+        self.booleanity_cycle = Box::new(MetalBooleanity::new()?);
         Ok(self)
     }
 }

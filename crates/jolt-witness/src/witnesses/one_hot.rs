@@ -42,6 +42,11 @@ impl RaChunkSelector {
         })
     }
 
+    /// Bit offset of the selected chunk in the canonical packed address.
+    pub const fn shift(self) -> usize {
+        self.shift
+    }
+
     pub const fn chunk_usize(self, value: usize) -> usize {
         self.chunk_u128(value as u128)
     }

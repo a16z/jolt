@@ -30,11 +30,11 @@ fn compact_ra_rounds_match_dense_multilinears_through_handoff() {
         if exceptional {
             cycle_point[log_t - 2] = AkitaField::from_u64(1);
         }
-        let tail = 0x9876543210fedcba765432109abcdef0u128;
+        let tail = 0x9876_5432_10fe_dcba_7654_3210_9abc_def0_u128;
         let mut state = 901u128;
         let indices: Vec<_> = (0..cycles)
             .map(|row| {
-                state = state.wrapping_mul(0xda942042e4dd58b5).wrapping_add(1);
+                state = state.wrapping_mul(0xda94_2042_e4dd_58b5).wrapping_add(1);
                 if row < prefix {
                     state
                 } else {
@@ -60,9 +60,16 @@ fn compact_ra_rounds_match_dense_multilinears_through_handoff() {
             gamma,
         )
         .unwrap();
+        let resident_rows = match &cpu.folded_ra {
+            LazyFoldedRa::Lazy { source, .. } => Some(
+                ResidentInstructionRows::shared(&mut ProofSession::default(), source.rows())
+                    .unwrap(),
+            ),
+            _ => None,
+        };
         let mut kernel = MetalInstructionRaKernel {
             cpu,
-            indices: None,
+            indices: resident_rows,
             gpu: Arc::clone(&gpu.0),
         };
         // Dense point-mass address folds, independent of lazy branch tables.
