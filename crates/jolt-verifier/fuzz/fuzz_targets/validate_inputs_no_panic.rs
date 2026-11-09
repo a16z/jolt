@@ -47,10 +47,10 @@ fuzz_target!(|data: &[u8]| {
     let ram_k = u64::from_le_bytes(data[8..16].try_into().unwrap()) as usize;
     let trusted_present = data[16] & 1 == 1;
     let untrusted_present = data[16] & 2 == 2;
-    let zk = if data[16] & 4 == 4 {
-        ZkConfig::BlindFold
-    } else {
-        ZkConfig::Transparent
+    let zk = match (data[16] >> 2) % 3 {
+        0 => ZkConfig::Transparent,
+        1 => ZkConfig::BlindFold,
+        _ => ZkConfig::Whiteout,
     };
 
     // Fuzzer-chosen public I/O sizes, bounded so the harness itself does not
