@@ -91,7 +91,6 @@ enum PreparedReadWrite<F: JoltField> {
 
 impl OptimizedRegistersReadWrite {
     fn prepare_state<F: JoltField>(
-        &self,
         session: &mut ProofSession,
         witness: &dyn JoltWitnessPlane<F>,
         inputs: ProverInputs<'_, F, RegistersReadWriteChecking<F>>,
@@ -158,7 +157,7 @@ impl<F: JoltField> PrepareKernel<F, RegistersReadWriteChecking<F>> for Optimized
         inputs: ProverInputs<'_, F, RegistersReadWriteChecking<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = RegistersReadWriteChecking<F>>>, KernelError<F>>
     {
-        match self.prepare_state(session, witness, inputs)? {
+        match Self::prepare_state(session, witness, inputs)? {
             PreparedReadWrite::Cycle(kernel) => Ok(Box::new(kernel)),
             PreparedReadWrite::Address(kernel) => Ok(Box::new(kernel)),
         }

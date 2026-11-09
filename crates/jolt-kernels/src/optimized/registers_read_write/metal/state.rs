@@ -21,7 +21,7 @@ impl Topology {
                 .ok_or_else(|| invalid("sparse count overflow"))?;
         }
         offsets.push(u32_shape(count)?);
-        u32_shape(masks.len())?;
+        let _ = u32_shape(masks.len())?;
         let device_masks = DeviceBuffer::from_slice(&gpu.device, &masks)?;
         let device_offsets = DeviceBuffer::from_slice(&gpu.device, &offsets)?;
         Ok(Self {
@@ -108,13 +108,13 @@ impl Sparse {
     fn ra(&self) -> Binding<'_> {
         match &self.coeffs {
             Coefficients::Direct { ra, .. } => Binding::buffer(ra),
-            _ => Binding::buffer(&self.values),
+            Coefficients::Indexed(_) => Binding::buffer(&self.values),
         }
     }
     fn wa(&self) -> Binding<'_> {
         match &self.coeffs {
             Coefficients::Direct { wa, .. } => Binding::buffer(wa),
-            _ => Binding::buffer(&self.values),
+            Coefficients::Indexed(_) => Binding::buffer(&self.values),
         }
     }
     fn direct(&self) -> bool {
@@ -136,11 +136,16 @@ pub(super) struct DeviceCycle {
 impl DeviceCycle {
     pub(super) fn new(gpu: &RegisterGpu, cycle: CycleState<F>) -> Result<Self, MetalError> {
         let _span = tracing::info_span!("metal_registers_upload").entered();
-        let (entries, ra_lut, wa_lut, raw_inc) = cycle
+        let SeedTransfer {
+            entries,
+            ra_lut,
+            wa_lut,
+            rd_inc: raw_inc,
+        } = cycle
             .into_seed()
             .ok_or_else(|| invalid("expected seed cycle owner"))?;
-        u32_shape(entries.len())?;
-        u32_shape(raw_inc.len())?;
+        let _ = u32_shape(entries.len())?;
+        let _ = u32_shape(raw_inc.len())?;
         let rows = entries.last().map_or(0, |entry| entry.row as usize + 1);
         if raw_inc.len() > rows {
             return Err(invalid("increment prefix exceeds represented seed rows"));
@@ -460,11 +465,11 @@ impl RegisterGpu {
         if threads == 0 {
             return Ok(());
         }
-        u32_shape(threads)?;
+        let _ = u32_shape(threads)?;
         let pipeline = self.library.pipeline(&host_name::<F>(name))?;
         let width = pipeline.thread_execution_width();
         if width == 0
-            || THREADS % width != 0
+            || !THREADS.is_multiple_of(width)
             || THREADS / width > 32
             || THREADS / width > width
             || pipeline.max_total_threads_per_threadgroup() < THREADS

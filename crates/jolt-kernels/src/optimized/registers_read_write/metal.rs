@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use jolt_akita::AkitaField as F;
-use jolt_field::{Ring, Zero};
+use jolt_field::Zero;
 use jolt_metal::runtime::{
     host_name, Batch, Binding, Device, DeviceBuffer, Grid, LibrarySpec, ShaderLibrary,
 };
@@ -11,7 +11,7 @@ use jolt_metal::shaders::FIELD_HEADERS;
 use jolt_metal::MetalError;
 
 use super::sparse::layout::SparseEntry;
-use super::sparse::CoeffLut;
+use super::sparse::{CoeffLut, SeedTransfer};
 use super::*;
 
 mod state;
@@ -66,7 +66,7 @@ impl PrepareKernel<F, RegistersReadWriteChecking<F>> for MetalRegistersReadWrite
         inputs: ProverInputs<'_, F, RegistersReadWriteChecking<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = RegistersReadWriteChecking<F>>>, KernelError<F>>
     {
-        let mut cpu = match OptimizedRegistersReadWrite.prepare_state(session, witness, inputs)? {
+        let mut cpu = match OptimizedRegistersReadWrite::prepare_state(session, witness, inputs)? {
             PreparedReadWrite::Cycle(cpu) => cpu,
             PreparedReadWrite::Address(cpu) => return Ok(Box::new(cpu)),
         };

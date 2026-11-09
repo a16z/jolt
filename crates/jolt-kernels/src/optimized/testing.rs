@@ -16,7 +16,7 @@
 use common::jolt_device::{JoltDevice, MemoryLayout};
 use jolt_claims::protocols::jolt::{JoltChallengeId, JoltOneHotConfig};
 use jolt_claims::{InputClaims, OutputClaims, SumcheckChallenges};
-use jolt_field::{Field, Fr, Ring};
+use jolt_field::{Field, Fr};
 use jolt_poly::UnivariatePoly;
 use jolt_program::execution::{JoltProgram, TraceData, TraceOutput};
 use jolt_program::preprocess::{BytecodePreprocessing, JoltProgramPreprocessing, RAMPreprocessing};
