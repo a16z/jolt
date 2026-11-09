@@ -63,11 +63,13 @@ Akita. It starts from the optimized CPU backend and selects GPU kernels for
 supported shapes. Trace commitments preserve committed-zero masks and implicit
 padding. Instruction-RA and Booleanity cycle rounds share compact device rows,
 while retaining CPU categorical startup, binding, and output checks.
+ReadRAF shares those rows, retains CPU address rounds and its grouped first
+cycle message, then offloads qualified lazy messages and direct device
+materialization with a small CPU tail.
 Root decompose/fold also supports D512/K16 traces with sparse ring challenges,
 including canonical chunked folds. It packs bounded trace windows and preserves
 the CPU digit expansion and witness construction. Unsupported fold shapes,
 coefficient packing, and Spartan outer remainder use the optimized CPU path.
-Root-fold throughput has not yet been measured.
 
 ```bash
 cargo run --release -p jolt-prover --features profiling,metal -- \
@@ -76,7 +78,8 @@ cargo run --release -p jolt-prover --features profiling,metal -- \
 
 The prover timer includes source packing, upload, and first-use transformed-key
 preparation. The `metal_trace_commit_dispatch`, `metal_trace_fold_dispatch`,
-`metal_instruction_ra_dispatch`, and `metal_booleanity_dispatch` spans record
+`metal_instruction_ra_dispatch`, `metal_read_raf_dispatch`, and
+`metal_booleanity_dispatch` spans record
 `gpu_s` from Metal command-buffer
 timestamps. Compare this with their wall time to distinguish GPU execution from
 host preparation and synchronization. Use `--format none` for throughput

@@ -236,6 +236,17 @@ This records the trace-commitment, instruction-RA, and Booleanity routing before
 root-fold offload; it does not establish the four-workload target or a root-fold
 speedup.
 
+The general sparse root-fold candidate at Jolt `c5fe773eb`, with Akita
+`aa58a7af`, verified the same Fibonacci input in 24.6202655 s
+(5.451514241 padded MHz). Its separate Chrome run measured 1.3323 s for the
+complete root-fold adapter, including 0.9311 s packing and 0.3345 s GPU work;
+the earlier CPU accumulation took 2.4219 s. Both small BLAKE2b and T27 proofs
+verified, and the T27 profile confirmed 32 GPU root-fold dispatches. Evidence
+is in `jolt-metal-forward-port-artifacts-20261109/root-sparse-metal/`.
+These are development observations, not the repeated four-workload acceptance
+comparison. Ring classification found only 2.6% uniform rings, so an additional
+uniform-only transformed key is deferred.
+
 Reuse existing profiler stage labels and `jolt-eval` telemetry objectives for
 prover/stage time where available. Add only measurements needed to identify GPU
 dispatch time, host preparation, and waiting; keep end-to-end time authoritative.
@@ -274,6 +285,15 @@ Instruction RA and Booleanity retain the CPU's lazy branch tables, binding,
 categorical startup, and output checks while offloading qualified round
 reductions. They share one proof-owned compact device row buffer. The session
 keeps a weak reference, so materialization by the last consumer releases it.
+
+ReadRAF retains CPU address rounds and its grouped first cycle message. It
+offloads lazy width-two/four messages, materializes directly at the existing
+lazy-policy crossover, and keeps subsequent shrinking prefixes on the device
+until the small CPU tail. Separate claim and selector extents retain their
+implicit tails. Its packed claim byte shares the existing 32-byte instruction
+row, which a proof-owned carry keeps alive for later RA and Booleanity use.
+Focused round and Metal validation checks pass; full-proof performance is the
+next integration measurement.
 
 Spartan outer remainder stays on the optimized CPU path. Its initial GPU port
 was correct, but upload and buffer preparation alone exceeded the measured CPU
