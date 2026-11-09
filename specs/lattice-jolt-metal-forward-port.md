@@ -289,10 +289,14 @@ identify its callers and replace a concrete duplication or serialization cost.
 It must not put Metal types, relation formulas, or transcript logic into
 `jolt-sumcheck`.
 
-Instruction RA and Booleanity retain the CPU's lazy branch tables, binding,
-categorical startup, and output checks while offloading qualified round
-reductions. They share one proof-owned compact device row buffer. The session
-keeps a weak reference, so materialization by the last consumer releases it.
+Instruction RA and Booleanity retain the CPU's lazy branch tables, categorical
+startup, and output checks. At the canonical lazy-policy crossover, they
+materialize directly on the GPU and keep shrinking field prefixes there until
+the small CPU tail. Both use the same selector materialization and fold helper.
+They share one proof-owned compact device row buffer. The session keeps a weak
+reference, so materialization by the last consumer releases it. Independent
+round oracles and Metal validation passed in isolation; combined full-proof
+measurements are pending.
 
 ReadRAF retains CPU address rounds and its grouped first cycle message. It
 offloads lazy width-two/four messages, materializes directly at the existing
