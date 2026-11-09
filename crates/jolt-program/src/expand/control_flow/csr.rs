@@ -108,20 +108,28 @@ pub(super) fn emit_csr_swap(
     Ok(())
 }
 
-/// Emits the `CSRRS` body: `rd := csr` unless `rd = x0`, and
-/// `csr := legalize(csr, csr | bits)` unless `bits = x0` (then the CSR is not
-/// written).
+/// The operation shared by register and immediate bit updates.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum CsrBitUpdate {
+    /// `CSRRS` / `CSRRSI`: `csr := legalize(csr, csr | bits)`.
+    Set,
+    /// `CSRRC` / `CSRRCI`: `csr := legalize(csr, csr & !bits)`.
+    Clear,
+}
+
+/// Emits a register bit update, suppressing writes for `rs1 = x0`.
 ///
-/// The set first removes operand bits that cannot change the architectural
-/// CSR. This also consumes an aliased `rs1` before the read overwrites it. For
+/// A set first removes operand bits that cannot change the architectural CSR.
+/// This also consumes an aliased `rs1` before the read overwrites it. For
 /// `mtvec`, setting a reserved MODE preserves the old MODE, so only BASE bits
-/// of that operand contribute.
-pub(super) fn emit_csr_set(
+/// of that operand contribute. Clearing preserves every CSR's legal set.
+pub(super) fn emit_csr_bit_update(
     asm: &mut ExpansionBuilder,
     csr: u16,
     virtual_reg: u8,
     rd: u8,
     bits: RegisterOperand,
+    update: CsrBitUpdate,
 ) -> Result<(), ExpansionError> {
     if bits == reg(0) {
         if rd == 0 {
@@ -132,8 +140,8 @@ pub(super) fn emit_csr_set(
         return Ok(());
     }
 
-    let prepared = match csr {
-        CSR_MSTATUS | CSR_MEPC | CSR_MTVEC => {
+    let prepared = match (update, csr) {
+        (CsrBitUpdate::Set, CSR_MSTATUS | CSR_MEPC | CSR_MTVEC) => {
             let temp = asm.allocate()?;
             match csr {
                 CSR_MSTATUS => {
@@ -164,7 +172,11 @@ pub(super) fn emit_csr_set(
     if rd != 0 {
         emit_csr_read(asm, csr, virtual_reg, reg(rd));
     }
-    asm.emit_r(Kind::OR, reg(virtual_reg), reg(virtual_reg), bits);
+    let kind = match update {
+        CsrBitUpdate::Set => Kind::OR,
+        CsrBitUpdate::Clear => Kind::ANDN,
+    };
+    asm.emit_r(kind, reg(virtual_reg), reg(virtual_reg), bits);
     if let Some(temp) = prepared {
         asm.release(temp);
     }
@@ -229,6 +241,11 @@ mod tests {
             (Kind::CSRRS, 0, 5, [2, 2, 4, 1]),
             (Kind::CSRRS, 6, 5, [3, 3, 5, 2]),
             (Kind::CSRRS, 5, 5, [3, 3, 5, 3]),
+            (Kind::CSRRC, 0, 0, [1, 1, 1, 1]),
+            (Kind::CSRRC, 6, 0, [1, 1, 1, 1]),
+            (Kind::CSRRC, 0, 5, [1, 1, 1, 1]),
+            (Kind::CSRRC, 6, 5, [2, 2, 2, 2]),
+            (Kind::CSRRC, 5, 5, [3, 3, 3, 3]),
         ];
         for (kind, rd, rs1, costs) in register_paths {
             for (csr, cost) in [CSR_MSTATUS, CSR_MEPC, CSR_MTVEC, 0x340, 0x342, 0x343]
@@ -239,6 +256,148 @@ mod tests {
             }
         }
 
+        // Each value class is listed explicitly, including effective no-ops.
+        let immediate_paths: &[(Kind, u16, &[u8], [usize; 2])] = &[
+            (
+                Kind::CSRRWI,
+                CSR_MSTATUS,
+                &[
+                    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21,
+                    22, 23, 24, 25, 26, 27, 28, 29, 30, 31,
+                ],
+                [1, 2],
+            ),
+            (
+                Kind::CSRRWI,
+                CSR_MEPC,
+                &[
+                    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21,
+                    22, 23, 24, 25, 26, 27, 28, 29, 30, 31,
+                ],
+                [1, 2],
+            ),
+            (
+                Kind::CSRRWI,
+                CSR_MTVEC,
+                &[
+                    0, 1, 2, 3, 4, 5, 8, 9, 12, 13, 16, 17, 20, 21, 24, 25, 28, 29,
+                ],
+                [1, 2],
+            ),
+            (
+                Kind::CSRRWI,
+                CSR_MTVEC,
+                &[6, 7, 10, 11, 14, 15, 18, 19, 22, 23, 26, 27, 30, 31],
+                [2, 3],
+            ),
+            (
+                Kind::CSRRWI,
+                0x340,
+                &[
+                    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21,
+                    22, 23, 24, 25, 26, 27, 28, 29, 30, 31,
+                ],
+                [1, 2],
+            ),
+            (
+                Kind::CSRRSI,
+                CSR_MSTATUS,
+                &[0, 1, 2, 3, 4, 5, 6, 7, 16, 17, 18, 19, 20, 21, 22, 23],
+                [1, 1],
+            ),
+            (
+                Kind::CSRRSI,
+                CSR_MSTATUS,
+                &[8, 9, 10, 11, 12, 13, 14, 15, 24, 25, 26, 27, 28, 29, 30, 31],
+                [1, 2],
+            ),
+            (Kind::CSRRSI, CSR_MEPC, &[0, 1], [1, 1]),
+            (
+                Kind::CSRRSI,
+                CSR_MEPC,
+                &[
+                    2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
+                    24, 25, 26, 27, 28, 29, 30, 31,
+                ],
+                [1, 2],
+            ),
+            (Kind::CSRRSI, CSR_MTVEC, &[0, 2, 3], [1, 1]),
+            (
+                Kind::CSRRSI,
+                CSR_MTVEC,
+                &[
+                    1, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
+                    24, 25, 26, 27, 28, 29, 30, 31,
+                ],
+                [1, 2],
+            ),
+            (Kind::CSRRSI, 0x340, &[0], [1, 1]),
+            (
+                Kind::CSRRSI,
+                0x340,
+                &[
+                    1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22,
+                    23, 24, 25, 26, 27, 28, 29, 30, 31,
+                ],
+                [1, 2],
+            ),
+            (
+                Kind::CSRRCI,
+                CSR_MSTATUS,
+                &[0, 1, 2, 3, 4, 5, 6, 7, 16, 17, 18, 19, 20, 21, 22, 23],
+                [1, 1],
+            ),
+            (
+                Kind::CSRRCI,
+                CSR_MSTATUS,
+                &[8, 9, 10, 11, 12, 13, 14, 15, 24, 25, 26, 27, 28, 29, 30, 31],
+                [1, 2],
+            ),
+            (Kind::CSRRCI, CSR_MEPC, &[0, 1], [1, 1]),
+            (
+                Kind::CSRRCI,
+                CSR_MEPC,
+                &[
+                    2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
+                    24, 25, 26, 27, 28, 29, 30, 31,
+                ],
+                [1, 2],
+            ),
+            (Kind::CSRRCI, CSR_MTVEC, &[0, 2], [1, 1]),
+            (
+                Kind::CSRRCI,
+                CSR_MTVEC,
+                &[
+                    1, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
+                    24, 25, 26, 27, 28, 29, 30, 31,
+                ],
+                [1, 2],
+            ),
+            (Kind::CSRRCI, 0x340, &[0], [1, 1]),
+            (
+                Kind::CSRRCI,
+                0x340,
+                &[
+                    1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22,
+                    23, 24, 25, 26, 27, 28, 29, 30, 31,
+                ],
+                [1, 2],
+            ),
+        ];
+        for &(kind, csr, values, costs) in immediate_paths {
+            let csrs: &[u16] = if csr == 0x340 {
+                &[0x340, 0x342, 0x343]
+            } else {
+                std::slice::from_ref(&csr)
+            };
+            for &csr in csrs {
+                for &uimm in values {
+                    for (rd, cost) in [0, 5].into_iter().zip(costs) {
+                        assert_count(kind, csr, rd, uimm, cost);
+                    }
+                }
+            }
+        }
         assert_count(Kind::ECALL, 0, 0, 0, 6);
         assert_count(Kind::MRET, 0, 0, 0, 3);
     }
