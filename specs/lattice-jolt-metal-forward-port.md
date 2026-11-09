@@ -363,26 +363,20 @@ policy without comparing it to the current CPU scheduler.
 
 #### Shared witness storage and padding
 
+The first bounded native-product candidate was removed after full-proof
+measurement. Its three source passes spent 1.135 s packing and 0.896 s uploading,
+against 0.240 s of GPU execution. The complete measured product family took
+3.166 s, while the preceding CPU profile spent about 0.779 s in the named product
+spans (excluding its uninstrumented opening walk). A further attempt must share
+an existing canonical extraction pass and write directly to reusable device
+storage; retaining the three-pass candidate alone is insufficient. The CPU
+product implementation remains selected.
+
 Use the current compact witness producers. Allocate a shared device source when
 its first consumer needs it and release it after its last consumer. Port related
 families together when the measured benefit depends on that sharing, notably
 Spartan outer/product and instruction address/cycle processing. Avoid repeated
 trace walks, a dense field vector per selector, and unrelated full-trace copies.
-
-The native product candidate supplies the first bounded Spartan producer:
-40-byte rows extracted through `SpartanProductRow`, at most 2^20 rows per tile.
-Canonical Rust extension coefficients and Lagrange weights drive GPU uniskip and
-remainder production; no precomputed field planes are uploaded. CPU code owns
-the split equality, challenge sequence, odd boundary pair, and final opening
-recipe. Device columns restore to CPU at 2^12 rows. The three native source passes
-(uniskip, preparation, openings), allocations, upload, waits, and restoration
-must all be measured. The focused reference comparison covers uniskip, every
-round, and final openings across a tile boundary, odd prefix, exceptional
-equality challenges, and CPU handoff; it also passes Metal shader validation.
-Full-proof integration and performance remain to be measured.
-The outer path retains its current guard aggregation and typed coefficient
-folds until a separate compact producer is justified. Raw `JoltTraceRow` bytes
-are not a public GPU decoding interface.
 
 For prefix-backed tables, carry the stored prefix length and tail semantics into
 the kernel. Dispatch over stored pairs, handle the boundary pair, and add the

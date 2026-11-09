@@ -27,13 +27,6 @@ use crate::{MaybeAllocative, ProofSession};
 /// failures the *typed extraction seam* can produce live here.
 #[derive(Debug, thiserror::Error)]
 pub enum SumcheckKernelError<F: Field> {
-    /// A compute backend failed while evaluating the final opening recipe.
-    #[error("{backend} opening computation failed: {reason}")]
-    Compute {
-        backend: &'static str,
-        reason: String,
-    },
-
     /// Relation-level failures (claim wiring, point derivation): kernels run
     /// the verifier's own relation methods as hard self-checks.
     #[error(transparent)]

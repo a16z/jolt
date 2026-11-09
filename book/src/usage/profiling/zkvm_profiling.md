@@ -76,14 +76,8 @@ device's recommended working set; otherwise both operations stream bounded
 windows. Retention belongs to the proof's source/opening hint. The shared setup
 keeps only its device and transformed key, and root folding releases reused
 windows after dispatch. Implicit trace padding remains unallocated.
-The native Spartan product candidate streams 40-byte rows in bounded windows
-for uniskip, direct remainder preparation, and posthoc openings. It retains only
-the shrinking remainder fields between rounds and restores a small CPU tail.
-Its source packing and upload repeat across those transcript boundaries; no
-whole-trace native mirror is retained. Active field-inline rows and unsupported
-sizes select CPU before uniskip. Performance remains unmeasured.
-Unsupported fold shapes, coefficient packing, and Spartan outer use the optimized
-CPU path.
+Unsupported fold shapes,
+coefficient packing, and Spartan outer remainder use the optimized CPU path.
 
 ```bash
 cargo run --release -p jolt-prover --features profiling,metal -- \
@@ -98,13 +92,6 @@ preparation. The `metal_trace_commit_dispatch`, `metal_trace_fold_dispatch`,
 timestamps. Compare this with their wall time to distinguish GPU execution from
 host preparation and synchronization. Use `--format none` for throughput
 measurements; Chrome tracing adds overhead.
-
-For native product, compare the complete `SpartanProductUniskip::prepare`,
-`metal_spartan_product_prepare`, round, and opening intervals. Nested
-`metal_spartan_product_pack` and `metal_spartan_product_upload` spans separate
-source costs; `metal_spartan_product_native`, `metal_spartan_product_bind`, and
-`metal_spartan_product_round` record GPU time. Device arithmetic alone excludes
-substantial work and is not a component speedup.
 
 The `Metal trace source retention` event records payload bytes, the retention
 limit, and admission; `Metal trace fold reuse` records reused window count.

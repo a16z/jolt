@@ -3768,8 +3768,6 @@ dependencies = [
  "akita-pcs",
  "akita-types",
  "allocative",
- "bytemuck",
- "bytemuck_derive",
  "common",
  "jolt-akita",
  "jolt-claims",
