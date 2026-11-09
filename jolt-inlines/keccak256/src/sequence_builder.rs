@@ -5,8 +5,10 @@
 //! register until χ consumes it. D[3] and D[4] reuse dead C registers.
 
 use crate::{
-    INLINE_OPCODE, KECCAK256_ABSORB_PERMUTE_FUNCT3, KECCAK256_ABSORB_PERMUTE_NAME,
-    KECCAK256_FUNCT3, KECCAK256_FUNCT7, KECCAK256_NAME, NUM_LANES, RATE_IN_U64,
+    INLINE_OPCODE, KECCAK256_ABSORB_DIGEST_FUNCT3, KECCAK256_ABSORB_DIGEST_NAME,
+    KECCAK256_ABSORB_PERMUTE_FUNCT3, KECCAK256_ABSORB_PERMUTE_NAME, KECCAK256_DIGEST_FUNCT3,
+    KECCAK256_DIGEST_NAME, KECCAK256_FUNCT3, KECCAK256_FUNCT7, KECCAK256_NAME, NUM_LANES,
+    RATE_IN_U64,
 };
 use jolt_inlines_sdk::host::{
     ExpandedInstructionSequence, ExpansionError, InlineBuilderExt, InlineExpansionBuilder,
@@ -51,6 +53,7 @@ struct Keccak256SequenceBuilder {
     chi_temp: [InlineRegister; 2],
     scratch: InlineRegister,
     absorb_block: bool,
+    digest_only: bool,
     operands: InlineOperands,
 }
 
@@ -76,6 +79,7 @@ impl Keccak256SequenceBuilder {
             chi_temp,
             scratch,
             absorb_block,
+            digest_only: false,
             operands,
         })
     }
@@ -85,8 +89,12 @@ impl Keccak256SequenceBuilder {
         for round in 0..24 {
             self.round = round;
             self.theta();
-            self.rho_and_pi();
-            self.chi();
+            if self.digest_only && round == 23 {
+                self.final_rho_pi_chi();
+            } else {
+                self.rho_and_pi();
+                self.chi();
+            }
             self.iota();
         }
         self.store_state();
@@ -117,7 +125,12 @@ impl Keccak256SequenceBuilder {
     }
 
     fn store_state(&mut self) {
-        self.asm.store_u64_range(self.operands.rs1, 0, &self.a);
+        let lanes = if self.digest_only {
+            &self.a[..4]
+        } else {
+            &self.a[..]
+        };
+        self.asm.store_u64_range(self.operands.rs1, 0, lanes);
     }
 
     fn lane(&self, x: usize, y: usize) -> u8 {
@@ -161,6 +174,10 @@ impl Keccak256SequenceBuilder {
         for x in 0..5 {
             let d = self.d_lane(x);
             for y in 0..5 {
+                // pi sends (x, x) to (x, 0); only this output row feeds the digest.
+                if self.digest_only && self.round == 23 && x != y {
+                    continue;
+                }
                 let a = self.lane(x, y);
                 self.asm.xor(Reg(a), Reg(d), a);
             }
@@ -209,6 +226,24 @@ impl Keccak256SequenceBuilder {
             self.asm.xor(Reg(b[2]), Reg(scratch), destination[2]);
             self.asm.xor(Reg(b[3]), Reg(t3), destination[3]);
             self.asm.xor(Reg(b[4]), Reg(t4), destination[4]);
+        }
+    }
+
+    fn final_rho_pi_chi(&mut self) {
+        // C and D are dead after theta.
+        // Lane zero has no rotation and can stay in its A register.
+        let mut b = [0; 5];
+        b[0] = self.lane(0, 0);
+        for x in 1..5 {
+            b[x] = *self.c[x];
+            self.asm
+                .rotl64(Reg(self.lane(x, x)), ROTATION_OFFSETS[x][x], b[x]);
+        }
+        // Output 3 still reads B[0], so compute it before overwriting A[0].
+        for x in [3, 0, 1, 2] {
+            self.asm
+                .emit_r(Kind::ANDN, *self.scratch, b[(x + 2) % 5], b[(x + 1) % 5]);
+            self.asm.xor(Reg(b[x]), Reg(*self.scratch), self.lane(x, 0));
         }
     }
 
@@ -271,5 +306,45 @@ impl InlineOp for Keccak256AbsorbPermutation {
         operands: InlineOperands,
     ) -> Result<ExpandedInstructionSequence, ExpansionError> {
         Keccak256SequenceBuilder::new(asm, operands, true)?.build()
+    }
+}
+
+pub struct Keccak256Digest;
+
+impl InlineOp for Keccak256Digest {
+    type Advice = NoAdvice;
+
+    const OPCODE: u32 = INLINE_OPCODE;
+    const FUNCT3: u32 = KECCAK256_DIGEST_FUNCT3;
+    const FUNCT7: u32 = KECCAK256_FUNCT7;
+    const NAME: &'static str = KECCAK256_DIGEST_NAME;
+
+    fn build_sequence(
+        asm: InlineExpansionBuilder,
+        operands: InlineOperands,
+    ) -> Result<ExpandedInstructionSequence, ExpansionError> {
+        let mut builder = Keccak256SequenceBuilder::new(asm, operands, false)?;
+        builder.digest_only = true;
+        builder.build()
+    }
+}
+
+pub struct Keccak256AbsorbDigest;
+
+impl InlineOp for Keccak256AbsorbDigest {
+    type Advice = NoAdvice;
+
+    const OPCODE: u32 = INLINE_OPCODE;
+    const FUNCT3: u32 = KECCAK256_ABSORB_DIGEST_FUNCT3;
+    const FUNCT7: u32 = KECCAK256_FUNCT7;
+    const NAME: &'static str = KECCAK256_ABSORB_DIGEST_NAME;
+
+    fn build_sequence(
+        asm: InlineExpansionBuilder,
+        operands: InlineOperands,
+    ) -> Result<ExpandedInstructionSequence, ExpansionError> {
+        let mut builder = Keccak256SequenceBuilder::new(asm, operands, true)?;
+        builder.digest_only = true;
+        builder.build()
     }
 }
