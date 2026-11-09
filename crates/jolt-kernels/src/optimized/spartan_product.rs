@@ -1058,7 +1058,7 @@ mod tests {
         JoltVirtualPolynomial::OpFlags(CircuitFlags::VirtualInstruction),
     ];
 
-    fn column_field_value(row: &SpartanProductRow, index: usize) -> Fr {
+    fn column_field_value<F: JoltField>(row: &SpartanProductRow, index: usize) -> F {
         match index {
             0 => row.left_instruction_input.to_field(),
             1 => row.right_instruction_input.to_field(),
@@ -1132,16 +1132,16 @@ mod tests {
             .collect()
     }
 
-    fn fixed_backend_from_rows(
+    pub(super) fn fixed_backend_from_rows<F: JoltField>(
         log_t: usize,
         rows: &[SpartanProductRow],
-        #[cfg(feature = "field-inline")] field_rows: &[(usize, FieldInlineSpartanRow<Fr>)],
-    ) -> FixedBackend<Fr> {
+        #[cfg(feature = "field-inline")] field_rows: &[(usize, FieldInlineSpartanRow<F>)],
+    ) -> FixedBackend<F> {
         let mut backend = FixedBackend::new();
         for (index, variable) in COLUMNS.iter().enumerate() {
-            let values: Vec<Fr> = rows
+            let values: Vec<F> = rows
                 .iter()
-                .map(|row| column_field_value(row, index))
+                .map(|row| column_field_value::<F>(row, index))
                 .collect();
             backend
                 .insert(
@@ -1159,7 +1159,7 @@ mod tests {
                 (FieldInlineVirtualPolynomial::FieldRs2Value, 1),
                 (FieldInlineVirtualPolynomial::FieldRdValue, 2),
             ] {
-                let mut table = vec![Fr::from_u64(0); 1 << log_t];
+                let mut table = vec![F::from_u64(0); 1 << log_t];
                 for (cycle, row) in field_rows {
                     table[*cycle] = [row.rs1_value, row.rs2_value, row.rd_value][value];
                 }
@@ -1176,27 +1176,27 @@ mod tests {
         backend
     }
 
-    fn true_input_claim(
+    fn true_input_claim<F: JoltField>(
         rows: &[SpartanProductRow],
-        #[cfg(feature = "field-inline")] field_rows: &[(usize, FieldInlineSpartanRow<Fr>)],
-        tau_low: &[Fr],
-        tau_high: Fr,
-        r0: Fr,
-    ) -> Fr {
+        #[cfg(feature = "field-inline")] field_rows: &[(usize, FieldInlineSpartanRow<F>)],
+        tau_low: &[F],
+        tau_high: F,
+        r0: F,
+    ) -> F {
         let eq = EqPolynomial::new(tau_low.to_vec()).evaluations();
-        let weights = centered_lagrange_evals::<Fr>(DOMAIN, r0).unwrap();
-        let scale = centered_lagrange_kernel::<Fr>(DOMAIN, tau_high, r0).unwrap();
-        let one = Fr::from_u64(1);
-        let mut total = Fr::from_u64(0);
+        let weights = centered_lagrange_evals::<F>(DOMAIN, r0).unwrap();
+        let scale = centered_lagrange_kernel::<F>(DOMAIN, tau_high, r0).unwrap();
+        let one = F::from_u64(1);
+        let mut total = F::from_u64(0);
         for (j, (row, &eq_value)) in rows.iter().zip(&eq).enumerate() {
             #[cfg_attr(not(feature = "field-inline"), expect(unused_mut))]
-            let mut left = weights[0] * column_field_value(row, 0)
-                + weights[1] * column_field_value(row, 4)
-                + weights[2] * column_field_value(row, 2);
+            let mut left = weights[0] * column_field_value::<F>(row, 0)
+                + weights[1] * column_field_value::<F>(row, 4)
+                + weights[2] * column_field_value::<F>(row, 2);
             #[cfg_attr(not(feature = "field-inline"), expect(unused_mut))]
-            let mut right = weights[0] * column_field_value(row, 1)
-                + weights[1] * column_field_value(row, 5)
-                + weights[2] * (one - column_field_value(row, 6));
+            let mut right = weights[0] * column_field_value::<F>(row, 1)
+                + weights[1] * column_field_value::<F>(row, 5)
+                + weights[2] * (one - column_field_value::<F>(row, 6));
             #[cfg(feature = "field-inline")]
             if let Some((_, field_row)) = field_rows.iter().find(|(cycle, _)| *cycle == j) {
                 let (field_left, field_right) = composed_remainder_factor_contributions(
@@ -1219,14 +1219,14 @@ mod tests {
         scale * total
     }
 
-    fn uniskip_input_claims(
+    pub(super) fn uniskip_input_claims<F: JoltField>(
         rows: &[SpartanProductRow],
-        #[cfg(feature = "field-inline")] field_rows: &[(usize, FieldInlineSpartanRow<Fr>)],
-        tau_low: &[Fr],
-    ) -> SumcheckInputClaims<Fr, ProductUniskip<Fr>> {
+        #[cfg(feature = "field-inline")] field_rows: &[(usize, FieldInlineSpartanRow<F>)],
+        tau_low: &[F],
+    ) -> SumcheckInputClaims<F, ProductUniskip<F>> {
         let at = |lane| {
-            let node = Fr::from_i64(DOMAIN_START + lane);
-            true_input_claim(
+            let node = F::from_i64(DOMAIN_START + lane);
+            true_input_claim::<F>(
                 rows,
                 #[cfg(feature = "field-inline")]
                 field_rows,
@@ -1324,13 +1324,13 @@ mod tests {
             tau_high,
             r0,
         } = inputs;
-        let backend = fixed_backend_from_rows(
+        let backend = fixed_backend_from_rows::<Fr>(
             log_t,
             &rows,
             #[cfg(feature = "field-inline")]
             &field_rows,
         );
-        let uniskip_inputs = uniskip_input_claims(
+        let uniskip_inputs = uniskip_input_claims::<Fr>(
             &rows,
             #[cfg(feature = "field-inline")]
             &field_rows,
@@ -1362,7 +1362,7 @@ mod tests {
             "product uni-skip first-round polynomial, log_t = {log_t}"
         );
 
-        let input_claim = true_input_claim(
+        let input_claim = true_input_claim::<Fr>(
             &rows,
             #[cfg(feature = "field-inline")]
             &field_rows,
@@ -1554,7 +1554,7 @@ mod tests {
                 .unwrap()
                 .field_inline_spartan_rows()
                 .unwrap();
-            let uniskip_inputs = uniskip_input_claims(
+            let uniskip_inputs = uniskip_input_claims::<Fr>(
                 &rows,
                 #[cfg(feature = "field-inline")]
                 &field_rows,
@@ -1597,7 +1597,7 @@ mod tests {
             assert_eq!(optimized_uniskip, reference_uniskip);
 
             let r0 = Fr::from_u64(15013);
-            let input_claim = true_input_claim(
+            let input_claim = true_input_claim::<Fr>(
                 &rows,
                 #[cfg(feature = "field-inline")]
                 &field_rows,
@@ -1702,7 +1702,7 @@ mod tests {
                 .unwrap();
                 let column: Vec<Fr> = rows
                     .iter()
-                    .map(|row| column_field_value(row, index))
+                    .map(|row| column_field_value::<Fr>(row, index))
                     .collect();
                 assert_eq!(column, table, "{variable:?}");
             }
