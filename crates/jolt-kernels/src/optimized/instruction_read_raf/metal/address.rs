@@ -1,5 +1,7 @@
 //! Resident address weights and bounded class histograms. Protocol geometry
 //! and the canonical suffix/table mapping stay in the parent CPU kernel.
+use std::mem::MaybeUninit;
+
 use super::*;
 
 pub(super) const KERNELS: [&str; 5] = [
@@ -129,6 +131,27 @@ fn dispatch<'a>(
     unsafe { batch.dispatch_unchecked(pipeline, bindings, Grid::linear(threads, THREADS)) }
 }
 
+/// One disjoint class/block range in the canonical representative order.
+struct AddressTransfer<'a> {
+    base: usize,
+    offsets: &'a [u16],
+    cache: u32,
+    records: &'a mut [MaybeUninit<[u32; 2]>],
+    weights: &'a mut [MaybeUninit<AkitaField>],
+}
+
+impl AddressTransfer<'_> {
+    fn fill(self, source_weights: &[AkitaField]) {
+        for ((&offset, record), weight) in self.offsets.iter().zip(self.records).zip(self.weights) {
+            let row = self.base + usize::from(offset);
+            // Canonical ScanBlock offsets index source_weights, whose entire
+            // length is checked against u32 before constructing these tasks.
+            let _ = record.write([row as u32, self.cache]);
+            let _ = weight.write(source_weights[row]);
+        }
+    }
+}
+
 impl DeviceAddressScan {
     pub(super) fn try_new(
         gpu: Arc<ReadRafGpu>,
@@ -172,8 +195,8 @@ impl DeviceAddressScan {
         }
         let _span = tracing::info_span!("metal_read_raf_address_prepare").entered();
         let _ = u32_len(host.weights.len())?;
-        let mut records = Vec::new();
-        let mut weights = Vec::new();
+        let mut representatives = 0usize;
+        let mut transfers = Vec::new();
         let mut cache_meta = Vec::new();
         let mut jobs = Vec::new();
         let range_table = RangePrefixSums::<AkitaField>::table();
@@ -181,9 +204,9 @@ impl DeviceAddressScan {
             .suffixes()
             .iter()
             .all(|s| matches!(s, Suffixes::One | Suffixes::LowerWord));
-        let pack_span = tracing::info_span!("metal_read_raf_address_pack").entered();
+        let layout_span = tracing::info_span!("metal_read_raf_address_layout").entered();
         for class in 0..SCAN_CLASSES {
-            let class_start = records.len();
+            let class_start = representatives;
             for (block_index, block) in host.blocks.layout.iter().enumerate() {
                 let start = usize::from(block.starts[class]);
                 let end = usize::from(block.starts[class + 1]);
@@ -196,16 +219,16 @@ impl DeviceAddressScan {
                 } else {
                     NONE
                 };
-                let begin = u32_len(records.len())?;
-                for &offset in &block.offsets[start..end] {
-                    let row = block_index * SCAN_BLOCK + usize::from(offset);
-                    records.push([u32_len(row)?, cache]);
-                    weights.push(host.weights[row]);
-                }
+                let begin = u32_len(representatives)?;
+                representatives = representatives
+                    .checked_add(end - start)
+                    .ok_or_else(|| invalid("address representative count overflows"))?;
+                let _ = u32_len(representatives)?;
+                transfers.push((block_index * SCAN_BLOCK, &block.offsets[start..end], cache));
                 if cached {
                     cache_meta.push([
                         begin,
-                        u32_len(records.len())?,
+                        u32_len(representatives)?,
                         u32::from(block.range_key_bits),
                         0,
                     ]);
@@ -218,13 +241,13 @@ impl DeviceAddressScan {
             for part in 0..=suffix_count.div_ceil(JOB_LANES) {
                 let emit_raf = part == 0;
                 let suffix_batch = part.saturating_sub(1) * JOB_LANES;
-                for start in (class_start..records.len()).step_by(JOB_ROWS) {
+                for start in (class_start..representatives).step_by(JOB_ROWS) {
                     // start/end/flag/RAF-present/suffix-count, three opcodes,
                     // then three logical output lanes. RAF and suffix jobs share scratch.
                     let mut job = [NONE; 5 + 2 * JOB_LANES];
                     job[..5].copy_from_slice(&[
                         u32_len(start)?,
-                        u32_len((start + JOB_ROWS).min(records.len()))?,
+                        u32_len((start + JOB_ROWS).min(representatives))?,
                         (class % 2) as u32,
                         u32::from(emit_raf),
                         if emit_raf {
@@ -255,7 +278,7 @@ impl DeviceAddressScan {
                 }
             }
         }
-        drop(pack_span);
+        drop(layout_span);
         let caches = cache_meta.len();
         let mut cache_outputs = [3, 4, 5, NONE, NONE];
         if let Some((start, _)) = table_lanes[range_table.index()] {
@@ -267,14 +290,57 @@ impl DeviceAddressScan {
                 }
             }
         }
+        let transfer_bytes = representatives
+            .checked_mul(size_of::<[u32; 2]>() + size_of::<AkitaField>())
+            .ok_or_else(|| invalid("address transfer size overflows"))?;
+        if transfer_bytes as u128 > gpu.device.limits().recommended_max_working_set_size as u128 {
+            return Ok(None);
+        }
         let rows = ResidentInstructionRows::shared(session, &host.rows)
             .map_err(|error| invalid(&error.to_string()))?;
         // Upload the shared prefix once. Its explicit tail represents the final
         // aggregate, including the last physical row in a full-prefix domain.
         drop(rows.resident(&gpu.device)?);
         let device = &gpu.device;
-        let records = DeviceBuffer::from_slice(device, &records)?;
-        let weights = DeviceBuffer::from_slice(device, &weights)?;
+        // The layout contains only existing coalesced offsets. Allocate exactly
+        // their live extent, then initialize disjoint destinations directly;
+        // there is no second full-size host record/weight owner.
+        let allocation_span = tracing::info_span!("metal_read_raf_address_allocate").entered();
+        let mut records = DeviceBuffer::<MaybeUninit<[u32; 2]>>::uninit(device, representatives)?;
+        let mut weights = DeviceBuffer::<MaybeUninit<AkitaField>>::uninit(device, representatives)?;
+        drop(allocation_span);
+        let fill_span = tracing::info_span!("metal_read_raf_address_fill").entered();
+        let mut record_slots = records.write_uninit()?;
+        let mut weight_slots = weights.write_uninit()?;
+        let mut destinations = Vec::with_capacity(transfers.len());
+        for (base, offsets, cache) in transfers {
+            let (record_part, remaining_records) = record_slots.split_at_mut(offsets.len());
+            record_slots = remaining_records;
+            let (weight_part, remaining_weights) = weight_slots.split_at_mut(offsets.len());
+            weight_slots = remaining_weights;
+            destinations.push(AddressTransfer {
+                base,
+                offsets,
+                cache,
+                records: record_part,
+                weights: weight_part,
+            });
+        }
+        let source_weights = &host.weights;
+        #[cfg(feature = "parallel")]
+        destinations
+            .into_par_iter()
+            .for_each(|task| task.fill(source_weights));
+        #[cfg(not(feature = "parallel"))]
+        destinations
+            .into_iter()
+            .for_each(|task| task.fill(source_weights));
+        // SAFETY: the canonical class/block ranges partition the exact live
+        // extent. Each task initialized every complete element in its slices;
+        // these types have no padding. No GPU use occurred during host writes.
+        let records = unsafe { records.assume_init()? };
+        let weights = unsafe { weights.assume_init()? };
+        drop(fill_span);
         let cache_meta = DeviceBuffer::from_slice(
             device,
             if cache_meta.is_empty() {
