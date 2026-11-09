@@ -258,6 +258,14 @@ pub enum SumcheckError<F: Field> {
     /// support the request, or its rejection pool ran out.
     #[error("transcript rejected a challenge draw")]
     TranscriptRejected,
+
+    /// A prover compute backend could not complete a round.
+    #[cfg(feature = "prover")]
+    #[error("{backend} computation failed: {reason}")]
+    Compute {
+        backend: &'static str,
+        reason: String,
+    },
 }
 
 impl<F: Field> From<VerificationError> for SumcheckError<F> {

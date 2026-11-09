@@ -466,6 +466,7 @@ jolt-openings = { path = "./crates/jolt-openings" }
 jolt-verifier = { path = "./crates/jolt-verifier" }
 jolt-verifier-derive = { path = "./crates/jolt-verifier-derive" }
 jolt-kernels = { path = "./crates/jolt-kernels" }
+jolt-metal = { path = "./crates/jolt-metal" }
 jolt-kernels-derive = { path = "./crates/jolt-kernels-derive" }
 jolt-profiling = { path = "./crates/jolt-profiling" }
 jolt-prover = { path = "./crates/jolt-prover" }

@@ -13,6 +13,7 @@ workspace = true
 
 [features]
 default = ["parallel"]
+metal = ["akita", "dep:jolt-metal"]
 akita = [
   "dep:jolt-akita",
   "jolt-claims/akita",
@@ -47,6 +48,7 @@ jolt-akita = { workspace = true, optional = true }
 jolt-claims.workspace = true
 jolt-field.workspace = true
 jolt-kernels-derive.workspace = true
+jolt-metal = { workspace = true, optional = true }
 jolt-lookup-tables.workspace = true
 jolt-openings.workspace = true
 jolt-poly = { workspace = true, default-features = false }

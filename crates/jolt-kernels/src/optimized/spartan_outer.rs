@@ -38,6 +38,9 @@
 //! homomorphism does the rest), and the wire assembly reuses the
 //! reference's own `jolt-poly` interpolation path.
 
+#[cfg(feature = "metal")]
+pub(crate) mod metal;
+
 #[cfg(feature = "field-inline")]
 use core::cmp::Ordering;
 #[cfg(feature = "field-inline")]
@@ -1074,6 +1077,11 @@ struct DerivedWeights<F> {
 struct OuterRemainderKernel<F: JoltField> {
     az: PrefixColumn<F>,
     bz: PrefixColumn<F>,
+    state: OuterRemainderState<F>,
+}
+
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
+struct OuterRemainderState<F: JoltField> {
     prefix_cycles: usize,
     purged: bool,
     split_eq: GruenSplitEqPolynomial<F>,
@@ -1224,16 +1232,18 @@ impl<F: JoltField> OuterRemainderKernel<F> {
                 values: bz,
                 tail: bz_tail,
             },
-            prefix_cycles,
-            purged: false,
-            split_eq,
-            pending_endpoints: Some(endpoints),
-            challenges: RoundChallenges::new(rounds),
-            rows,
-            #[cfg(feature = "field-inline")]
-            field_rows,
-            opening_ids,
-            derived,
+            state: OuterRemainderState {
+                prefix_cycles,
+                purged: false,
+                split_eq,
+                pending_endpoints: Some(endpoints),
+                challenges: RoundChallenges::new(rounds),
+                rows,
+                #[cfg(feature = "field-inline")]
+                field_rows,
+                opening_ids,
+                derived,
+            },
         })
     }
 
@@ -1264,14 +1274,20 @@ impl<F: JoltField> OuterRemainderKernel<F> {
             bz_constant,
         })
     }
+}
 
-    fn bind(&mut self, challenge: F) {
-        let shrunk = self.az.bind(challenge);
-        let _ = self.bz.bind(challenge);
+impl<F: JoltField> OuterRemainderState<F> {
+    fn bind(&mut self, az: &mut PrefixColumn<F>, bz: &mut PrefixColumn<F>, challenge: F) {
+        let shrunk = az.bind(challenge);
+        let _ = bz.bind(challenge);
         if shrunk && !self.purged {
             self.purged = true;
             crate::mem::purge_retained_memory(self.challenges.total() - 1);
         }
+        self.bind_metadata(challenge);
+    }
+
+    fn bind_metadata(&mut self, challenge: F) {
         self.split_eq.bind(challenge);
         self.challenges.push(challenge);
         self.pending_endpoints = None;
@@ -1472,9 +1488,32 @@ impl<F: JoltField> ClaimAccumulator<F> {
     }
 }
 
+impl<F: JoltField> OuterRemainderState<F> {
+    fn prove_round(
+        &mut self,
+        az: &mut PrefixColumn<F>,
+        bz: &mut PrefixColumn<F>,
+        bind: Option<F>,
+        round: usize,
+        previous_claim: F,
+    ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
+        if let Some(challenge) = bind {
+            self.bind(az, bz, challenge);
+        }
+        let (q_zero, q_infinity) = match self.pending_endpoints.take() {
+            Some(endpoints) => endpoints,
+            None => az.product_endpoints(bz, &self.split_eq),
+        };
+        self.split_eq
+            .checked_cubic(q_zero, q_infinity, previous_claim, round, || {
+                az.product_at_one(bz, &self.split_eq)
+            })
+    }
+}
+
 impl<F: JoltField> ProveRounds<F> for OuterRemainderKernel<F> {
     fn num_rounds(&self) -> usize {
-        self.challenges.total()
+        self.state.challenges.total()
     }
 
     fn prove_round(
@@ -1483,21 +1522,12 @@ impl<F: JoltField> ProveRounds<F> for OuterRemainderKernel<F> {
         round: usize,
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
-        if let Some(challenge) = bind {
-            self.bind(challenge);
-        }
-        let (q_zero, q_infinity) = match self.pending_endpoints.take() {
-            Some(endpoints) => endpoints,
-            None => self.az.product_endpoints(&self.bz, &self.split_eq),
-        };
-        self.split_eq
-            .checked_cubic(q_zero, q_infinity, previous_claim, round, || {
-                self.az.product_at_one(&self.bz, &self.split_eq)
-            })
+        self.state
+            .prove_round(&mut self.az, &mut self.bz, bind, round, previous_claim)
     }
 
     fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {
-        self.bind(bind);
+        self.state.bind(&mut self.az, &mut self.bz, bind);
         Ok(())
     }
 }
@@ -1507,10 +1537,32 @@ impl<F: JoltField> SumcheckKernel<F> for OuterRemainderKernel<F> {
 
     #[cfg(feature = "field-inline")]
     fn park_residue(mut self: Box<Self>, session: &mut ProofSession) {
-        session.park(FieldSpartanCarry(std::mem::take(&mut self.field_rows)));
+        session.park(FieldSpartanCarry(std::mem::take(
+            &mut self.state.field_rows,
+        )));
         crate::mem::drop_in_background_thread(self);
     }
 
+    fn output_claims(
+        &mut self,
+        inputs: &SumcheckInputClaims<F, Self::Relation>,
+    ) -> Result<SumcheckOutputClaims<F, Self::Relation>, SumcheckKernelError<F>> {
+        self.state.output_claims(inputs)
+    }
+
+    fn validate_derived_tables(
+        &self,
+        relation: &Self::Relation,
+        input_points: &SumcheckInputPoints<F, Self::Relation>,
+        output_points: &SumcheckOutputPoints<F, Self::Relation>,
+        challenges: &ConcreteSumcheckChallenges<F, Self::Relation>,
+    ) -> Result<(), SumcheckKernelError<F>> {
+        self.state
+            .validate_derived_tables(relation, input_points, output_points, challenges)
+    }
+}
+
+impl<F: JoltField> OuterRemainderState<F> {
     #[cfg_attr(
         not(feature = "field-inline"),
         expect(
@@ -1520,8 +1572,8 @@ impl<F: JoltField> SumcheckKernel<F> for OuterRemainderKernel<F> {
     )]
     fn output_claims(
         &mut self,
-        inputs: &SumcheckInputClaims<F, Self::Relation>,
-    ) -> Result<SumcheckOutputClaims<F, Self::Relation>, SumcheckKernelError<F>> {
+        inputs: &SumcheckInputClaims<F, OuterRemainder<F>>,
+    ) -> Result<SumcheckOutputClaims<F, OuterRemainder<F>>, SumcheckKernelError<F>> {
         self.challenges.require_complete()?;
         let weights = self.cycle_weights();
         let claimed =
@@ -1529,7 +1581,7 @@ impl<F: JoltField> SumcheckKernel<F> for OuterRemainderKernel<F> {
                 .map_err(|_| SumcheckKernelError::InvariantViolation {
                     reason: "outer opening walk re-extraction failed after the rounds",
                 })?;
-        let claims: BTreeMap<OpeningIdOf<F, Self::Relation>, F> = self
+        let claims: BTreeMap<OpeningIdOf<F, OuterRemainder<F>>, F> = self
             .opening_ids
             .iter()
             .copied()
@@ -1546,7 +1598,7 @@ impl<F: JoltField> SumcheckKernel<F> for OuterRemainderKernel<F> {
                     .zip(self.field_claimed_inputs(&weights)),
             )
             .collect();
-        SumcheckOutputClaims::<F, Self::Relation>::from_opening_values(|id| {
+        SumcheckOutputClaims::<F, OuterRemainder<F>>::from_opening_values(|id| {
             claims.get(id).copied().or_else(|| inputs.resolve_input(id))
         })
         .map_err(SumcheckKernelError::from)
@@ -1554,10 +1606,10 @@ impl<F: JoltField> SumcheckKernel<F> for OuterRemainderKernel<F> {
 
     fn validate_derived_tables(
         &self,
-        relation: &Self::Relation,
-        input_points: &SumcheckInputPoints<F, Self::Relation>,
-        output_points: &SumcheckOutputPoints<F, Self::Relation>,
-        challenges: &ConcreteSumcheckChallenges<F, Self::Relation>,
+        relation: &OuterRemainder<F>,
+        input_points: &SumcheckInputPoints<F, OuterRemainder<F>>,
+        output_points: &SumcheckOutputPoints<F, OuterRemainder<F>>,
+        challenges: &ConcreteSumcheckChallenges<F, OuterRemainder<F>>,
     ) -> Result<(), SumcheckKernelError<F>> {
         self.challenges.require_complete()?;
         // The stream challenge binds the per-stream weight pairs; the split-eq

@@ -3753,6 +3753,7 @@ dependencies = [
  "jolt-field",
  "jolt-kernels-derive",
  "jolt-lookup-tables",
+ "jolt-metal",
  "jolt-openings",
  "jolt-poly",
  "jolt-program",

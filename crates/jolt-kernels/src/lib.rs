@@ -47,6 +47,8 @@ mod error;
 pub mod field_inline;
 mod kernel;
 pub mod mem;
+#[cfg(feature = "metal")]
+mod metal;
 pub mod opening;
 pub mod optimized;
 pub mod precommitted_reduction;

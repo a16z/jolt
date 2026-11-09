@@ -12,6 +12,7 @@ categories = ["cryptography"]
 workspace = true
 
 [features]
+metal = ["akita", "jolt-kernels/metal"]
 default = ["parallel"]
 parallel = [
   "jolt-program/parallel",

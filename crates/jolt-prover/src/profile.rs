@@ -272,6 +272,8 @@ impl OutputFormat {
 pub enum BackendKind {
     Reference,
     Optimized,
+    #[cfg(feature = "metal")]
+    Metal,
 }
 
 impl BackendKind {
@@ -283,6 +285,8 @@ impl BackendKind {
         match self {
             Self::Reference => "reference",
             Self::Optimized => "optimized",
+            #[cfg(feature = "metal")]
+            Self::Metal => "metal",
         }
     }
 
@@ -293,6 +297,8 @@ impl BackendKind {
         match self {
             Self::Reference => "",
             Self::Optimized => "_optimized",
+            #[cfg(feature = "metal")]
+            Self::Metal => "_metal",
         }
     }
 }
@@ -826,7 +832,7 @@ fn run_workload(args: &ProfileArgs, scale: u32, run_dir: &Path) -> ProfileResult
     tracing::info!("Running modular {bench_name} profile at scale 2^{scale}");
 
     if args.result_json.is_some() {
-        assert_eq!(args.backend, BackendKind::Optimized);
+        assert_ne!(args.backend, BackendKind::Reference);
         assert_eq!(args.format, OutputFormat::None);
         assert!(args.guest_elf.is_some() && args.input_file.is_some());
     }
@@ -1134,6 +1140,10 @@ fn prove_workload(
     let backend = match backend {
         BackendKind::Reference => JoltBackend::reference(),
         BackendKind::Optimized => JoltBackend::optimized(),
+        #[cfg(feature = "metal")]
+        BackendKind::Metal => JoltBackend::optimized()
+            .with_metal_compute()
+            .expect("initialize Metal compute"),
     };
 
     let memory_layout = program_preprocessing.memory_layout.clone();
