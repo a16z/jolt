@@ -21,8 +21,8 @@ kernel void outer_product(
     constant F& challenge [[buffer(11)]],
     constant F& az_tail [[buffer(12)]],
     constant F& bz_tail [[buffer(13)]],
-    uint i [[thread_position_in_grid]],
-    uint threads [[threads_per_grid]],
+    uint local [[thread_index_in_threadgroup]],
+    uint threads [[threads_per_threadgroup]],
     uint group [[threadgroup_position_in_grid]],
     ushort lane [[thread_index_in_simdgroup]],
     ushort simdgroup [[simdgroup_index_in_threadgroup]],
@@ -35,7 +35,10 @@ kernel void outer_product(
     Acc q0 = Acc::zero(), qi = Acc::zero(), q1 = Acc::zero();
     ulong n = bind ? (ulong(old_len) + 1) / 2 : old_len;
     ulong pairs = (n + 1) / 2;
-    for (ulong j = i; j < pairs; j += threads) {
+    // Each group owns one outer-equality block; apply its weight once below.
+    for (uint inner = local; inner < in_len; inner += threads) {
+        ulong j = ulong(group) * in_len + inner;
+        if (j >= pairs) break;
         ulong index = (bind ? 4 : 2) * j;
         F a0 = outer_value(az, old_len, index, az_tail);
         F a1 = outer_value(az, old_len, index + 1, az_tail);
@@ -55,7 +58,7 @@ kernel void outer_product(
                 next_bz[2 * j + 1] = b1;
             }
         }
-        F weight = e_out[j / in_len] * e_in[j % in_len];
+        F weight = e_in[inner];
         q0.fmadd(weight * a0, b0);
         qi.fmadd(weight * (a1 - a0), b1 - b0);
         if (need_one) q1.fmadd(weight * a1, b1);
@@ -64,8 +67,9 @@ kernel void outer_product(
     qi = jolt::threadgroup_merge(qi, scratch[1], lane, simdgroup, simdgroups, width);
     q1 = jolt::threadgroup_merge(q1, scratch[2], lane, simdgroup, simdgroups, width);
     if (simdgroup == 0 && lane == 0) {
-        partials[3 * group] = q0.reduce();
-        partials[3 * group + 1] = qi.reduce();
-        partials[3 * group + 2] = q1.reduce();
+        F weight = e_out[group];
+        partials[3 * group] = weight * q0.reduce();
+        partials[3 * group + 1] = weight * qi.reduce();
+        partials[3 * group + 2] = weight * q1.reduce();
     }
 }

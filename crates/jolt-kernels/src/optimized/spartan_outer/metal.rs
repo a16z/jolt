@@ -80,6 +80,7 @@ impl GpuColumns {
         az: &PrefixColumn<AkitaField>,
         bz: &PrefixColumn<AkitaField>,
     ) -> Result<Self, MetalError> {
+        let _span = tracing::info_span!("metal_outer_upload").entered();
         debug_assert_eq!(az.tail[0], az.tail[1]);
         debug_assert_eq!(bz.tail[0], bz.tail[1]);
         debug_assert_eq!(az.values.len(), bz.values.len());
@@ -109,6 +110,8 @@ impl GpuColumns {
         bind: Option<AkitaField>,
         eq: &GruenSplitEqPolynomial<AkitaField>,
     ) -> Result<[AkitaField; 3], MetalError> {
+        let span = tracing::info_span!("metal_outer_dispatch", gpu_s = tracing::field::Empty);
+        let _span = span.enter();
         let invalid = |reason: &str| MetalError::InvalidDispatch {
             pipeline: "outer_product".to_owned(),
             reason: reason.to_owned(),
@@ -150,8 +153,12 @@ impl GpuColumns {
         if group_size == 0 || group_size / width > 32 || group_size / width > width {
             return Err(invalid("unsupported SIMD-group geometry"));
         }
-        let groups = pairs.div_ceil(group_size).clamp(1, 256);
-        let mut partials = DeviceBuffer::<AkitaField>::zeroed(&gpu.device, 3 * groups)?;
+        let groups = pairs.div_ceil(e_in.len()).max(1);
+        let partial_len = groups
+            .checked_mul(3)
+            .filter(|len| u32::try_from(*len).is_ok())
+            .ok_or_else(|| invalid("partial output exceeds 32-bit indexing"))?;
+        let mut partials = DeviceBuffer::<AkitaField>::zeroed(&gpu.device, partial_len)?;
         let do_bind = u32::from(bind.is_some());
         let need_one =
             u32::from(eq.current_linear_evals().1.is_zero() && !eq.current_scalar().is_zero());
@@ -183,7 +190,8 @@ impl GpuColumns {
                 Grid::linear(groups * group_size, group_size),
             )?;
         }
-        let _ = batch.commit_and_wait()?;
+        let gpu_time = batch.commit_and_wait()?;
+        let _ = span.record("gpu_s", gpu_time.as_secs_f64());
         let mut result = [AkitaField::zero(); 3];
         for partial in partials.read()?.chunks_exact(3) {
             for (sum, value) in result.iter_mut().zip(partial) {
@@ -314,7 +322,7 @@ mod tests {
     fn prefix_rounds_match_dense_multilinears() {
         let gpu = MetalOuterRemainder::new().unwrap();
         let bits = 10;
-        for prefix in [1, 3, 257, 1023, 1024] {
+        for prefix in [0, 1, 3, 257, 1023, 1024] {
             for exceptional in [false, true] {
                 let point: Vec<_> = (0..bits)
                     .map(|i| {
