@@ -89,5 +89,11 @@ mod tests {
         hash_input.extend([0xac, 2]);
         assert_eq!(Workload::Sha2Chain.input_for_operations(300), hash_input);
         assert_eq!(Workload::Sha3Chain.input_for_operations(300), hash_input);
+        let mut blake_input = vec![5; 64];
+        blake_input.extend([0xac, 2]);
+        assert_eq!(
+            Workload::Blake2bChain.input_for_operations(300),
+            blake_input
+        );
     }
 }

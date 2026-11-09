@@ -42,6 +42,7 @@ use std::result::Result as StdResult;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use blake2::{Blake2b512, Digest};
 use clap::ValueEnum;
 #[cfg(feature = "akita")]
 use jolt_akita::{AkitaChunkProfile, AkitaField};
@@ -54,6 +55,7 @@ use jolt_field::Fr;
 use jolt_field::JoltField;
 use jolt_host::{GuestElf, JoltProgramSource, Program};
 // Keep the inline libraries linked so their host-side registrations reach the tracer.
+use jolt_inlines_blake2 as _;
 use jolt_inlines_keccak256 as _;
 use jolt_inlines_secp256k1 as _;
 use jolt_inlines_sha2 as _;
@@ -89,6 +91,8 @@ const CYCLES_PER_SHA256: f64 = 3396.0;
 const CYCLES_PER_SHA3: f64 = 4330.0;
 const CYCLES_PER_BTREEMAP_OP: f64 = 1550.0;
 const CYCLES_PER_FIBONACCI_UNIT: f64 = 12.0;
+// Donor chain probes measured up to 2143.31 rows per full-digest iteration.
+const CYCLES_PER_BLAKE2B: f64 = 2144.0;
 const SAFETY_MARGIN: f64 = 0.9;
 const LEGACY_TIMINGS_HEADER: &str = "benchmark_name,scale,prover_time_s,trace_length,proving_hz,proof_size,proof_size_compressed,backend";
 const TIMINGS_HEADER: &str = "benchmark_name,scale,prover_time_s,trace_length,proving_hz,proof_size,proof_size_compressed,backend,setup_time_s,verifier_parallel_time_s,verifier_single_thread_time_s,verifier_parallel_threads";
@@ -129,6 +133,7 @@ pub enum Workload {
     #[value(name = "btreemap")]
     BTreeMap,
     Secp256k1Batch,
+    Blake2bChain,
     /// The eq-MLE field-inline guest (`examples/field-ops`): the workload
     /// that exercises the field-inline columns and kernels. Fixed-size (its input does
     /// not scale), so it is not in the default sweep list.
@@ -146,6 +151,7 @@ impl Workload {
             Self::Sha3Chain => "sha3-chain",
             Self::BTreeMap => "btreemap",
             Self::Secp256k1Batch => "secp256k1-batch",
+            Self::Blake2bChain => "blake2b-chain",
             #[cfg(feature = "field-inline")]
             Self::FieldOps => "field-ops",
         }
@@ -153,6 +159,11 @@ impl Workload {
 
     fn program(self) -> Program {
         match self {
+            Self::Blake2bChain => {
+                let mut program = Program::new("hashbench-guest");
+                program.set_func("blake2b_chain");
+                program
+            }
             Self::Secp256k1Batch => {
                 let mut program = Program::new("secp256k1-ecdsa-verify-guest");
                 program.add_guest_feature("batch-bench");
@@ -178,6 +189,7 @@ impl Workload {
             Self::Sha3Chain => 22,
             Self::BTreeMap => 20,
             Self::Secp256k1Batch => 20,
+            Self::Blake2bChain => 22,
             #[cfg(feature = "field-inline")]
             Self::FieldOps => 16,
         }
@@ -189,6 +201,7 @@ impl Workload {
             Self::Sha2Chain => CYCLES_PER_SHA256,
             Self::Sha3Chain => CYCLES_PER_SHA3,
             Self::BTreeMap => CYCLES_PER_BTREEMAP_OP,
+            Self::Blake2bChain => CYCLES_PER_BLAKE2B,
             Self::Secp256k1Batch => return self.input_for_operations(1),
             #[cfg(feature = "field-inline")]
             Self::FieldOps => return eqpoly_inputs(),
@@ -207,6 +220,8 @@ impl Workload {
             ]
             .concat(),
             Self::Secp256k1Batch => prepare::secp256k1_inputs(operations),
+            Self::Blake2bChain => postcard::to_stdvec(&(([5u8; 32], [5u8; 32]), operations))
+                .expect("serialize BLAKE2b chain input"),
             #[cfg(feature = "field-inline")]
             Self::FieldOps => eqpoly_inputs(),
         }
@@ -870,6 +885,18 @@ fn run_workload(args: &ProfileArgs, scale: u32, run_dir: &Path) -> ProfileResult
         args.akita_chunk_profile,
     )?;
     let (duration, proof_size) = (run.duration, run.proof_size);
+
+    if matches!(workload, Workload::Blake2bChain) {
+        let ((first, second), iterations): (([u8; 32], [u8; 32]), u32) =
+            postcard::from_bytes(&input).expect("decode BLAKE2b chain input");
+        let mut expected = [0u8; 64];
+        expected[..32].copy_from_slice(&first);
+        expected[32..].copy_from_slice(&second);
+        for _ in 0..iterations {
+            expected = Blake2b512::digest(expected).into();
+        }
+        assert_eq!(run.public_output.as_slice(), expected.as_slice());
+    }
 
     if let Some(path) = &args.result_json {
         let metrics = serde_json::json!({

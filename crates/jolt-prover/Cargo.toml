@@ -68,6 +68,7 @@ zk = [
 # The profile harness (`[[bin]] jolt-prover`, `profile` subcommand).
 profiling = [
   "dep:bincode",
+  "dep:blake2",
   "dep:chrono",
   "dep:clap",
   "dep:rayon",
@@ -76,6 +77,8 @@ profiling = [
   "jolt-inlines-keccak256/host",
   "dep:jolt-inlines-sha2",
   "jolt-inlines-sha2/host",
+  "dep:jolt-inlines-blake2",
+  "jolt-inlines-blake2/host",
   "dep:jolt-inlines-secp256k1",
   "jolt-inlines-secp256k1/host",
   "dep:jolt-profiling",
@@ -130,10 +133,12 @@ tracing.workspace = true
 # Optional: the `profiling` harness (bins cannot use dev-dependencies).
 allocative = { workspace = true, optional = true }
 bincode = { workspace = true, optional = true }
+blake2 = { workspace = true, optional = true }
 chrono = { workspace = true, optional = true }
 clap = { workspace = true, optional = true }
 jolt-inlines-keccak256 = { workspace = true, optional = true }
 jolt-inlines-sha2 = { workspace = true, optional = true }
+jolt-inlines-blake2 = { workspace = true, optional = true }
 jolt-inlines-secp256k1 = { workspace = true, optional = true }
 jolt-host = { workspace = true, optional = true }
 # default-features = false: the `profiling` feature adds `summary`

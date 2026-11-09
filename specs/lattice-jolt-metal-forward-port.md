@@ -4,7 +4,7 @@
 |---|---|
 | Author(s) | Codex, for Justin Thaler |
 | Created | 2026-11-09 |
-| Status | proposed — for review before implementation |
+| Status | in progress — initial design reviewed |
 | PR | |
 
 ## Summary
