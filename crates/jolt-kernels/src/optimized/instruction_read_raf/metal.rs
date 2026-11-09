@@ -146,7 +146,8 @@ impl ReadRafGpu {
             RoundSource::Dense { prefix, bind, .. } => (2, *prefix, 0, 0, *bind),
         };
         let output_len = if mode == 0 {
-            0
+            // Metal validates one pointee even when this mode never writes it.
+            1
         } else {
             prefix
                 .checked_mul(n)
@@ -178,17 +179,28 @@ impl ReadRafGpu {
                 *out = u32::try_from(value)
                     .map_err(|_| compute_error(invalid("shape exceeds 32-bit indexing")))?;
             }
-            let empty_fields =
-                DeviceBuffer::<AkitaField>::zeroed(&self.device, 0).map_err(compute_error)?;
-            let empty_rows =
-                DeviceBuffer::<[u64; 4]>::zeroed(&self.device, 0).map_err(compute_error)?;
+            // Placeholder bindings must contain a complete shader element;
+            // the runtime's minimum allocation is smaller than a ulong4 row.
+            let unused_fields =
+                DeviceBuffer::<AkitaField>::zeroed(&self.device, 1).map_err(compute_error)?;
+            let unused_rows =
+                DeviceBuffer::<[u64; 4]>::zeroed(&self.device, 1).map_err(compute_error)?;
+            let placeholder = [AkitaField::zero()];
             let (flat_ra, claim_table) = match &source {
                 RoundSource::Lazy { ra, claims, .. } => {
                     (ra.iter().flatten().copied().collect::<Vec<_>>(), *claims)
                 }
-                RoundSource::Dense { .. } => (Vec::new(), &[][..]),
+                RoundSource::Dense { .. } => (Vec::new(), placeholder.as_slice()),
             };
-            let ra = DeviceBuffer::from_slice(&self.device, &flat_ra).map_err(compute_error)?;
+            let ra = DeviceBuffer::from_slice(
+                &self.device,
+                if flat_ra.is_empty() {
+                    &placeholder
+                } else {
+                    &flat_ra
+                },
+            )
+            .map_err(compute_error)?;
             let claims =
                 DeviceBuffer::from_slice(&self.device, claim_table).map_err(compute_error)?;
             let device_tails =
@@ -198,7 +210,7 @@ impl ReadRafGpu {
                 &self.device,
                 tail_cache
                     .as_ref()
-                    .map_or(&[][..], |cache| cache.products().as_slice()),
+                    .map_or(placeholder.as_slice(), |cache| cache.products().as_slice()),
             )
             .map_err(compute_error)?;
             let e_in =
@@ -226,8 +238,8 @@ impl ReadRafGpu {
                 return Err(compute_error(invalid("unsupported SIMD geometry")));
             }
             let (rows, tail, previous) = match &source {
-                RoundSource::Lazy { rows, .. } => (&rows.prefix, rows.tail, &empty_fields),
-                RoundSource::Dense { values, .. } => (&empty_rows, [0; 4], *values),
+                RoundSource::Lazy { rows, .. } => (&rows.prefix, rows.tail, &unused_fields),
+                RoundSource::Dense { values, .. } => (&unused_rows, [0; 4], *values),
             };
             let mut batch = Batch::new(&self.device).map_err(compute_error)?;
             // SAFETY: the selected mode accesses only its populated inputs.
