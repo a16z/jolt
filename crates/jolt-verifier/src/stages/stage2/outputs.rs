@@ -256,7 +256,7 @@ mod tests {
         }))
         .unwrap();
         Stage2BatchSumchecks::<Fr> {
-            ram_read_write: RamReadWriteChecking::new(dimensions, log_k, Vec::new()),
+            ram_read_write: RamReadWriteChecking::new(dimensions, log_k, Vec::new(), Vec::new()),
             product_remainder: ProductRemainder::new(
                 SpartanProductDimensions::new(log_t),
                 fr(1),

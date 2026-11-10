@@ -2,8 +2,9 @@
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::{BYTES_PER_INSTRUCTION, RAM_START_ADDRESS};
 use common::jolt_device::{JoltDevice, MemoryLayout, MemoryLayoutError};
+use jolt_riscv::JoltInstructionRow;
 
-use super::public_io::PublicMemorySegment;
+use super::{public_io::PublicMemorySegment, PreprocessingError};
 
 #[derive(Default, Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(
@@ -18,6 +19,8 @@ use super::public_io::PublicMemorySegment;
 pub struct RAMPreprocessing {
     pub min_bytecode_address: u64,
     pub bytecode_words: Vec<u64>,
+    /// Canonical half-open intervals of protected RAM word indices.
+    pub code_word_intervals: Vec<(usize, usize)>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -89,8 +92,107 @@ impl RAMPreprocessing {
         Self {
             min_bytecode_address,
             bytecode_words,
+            code_word_intervals: Vec::new(),
         }
     }
+}
+
+/// Round real source-instruction extents outward to RAM doublewords and merge
+/// overlaps and neighbors. Expansion rows must be reduced to their source
+/// anchors before calling; address-zero padding is not source code.
+pub fn code_word_intervals(
+    source_extents: impl IntoIterator<Item = (u64, bool)>,
+    lowest_address: u64,
+) -> Result<Vec<(usize, usize)>, PreprocessingError> {
+    if !lowest_address.is_multiple_of(8) {
+        return Err(PreprocessingError::InvalidCodeWordIntervals(
+            "lowest RAM address is not doubleword aligned",
+        ));
+    }
+    let mut intervals = Vec::new();
+    for (address, is_compressed) in source_extents {
+        if address == 0 {
+            continue;
+        }
+        let end = address
+            .checked_add(if is_compressed { 2 } else { 4 })
+            .ok_or(PreprocessingError::InvalidCodeWordIntervals(
+                "source instruction extent overflows",
+            ))?;
+        let offset = address.checked_sub(lowest_address).ok_or(
+            PreprocessingError::InvalidCodeWordIntervals("source instruction is below RAM"),
+        )?;
+        if !address.is_multiple_of(2) {
+            return Err(PreprocessingError::InvalidCodeWordIntervals(
+                "source instruction address is not halfword aligned",
+            ));
+        }
+        let start = usize::try_from(offset / 8).map_err(|_| {
+            PreprocessingError::InvalidCodeWordIntervals("source word exceeds usize range")
+        })?;
+        let end = usize::try_from((end - lowest_address).div_ceil(8)).map_err(|_| {
+            PreprocessingError::InvalidCodeWordIntervals("source word exceeds usize range")
+        })?;
+        intervals.push((start, end));
+    }
+    intervals.sort_unstable();
+    let mut merged: Vec<(usize, usize)> = Vec::with_capacity(intervals.len());
+    for (start, end) in intervals {
+        if let Some((_, previous_end)) = merged.last_mut() {
+            if start <= *previous_end {
+                *previous_end = (*previous_end).max(end);
+                continue;
+            }
+        }
+        merged.push((start, end));
+    }
+    Ok(merged)
+}
+
+/// Expansion metadata retains the source length on the final row only.
+/// Taking each anchor avoids treating a compressed expansion as four bytes.
+pub fn bytecode_code_word_intervals(
+    bytecode: &[JoltInstructionRow],
+    lowest_address: u64,
+) -> Result<Vec<(usize, usize)>, PreprocessingError> {
+    code_word_intervals(
+        bytecode
+            .iter()
+            .filter(|row| row.virtual_sequence_remaining.unwrap_or(0) == 0)
+            .map(|row| (row.address as u64, row.is_compressed)),
+        lowest_address,
+    )
+}
+
+/// Membership in an admitted canonical interval list, without a RAM-sized mask.
+pub fn is_code_word(intervals: &[(usize, usize)], word_index: usize) -> bool {
+    let next = intervals.partition_point(|&(start, _)| start <= word_index);
+    next.checked_sub(1)
+        .and_then(|index| intervals.get(index))
+        .is_some_and(|&(_, end)| word_index < end)
+}
+
+pub fn validate_code_word_intervals(
+    intervals: &[(usize, usize)],
+    memory_layout: &MemoryLayout,
+) -> Result<(), PreprocessingError> {
+    let max_ram_k = compute_max_ram_k(memory_layout)
+        .map_err(|_| PreprocessingError::InvalidCodeWordIntervals("RAM domain is invalid"))?;
+    let mut previous_end = None;
+    for &(start, end) in intervals {
+        if start >= end || end > max_ram_k {
+            return Err(PreprocessingError::InvalidCodeWordIntervals(
+                "protected interval is empty or outside RAM",
+            ));
+        }
+        if previous_end.is_some_and(|previous| start <= previous) {
+            return Err(PreprocessingError::InvalidCodeWordIntervals(
+                "protected intervals are not sorted, disjoint and merged",
+            ));
+        }
+        previous_end = Some(end);
+    }
+    Ok(())
 }
 
 pub fn compute_min_ram_k(
@@ -193,6 +295,39 @@ mod tests {
     }
 
     #[test]
+    fn source_code_extents_round_and_merge_without_freezing_gaps() {
+        let lowest = 0x8000_0000;
+        assert_eq!(
+            super::code_word_intervals(
+                [
+                    (lowest + 38, false),
+                    (lowest + 6, true),
+                    (lowest + 8, false),
+                    (lowest, false),
+                    (0, false),
+                ],
+                lowest
+            ),
+            Ok(vec![(0, 2), (4, 6)])
+        );
+        let intervals = [(0, 2), (4, 6)];
+        for word in 0..8 {
+            assert_eq!(
+                super::is_code_word(&intervals, word),
+                matches!(word, 0 | 1 | 4 | 5)
+            );
+        }
+    }
+
+    #[test]
+    fn source_code_extents_reject_overflow_low_and_unaligned_addresses() {
+        assert!(super::code_word_intervals([(u64::MAX - 1, true)], 0).is_err());
+        assert!(super::code_word_intervals([(8, false)], 16).is_err());
+        assert!(super::code_word_intervals([(17, true)], 16).is_err());
+        assert!(super::code_word_intervals([(16, false)], 1).is_err());
+    }
+
+    #[test]
     fn preprocesses_memory_bytes_into_words() {
         let preprocessing = RAMPreprocessing::preprocess(vec![
             (0x8000_0000, 0x01),
@@ -218,6 +353,7 @@ mod tests {
         let preprocessing = RAMPreprocessing {
             min_bytecode_address: 0x8000_0000,
             bytecode_words: vec![0x0201, 0x03],
+            code_word_intervals: Vec::new(),
         };
 
         let initial = PublicInitialRam::new(&preprocessing, &device);

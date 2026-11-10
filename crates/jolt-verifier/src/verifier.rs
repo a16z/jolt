@@ -455,6 +455,7 @@ pub struct CheckedInputs {
     pub ram_K: usize,
     pub entry_address: u64,
     pub preprocessing_digest: [u8; 32],
+    pub code_word_intervals: Vec<(usize, usize)>,
     pub untrusted_advice_commitment_present: bool,
     pub trusted_advice_commitment_present: bool,
     pub vc_capacity: Option<usize>,
@@ -490,6 +491,7 @@ where
         return Err(VerifierError::MemoryLayoutMismatch);
     }
     validate_ram_remap_base(memory_layout)?;
+    preprocessing.program.validate_code_word_intervals()?;
 
     if num::u64_from_usize(public_io.inputs.len()) > memory_layout.max_input_size {
         return Err(VerifierError::InputTooLarge {
@@ -634,6 +636,7 @@ where
         ram_K: ram_k,
         entry_address: program.entry_address(),
         preprocessing_digest: preprocessing.preprocessing_digest,
+        code_word_intervals: preprocessing.program.code_word_intervals().to_vec(),
         untrusted_advice_commitment_present,
         trusted_advice_commitment_present,
         vc_capacity,
@@ -996,6 +999,7 @@ where
         return Err(VerifierError::MemoryLayoutMismatch);
     }
     validate_ram_remap_base(memory_layout)?;
+    preprocessing.program.validate_code_word_intervals()?;
 
     if num::u64_from_usize(public_io.inputs.len()) > memory_layout.max_input_size {
         return Err(VerifierError::InputTooLarge {
@@ -1120,6 +1124,7 @@ where
         ram_K: ram_k,
         entry_address: preprocessing.program.entry_address(),
         preprocessing_digest: preprocessing.preprocessing_digest,
+        code_word_intervals: preprocessing.program.code_word_intervals().to_vec(),
         untrusted_advice_commitment_present,
         trusted_advice_commitment_present,
         vc_capacity,
@@ -1591,7 +1596,10 @@ mod tests {
         let mut memory_layout = test_memory_layout();
         memory_layout.trusted_advice_start -= 4;
         memory_layout.untrusted_advice_start -= 4;
-        let preprocessing = test_preprocessing_with_layout(memory_layout);
+        let mut preprocessing = test_preprocessing();
+        if let ProgramPreprocessing::Full(full) = &mut preprocessing.program {
+            Arc::make_mut(full).memory_layout = memory_layout;
+        }
         let public_io = JoltDevice {
             memory_layout: preprocessing.program.memory_layout().clone(),
             ..JoltDevice::default()

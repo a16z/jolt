@@ -135,7 +135,12 @@ where
         }
     })?;
     let sumchecks = Stage2BatchSumchecks {
-        ram_read_write: RamReadWriteChecking::new(read_write_dimensions, log_k, tau_low.clone()),
+        ram_read_write: RamReadWriteChecking::new(
+            read_write_dimensions,
+            log_k,
+            tau_low.clone(),
+            backend.code_word_intervals().to_vec(),
+        ),
         product_remainder: ProductRemainder::new(
             product_dimensions,
             uniskip_challenge,
@@ -275,7 +280,14 @@ mod field_inline_round_trip {
             b"",
         );
         twins::replay_stage1(&mut transcript, &stage1);
-        twins::replay_stage2(&mut transcript, &config, &public_io, &stage1, &out);
+        twins::replay_stage2(
+            &mut transcript,
+            &config,
+            &public_io,
+            &stage1,
+            &out,
+            context.code_word_intervals(),
+        );
 
         assert_eq!(
             transcript.verifier_message::<[u8; 32]>(),
@@ -353,9 +365,10 @@ mod field_inline_zk {
             public_io: JoltDevice::default(),
             zk: true,
             trace_length: 1 << LOG_T,
-            ram_K: 1 << 4,
+            ram_K: config.ram_K,
             entry_address: ENTRY,
             preprocessing_digest: [0u8; 32],
+            code_word_intervals: context.code_word_intervals().to_vec(),
             untrusted_advice_commitment_present: false,
             trusted_advice_commitment_present: false,
             vc_capacity: Some(CAPACITY),
@@ -413,6 +426,7 @@ mod field_inline_zk {
                 read_write_dimensions,
                 log_k,
                 tau_low.clone(),
+                context.code_word_intervals().to_vec(),
             ),
             product_remainder: ProductRemainder::new(
                 product_dimensions,

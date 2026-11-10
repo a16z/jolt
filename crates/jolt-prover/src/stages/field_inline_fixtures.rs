@@ -33,7 +33,7 @@ use jolt_program::execution::{FieldEvent, JoltProgram, TraceData, TraceOutput};
 use jolt_program::field_inline::{
     FieldEncodedValue, FieldInlineTraceData, FieldRegisterRead, FieldRegisterWrite,
 };
-use jolt_program::preprocess::{BytecodePreprocessing, JoltProgramPreprocessing, RAMPreprocessing};
+use jolt_program::preprocess::JoltProgramPreprocessing;
 use jolt_riscv::{
     JoltInstructionKind, JoltInstructionProfile, JoltInstructionRow, JoltTraceRow,
     NormalizedOperands, RamAccess, RamWrite, RegisterRead, RegisterState, RegisterWrite,
@@ -81,13 +81,17 @@ fn instruction(
 fn fixture_program_preprocessing(
     bytecode: Vec<JoltInstructionRow>,
 ) -> Arc<JoltProgramPreprocessing> {
-    Arc::new(JoltProgramPreprocessing {
-        bytecode: BytecodePreprocessing::preprocess(bytecode, ENTRY, RV64IMAC_JOLT_FIELD_INLINE)
-            .unwrap(),
-        ram: RAMPreprocessing::default(),
-        memory_layout: test_memory_layout(),
-        max_padded_trace_length: 1 << LOG_T,
-    })
+    Arc::new(
+        JoltProgramPreprocessing::new(
+            bytecode,
+            vec![(ENTRY, 0)],
+            test_memory_layout(),
+            ENTRY,
+            1 << LOG_T,
+            RV64IMAC_JOLT_FIELD_INLINE,
+        )
+        .unwrap(),
+    )
 }
 
 pub(crate) fn field_inline_backend(
@@ -414,6 +418,10 @@ pub(crate) fn test_checked_inputs() -> CheckedInputs {
         ram_K: 1 << RAM_LOG_K,
         entry_address: ENTRY,
         preprocessing_digest: [0u8; 32],
+        code_word_intervals: fixture_program_preprocessing(field_arithmetic_program().0)
+            .ram
+            .code_word_intervals
+            .clone(),
         untrusted_advice_commitment_present: false,
         trusted_advice_commitment_present: false,
         vc_capacity: cfg!(feature = "zk").then_some(MAX_BLINDFOLD_GENERATORS),
@@ -604,6 +612,7 @@ pub(crate) mod twins {
         public_io: &JoltDevice,
         stage1: &Stage1ProverOutput<Fr, C>,
         stage2: &Stage2ProverOutput<Fr, C>,
+        code_word_intervals: &[(usize, usize)],
     ) {
         let log_t = LOG_T;
         let log_k = config.ram_K.ilog2() as usize;
@@ -635,6 +644,7 @@ pub(crate) mod twins {
                 read_write_dimensions,
                 log_k,
                 tau_low.clone(),
+                code_word_intervals.to_vec(),
             ),
             product_remainder: ProductRemainder::new(
                 product_dimensions,

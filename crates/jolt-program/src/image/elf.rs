@@ -1,9 +1,10 @@
 use common::constants::RAM_START_ADDRESS;
 use jolt_riscv::{uncompress_rv64_instruction, JoltInstructionProfile, SourceInstruction};
-use object::{Object, ObjectSection, SectionKind};
+use object::elf::SHF_WRITE;
+use object::{Object, ObjectSection, SectionFlags, SectionKind};
 use std::collections::BTreeMap;
 
-use crate::ProgramError;
+use crate::{preprocess::ram::code_word_intervals, ProgramError};
 
 /// Contents decoded directly from an RV64 ELF program image.
 ///
@@ -42,6 +43,7 @@ pub fn decode_elf(
     let mut memory_image = BTreeMap::new();
     let mut program_end = RAM_START_ADDRESS;
     let mut text_ranges = Vec::new();
+    let mut writable_ranges = Vec::new();
 
     for section in obj
         .sections()
@@ -59,6 +61,11 @@ pub fn decode_elf(
             .data()
             .map_err(|_| ProgramError::MalformedImage("section data is not readable"))?;
 
+        if matches!(section.flags(), SectionFlags::Elf { sh_flags, .. } if sh_flags.contains(SHF_WRITE))
+            && start < end
+        {
+            writable_ranges.push((start, end));
+        }
         if section.kind() == SectionKind::Text {
             text_ranges.push((start, end));
         }
@@ -83,6 +90,28 @@ pub fn decode_elf(
             .map(|address| memory_image.get(&address).copied().unwrap_or(0))
             .collect();
         decode_text_section(start, &raw_data, &mut instructions, profile)?;
+    }
+
+    let protected_words = code_word_intervals(
+        instructions.iter().map(|instruction| {
+            let row = instruction.row();
+            (row.address as u64, row.is_compressed)
+        }),
+        0,
+    )
+    .map_err(|_| ProgramError::MalformedImage("invalid source instruction extent"))?;
+    // Protection freezes the whole word, including any read-only bytes sharing
+    // it. Zero text padding alone creates no protected interval.
+    for (start, end) in writable_ranges {
+        let first_word = start / 8;
+        let end_word = end.div_ceil(8);
+        if protected_words.iter().any(|&(code_start, code_end)| {
+            (code_start as u128) < u128::from(end_word) && u128::from(first_word) < code_end as u128
+        }) {
+            return Err(ProgramError::MalformedImage(
+                "writable section shares a protected code doubleword",
+            ));
+        }
     }
 
     Ok(Rv64ProgramImage {
@@ -463,6 +492,44 @@ mod tests {
             RAM_START_ADDRESS as usize
         );
         assert_eq!(image.instructions[0].row().operands.imm, 1);
+    }
+
+    #[test]
+    fn decode_elf_rejects_writable_bytes_sharing_a_code_word() {
+        let text = text_section(RAM_START_ADDRESS, &[0x01, 0x00]);
+        let data = data_section(RAM_START_ADDRESS + 4, &[0xaa]);
+        let mut bss = data_section(RAM_START_ADDRESS + 6, &[]);
+        bss.section_type = SHT_NOBITS;
+        bss.size_override = Some(2);
+        for writable in [data, bss] {
+            let elf = build_elf64(&[text_section(text.address, &text.data), writable]);
+            assert!(matches!(
+                decode_elf(&elf, RV64IMAC_JOLT),
+                Err(ProgramError::MalformedImage(
+                    "writable section shares a protected code doubleword"
+                ))
+            ));
+        }
+    }
+
+    #[test]
+    fn decode_elf_allows_writable_words_containing_only_text_padding() {
+        let elf = build_elf64(&[
+            text_section(RAM_START_ADDRESS, &[0x01, 0x00, 0, 0, 0, 0, 0, 0, 0, 0]),
+            data_section(RAM_START_ADDRESS + 10, &[0xaa, 0xbb]),
+        ]);
+        let image = decode_elf(&elf, RV64IMAC_JOLT).expect("padding word remains writable");
+        assert_eq!(image.instructions.len(), 1);
+    }
+
+    #[test]
+    fn decode_elf_allows_read_only_data_sharing_a_code_word() {
+        let mut rodata = data_section(RAM_START_ADDRESS + 2, &[0xaa, 0xbb]);
+        rodata.flags = SHF_ALLOC;
+        let elf = build_elf64(&[text_section(RAM_START_ADDRESS, &[0x01, 0x00]), rodata]);
+        let image =
+            decode_elf(&elf, RV64IMAC_JOLT).expect("read-only neighboring bytes may freeze");
+        assert_eq!(image.instructions.len(), 1);
     }
 
     #[test]

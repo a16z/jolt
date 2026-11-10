@@ -263,7 +263,14 @@ mod field_inline_round_trip {
             b"",
         );
         twins::replay_stage1(&mut transcript, &stage1);
-        twins::replay_stage2(&mut transcript, &config, &public_io, &stage1, &stage2);
+        twins::replay_stage2(
+            &mut transcript,
+            &config,
+            &public_io,
+            &stage1,
+            &stage2,
+            context.code_word_intervals(),
+        );
         twins::replay_stage3(&mut transcript, &stage1, &stage2, &stage3);
         twins::replay_stage4(
             &mut transcript,

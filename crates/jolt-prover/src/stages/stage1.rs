@@ -296,6 +296,7 @@ mod field_inline_zk {
             ram_K: 1 << 4,
             entry_address: ENTRY,
             preprocessing_digest: [0u8; 32],
+            code_word_intervals: Vec::new(),
             untrusted_advice_commitment_present: false,
             trusted_advice_commitment_present: false,
             vc_capacity: Some(CAPACITY),

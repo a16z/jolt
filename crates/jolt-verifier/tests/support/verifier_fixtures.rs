@@ -31,7 +31,7 @@ use super::guest_fixtures::{fixture_witness, prepare_guest, PreparedGuest};
 static VERIFIER_FIXTURE_LOCK: Mutex<()> = Mutex::new(());
 // Bump whenever cached proofs stop verifying: cached ZK fixtures load without an
 // acceptance check.
-const FIXTURE_MAGIC: &[u8; 8] = b"JVCF0012";
+const FIXTURE_MAGIC: &[u8; 8] = b"JVCF0013";
 const REGENERATE_ARTIFACTS_ENV: &str = "JOLT_VERIFIER_REGENERATE_VERIFIER_FIXTURES";
 const VERIFIER_FIXTURE_LOCK_FILE: &str = "jolt-verifier-fixtures.lock";
 
@@ -423,7 +423,7 @@ fn load_or_generate_fixture(
 fn fixture_path(kind: VerifierFixtureKind) -> PathBuf {
     let filename = format!("{}.jvcf", kind.fixture_name());
     if cfg!(feature = "zk") {
-        env::temp_dir()
+        jolt_host::default_target_dir()
             .join("jolt-verifier-fixtures")
             .join(filename)
     } else {

@@ -241,6 +241,11 @@ impl<'a, F: JoltField, B: ?Sized> KernelContext<'a, F, B> {
         &self.session
     }
 
+    /// Public program code words used by the RAM read-write relation.
+    pub fn code_word_intervals(&self) -> &[(usize, usize)] {
+        &self.witness.program_preprocessing().ram.code_word_intervals
+    }
+
     /// Release the completed execution, dropping retained kernel state in the background.
     pub fn finish(self) {
         crate::mem::drop_in_background_thread(self.session);

@@ -138,6 +138,62 @@ anywhere pays across every subsystem; (2) additional *rarely-active* RAM-side co
 nearly free; (3) additional *dense* columns (or 8× lane columns active on every memory op) are
 expensive; (4) making the RAM sumchecks somewhat more complex is nearly irrelevant at ~0.6%.
 
+## Current RAM guards
+
+The ordinary RAM read-write relation in `jolt-claims` also checks code preservation
+and memory-row address selection. With $E(j)=eq(r_0,j)$ and the public protected-word
+mask $C(k)$, its batched identity is
+
+```
+Read(r0) + gamma Write(r0) + gamma^3 (Load + Store)(r0)
+  = sum_(k,j) E(j) ra(k,j)
+      [(1 + gamma) Val(k,j) + (gamma + gamma^2 C(k)) Inc(j) + gamma^3].
+```
+
+The third unbatched input is zero, with output weight `E*C`. The fourth input uses
+the Load and Store openings already produced by the outer remainder. The three
+output openings remain Val, ra and Inc at the existing joint point, with degree
+three and unchanged round count. Clear verification and BlindFold consume this
+single relation; the mask comes from authenticated preprocessing in both modes.
+
+`C` is the union of canonical sorted, disjoint, nonadjacent half-open intervals
+of RAM indices. Preprocessing derives it from real source instruction extents
+(two or four bytes), rounded outward to doublewords. Address-zero padding and
+intermediate expansion rows contribute no new extents. Full admission and
+full-preprocessing deserialization validate exact coverage, checked arithmetic,
+canonical shape and RAM bounds. Committed keys carry the same intervals and
+validate shape and bounds; hidden source coverage is part of the trusted key.
+The preprocessing digest domains are versioned for the added metadata.
+
+ELF admission rejects any writable section, including `.bss`, that shares a
+protected word. Read-only bytes sharing a real code word are also frozen. A word
+containing only text padding remains unprotected. The SDK linker aligns rodata
+and writable data to eight bytes, but arbitrary ELF inputs still require this
+check.
+
+The optimized kernel fuses the count term and modified increment coefficient
+into its existing sparse accumulations. Before address binding it uses Boolean
+interval membership. During low-bit address binding it keeps full blocks and at
+most two weighted boundary blocks per interval; after address binding it keeps
+one scalar. It allocates no K-sized mask or extra trace-sized table and makes no
+extra trace pass. The verifier evaluates the mask MLE in `O(s log K)` for `s`
+intervals.
+
+Commitments bind the trace before the random cycle point `r0` and batching
+challenge `gamma`. Together with zero-or-one-hot RA, the third identity tests the
+fixed vector of code-word increments at `r0`; the fourth requires one selected
+address exactly on memory rows. The cycle zero-test bound is at most `log T/|F|`,
+and batching adds at most `3/|F|` for fixed nonzero residuals in the ideal uniform
+challenge analysis. The total protocol error also includes sumcheck, RA
+reductions, commitments and transcript security. Final-memory equality alone
+would not exclude a code modification followed by restoration.
+
+Tracer admission rejects changed protected words before mutation and permits
+same-value stores at every width. It also rejects loads below `lowest_address`.
+AMOs, successful SC, lazy tracing, parallel replay and native fast stores use
+these guards. The constraints continue to leave the tracer's other memory-map
+permissions separate.
+
 ## Intent
 
 ### Goal

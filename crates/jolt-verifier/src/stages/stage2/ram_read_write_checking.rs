@@ -13,7 +13,7 @@ use jolt_claims::protocols::jolt::{
 };
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::JoltField;
-use jolt_poly::try_eq_mle;
+use jolt_poly::{interval_mask_mle_msb, try_eq_mle};
 
 use crate::stages::relations::ConcreteSumcheck;
 use crate::stages::stage1::Stage1ClearOutput;
@@ -28,6 +28,8 @@ pub fn ram_read_write_input_values_from_upstream<F: JoltField>(
     RamReadWriteInputClaims {
         ram_read_value: outer.ram_read_value,
         ram_write_value: outer.ram_write_value,
+        load: outer.load,
+        store: outer.store,
     }
 }
 
@@ -37,15 +39,22 @@ pub struct RamReadWriteChecking<F: JoltField> {
     dimensions: ReadWriteDimensions,
     ram_log_k: usize,
     product_tau_low: Vec<F>,
+    code_word_intervals: Vec<(usize, usize)>,
 }
 
 impl<F: JoltField> RamReadWriteChecking<F> {
-    pub fn new(dimensions: ReadWriteDimensions, ram_log_k: usize, product_tau_low: Vec<F>) -> Self {
+    pub fn new(
+        dimensions: ReadWriteDimensions,
+        ram_log_k: usize,
+        product_tau_low: Vec<F>,
+        code_word_intervals: Vec<(usize, usize)>,
+    ) -> Self {
         Self {
             symbolic: relations::ram::ReadWriteChecking::new(dimensions),
             dimensions,
             ram_log_k,
             product_tau_low,
+            code_word_intervals,
         }
     }
 }
@@ -58,6 +67,10 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
 }
 
 impl<F: JoltField> RamReadWriteChecking<F> {
+    pub fn code_word_intervals(&self) -> &[(usize, usize)] {
+        &self.code_word_intervals
+    }
+
     pub fn dimensions(&self) -> ReadWriteDimensions {
         self.dimensions
     }
@@ -108,7 +121,7 @@ impl<F: JoltField> ConcreteSumcheck<F> for RamReadWriteChecking<F> {
         match public_id {
             // The opening point is `[r_address(log_k) || r_cycle(log_t)]`, so the
             // cycle sub-point is the suffix past the address bits.
-            RamReadWritePublic::EqCycle => {
+            RamReadWritePublic::EqCycle | RamReadWritePublic::CodeEqCycle => {
                 let r_cycle = output_points.val().get(self.ram_log_k..).ok_or_else(|| {
                     public_input_failed(format!(
                         "RAM read-write opening point is too short: expected at least {}, got {}",
@@ -116,7 +129,20 @@ impl<F: JoltField> ConcreteSumcheck<F> for RamReadWriteChecking<F> {
                         output_points.val().len()
                     ))
                 })?;
-                try_eq_mle(&self.product_tau_low, r_cycle).map_err(public_input_failed)
+                let eq_cycle =
+                    try_eq_mle(&self.product_tau_low, r_cycle).map_err(public_input_failed)?;
+                match public_id {
+                    RamReadWritePublic::EqCycle => Ok(eq_cycle),
+                    RamReadWritePublic::CodeEqCycle => {
+                        let r_address = output_points
+                            .val()
+                            .get(..self.ram_log_k)
+                            .ok_or_else(|| public_input_failed("RAM address point is too short"))?;
+                        let code = interval_mask_mle_msb(&self.code_word_intervals, r_address)
+                            .map_err(public_input_failed)?;
+                        Ok(eq_cycle * code)
+                    }
+                }
             }
         }
     }

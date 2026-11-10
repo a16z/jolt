@@ -86,7 +86,8 @@ pub use evaluation_claim::EvaluationClaim;
 pub use identity::{IdentityPolynomial, OperandPolynomial, OperandSide};
 pub use lt::LtPolynomial;
 pub use mle::{
-    block_selector_mle_msb, range_mask_mle_msb, sparse_mle_msb, sparse_segments_mle_msb, MleError,
+    block_selector_mle_msb, interval_mask_mle_msb, range_mask_mle_msb, sparse_mle_msb,
+    sparse_segments_mle_msb, MleError,
 };
 pub use multilinear::{MultilinearBinding, MultilinearEvaluation, MultilinearPoly, RlcSource};
 pub use omitted_constant::OmittedConstantPoly;

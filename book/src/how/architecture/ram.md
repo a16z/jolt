@@ -45,6 +45,56 @@ RAF evaluation ties `RamAddress` to the one-hot address: on each cycle it must e
 The verifier requires `lowest_address` to be a multiple of 8, so every admissible `RamAddress` is a multiple of 8.
 An access misaligned for its width, such as an `LH` at an odd address or any misaligned `LD`, leaves a low bit set in `RamAddress` and cannot be proven.
 
+## Read-write checking and protected code words
+
+RAM read-write checking enforces both value consistency and address selection.
+Let $E(j)=\widetilde{\textsf{eq}}(r_0,j)$, where $r_0$ is the outer sumcheck's
+cycle point, and let $C(k)$ select words containing real source instructions.
+Stage 2 proves
+
+$$
+\textsf{Read}(r_0)+\gamma\textsf{Write}(r_0)
+ +\gamma^3(\textsf{Load}+\textsf{Store})(r_0)
+ =\sum_{k,j}E(j)\textsf{ra}(k,j)
+ \left[(1+\gamma)\textsf{Val}(k,j)
+ +(\gamma+\gamma^2 C(k))\textsf{Inc}(j)+\gamma^3\right].
+$$
+
+The $\gamma^2$ identity forces zero increments on protected words. It rejects
+code changes even when a later store restores the original value. Same-value
+stores remain valid, including byte, halfword and word stores into a protected
+doubleword. The $\gamma^3$ identity ties the selector sum to the existing Load
+and Store flags. Together with the one-hot reductions, it requires one selected
+address on memory rows and zero on other rows. Virtual memory rows and the
+field-inline memory accumulator carry these same flags.
+
+Preprocessing rounds each real source instruction's two- or four-byte extent
+outward to doublewords, merges adjacent intervals and excludes synthetic
+address-zero padding and intermediate virtual rows. The interval list enters
+the program digest in both full and committed program modes. Full preprocessing
+checks exact source coverage; committed verification trusts the authenticated
+key's coverage and checks the public interval shape and bounds. ELF admission
+rejects writable sections sharing a protected word. Read-only data sharing a
+code word is frozen with that word; text padding alone does not protect a word.
+
+At the final opening point, the verifier evaluates the multilinear extension
+of the mask, rather than testing membership at a field-valued address. For
+$s$ intervals this takes $O(s\log K)$ arithmetic. The optimized prover uses
+interval endpoints and at most two boundary weights per interval while binding
+address bits. It adds no dense mask, trace pass, commitment, opening point or
+sumcheck round; the maximum degree remains three.
+
+The RAM value check reconstructs each pre-access value from initial RAM and
+all earlier selected increments. Since the new code identity makes those
+increments zero on protected words, each code value equals its initial value
+throughout execution. Equality of initial and final RAM alone would permit
+a temporary modification.
+
+The interpreter, replay tracer and native tracer reject a changed protected
+word before writing it, and reject loads below `lowest_address`. These checks
+match the new relations' intended memory behavior. They do not add constraints
+for the rest of the tracer's store-permission policy.
+
 ## Deviations from the Twist algorithm as described in the paper
 
 Our implementation of the Twist prover algorithm differs from the description given in the Twist and Shout [paper](https://eprint.iacr.org/2025/105) in a couple of ways. One such deviation is [wv virtualization](../twist-shout.md#wv-virtualization). Other, RAM-specific deviations are described below.
