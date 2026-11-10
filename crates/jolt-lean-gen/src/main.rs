@@ -740,11 +740,14 @@ fn render_definition(kind: SourceInstructionKind) -> Result<String, Box<dyn std:
 
 fn render_lean_file() -> Result<String, Box<dyn std::error::Error>> {
     let mut out = String::new();
+    // The imports and `open` lines match the Lean model's copy of this file.
     out.push_str(
         "\
 import JoltBytecode.JoltISA.Instruction
 import JoltBytecode.JoltISA.VirtualRegisters
 import JoltBytecode.JoltISA.Expansions.ALU
+
+open LeanRV64D
 
 /-!
 # Auto-generated Jolt-ISA expansion programs
@@ -755,7 +758,7 @@ regenerate instead. Each `...ProgramAuto` mirrors the final Jolt rows
 emitted by Rust for its source instruction parameters.
 -/
 
-open Sail PreSail LeanRV64D.Functions
+open Sail Sail.ConcurrencyInterfaceV1 Sail.ConcurrencyInterfaceV1.PreSail LeanRV64D LeanRV64D.Functions
 
 namespace JoltISA
 
