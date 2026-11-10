@@ -1,4 +1,5 @@
 #![expect(unused_results)]
+use jolt_poly::Budget;
 
 use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion};
 use jolt_field::{
@@ -166,14 +167,15 @@ fn bench_eq_builders_field<F: Field>(c: &mut Criterion, field: &str) {
         group.bench_function(BenchmarkId::new("evals", n), |bench| {
             bench.iter(|| EqPolynomial::<F>::evals(std::hint::black_box(&point), None));
         });
-        let mut out = F::zeroed_vec(1 << n);
-        group.bench_function(BenchmarkId::new("evals_into", n), |bench| {
+        group.bench_function(BenchmarkId::new("evals_budget", n), |bench| {
             bench.iter(|| {
-                EqPolynomial::<F>::evals_into(
+                EqPolynomial::<F>::evals_in(
                     std::hint::black_box(&point),
                     None,
-                    std::hint::black_box(&mut out),
-                );
+                    Budget {
+                        max_bytes: usize::MAX,
+                    },
+                )
             });
         });
         group.bench_function(BenchmarkId::new("mapped", n), |bench| {

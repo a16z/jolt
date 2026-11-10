@@ -1,3 +1,4 @@
+use super::alloc::{check_layout, domain_len, EqAlloc, Global, TableInit};
 use super::boolean_bits_msb;
 use super::EqPolynomial;
 use crate::point::{msb_index, Endianness, PointLike};
@@ -6,6 +7,7 @@ use crate::{PointRef, HIGH_TO_LOW};
 use jolt_field::Field;
 use jolt_utils::Math;
 use std::ops::{Mul, SubAssign};
+use std::panic::Location;
 
 pub(super) const SERIAL_MAX_VARS: usize = 16;
 
@@ -38,35 +40,45 @@ impl<F: Field> EqPolynomial<F> {
     ///
     /// Uses a serial or parallel path based on table size. Coordinate significance
     /// follows `PointLike::ENDIANNESS`; bare slices are high-to-low.
-    #[tracing::instrument(skip_all, name = "EqPolynomial::evals")]
+    #[track_caller]
     pub fn evals<P: PointLike + ?Sized>(r: &P, scaling_factor: Option<F>) -> Vec<F>
     where
         P::Coord: Send + Sync + Into<F>,
         F: Mul<P::Coord, Output = F> + SubAssign<F>,
     {
-        let mut values = F::zeroed_vec(Self::domain_len(r.num_vars()));
-        Self::evals_into(r, scaling_factor, &mut values);
-        values
+        match Self::evals_in(r, scaling_factor, Global) {
+            Ok(v) => v,
+            Err(never) => match never {},
+        }
     }
 
-    /// Fills `out` with `scale * eq(r, x)` in significance order.
-    /// Callers with their own allocation policy, such as Akita, allocate the buffer.
-    /// This method allocates no table storage.
-    ///
-    /// # Panics
-    /// Panics unless `out.len() == 2^r.num_vars()`, or if the domain overflows `usize`.
+    #[track_caller]
+    #[tracing::instrument(skip_all, name = "EqPolynomial::evals")]
+    pub fn evals_in<P: PointLike + ?Sized, A: EqAlloc>(
+        r: &P,
+        scaling_factor: Option<F>,
+        policy: A,
+    ) -> Result<Vec<F>, A::Error>
+    where
+        P::Coord: Send + Sync + Into<F>,
+        F: Mul<P::Coord, Output = F> + SubAssign<F>,
+    {
+        let at = Location::caller();
+        let len = domain_len(r.num_vars(), policy)?;
+        check_layout::<F, _>(len, policy)?;
+        policy.admit::<F>(len, at)?;
+        let mut values = policy.table(len, TableInit::Zero)?;
+        Self::fill_evals(r, scaling_factor, &mut values);
+        Ok(values)
+    }
+
     #[inline]
-    pub fn evals_into<P>(r: &P, scale: Option<F>, out: &mut [F])
+    pub(crate) fn fill_evals<P>(r: &P, scale: Option<F>, out: &mut [F])
     where
         P: PointLike + ?Sized,
         P::Coord: Send + Sync + Into<F>,
         F: Mul<P::Coord, Output = F> + SubAssign<F>,
     {
-        assert_eq!(
-            out.len(),
-            Self::domain_len(r.num_vars()),
-            "invalid equality-table length"
-        );
         out[0] = scale.unwrap_or(F::one());
         if r.num_vars() <= SERIAL_MAX_VARS {
             Self::fill_serial::<_, _, false>(r, out, &|x| x);
@@ -75,19 +87,16 @@ impl<F: Field> EqPolynomial<F> {
         }
     }
 
-    #[inline]
-    #[expect(
-        clippy::expect_used,
-        reason = "infallible builder must panic on dimension overflow"
-    )]
-    pub(super) fn domain_len(num_vars: usize) -> usize {
-        u32::try_from(num_vars)
-            .ok()
-            .and_then(|bits| 1usize.checked_shl(bits))
-            .expect("equality table capacity overflow")
+    #[cfg(test)]
+    fn domain_len(num_vars: usize) -> usize {
+        match domain_len(num_vars, Global) {
+            Ok(v) => v,
+            Err(never) => match never {},
+        }
     }
 
     /// Computes `map(scale * eq(r, x))`, applying `map` once per output.
+    #[track_caller]
     pub fn evals_mapped<P, G>(r: &P, scaling_factor: Option<F>, map: G) -> Vec<F>
     where
         P: PointLike + ?Sized,
@@ -95,30 +104,41 @@ impl<F: Field> EqPolynomial<F> {
         F: Mul<P::Coord, Output = F>,
         G: Fn(F) -> F + Sync,
     {
-        let len = Self::domain_len(r.num_vars());
-        let mut values = F::zeroed_vec(len);
-        Self::evals_mapped_into(r, scaling_factor, map, &mut values);
-        values
+        match Self::evals_mapped_in(r, scaling_factor, map, Global) {
+            Ok(v) => v,
+            Err(never) => match never {},
+        }
     }
 
-    /// Fills `out` with `map(scale * eq(r, x))`, applying `map` once per output.
-    /// Callers with their own allocation policy, such as Akita, allocate the buffer.
-    /// This method allocates no table storage; callback allocations belong to `map`.
-    ///
-    /// # Panics
-    /// Panics unless `out.len() == 2^r.num_vars()`, or if the domain overflows `usize`.
-    pub fn evals_mapped_into<P, G>(r: &P, scale: Option<F>, map: G, out: &mut [F])
+    #[track_caller]
+    pub fn evals_mapped_in<P, G, A: EqAlloc>(
+        r: &P,
+        scaling_factor: Option<F>,
+        map: G,
+        policy: A,
+    ) -> Result<Vec<F>, A::Error>
     where
         P: PointLike + ?Sized,
         P::Coord: Send + Sync + Into<F>,
         F: Mul<P::Coord, Output = F>,
         G: Fn(F) -> F + Sync,
     {
-        assert_eq!(
-            out.len(),
-            Self::domain_len(r.num_vars()),
-            "invalid equality-table length"
-        );
+        let at = Location::caller();
+        let len = domain_len(r.num_vars(), policy)?;
+        check_layout::<F, _>(len, policy)?;
+        policy.admit::<F>(len, at)?;
+        let mut values = policy.table(len, TableInit::Zero)?;
+        Self::evals_mapped_into(r, scaling_factor, map, &mut values);
+        Ok(values)
+    }
+
+    fn evals_mapped_into<P, G>(r: &P, scale: Option<F>, map: G, out: &mut [F])
+    where
+        P: PointLike + ?Sized,
+        P::Coord: Send + Sync + Into<F>,
+        F: Mul<P::Coord, Output = F>,
+        G: Fn(F) -> F + Sync,
+    {
         out[0] = scale.unwrap_or(F::one());
         Self::fill_mapped(r, out, &map);
     }

@@ -1,37 +1,98 @@
+use super::alloc::{check_layout, domain_len, EqAlloc, EqTableError, Global, TableInit};
 use super::EqPolynomial;
 use crate::point::PointLike;
 use jolt_field::Field;
 use std::ops::{Mul, SubAssign};
+use std::panic::Location;
 impl<F: Field> EqPolynomial<F> {
     /// `result[j]` is the eq table over the `j` most-significant variables.
     ///
     /// Returns `n+1` tables where `result[0] = [scaling_factor]` (eq over 0 vars).
-    #[tracing::instrument(skip_all, name = "EqPolynomial::evals_cached_msb")]
+    #[track_caller]
     pub fn evals_cached_msb<P: PointLike + ?Sized>(r: &P, scaling_factor: Option<F>) -> Vec<Vec<F>>
     where
         P::Coord: Send + Sync + Into<F>,
         F: Mul<P::Coord, Output = F> + SubAssign<F>,
     {
-        let mut evals: Vec<Vec<F>> = (0..=r.num_vars())
-            .map(|i| vec![scaling_factor.unwrap_or(F::one()); 1 << i])
-            .collect();
-        Self::fill_cached::<_, true>(r, &mut evals);
-        evals
+        match Self::evals_cached_msb_in(r, scaling_factor, Global) {
+            Ok(v) => v,
+            Err(never) => match never {},
+        }
+    }
+
+    #[track_caller]
+    #[tracing::instrument(skip_all, name = "EqPolynomial::evals_cached_msb")]
+    pub fn evals_cached_msb_in<P: PointLike + ?Sized, A: EqAlloc>(
+        r: &P,
+        scaling_factor: Option<F>,
+        policy: A,
+    ) -> Result<Vec<Vec<F>>, A::Error>
+    where
+        P::Coord: Send + Sync + Into<F>,
+        F: Mul<P::Coord, Output = F> + SubAssign<F>,
+    {
+        let at = Location::caller();
+        Self::build_cached::<_, _, true>(r, scaling_factor, policy, at)
     }
 
     /// `result[j]` is the eq table over the `j` least-significant variables.
     ///
     /// `result[0] = [scaling_factor]`. Each new variable is the new MSB.
+    #[track_caller]
     pub fn evals_cached_lsb<P: PointLike + ?Sized>(r: &P, scaling_factor: Option<F>) -> Vec<Vec<F>>
     where
         P::Coord: Send + Sync + Into<F>,
         F: Mul<P::Coord, Output = F>,
     {
-        let mut evals: Vec<Vec<F>> = (0..=r.num_vars())
-            .map(|i| vec![scaling_factor.unwrap_or(F::one()); 1 << i])
-            .collect();
-        Self::fill_cached::<_, false>(r, &mut evals);
-        evals
+        match Self::evals_cached_lsb_in(r, scaling_factor, Global) {
+            Ok(v) => v,
+            Err(never) => match never {},
+        }
+    }
+
+    #[track_caller]
+    pub fn evals_cached_lsb_in<P: PointLike + ?Sized, A: EqAlloc>(
+        r: &P,
+        scaling_factor: Option<F>,
+        policy: A,
+    ) -> Result<Vec<Vec<F>>, A::Error>
+    where
+        P::Coord: Send + Sync + Into<F>,
+        F: Mul<P::Coord, Output = F>,
+    {
+        let at = Location::caller();
+        Self::build_cached::<_, _, false>(r, scaling_factor, policy, at)
+    }
+
+    fn build_cached<P: PointLike + ?Sized, A: EqAlloc, const MSB: bool>(
+        r: &P,
+        scaling_factor: Option<F>,
+        policy: A,
+        at: &'static Location<'static>,
+    ) -> Result<Vec<Vec<F>>, A::Error>
+    where
+        P::Coord: Send + Sync + Into<F>,
+        F: Mul<P::Coord, Output = F>,
+    {
+        let len = domain_len(r.num_vars(), policy)?;
+        let elements = len.checked_add(len - 1).ok_or_else(|| {
+            policy.reject(EqTableError::SizeOverflow {
+                elements: len,
+                element_size: 2,
+            })
+        })?;
+        check_layout::<F, _>(len, policy)?;
+        check_layout::<Vec<F>, _>(r.num_vars() + 1, policy)?;
+        policy.admit::<F>(elements, at)?;
+        let mut evals = policy.storage(r.num_vars() + 1)?;
+        for i in 0..=r.num_vars() {
+            evals.push(policy.table(
+                1 << i,
+                TableInit::Repeat(scaling_factor.unwrap_or(F::one())),
+            )?);
+        }
+        Self::fill_cached::<_, MSB>(r, &mut evals);
+        Ok(evals)
     }
 
     #[inline]

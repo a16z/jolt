@@ -1,7 +1,9 @@
+use super::alloc::{check_layout, domain_len, EqAlloc, EqTableError, Global, TableInit};
 use super::EqPolynomial;
 use crate::{MleError, PointLike, PointRef};
 use jolt_field::Field;
 use std::ops::Mul;
+use std::panic::Location;
 pub fn try_eq_mle<F: Field>(left: &[F], right: &[F]) -> Result<F, MleError> {
     if left.len() != right.len() {
         return Err(MleError::EqualityArityMismatch {
@@ -105,8 +107,25 @@ impl<F: Field> EqPolynomial<F> {
     }
 
     /// Sum equality weights at indices `0..len` in O(number of variables).
+    #[track_caller]
     pub fn prefix_sum<P: PointLike<Coord = F> + ?Sized>(point: &P, len: usize) -> F {
-        F::one() - Self::suffix_sum(point, len)
+        match Self::prefix_sum_in(point, len, Global) {
+            Ok(v) => v,
+            Err(never) => match never {},
+        }
+    }
+
+    #[track_caller]
+    pub fn prefix_sum_in<P: PointLike<Coord = F> + ?Sized, A: EqAlloc>(
+        point: &P,
+        len: usize,
+        policy: A,
+    ) -> Result<F, A::Error> {
+        let expected = domain_len(point.num_vars(), policy)?;
+        if len > expected {
+            return Err(policy.reject(EqTableError::LengthMismatch { expected, got: len }));
+        }
+        Ok(F::one() - Self::suffix_sum(point, len))
     }
 }
 
@@ -116,38 +135,41 @@ impl<F: Field> EqPolynomial<F> {
     ///
     /// # Panics
     /// Panics if the domain overflows `usize` or `len` exceeds the domain.
+    #[track_caller]
     pub fn evals_prefix<P>(r: &P, scale: Option<F>, len: usize) -> Vec<F>
     where
         P: PointLike + ?Sized,
         P::Coord: Send + Sync + Into<F>,
         F: Mul<P::Coord, Output = F>,
     {
-        assert!(
-            len <= Self::domain_len(r.num_vars()),
-            "invalid equality-table prefix"
-        );
-        let mut values = F::zeroed_vec(len);
-        Self::evals_prefix_into(r, scale, &mut values);
-        values
+        match Self::evals_prefix_in(r, scale, len, Global) {
+            Ok(v) => v,
+            Err(never) => match never {},
+        }
     }
 
-    /// Fills the first `out.len()` equality weights in significance order.
-    /// Callers with their own allocation policy, such as Akita, allocate the buffer.
-    /// This method allocates no table storage.
-    ///
-    /// # Panics
-    /// Panics if `out.len() > 2^r.num_vars()`, or if the domain overflows `usize`.
-    pub fn evals_prefix_into<P>(r: &P, scale: Option<F>, out: &mut [F])
+    #[track_caller]
+    pub fn evals_prefix_in<P, A: EqAlloc>(
+        r: &P,
+        scale: Option<F>,
+        len: usize,
+        policy: A,
+    ) -> Result<Vec<F>, A::Error>
     where
         P: PointLike + ?Sized,
         P::Coord: Send + Sync + Into<F>,
         F: Mul<P::Coord, Output = F>,
     {
-        assert!(
-            out.len() <= Self::domain_len(r.num_vars()),
-            "invalid equality-table prefix"
-        );
-        Self::fill_prefix(r, scale, out);
+        let at = Location::caller();
+        let expected = domain_len(r.num_vars(), policy)?;
+        if len > expected {
+            return Err(policy.reject(EqTableError::LengthMismatch { expected, got: len }));
+        }
+        check_layout::<F, _>(len, policy)?;
+        policy.admit::<F>(len, at)?;
+        let mut values = policy.table(len, TableInit::Zero)?;
+        Self::fill_prefix(r, scale, &mut values);
+        Ok(values)
     }
 
     fn fill_prefix<P>(r: &P, scale: Option<F>, values: &mut [F])
