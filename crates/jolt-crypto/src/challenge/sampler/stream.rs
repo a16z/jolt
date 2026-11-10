@@ -201,10 +201,7 @@ impl SparseChallengeShell {
                     .validate(ring_d, config)
                     .map_err(|error| CryptoError::InvalidSetup(error.into()))?;
                 let (_, certified_bits) = operator_norm_rates(rejection)?;
-                (
-                    u128::BITS - (rank_space - 1).leading_zeros(),
-                    certified_bits,
-                )
+                ((rank_space - 1).bit_width(), certified_bits)
             }
         };
         let candidate_bits = usize::try_from(rank_bits)
@@ -524,7 +521,7 @@ fn pool_len(count: usize, rates: &PoolRates) -> Result<usize, CryptoError> {
     let pool = if w == 0 {
         least
     } else {
-        let bit_len = |b: u128| u128::BITS - b.leading_zeros();
+        let bit_len = |b: u128| b.bit_width();
         let mut pool = least;
         for len in bit_len(w)..=bit_len(least - 1) {
             let class_low = w.max(1 << (len - 1));

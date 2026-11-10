@@ -434,7 +434,9 @@ mod tests {
         let prepared = Ifma52NttMatrix::prepare(&matrix, &params);
         let actual = prepared.mat_vec_i16::<F>(2, &rhs).expect("matvec");
         let expected = matrix
-            .chunks_exact(3)
+            .as_chunks::<3>()
+            .0
+            .iter()
             .map(|row| {
                 row.iter()
                     .zip(&rhs)
@@ -504,7 +506,9 @@ mod tests {
             .mat_vec_i16_with_tail::<F, _>(&tail_matrix, 3, &rhs, &tail_params)
             .expect("mixed matvec");
         let expected = matrix
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .map(|row| {
                 row.iter()
                     .zip(&rhs)
@@ -591,7 +595,9 @@ mod tests {
             .mat_vec_i16_with_tail::<F, _>(&tail_matrix, 2, &rhs, &tail_params)
             .expect("Q128 mixed matvec");
         let expected = matrix
-            .chunks_exact(3)
+            .as_chunks::<3>()
+            .0
+            .iter()
             .map(|row| {
                 row.iter()
                     .zip(&rhs)

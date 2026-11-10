@@ -780,8 +780,10 @@ mod prover {
             }
             let v = SecretVec::from(v);
             let v_rings = SecretVec::from(
-                v.chunks_exact(CHALLENGE_RING_DIM)
-                    .map(CyclotomicRing::from_slice)
+                v.as_chunks::<CHALLENGE_RING_DIM>()
+                    .0
+                    .iter()
+                    .map(|chunk| CyclotomicRing::from_slice(chunk))
                     .collect::<Vec<ChallengeRing<F>>>(),
             );
             // A rejected attempt's t_D, cm(t_D) and witness are never

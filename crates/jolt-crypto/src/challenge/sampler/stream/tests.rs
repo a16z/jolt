@@ -358,7 +358,7 @@ fn pool_len_by_scan(count: usize, rates: &PoolRates) -> Result<usize, CryptoErro
     }
     let union = |b: u128| -> Option<bool> {
         let tail = b.checked_sub(w)?.checked_add(1)?;
-        let bitlen = u128::from(u128::BITS - b.leading_zeros());
+        let bitlen = u128::from(b.bit_width());
         let rhs = w
             .checked_sub(1)?
             .checked_mul(bitlen)?

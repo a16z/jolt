@@ -352,5 +352,5 @@ fn ceil_sqrt(x: u128) -> u128 {
 
 /// `⌈log₂ x⌉` for `x ≥ 1`.
 fn ceil_log2(x: u128) -> u128 {
-    u128::from(u128::BITS - (x - 1).leading_zeros())
+    u128::from((x - 1).bit_width())
 }

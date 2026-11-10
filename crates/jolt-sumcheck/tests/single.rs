@@ -277,7 +277,7 @@ fn tampered_coefficient_or_claim_fails_the_oracle_check() {
         let tables = (kernel.a.clone(), kernel.b.clone());
         let instance = instance(&kernel);
         let (proof, _, _) = prove(&mut kernel, &instance);
-        assert!(proof.pow_nonces.is_empty());
+        assert_eq!(proof.pow_nonces, []);
 
         for round in 0..3 {
             for coefficient in 0..2 {
@@ -400,7 +400,7 @@ fn zero_round_compressed_instance_reduces_to_its_input_claim() {
     let mut kernel = ProductKernel::<P>::sampled(0, 51, false, sample::<P, P>);
     let (proof, proved, prover_state) = prove(&mut kernel, &instance);
     assert_eq!(proof, SingleSumcheckProof::default());
-    assert!(proved.challenges.is_empty());
+    assert_eq!(proved.challenges, []);
     let (replayed, verifier_state) = replay(&instance, &proof).unwrap();
     assert_eq!(replayed.output_claim, instance.input_claim);
     assert_eq!(verifier_state, prover_state);

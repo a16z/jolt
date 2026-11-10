@@ -3,6 +3,7 @@ use jolt_algebra::JoltField;
 use jolt_openings::VerifierOpeningClaim;
 use jolt_poly::{Point, HIGH_TO_LOW};
 
+#[cfg(not(feature = "akita"))]
 use crate::VerifierError;
 use jolt_claims::protocols::composed::ComposedOpeningId;
 

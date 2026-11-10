@@ -452,7 +452,7 @@ fn scalar_forward<const D: usize>(
         len /= 2;
         blocks *= 2;
     }
-    for block in values.chunks_exact_mut(16) {
+    for block in values.as_chunks_mut::<16>().0 {
         let standard: [u64; 16] = std::array::from_fn(|offset| block[offset]);
         for (value, &offset) in block.iter_mut().zip(&STORED_ORDER) {
             *value = standard[offset];
@@ -466,7 +466,7 @@ fn scalar_inverse<const D: usize>(
     prime: Ifma52Prime,
     twiddles: &Ifma52Twiddles<D>,
 ) {
-    for block in values.chunks_exact_mut(16) {
+    for block in values.as_chunks_mut::<16>().0 {
         let stored: [u64; 16] = std::array::from_fn(|offset| block[offset]);
         for (&value, &offset) in stored.iter().zip(&STORED_ORDER) {
             block[offset] = value;

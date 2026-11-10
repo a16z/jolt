@@ -45,8 +45,8 @@ unsafe fn i16_values_in_balanced_range_avx2(values: &[i16], bound: i16) -> bool 
 
     let max_valid = _mm256_set1_epi16(bound - 1);
     let min_valid = _mm256_set1_epi16(-bound);
-    let violations = |chunk: &[i16]| -> __m256i {
-        // SAFETY: every chunk passed below holds exactly `LANES` values.
+    let violations = |chunk: &[i16; LANES]| -> __m256i {
+        // SAFETY: `chunk` holds exactly `LANES` values, one 256-bit load.
         let value = unsafe { _mm256_loadu_si256(chunk.as_ptr().cast()) };
         _mm256_or_si256(
             _mm256_cmpgt_epi16(value, max_valid),
@@ -54,10 +54,12 @@ unsafe fn i16_values_in_balanced_range_avx2(values: &[i16], bound: i16) -> bool 
         )
     };
 
-    let mut blocks = values.chunks_exact(LANES * VECTORS_PER_BLOCK);
-    for block in &mut blocks {
+    let (blocks, rest) = values.as_chunks::<{ LANES * VECTORS_PER_BLOCK }>();
+    for block in blocks {
         let any = block
-            .chunks_exact(LANES)
+            .as_chunks::<LANES>()
+            .0
+            .iter()
             .fold(_mm256_setzero_si256(), |any, chunk| {
                 _mm256_or_si256(any, violations(chunk))
             });
@@ -65,14 +67,14 @@ unsafe fn i16_values_in_balanced_range_avx2(values: &[i16], bound: i16) -> bool 
             return false;
         }
     }
-    let mut vectors = blocks.remainder().chunks_exact(LANES);
-    for chunk in &mut vectors {
+    let (vectors, tail) = rest.as_chunks::<LANES>();
+    for chunk in vectors {
         let any = violations(chunk);
         if _mm256_testz_si256(any, any) == 0 {
             return false;
         }
     }
-    scalar_i16_values_in_balanced_range(vectors.remainder(), bound)
+    scalar_i16_values_in_balanced_range(tail, bound)
 }
 
 #[cfg(test)]

@@ -68,15 +68,13 @@ impl<F: JoltField> WhiteoutPadOpening<F> {
                 "pad image is not whole ring elements",
             ));
         }
-        self.image
-            .chunks_exact(D)
-            .map(|ring| {
-                let coefficients: [F; D] = ring
-                    .try_into()
-                    .map_err(|_| WhiteoutError::InvalidRelation("pad image ring"))?;
-                Ok(CyclotomicRing::from_coefficients(coefficients))
-            })
-            .collect()
+        Ok(self
+            .image
+            .as_chunks::<D>()
+            .0
+            .iter()
+            .map(|ring| CyclotomicRing::from_coefficients(*ring))
+            .collect())
     }
 }
 

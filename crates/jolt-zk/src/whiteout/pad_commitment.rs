@@ -343,9 +343,19 @@ impl<F: JoltField, const D: usize> LatticePadCommitment<F, D> {
         ]);
         let pad_params = BalancedDecomposePow2Params::<F>::new(PAD_LEVELS, PAD_LOG_BASIS);
         let mut planes = Zeroizing::new(vec![0i8; PAD_LEVELS * CHALLENGE_RING_DIM]);
-        for (group, values) in regular.chunks_exact(CHALLENGE_RING_DIM).enumerate() {
+        for (group, values) in regular
+            .as_chunks::<CHALLENGE_RING_DIM>()
+            .0
+            .iter()
+            .enumerate()
+        {
             balanced_decompose_coefficients_pow2_i8_into(values, &mut planes, &pad_params);
-            for (level, plane) in planes.chunks_exact(CHALLENGE_RING_DIM).enumerate() {
+            for (level, plane) in planes
+                .as_chunks::<CHALLENGE_RING_DIM>()
+                .0
+                .iter()
+                .enumerate()
+            {
                 let ring = rings
                     .get_mut(PadPlacement::regular_ring(group, level))
                     .ok_or(WhiteoutError::InvalidRelation("pad digits overflow"))?;
@@ -395,7 +405,12 @@ impl<F: JoltField, const D: usize> LatticePadCommitment<F, D> {
 #[cfg(feature = "whiteout-prover")]
 fn pack_native<const D: usize>(rings: &[[i64; CHALLENGE_RING_DIM]], native: &mut [i64]) {
     let stride = D / CHALLENGE_RING_DIM;
-    for (element, components) in native.chunks_exact_mut(D).zip(rings.chunks_exact(stride)) {
+    for (element, components) in native
+        .as_chunks_mut::<D>()
+        .0
+        .iter_mut()
+        .zip(rings.chunks_exact(stride))
+    {
         for (k, ring) in components.iter().enumerate() {
             for (dst, &value) in element.iter_mut().skip(k).step_by(stride).zip(ring) {
                 *dst = value;

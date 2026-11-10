@@ -30,7 +30,7 @@ impl RowLabels {
             .checked_add(products)
             .and_then(|end| end.checked_add(affine))
             .ok_or(overflow)?;
-        let bits = (usize::BITS - end.saturating_sub(1).leading_zeros()) as usize;
+        let bits = end.saturating_sub(1).bit_width() as usize;
         Ok(Self {
             operands,
             products,

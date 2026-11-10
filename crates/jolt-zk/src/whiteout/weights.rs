@@ -399,7 +399,9 @@ impl<F: JoltField, const D: usize> ResponseStatement<'_, F, D> {
             rest = tail;
             if let BlockTarget::Compressed { .. } = target {
                 let through_c: Vec<F> = block
-                    .chunks_exact(D)
+                    .as_chunks::<D>()
+                    .0
+                    .iter()
                     .flat_map(|ring| {
                         challenge_times_ring_transpose(
                             &c,
@@ -474,7 +476,7 @@ impl<F: JoltField, const D: usize> ResponseStatement<'_, F, D> {
             let (block, tail) = rest.split_at((rows * D).min(rest.len()));
             rest = tail;
             if let BlockTarget::Public(image) = target {
-                for (weights, t) in block.chunks_exact(D).zip(image) {
+                for (weights, t) in block.as_chunks::<D>().0.iter().zip(image) {
                     total -= challenge_times_ring(&c, t)
                         .coefficient_inner_product(&CyclotomicRing::from_slice(weights));
                 }

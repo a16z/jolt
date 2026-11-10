@@ -674,7 +674,11 @@ impl<F: JoltField, const D: usize> ResponseStatement<'_, F, D> {
         let c = self.challenge.to_dense_ct()?;
         let bound = self.setup.params().response_bound();
         let nz = self.setup.linear().apply(z, bound)?;
-        let f = v.chunks_exact(D).map(CyclotomicRing::<F, D>::from_slice);
+        let f = v
+            .as_chunks::<D>()
+            .0
+            .iter()
+            .map(|chunk| CyclotomicRing::<F, D>::from_slice(chunk));
         for ((nz, f), t) in nz.iter().zip(f).zip(self.targets(&decoded)?.iter()) {
             if *nz != f + challenge_times_ring(&c, t) {
                 return Err(WhiteoutError::ResponseRejected("ring-linear rows"));
@@ -816,7 +820,9 @@ impl<F: JoltField, const D: usize> ResponseStatement<'_, F, D> {
             if let BlockTarget::Compressed { .. } = target {
                 images.push(
                     block
-                        .chunks_exact(D)
+                        .as_chunks::<D>()
+                        .0
+                        .iter()
                         .flat_map(|ring| {
                             (-challenge_times_ring_transpose(
                                 &c,
@@ -837,8 +843,10 @@ impl<F: JoltField, const D: usize> ResponseStatement<'_, F, D> {
         // Item 2 acts on V's digits directly.
         let v_rows: Vec<ChallengeRing<F>> = weights
             .v_image
-            .chunks_exact(CHALLENGE_RING_DIM)
-            .map(CyclotomicRing::from_slice)
+            .as_chunks::<CHALLENGE_RING_DIM>()
+            .0
+            .iter()
+            .map(|chunk| CyclotomicRing::from_slice(chunk))
             .collect();
         let v_digit_columns = self.setup.v_matrix().apply_transposed(
             &v_rows
@@ -923,7 +931,7 @@ impl<F: JoltField, const D: usize> ResponseStatement<'_, F, D> {
                     // A_D reads V's digits in e's order, one ring per column.
                     for (column, dst) in v_digit_columns
                         .iter()
-                        .zip(out.chunks_exact_mut(CHALLENGE_RING_DIM))
+                        .zip(out.as_chunks_mut::<CHALLENGE_RING_DIM>().0.iter_mut())
                     {
                         for (dst, w) in dst.iter_mut().zip(column.sigma_m1().coefficients()) {
                             *dst += *w;
@@ -1046,8 +1054,10 @@ impl<F: JoltField, const D: usize> ResponseStatement<'_, F, D> {
                     images
                         .next()
                         .ok_or(WhiteoutError::InvalidRelation("compressed image missing"))?
-                        .chunks_exact(D)
-                        .map(CyclotomicRing::from_slice),
+                        .as_chunks::<D>()
+                        .0
+                        .iter()
+                        .map(|chunk| CyclotomicRing::from_slice(chunk)),
                 ),
             }
         }

@@ -186,7 +186,9 @@ mod tests {
             })
             .collect::<Vec<_>>();
         let expected = matrix
-            .chunks_exact(NUM_COLS)
+            .as_chunks::<NUM_COLS>()
+            .0
+            .iter()
             .map(|row| {
                 row.iter()
                     .zip(&rhs)

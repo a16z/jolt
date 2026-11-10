@@ -44,7 +44,9 @@ fn schoolbook<const D: usize>(
 
 fn lift<const D: usize>(input: &[i64]) -> Vec<CyclotomicRing<F, D>> {
     input
-        .chunks_exact(D)
+        .as_chunks::<D>()
+        .0
+        .iter()
         .map(|column| {
             CyclotomicRing::from_slice(&column.iter().map(|&v| F::from_i64(v)).collect::<Vec<_>>())
         })
@@ -314,7 +316,9 @@ fn check_commit<const D: usize>(
             &params,
         );
         let planes = digits
-            .chunks_exact(D)
+            .as_chunks::<D>()
+            .0
+            .iter()
             .map(|plane| {
                 CyclotomicRing::from_slice(
                     &plane

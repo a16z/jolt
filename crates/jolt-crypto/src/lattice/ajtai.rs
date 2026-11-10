@@ -507,7 +507,7 @@ impl<F: Field + CanonicalEncoding, const D: usize> PreparedMatrix<F, D> {
         let columns = input
             .get(start * D..end * D)
             .ok_or_else(|| CryptoError::Internal("column chunk outside the input".into()))?;
-        for (offset, coefficients) in columns.chunks_exact(D).enumerate() {
+        for (offset, coefficients) in columns.as_chunks::<D>().0.iter().enumerate() {
             for (dst, &value) in lifted.iter_mut().zip(coefficients) {
                 // In range: every caller bounds `|value| <= bound <= i32::MAX`.
                 *dst = value as i32;
@@ -575,7 +575,9 @@ impl<F: Field + CanonicalEncoding + WithAccumulator, const D: usize> PreparedMat
                         for (entry, scale) in row_entries
                             .get(range.start * D..range.end * D)
                             .unwrap_or_default()
-                            .chunks_exact(D)
+                            .as_chunks::<D>()
+                            .0
+                            .iter()
                             .zip(scales.get(range).unwrap_or_default())
                         {
                             // Scales are public; callers pass sparse ones
@@ -669,5 +671,5 @@ pub(super) fn field_bits<F: Field + CanonicalEncoding>() -> Result<u32, CryptoEr
     let top = (-F::one())
         .to_u128_checked()
         .ok_or_else(|| CryptoError::InvalidSetup("field modulus exceeds 128 bits".into()))?;
-    Ok(u128::BITS - top.leading_zeros())
+    Ok(top.bit_width())
 }

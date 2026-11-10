@@ -75,7 +75,7 @@ pub(crate) struct FieldModulusLimbs {
 
 impl FieldModulusLimbs {
     pub(crate) fn new(modulus: u128) -> Self {
-        let bits = u128::BITS - modulus.leading_zeros();
+        let bits = modulus.bit_width();
         Self {
             half: modulus / 2,
             limbs: slices(modulus).map(|slice| slice as i32),

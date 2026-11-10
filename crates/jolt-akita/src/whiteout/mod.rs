@@ -648,8 +648,8 @@ impl WhiteoutCatalog {
             with_backend_pool(|| generate_material(&requirements)).map_err(material_error)?
         };
         Ok(Self {
-            material,
             scheme,
+            material,
             precommitted,
             num_vars,
             num_polys,

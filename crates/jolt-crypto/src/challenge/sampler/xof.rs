@@ -208,7 +208,7 @@ impl XofCursor {
         if modulus == 1 {
             return 0;
         }
-        let bits = usize::BITS - (modulus - 1).leading_zeros();
+        let bits = (modulus - 1).bit_width();
         if bits <= 8 {
             let mask = ((1u16 << bits) - 1) as u8;
             loop {
@@ -227,13 +227,12 @@ impl XofCursor {
                     return val;
                 }
             }
-        } else {
-            let mask: usize = (1 << bits) - 1;
-            loop {
-                let val = (self.next_u32() as usize) & mask;
-                if val < modulus {
-                    return val;
-                }
+        }
+        let mask: usize = (1 << bits) - 1;
+        loop {
+            let val = (self.next_u32() as usize) & mask;
+            if val < modulus {
+                return val;
             }
         }
     }

@@ -192,8 +192,10 @@ impl<F: Field + CanonicalEncoding, const D: usize> RingLinearMap<F, D> {
             let (block_weights, tail) = rest.split_at(block.matrix.shape().rows * D);
             rest = tail;
             let rows: Vec<CyclotomicRing<F, D>> = block_weights
-                .chunks_exact(D)
-                .map(CyclotomicRing::from_slice)
+                .as_chunks::<D>()
+                .0
+                .iter()
+                .map(|chunk| CyclotomicRing::from_slice(chunk))
                 .collect();
             matrix_adjoint(&block.matrix, &rows, block.input.clone(), out)?;
             if let Some(gadget) = &block.gadget {
@@ -333,7 +335,10 @@ fn matrix_adjoint<F: Field + CanonicalEncoding, const D: usize>(
     let targets = out
         .get_mut(input)
         .ok_or(WhiteoutError::InvalidRelation("matrix reads outside s"))?;
-    for (column, dst) in columns.iter().zip(targets.chunks_exact_mut(D)) {
+    for (column, dst) in columns
+        .iter()
+        .zip(targets.as_chunks_mut::<D>().0.iter_mut())
+    {
         for (dst, w) in dst.iter_mut().zip(column.sigma_m1().coefficients()) {
             *dst += *w;
         }

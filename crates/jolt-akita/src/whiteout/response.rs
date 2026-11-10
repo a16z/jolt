@@ -191,7 +191,7 @@ pub(super) struct ResponseRow {
 
 impl ResponseRow {
     /// Plans the response row of `e` with `num_vars` variables.
-    #[cfg(test)]
+    #[cfg(all(test, feature = "zk-prover"))]
     pub(super) fn plan(num_vars: usize) -> Result<Self, ZkError> {
         let _span = tracing::info_span!("whiteout_plan_response", num_vars).entered();
         let chunking = ChunkedWitnessCfg::default_non_chunked();

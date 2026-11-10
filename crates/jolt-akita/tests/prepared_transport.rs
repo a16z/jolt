@@ -7,7 +7,7 @@ use std::sync::Arc;
 use akita_params::FlatMatrix;
 use akita_pcs::{AkitaDeserialize, AkitaSerialize, Compress, Validate};
 use akita_types::{
-    sample_akita_setup_seed, AkitaExpandedSetup, AkitaSetupDescriptor, AkitaSetupSeed,
+    sample_akita_setup_seed, AkitaExpandedSetup, AkitaSetupDescriptor,
     AkitaVerifierSetup as BackendSetup, SetupPrefixVerifierRegistry,
 };
 use jolt_akita::{
@@ -16,6 +16,7 @@ use jolt_akita::{
     AkitaVerifierSetup, TrustedBytes,
 };
 use jolt_algebra::Ring;
+use jolt_crypto::lattice::PublicMatrixSeed;
 use jolt_openings::{BatchOpeningScheme, CommitmentScheme, EvaluationClaim, VerifierOpeningClaim};
 use jolt_poly::{MultilinearPoly, OneHotPolynomial, Polynomial, TensorEqTable};
 use jolt_transcript::Blake2b512;
@@ -330,7 +331,7 @@ fn full_setup_import_rejects_wrong_capacity_seed_and_truncated_bodies() {
         AkitaSetupDescriptor::deserialize_with_mode(&mut reader, Compress::No, Validate::Yes, &())
             .unwrap();
     let mut wrong_seed = descriptor.clone();
-    wrong_seed.setup_seed = AkitaSetupSeed::shake256_paged_v1([42; 32]);
+    wrong_seed.setup_seed = PublicMatrixSeed::shake256_paged_v1([42; 32]);
     let mut wrong_count = descriptor;
     wrong_count.num_field_elements = usize::MAX;
     for descriptor in [wrong_seed, wrong_count] {

@@ -218,7 +218,7 @@ fn fp32_i8_decomposition_with_zero_levels_is_a_noop() {
     let mut output = [];
 
     balanced_decompose_coefficients_pow2_i8_into(&coefficients, &mut output, &params);
-    assert!(output.is_empty());
+    assert_eq!(output, []);
 }
 
 #[test]
