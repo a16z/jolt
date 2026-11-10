@@ -92,8 +92,8 @@ An entry must meet one of these conditions:
   the ISA rule that permits both outcomes.
 
 A skip drops the whole test file, including cases unrelated to the reason
-for exclusion. For example, skipping `Zalrsc-sc.d-00` drops all 655 signature
-updates because its LR.W/SC.D case expects Sail's wider reservation granule.
+for exclusion. For example, skipping `Zalrsc-sc.d-00` drops every SC.D check
+in that file because its LR.W/SC.D case expects Sail's wider reservation granule.
 Jolt reserves exactly the bytes read by LR; this spec-legal difference does
 not require changing Jolt's LR/SC semantics.
 
