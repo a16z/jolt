@@ -32,7 +32,7 @@ so the authors can fold it into the paper.
 
 | # | Delta | Kind | Status |
 |---|---|---|---|
-| D1 | Σ attempt runs in constant time: DIT on M4, masked challenge sampler, `Fork::attempt` | extension (outside the paper's model) | implemented |
+| D1 | Σ attempt runs in constant time: DIT on M4, masked challenge sampler, `AttemptFork` | extension (outside the paper's model) | implemented |
 | D2 | Σ near-zero rejection: σ grows so one attempt almost always accepts | parameter change | in progress (`wo/sigma-norej`) |
 | D3 | One-shot fold responses sized to 2^−136 in total, not "one extra digit, 2^−950" | parameter change, fix | implemented on `wo/akita-w2` |
 | D4 | Hiding randomness: sizing owner, open alphabet, cut before the terminal, trusted catalogs reject it | clarification, extension | implemented |
@@ -97,10 +97,12 @@ oracle" (`05_security.tex:314-317`). No implementation rule is given.
   replaces Fisher–Yates swaps at secret indices with full masked scans, builds
   the dense challenge by a masked scatter, and always runs the exact certified
   operator-norm evaluation.
-- **`Fork::attempt`.** `jolt:crates/jolt-transcript/src/fork.rs:18,70`. It is
-  a fresh sponge that absorbs the tag `jolt-transcript/fork/attempt/v1`, then σ,
-  then a 32-byte nonce drawn from the prover's RNG. It never uses a counter
-  and records no transcript event.
+- **`AttemptFork`.** `jolt:crates/jolt-zk/src/whiteout/transport.rs`. It
+  initializes a fresh sponge with the protocol domain tag
+  `jolt-zk/whiteout/attempt-fork/v1`, then absorbs σ and a 32-byte nonce drawn
+  from the prover's RNG. For an accepted attempt, the verifier rebuilds the
+  fork from σ and the sent nonce n, absorbs the sent t_D payload, and derives
+  c. The fork never uses a counter and records no transcript event.
 
 **Why.** A rejected attempt's (y, c, z, V, t_D) is correlated with the witness
 through the rejection event. A timing leak of any of them defeats H2 exactly as

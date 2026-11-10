@@ -96,7 +96,6 @@ pub(crate) fn receive_bytes<T: VerifierTranscript + ?Sized>(
 /// accepted attempt (Whiteout, Thm `wo:thm:zk`, hybrid H2). The verifier
 /// squeezes the same seed, reads the nonce, and rebuilds the same fork. No
 /// transcript state is ever copied.
-#[derive(Clone)]
 pub(crate) struct AttemptFork<H>(H);
 
 /// Redacted: an attempt fork is keyed by a secret nonce, so its sponge

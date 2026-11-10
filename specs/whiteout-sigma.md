@@ -42,8 +42,8 @@ W4 builds the lattice half of `jolt-zk` and the primitives it needs.
 
   `ZkBackend for Whiteout` moves to W6, because it needs W3's residual
   opening type.
-- **`Fork::attempt` in `jolt-transcript`**: the oracle domain of the attempt
-  challenges.
+- **`AttemptFork` in `jolt-zk::whiteout::transport`**: the oracle domain of
+  the attempt challenges.
 
 **Out of W4:**
 
@@ -437,7 +437,7 @@ for i = 1..T_att:
    randomness. A_D is 1 × R_64, so t_D has 64 coefficients.
 4. **Nonce and challenge.**
    - `n_i` is 32 uniform bytes from the prover's RNG, never a counter.
-   - `c_i = SampleChallenge(Fork::attempt(σ, n_i).absorb(t_D))`, from the
+   - `c_i = SampleChallenge(AttemptFork::new(σ, n_i).absorb(t_D))`, from the
      operator-norm-filtered d = 64 family.
    - The prover uses the constant-time sampler of §2.8. Its output equals
      `sample_indexed_challenges_from_seed(seed, 64, 1, cfg, Some(D64_SELECTIVE_L2))`,
@@ -449,10 +449,12 @@ for i = 1..T_att:
 6. **Outcome.** On acceptance, send t_D and n_i, and leave the loop. On
    rejection, discard the attempt.
 
-`Fork::attempt` is a fresh sponge. It absorbs the tag
-`jolt-transcript/fork/attempt/v1`, then σ, then the 32-byte nonce. It is
-separate from the grinding forks, which are keyed by a `u32` counter, so the
-attempt queries have their own oracle domain (H2: "a separate domain of the
+`AttemptFork::new` initializes a fresh sponge with the protocol domain tag
+`jolt-zk/whiteout/attempt-fork/v1`, then absorbs σ and the 32-byte nonce.
+For an accepted attempt, the verifier rebuilds the fork from σ and the sent
+nonce n, absorbs the sent t_D payload, and derives c. The tag separates attempt
+queries from the grinding forks, which are keyed by a `u32` counter, giving
+attempt queries their own oracle domain (H2: "a separate domain of the
 oracle"). A counter would not do: H2 needs a nonce that is uniform and secret
 until it is published.
 
@@ -1312,7 +1314,7 @@ somewhere in eight runs has probability about 19% at 2^−5.23 per attempt.
 | # | Slice | Depends on | Status |
 |---|---|---|---|
 | 1 | `jolt-crypto::lattice`: `MatrixShape`/`MatrixView`, `GadgetDigits`, `AjtaiLevel`, constant-time `apply_centered` on CRT-NTT (with jolt-algebra's constant-time Garner and branch-free decomposition), one-level `commit`, `sample_box_digits`, `required_randomness_columns`, frozen digests, `TwoLevelLayout` description | M5b | done |
-| 2 | `jolt-transcript`: `Fork::attempt`, `is_fork_domain` for transcript audits, redacted `Debug` | — | done |
+| 2 | `jolt-zk::whiteout::transport`: `AttemptFork`, redacted `Debug` | — | done |
 | 3 | `jolt-zk::whiteout`: segment table, alphabet and shape check, `SigmaParams` with derived widths, the exact check and typed errors; `JointRejection::max_attempts` | M5a, M6d | done |
 | 4 | `jolt-crypto::challenge`: constant-time prover-side attempt sampler, byte-identical to the verifier's; `SparseChallenge::to_dense_ct` | M5b | done |
 | 5 | `RowLabels`, lifting, Q_μ/B_μ | **M6b** relation shapes | done |
