@@ -44,6 +44,7 @@ where
             request.setup(),
             request.shape().log_t,
             witness,
+            prepared.as_deref(),
         )?;
         let mut group_hints = request.precommitted_hints().to_vec();
         #[cfg(feature = "field-inline")]

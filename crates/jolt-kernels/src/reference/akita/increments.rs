@@ -7,6 +7,8 @@ use jolt_witness::{collect_bundles, JoltWitnessPlane, WitnessBundle, WitnessErro
 use rayon::prelude::*;
 
 use crate::akita::commitment::FusedIncObject;
+use crate::constant_suffix::ConstantSuffix;
+use crate::instruction_rows::InstructionCycleRow;
 use crate::KernelError;
 
 #[derive(Clone, Copy, WitnessBundle)]
@@ -21,6 +23,7 @@ pub(super) fn commit_fused_inc<F, PCS>(
     setup: &PCS::ProverSetup,
     log_t: usize,
     witness: &dyn JoltWitnessPlane<F>,
+    prepared: Option<&ConstantSuffix<InstructionCycleRow>>,
 ) -> Result<FusedIncObject<PCS>, KernelError<F>>
 where
     F: JoltField,
@@ -30,6 +33,9 @@ where
     let cycles = 1usize << log_t;
     let values = if let Some(access) = witness.random_access().filter(|a| cycles <= a.cycles()) {
         let extract = |cycle| -> Result<F, WitnessError> {
+            if let Some(rows) = prepared {
+                return Ok(rows[cycle].fused_inc());
+            }
             Ok(F::from_i128(
                 access.window::<IncrementRow>(cycle)?.increment.0,
             ))
