@@ -49,6 +49,56 @@ fn bench_gruen_bind(input: (GruenSplitEqPolynomial<Fr>, Vec<Fr>)) -> GruenSplitE
     black_box(eq)
 }
 
+#[library_benchmark]
+#[bench::vars_16_low_to_high(setup_gruen(BindingOrder::LowToHigh))]
+#[bench::vars_16_high_to_low(setup_gruen(BindingOrder::HighToLow))]
+fn bench_gruen_deg_2(input: (GruenSplitEqPolynomial<Fr>, Vec<Fr>)) -> GruenSplitEqPolynomial<Fr> {
+    let (mut eq, challenges) = input;
+    let q_zero = Fr::from_u64(2);
+    let q_one = Fr::from_u64(5);
+    for challenge in challenges {
+        let (l_zero, l_one) = eq.current_linear_evals();
+        let hint = l_zero * q_zero + l_one * q_one;
+        black_box(eq.gruen_poly_deg_2(q_one, hint, || q_zero)).expect("consistent round hint");
+        eq.bind(black_box(challenge));
+    }
+    black_box(eq)
+}
+
+#[library_benchmark]
+#[bench::vars_16_low_to_high(setup_gruen(BindingOrder::LowToHigh))]
+#[bench::vars_16_high_to_low(setup_gruen(BindingOrder::HighToLow))]
+fn bench_gruen_deg_3(input: (GruenSplitEqPolynomial<Fr>, Vec<Fr>)) -> GruenSplitEqPolynomial<Fr> {
+    let (mut eq, challenges) = input;
+    let q_zero = Fr::from_u64(2);
+    let q_one = Fr::from_u64(10);
+    for challenge in challenges {
+        let (l_zero, l_one) = eq.current_linear_evals();
+        let hint = l_zero * q_zero + l_one * q_one;
+        black_box(eq.gruen_poly_deg_3(q_zero, Fr::from_u64(5), hint, || q_one))
+            .expect("consistent round hint");
+        eq.bind(black_box(challenge));
+    }
+    black_box(eq)
+}
+
+#[library_benchmark]
+#[bench::vars_16_low_to_high(setup_gruen(BindingOrder::LowToHigh))]
+#[bench::vars_16_high_to_low(setup_gruen(BindingOrder::HighToLow))]
+fn bench_gruen_toom(input: (GruenSplitEqPolynomial<Fr>, Vec<Fr>)) -> GruenSplitEqPolynomial<Fr> {
+    let (mut eq, challenges) = input;
+    let q_zero = Fr::from_u64(2);
+    let q_one = Fr::from_u64(10);
+    for challenge in challenges {
+        let (l_zero, l_one) = eq.current_linear_evals();
+        let hint = l_zero * q_zero + l_one * q_one;
+        black_box(eq.gruen_poly_from_evals(&[q_one, Fr::from_u64(5)], hint, || q_zero))
+            .expect("consistent round hint");
+        eq.bind(black_box(challenge));
+    }
+    black_box(eq)
+}
+
 fn setup_tensor() -> (TensorEqTable<Fr>, Vec<Fr>) {
     (TensorEqTable::new(&setup_point(16)), setup_point(1 << 16))
 }
@@ -67,7 +117,7 @@ fn bench_tensor_fold(input: (TensorEqTable<Fr>, Vec<Fr>)) -> Fr {
 
 library_benchmark_group!(
     name = eq_evals_group;
-    benchmarks = bench_eq_evals, bench_eq_evals_le, bench_gruen_bind, bench_tensor_fold
+    benchmarks = bench_eq_evals, bench_eq_evals_le, bench_gruen_bind, bench_gruen_deg_2, bench_gruen_deg_3, bench_gruen_toom, bench_tensor_fold
 );
 
 main!(
