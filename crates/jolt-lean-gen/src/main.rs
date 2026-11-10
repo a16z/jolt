@@ -144,6 +144,7 @@ fn final_imm_width(name: &str) -> Option<u32> {
 }
 
 // The source-facing Lean constructors decode these encoded-width immediates.
+// AUIPC is printed with the plain constructor (see encoded_literal).
 fn encoded_imm_width(name: &str) -> Option<u32> {
     match name {
         "ADDI" | "ADDIW" | "ANDI" | "ORI" | "XORI" | "SLTI" | "SLTIU" | "JALR"
@@ -152,7 +153,6 @@ fn encoded_imm_width(name: &str) -> Option<u32> {
         | "VirtualShiftDataB" | "VirtualShiftDataH" | "VirtualShiftDataW" | "LD" | "SD" => Some(12),
         "BEQ" | "BNE" | "BLT" | "BGE" | "BLTU" | "BGEU" | "VirtualAssertEQ" => Some(13),
         "JAL" => Some(21),
-        "AUIPC" => Some(20),
         _ => None,
     }
 }
@@ -180,11 +180,9 @@ fn encoded_literal(name: &str, imm: i128) -> Option<(u32, i128)> {
 
 // Widths for the remaining Lean immediate fields. Decoded final-row widths
 // for source-style instructions are handled by final_imm_width above.
+// For example, BEQ is printed as `BitVec 128` by final_imm_width.
 fn imm_width(name: &str) -> u32 {
     match name {
-        "BEQ" | "BNE" | "BLT" | "BGE" | "BLTU" | "BGEU" | "VirtualAssertEQ" => 13,
-        "AUIPC" => 20,
-        "JAL" => 21,
         "LUI" | "VirtualMULI" | "VirtualMULIW" | "VirtualAdvice" | "VirtualAdviceLoad" => 64,
         _ => 12,
     }
