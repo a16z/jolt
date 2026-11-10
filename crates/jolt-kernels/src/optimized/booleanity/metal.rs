@@ -244,12 +244,12 @@ impl MetalBooleanityKernel {
                 .pipeline(&host_name::<AkitaField>("lazy_booleanity_cached"))
                 .map_err(compute_error)?;
             let cached_width = cached_pipeline.thread_execution_width();
-            let cached_group = if cached_width == 0 {
-                0
-            } else {
-                cached_pipeline.max_total_threads_per_threadgroup().min(128) / cached_width
-                    * cached_width
-            };
+            let cached_group = cached_pipeline
+                .max_total_threads_per_threadgroup()
+                .min(128)
+                .checked_div(cached_width)
+                .unwrap_or(0)
+                * cached_width;
             let cached_admitted = cached_group != 0
                 && cached_group / cached_width <= 32
                 && cached_group / cached_width <= cached_width
