@@ -13,7 +13,7 @@ mod trace_compute;
 pub use trace_compute::MetalTraceCompute;
 
 impl<PCS: CommitmentScheme<Field = AkitaField>> JoltBackend<AkitaField, PCS> {
-    /// Use Metal for compact ReadRAF, instruction-RA and Booleanity cycle rounds.
+    /// Use Metal for admitted instruction, bytecode and Booleanity kernels.
     /// Other slots retain their current implementations.
     /// Compiles the shaders before any proof starts; device/setup errors are
     /// returned to the caller rather than silently selecting the CPU backend.

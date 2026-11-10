@@ -110,7 +110,8 @@ kernel void instruction_input_native(
 
 template <typename F>
 F input_value(device const F* values, uint prefix, ulong row, uint column, F tail) {
-    return row < prefix ? values[ulong(column) * prefix + row] : tail;
+    if (row < prefix) return values[ulong(column) * prefix + row];
+    return tail;
 }
 // The output never aliases the input. Packed patterns remain 2/4/8/16 bits;
 // at saturation, lookup and bind flags directly into dense field columns.
