@@ -252,7 +252,8 @@ impl DeviceCycle {
         weights: Option<RoundWeights<'_>>,
         tail_entries: usize,
     ) -> Result<BoundCycle, MetalError> {
-        let _span = tracing::info_span!("metal_registers_bind").entered();
+        let span = tracing::info_span!("metal_registers_bind", phase = "seed", fused = false);
+        let _span = span.enter();
         if let Phase::Seed(seed) = &mut self.phase {
             if seed.first.is_none() {
                 seed.first = Some(r);
@@ -302,6 +303,14 @@ impl DeviceCycle {
             }
             Phase::Sparse(old) => {
                 let direct = old.direct() || self.ra_lut.saturated() || self.wa_lut.saturated();
+                let phase = if old.direct() {
+                    "direct"
+                } else if direct {
+                    "transition"
+                } else {
+                    "indexed"
+                };
+                let _ = span.record("phase", phase);
                 let next = PendingSparse::new(
                     gpu,
                     old.topology.bound(gpu)?,
@@ -332,6 +341,7 @@ impl DeviceCycle {
                         )
                     })
                     .transpose()?;
+                let _ = span.record("fused", buffers.is_some());
                 let params = [
                     u32_shape(old.topology.masks.len())?,
                     u32_shape(next.topology.masks.len())?,
