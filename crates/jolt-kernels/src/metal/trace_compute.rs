@@ -6,7 +6,7 @@ use std::{
 use akita_error::{checked, AkitaError};
 use akita_metal::onehot::{DeviceK16Sources, OneHotCommitShape};
 use akita_metal::onehot_fold::{OneHotFoldChallenge, OneHotFoldShape, OneHotFoldWorkspace};
-use akita_metal::onehot_ntt::{DeviceOneHotNttKey, OneHotNttWorkspace};
+use akita_metal::onehot_ntt::{DeviceOneHotNttKey, OneHotNttWorkspace, SharedKeyNttWorkspace};
 use akita_metal::onehot_packing::{OneHotPackingShape, OneHotPackingWorkspace};
 use akita_metal::{AkitaMetal, AkitaMetalError};
 use akita_pcs::custom_source::CommitInnerPlan;
@@ -357,6 +357,10 @@ impl TraceOneHotComputeKernel for MetalTraceCompute {
         let _span = tracing::info_span!(
             "metal_trace_commitment",
             columns = rows.num_columns(),
+            one_hot_k,
+            ring_dimension = plan.ring_dimension,
+            logical_rows = rows.num_rows(),
+            prefix_rows = rows.nonzero_prefix_len(),
             positions = plan.num_positions_per_block,
             blocks = plan.num_live_blocks,
             n_a = plan.n_a,
@@ -443,6 +447,7 @@ impl TraceOneHotComputeKernel for MetalTraceCompute {
         let blocks_per_window = staging_blocks(rows_per_block, columns)?;
         let active_blocks = prefix.div_ceil(rows_per_block);
         let mut workspace = OneHotNttWorkspace::new(&self.shared.metal);
+        let mut shared_workspace = SharedKeyNttWorkspace::new(&self.shared.metal);
         for first_block in (0..active_blocks).step_by(blocks_per_window) {
             let blocks = blocks_per_window.min(active_blocks - first_block);
             let first_row = first_block * rows_per_block;
@@ -450,12 +455,26 @@ impl TraceOneHotComputeKernel for MetalTraceCompute {
             let pack_span = tracing::info_span!("metal_trace_commit_pack").entered();
             let sources = self.pack_rows(rows, first_row, window_rows)?;
             drop(pack_span);
-            let dispatch =
-                tracing::info_span!("metal_trace_commit_dispatch", gpu_s = tracing::field::Empty);
+            let dispatch = tracing::info_span!(
+                "metal_trace_commit_dispatch",
+                first_block,
+                window_blocks = blocks,
+                algorithm = tracing::field::Empty,
+                gpu_s = tracing::field::Empty
+            );
             let _dispatch = dispatch.enter();
-            let (result, gpu_time) = workspace
-                .commit(key, &sources, shape)
-                .map_err(compute_error)?;
+            let (result, gpu_time, algorithm) = if let Some((result, gpu_time)) = shared_workspace
+                .try_commit(key, &sources, shape)
+                .map_err(compute_error)?
+            {
+                (result, gpu_time, "shared_key")
+            } else {
+                let (result, gpu_time) = workspace
+                    .commit(key, &sources, shape)
+                    .map_err(compute_error)?;
+                (result, gpu_time, "fused_ntt")
+            };
+            let _ = dispatch.record("algorithm", algorithm);
             let _ = dispatch.record("gpu_s", gpu_time.as_secs_f64());
             let result = result.read().map_err(compute_error)?;
             let per_column = blocks * block_coefficients;
