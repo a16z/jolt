@@ -302,14 +302,24 @@ A later configuration audit found that donor `7aa549cc9` selects 8-bit committed
 and 32-bit virtual chunks at T27, whereas current Akita uses 4/16 bits. The two
 K16 panel experiments therefore do not reproduce the donor large-workload path.
 That path uses a different raw-limb K256 panel kernel. The frozen original-port
-control is being built with its unchanged configuration and published Akita
-`79f09e2`; no original-port throughput has yet been measured here.
+control uses unchanged kernels/configuration and published Akita `79f09e2`.
+Its adapter (`f4ef0a628`) verified the same frozen Fibonacci guest, input and
+output in 32.4982 s. It produced 134,217,861 proof rows versus current
+134,217,720, crossing into a padded T28 domain. Both versions exclude canonical
+trailing padding; instruction lowering has changed. This is a verified
+workload observation, not an equal-domain MHz comparison or reconstruction of
+the historical 5x result. The separate profile also verified; evidence is in
+`original-donor-observation/`.
 
 The forward port will evaluate K256 through an explicit Metal selection before
 preprocessing, preserving CPU defaults. Frozen Fib requires exactly 20 native
-columns at arity 35. Generate this missing schedule through the current
-JoltOneHotK256 policy and validated catalog emitter, then inspect its actual
-geometry before admitting a GPU kernel. Do not import the donor capacity-32
+columns at arity 35. The current JoltOneHotK256 planner and validated catalog
+emitter generated that exact schedule: D512, rank one, one inner digit,
+131,072 positions per block, 512 blocks per column, subring dimension 128,
+and 31 signed-unit challenge terms. The generator passed focused Clippy.
+Catalog hashes and provenance are in `k256-native-catalog-manifest.json`.
+The source candidate selects K256 before preprocessing; commit/root/packing
+kernels are being adapted to this geometry. Do not import the donor capacity-32
 catalog or pad native columns to fit it. K256 device sources need byte selectors
 plus zero-selection masks, because 255 is a valid selector. Shared source
 ownership and implicit suffixes remain unchanged. Instruction RA, Booleanity
