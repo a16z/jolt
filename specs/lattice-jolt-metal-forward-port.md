@@ -1084,3 +1084,51 @@ footprint was about 5.35 GiB. Reducing Outer host reads from 4,737,285 fields to
 4,635 did not measurably shorten uniskip in the saved profiles; a narrow host-phase
 diagnostic is the next step. No Outer implementation is included in this pin-only
 checkpoint.
+
+
+## Four-bin packing and ReadRAF sum checkpoint (2026-11-10)
+
+Measured Jolt `cd4f73b9d` pins published Akita `5668262b`. Native K16
+coefficient packing groups each row into four bins under the existing canonical
+weights, with the ordinary coefficient route retained for unsupported geometry
+or resources. ReadRAF uses the canonical five-word sum accumulator in its
+existing lazy, materialization and dense kernels. Neither change alters source
+ownership, implicit padding, transcript selection or protocol geometry. Focused
+oracles passed normally and with Metal validation; parallel, serial and
+integrated Clippy passed.
+
+The standard release executable verified the small proof and all four frozen
+workloads with both verifiers, preserving exact inputs, public outputs and
+actual/padded cycle counts. Each entry is one untraced observation; Fibonacci
+reuses the release-pipeline observation.
+
+| Workload | Prove seconds | Padded MHz | Actual MHz |
+| --- | ---: | ---: | ---: |
+| Fibonacci | 17.421603917 | 7.704097088 | 7.704096628 |
+| SHA-2 chain | 19.631253416 | 6.836941338 | 6.836927686 |
+| BTreeMap | 20.679329083 | 6.490429523 | 6.489292687 |
+| BLAKE2b chain | 13.791036292 | 9.732243840 | 6.502958523 |
+| Arithmetic mean of rates | — | 7.690927947 | 6.883318881 |
+
+In the separate production profiles, complete native packing fell from
+0.5756 s to 0.1684 s versus saved `b2fce09d9`/`b8070597`, including preparation,
+all 32 windows and finalization. Stage 8 fell from 2.2117 s to 1.8907 s.
+ReadRAF's first three lazy rounds fell from 0.4626 s to 0.4447 s; materialization
+was flat at 0.1189 s, and dense rounds fell from 0.0895 s to 0.0868 s. Its complete
+family nevertheless rose from 1.9797 s to 2.1082 s, alongside an unchanged
+address phase that took 1.0425 s instead of 0.8906 s. These observations do not
+establish a later-mode regression or a complete-family ReadRAF improvement.
+
+The disjoint stage union was effectively flat, 18.3922 s versus 18.3991 s;
+the profiled whole proof was 18.4796 s versus 18.4878 s. The separate unprofiled
+Fibonacci observation improved from 17.7016 s to 17.4216 s. Peak RSS was
+38.7071 GiB and footprint 44.9560 GiB, versus 38.6411/44.9503 GiB; retained
+source payload was unchanged. These are unmatched observations, and nested
+component differences are not additive causal savings. The paired packing
+experiment and production family reduction support development adoption, but
+the 20 MHz target and final matched, repeated campaign remain pending.
+
+Evidence is in `packing-sum-metal/`, including its `frozen-suite/`, and
+`packing-sum-production-profile-review.json`; the frozen executable is
+`packing-sum-jolt-prover`. No held Outer, Booleanity-fusion, two-prime or K256
+candidate is included.
