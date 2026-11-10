@@ -3,7 +3,7 @@ use jolt_riscv::{uncompress_rv64_instruction, JoltInstructionProfile, SourceInst
 use object::{Object, ObjectSection, SectionKind};
 use std::collections::BTreeMap;
 
-use crate::ProgramError;
+use crate::{preprocess::PreprocessingError, ProgramError};
 
 /// Contents decoded directly from an RV64 ELF program image.
 ///
@@ -117,6 +117,9 @@ fn decode_text_section(
     let mut offset = 0;
     while offset < raw_data.len() {
         let address = section_address + offset as u64;
+        if !address.is_multiple_of(2) {
+            return Err(PreprocessingError::InvalidBytecodeAddress(address as usize).into());
+        }
         let Some(&[b0, b1]) = raw_data.get(offset..offset + 2) else {
             return Err(ProgramError::MalformedImage(
                 "truncated instruction halfword",
@@ -157,7 +160,7 @@ fn decode_text_section(
 )]
 mod tests {
     use super::{decode_elf, merge_ranges};
-    use crate::{ProgramError, RV64I};
+    use crate::{preprocess::PreprocessingError, ProgramError, RV64I};
     use common::constants::RAM_START_ADDRESS;
     use jolt_riscv::{SourceInstructionKind, RV64IMAC_JOLT, RV64IM_JOLT};
 
@@ -381,6 +384,21 @@ mod tests {
             decode_elf(&elf, RV64IMAC_JOLT),
             Err(ProgramError::MalformedImage(message)) if message.contains("section extent")
         ));
+    }
+
+    #[test]
+    fn decode_elf_requires_even_instruction_addresses_in_all_profiles() {
+        let nop = 0x0000_0013u32;
+        for profile in [RV64I, RV64IM_JOLT, RV64IMAC_JOLT] {
+            let even = build_elf64(&[text_section(RAM_START_ADDRESS, &nop.to_le_bytes())]);
+            assert!(decode_elf(&even, profile).is_ok());
+            let address = RAM_START_ADDRESS + 1;
+            let odd = build_elf64(&[text_section(address, &nop.to_le_bytes())]);
+            assert!(matches!(
+                decode_elf(&odd, profile),
+                Err(ProgramError::Preprocessing(PreprocessingError::InvalidBytecodeAddress(got))) if got == address as usize
+            ));
+        }
     }
 
     #[test]

@@ -26,6 +26,14 @@ For the purposes of the memory checking argument, we remap the memory address to
 where `lowest_address` is the left-most address depicted in the diagram above.
 The division by eight reflects the fact that we treat guest memory as "doubleword-addressable" for the purposes of memory-checking.
 
+Layout admission requires `heap_end <= 2^64 - 8` and
+`lowest_address + 8 * max_ram_K <= 2^64`, where `max_ram_K` is the maximum
+admitted power-of-two-padded RAM domain, not the domain selected by one proof.
+Checked layout construction, full and committed preprocessing admission, and
+verifier-key deserialization enforce these bounds before execution or verification.
+The ELF decoder also rejects odd instruction addresses, matching bytecode admission's
+two-byte alignment requirement. These checks add no per-cycle proof relation.
+
 ### Sub-doubleword accesses
 
 Load and store instructions that access less than a full doubleword (e.g. `LB`, `SH`, `LW`) are expanded into [inline sequences](./emulation.md#virtual-instructions-and-sequences) around a *floor-addressed* doubleword access: `VirtualLoad{B,H,W}` reads, and `VirtualStore{B,H,W}` writes, the doubleword containing the effective address `ea = rs1 + imm`.
@@ -138,14 +146,24 @@ This arrangement minimizes verifier computation. If we placed untrusted advice f
 ## Output Check
 
 Jolt ensures correctness of guest program outputs via the **output check** sumcheck.
-Guest I/O operations, including outputs, inputs, and termination or panic bits, occur within a designated [memory region](#address-remapping).
-At execution completion, outputs and relevant status bits are written into this region.
+Guest I/O operations, including outputs, inputs, and the panic and termination words, occur within a designated [memory region](#address-remapping).
+Each flag occupies one eight-byte word, starts at zero, and stores ordinary little-endian bytes.
+Loads return those bytes; stores and AMOs update them, including partial-word accesses.
+Intermediate flag values are unrestricted. LR/SC remains restricted to ordinary RAM and cannot access the I/O window.
 
-Verifying that the claimed outputs and status bits are correct amounts to checking that the following polynomials agree at the indices corresponding to the program I/O memory region:
+At finalization, the tracer accepts exactly `(panic_word, termination_word) = (0, 1)` for success or `(1, 0)` for panic.
+It rejects every other pair and derives the public `panic` Boolean from the accepted pair.
+The SDK writes both complete words before its exit self-jump so earlier flag writes cannot leave a noncanonical final value.
+The final-memory witness reads the stored flag bytes instead of constructing them from the public Boolean.
+
+Verifying that the claimed outputs and flag words are correct amounts to checking that the following polynomials agree at the indices corresponding to the program I/O memory region:
 
 ![final memory](../../imgs/final_memory_state.png)
 
-Note that `val_io` is only contains information known by the verifier.
+`val_io` contains only information known by the verifier.
+Its existing I/O mask covers both complete flag words.
+It sets panic to the public Boolean and termination to one on success; the omitted termination segment on panic evaluates to zero under the same mask.
+The output check therefore requires the same two final pairs without adding a constraint or opening.
 To check that these two polynomials are equal, we use the following sumcheck:
 
 $$

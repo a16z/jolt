@@ -134,8 +134,8 @@ fn record_device_store_pre(state: &mut GuestState, host: &HostContext, address: 
 }
 
 /// `Sd`/`VirtualStore*` slow path: device-region, unaligned, stack-canary, or
-/// out-of-bounds addresses. `JoltDevice::store` also handles the
-/// panic/termination bits.
+/// out-of-bounds addresses. `JoltDeviceMemory::store` also updates the
+/// panic and termination bytes.
 pub extern "sysv64" fn slow_store_doubleword(
     state: *mut GuestState,
     address: u64,

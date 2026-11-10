@@ -3,7 +3,7 @@ use std::path::Path;
 use std::process::exit;
 
 use clap::Parser;
-use common::jolt_device::{JoltDevice, MemoryConfig};
+use common::jolt_device::{JoltDeviceMemory, MemoryConfig};
 
 use tracer::emulator::{default_terminal::DefaultTerminal, Emulator};
 
@@ -53,7 +53,7 @@ fn main() {
         program_size: Some(elf_content.len() as u64),
         ..Default::default()
     };
-    emulator.get_mut_cpu().get_mut_mmu().jolt_device = Some(JoltDevice::new(&memory_config));
+    emulator.get_mut_cpu().get_mut_mmu().jolt_device = Some(JoltDeviceMemory::new(&memory_config));
 
     let endcode = emulator.run_test(args.trace.unwrap_or(false), args.disassemble);
 

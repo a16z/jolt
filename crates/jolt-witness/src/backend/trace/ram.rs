@@ -177,21 +177,6 @@ impl TraceBackend {
             populate_ram_bytes(&mut state, start, &self.trace.device.outputs, "output")?;
         }
 
-        let panic_index =
-            self.remapped_required_address(self.trace.device.memory_layout.panic, "panic")?;
-        set_ram_word(
-            &mut state,
-            panic_index,
-            self.trace.device.panic as u64,
-            "panic",
-        )?;
-        if !self.trace.device.panic {
-            let termination_index = self.remapped_required_address(
-                self.trace.device.memory_layout.termination,
-                "termination",
-            )?;
-            set_ram_word(&mut state, termination_index, 1, "termination")?;
-        }
         Ok(state)
     }
 
@@ -200,18 +185,7 @@ impl TraceBackend {
         state: &mut [u64],
         bytes: &[(u64, u8)],
     ) -> Result<(), WitnessError> {
-        let dram_start = self.dram_start_address()?;
-        for &(address, byte) in bytes {
-            let absolute_address = if address >= dram_start {
-                address
-            } else {
-                dram_start
-                    .checked_add(address)
-                    .ok_or_else(|| WitnessError::InvalidWitnessData {
-                        label: JOLT_VM_LABEL,
-                        reason: format!("final memory address offset {address:#x} overflows"),
-                    })?
-            };
+        for &(absolute_address, byte) in bytes {
             let Some(word_index) = self.remapped_ram_address(absolute_address)? else {
                 continue;
             };
@@ -229,17 +203,6 @@ impl TraceBackend {
                 (state[word_index] & !(0xff_u64 << shift)) | ((byte as u64) << shift);
         }
         Ok(())
-    }
-
-    pub(crate) fn dram_start_address(&self) -> Result<u64, WitnessError> {
-        self.preprocessing
-            .memory_layout
-            .stack_end
-            .checked_sub(self.preprocessing.memory_layout.program_size)
-            .ok_or_else(|| WitnessError::InvalidWitnessData {
-                label: JOLT_VM_LABEL,
-                reason: "memory layout stack_end is below program_size".to_owned(),
-            })
     }
 
     pub(crate) fn remapped_required_address(
@@ -298,22 +261,6 @@ pub(crate) fn populate_ram_bytes(
         })
         .collect::<Vec<_>>();
     populate_ram_words(state, start, &words, label)
-}
-
-pub(crate) fn set_ram_word(
-    state: &mut [u64],
-    index: usize,
-    word: u64,
-    label: &'static str,
-) -> Result<(), WitnessError> {
-    let Some(slot) = state.get_mut(index) else {
-        return Err(WitnessError::InvalidWitnessData {
-            label: JOLT_VM_LABEL,
-            reason: format!("{label} memory index {index} exceeds ram_k {}", state.len()),
-        });
-    };
-    *slot = word;
-    Ok(())
 }
 
 pub(crate) fn populate_ram_words(

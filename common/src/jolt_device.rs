@@ -22,12 +22,35 @@ use crate::constants::{
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MemoryLayoutError {
     ZeroAddress,
-    AddressBelowLowest { address: u64, lowest_address: u64 },
+    AddressBelowLowest {
+        address: u64,
+        lowest_address: u64,
+    },
     MissingProgramSize,
-    SizeOverflow { region: &'static str },
-    InvalidTrustedAdviceSize { size: u64 },
-    InvalidUntrustedAdviceSize { size: u64 },
-    IoRegionTooLarge { padded_bytes: u64 },
+    SizeOverflow {
+        region: &'static str,
+    },
+    InvalidTrustedAdviceSize {
+        size: u64,
+    },
+    InvalidUntrustedAdviceSize {
+        size: u64,
+    },
+    IoRegionTooLarge {
+        padded_bytes: u64,
+    },
+    HeapEndTooHigh {
+        heap_end: u64,
+    },
+    HeapBelowLowest {
+        heap_end: u64,
+        lowest_address: u64,
+    },
+    RamDomainTooLarge,
+    RamAddressSpaceOverflow {
+        lowest_address: u64,
+        max_ram_k: usize,
+    },
 }
 
 impl Display for MemoryLayoutError {
@@ -51,6 +74,19 @@ impl Display for MemoryLayoutError {
                 f,
                 "Untrusted advice size must be a power of two (got {size})"
             ),
+            Self::HeapBelowLowest { heap_end, lowest_address } => write!(
+                f,
+                "memory layout heap end {heap_end} is below lowest mapped address {lowest_address}"
+            ),
+            Self::RamDomainTooLarge => write!(f, "RAM domain size exceeds this platform's addressable usize range"),
+            Self::RamAddressSpaceOverflow { lowest_address, max_ram_k } => write!(
+                f,
+                "maximum padded RAM domain of {max_ram_k} words from {lowest_address} exceeds the 64-bit address space"
+            ),
+            Self::HeapEndTooHigh { heap_end } => write!(
+                f,
+                "heap end {heap_end} leaves fewer than eight bytes before the end of the address space"
+            ),
             Self::IoRegionTooLarge { padded_bytes } => write!(
                 f,
                 "padded I/O region ({padded_bytes} bytes) reaches the zero address or exceeds RAM_START_ADDRESS"
@@ -61,14 +97,9 @@ impl Display for MemoryLayoutError {
 
 impl Error for MemoryLayoutError {}
 
-#[expect(
-    clippy::too_long_first_doc_paragraph,
-    reason = "pre-existing doc paragraph exceeds the pedantic limit"
-)]
-/// Represented as a "peripheral device" in the RISC-V emulator, this captures
-/// all reads from the reserved memory address space for program inputs and all writes
-/// to the reserved memory address space for program outputs.
-/// The inputs and outputs are part of the public inputs to the proof.
+/// Public program inputs, outputs, and the final panic claim.
+/// Live guest loads and stores use [`JoltDeviceMemory`], which validates the
+/// stored flag words before constructing this public statement.
 ///
 /// The advice fields are *not* public: they hold the prover's private inputs,
 /// populated so the emulator can service loads from the advice memory regions.
@@ -143,11 +174,121 @@ impl JoltDevice {
         }
     }
 
+    pub fn size(&self) -> usize {
+        self.inputs.len() + self.outputs.len()
+    }
+
+    pub fn input_words_le(&self) -> Vec<u64> {
+        bytes_to_words_le(&self.inputs)
+    }
+
+    pub fn output_words_le(&self) -> Vec<u64> {
+        bytes_to_words_le(&self.outputs)
+    }
+}
+
+/// The stored bytes of the panic and termination words, in address order.
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FlagWords {
+    bytes: [u8; 16],
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InvalidFlagWords {
+    pub panic_word: u64,
+    pub termination_word: u64,
+}
+
+impl Display for InvalidFlagWords {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+        write!(
+            f,
+            "invalid final flag words ({}, {}): expected (0, 1) or (1, 0)",
+            self.panic_word, self.termination_word
+        )
+    }
+}
+
+impl Error for InvalidFlagWords {}
+
+impl FlagWords {
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "offset & 15 is below the fixed sixteen-byte length"
+    )]
+    fn load(&self, offset: usize) -> u8 {
+        self.bytes[offset & 15]
+    }
+
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "offset & 15 is below the fixed sixteen-byte length"
+    )]
+    fn store(&mut self, offset: usize, value: u8) {
+        self.bytes[offset & 15] = value;
+    }
+
+    pub fn outcome(&self) -> Result<bool, InvalidFlagWords> {
+        let panic_word = u64::from_le_bytes(core::array::from_fn(|i| self.load(i)));
+        let termination_word = u64::from_le_bytes(core::array::from_fn(|i| self.load(i + 8)));
+        match (panic_word, termination_word) {
+            (0, 1) => Ok(false),
+            (1, 0) => Ok(true),
+            _ => Err(InvalidFlagWords {
+                panic_word,
+                termination_word,
+            }),
+        }
+    }
+
+    /// Appends the actual stored bytes at their absolute guest addresses.
+    pub fn append_memory(&self, panic_address: u64, bytes: &mut Vec<(u64, u8)>) {
+        bytes.extend(
+            self.bytes
+                .iter()
+                .enumerate()
+                .map(|(offset, byte)| (panic_address + offset as u64, *byte)),
+        );
+    }
+}
+
+/// Live I/O memory. Public panic is derived only when this state is finalized.
+#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct JoltDeviceMemory {
+    pub inputs: Vec<u8>,
+    pub trusted_advice: Vec<u8>,
+    pub untrusted_advice: Vec<u8>,
+    pub outputs: Vec<u8>,
+    pub flags: FlagWords,
+    pub memory_layout: MemoryLayout,
+}
+
+impl JoltDeviceMemory {
+    pub fn new(memory_config: &MemoryConfig) -> Self {
+        Self {
+            memory_layout: MemoryLayout::new(memory_config),
+            ..Self::default()
+        }
+    }
+
+    pub fn into_public(self) -> Result<JoltDevice, InvalidFlagWords> {
+        let panic = self.flags.outcome()?;
+        Ok(JoltDevice {
+            inputs: self.inputs,
+            trusted_advice: self.trusted_advice,
+            untrusted_advice: self.untrusted_advice,
+            outputs: self.outputs,
+            panic,
+            memory_layout: self.memory_layout,
+        })
+    }
+
     pub fn load(&self, address: u64) -> u8 {
-        if self.is_panic(address) {
-            self.panic as u8
-        } else if self.is_termination(address) {
-            0
+        // The existing range checks admit offsets 0..16; masking the fixed buffer index
+        // removes bounds branches from the byte loop without allocations or another pass.
+        if self.is_panic(address) || self.is_termination(address) {
+            self.flags
+                .load((address - self.memory_layout.panic) as usize)
         } else if self.is_input(address) {
             let internal_address = self.convert_read_address(address);
             self.inputs.get(internal_address).copied().unwrap_or(0)
@@ -173,10 +314,10 @@ impl JoltDevice {
     }
 
     pub fn store(&mut self, address: u64, value: u8) {
-        if address == self.memory_layout.panic {
-            self.panic = true;
-            return;
-        } else if self.is_panic(address) || self.is_termination(address) {
+        // Flag accesses use fixed storage: no allocation or trace-sized work.
+        if self.is_panic(address) || self.is_termination(address) {
+            self.flags
+                .store((address - self.memory_layout.panic) as usize, value);
             return;
         }
 
@@ -201,10 +342,6 @@ impl JoltDevice {
         }
     }
 
-    pub fn size(&self) -> usize {
-        self.inputs.len() + self.outputs.len()
-    }
-
     pub fn is_input(&self, address: u64) -> bool {
         address >= self.memory_layout.input_start && address < self.memory_layout.input_end
     }
@@ -220,7 +357,7 @@ impl JoltDevice {
     }
 
     pub fn is_output(&self, address: u64) -> bool {
-        address >= self.memory_layout.output_start && address < self.memory_layout.termination
+        address >= self.memory_layout.output_start && address < self.memory_layout.output_end
     }
 
     pub fn is_panic(&self, address: u64) -> bool {
@@ -245,14 +382,6 @@ impl JoltDevice {
 
     fn convert_write_address(&self, address: u64) -> usize {
         (address - self.memory_layout.output_start) as usize
-    }
-
-    pub fn input_words_le(&self) -> Vec<u64> {
-        bytes_to_words_le(&self.inputs)
-    }
-
-    pub fn output_words_le(&self) -> Vec<u64> {
-        bytes_to_words_le(&self.outputs)
     }
 }
 
@@ -320,8 +449,8 @@ pub struct MemoryLayout {
     pub heap_end: u64,
     pub panic: u64,
     pub termination: u64,
-    /// End of the memory region containing inputs, outputs, the panic bit,
-    /// and the termination bit.
+    /// End of the memory region containing inputs, outputs, the panic word,
+    /// and the termination word.
     pub io_end: u64,
 }
 
@@ -413,7 +542,7 @@ impl MemoryLayout {
             });
         }
 
-        // Adds 16 to account for panic bit and termination bit
+        // Adds 16 to account for the panic and termination words
         // (they each occupy one full 8-byte word)
         let io_region_bytes = max_input_size
             .checked_add(max_trusted_advice_size)
@@ -508,7 +637,7 @@ impl MemoryLayout {
             .checked_add(heap_size)
             .ok_or(MemoryLayoutError::SizeOverflow { region: "heap" })?;
 
-        Ok(Self {
+        let layout = Self {
             program_size,
             max_trusted_advice_size,
             trusted_advice_start,
@@ -529,7 +658,47 @@ impl MemoryLayout {
             panic,
             termination,
             io_end,
-        })
+        };
+        let _ = layout.max_ram_k()?;
+        Ok(layout)
+    }
+
+    /// Ensures an access beginning below `heap_end` has eight-byte headroom.
+    /// Admission repeats this check for layouts decoded from verifier keys.
+    fn validate_heap_end(&self) -> Result<(), MemoryLayoutError> {
+        if self.heap_end > u64::MAX - 7 {
+            return Err(MemoryLayoutError::HeapEndTooHigh {
+                heap_end: self.heap_end,
+            });
+        }
+        Ok(())
+    }
+
+    /// Computes and admits the maximum padded RAM domain for this layout.
+    /// Both construction and verifier-key admission use this sizing law.
+    pub fn max_ram_k(&self) -> Result<usize, MemoryLayoutError> {
+        self.validate_heap_end()?;
+        let lowest_address = self.get_lowest_address();
+        let total_bytes = self.heap_end.checked_sub(lowest_address).ok_or(
+            MemoryLayoutError::HeapBelowLowest {
+                heap_end: self.heap_end,
+                lowest_address,
+            },
+        )?;
+        // Count a partial last word because the tracer admits starts below heap_end.
+        let total_words = usize::try_from(total_bytes.div_ceil(8))
+            .map_err(|_| MemoryLayoutError::RamDomainTooLarge)?;
+        let max_ram_k = total_words
+            .checked_next_power_of_two()
+            .ok_or(MemoryLayoutError::RamDomainTooLarge)?;
+        // Check the admitted maximum, even when a proof selects a smaller domain.
+        if u128::from(lowest_address) + 8 * max_ram_k as u128 > (1u128 << 64) {
+            return Err(MemoryLayoutError::RamAddressSpaceOverflow {
+                lowest_address,
+                max_ram_k,
+            });
+        }
+        Ok(max_ram_k)
     }
 
     pub fn get_lowest_address(&self) -> u64 {
@@ -569,6 +738,71 @@ mod tests {
     use super::*;
 
     #[test]
+    fn flag_bytes_roundtrip_without_a_panic_latch() {
+        let mut device = JoltDeviceMemory::new(&MemoryConfig {
+            program_size: Some(1024),
+            ..Default::default()
+        });
+        let start = device.memory_layout.panic;
+        for offset in 0..16 {
+            assert_eq!(device.load(start + offset), 0);
+            device.store(start + offset, (offset + 2) as u8);
+        }
+        for offset in 0..16 {
+            assert_eq!(device.load(start + offset), (offset + 2) as u8);
+        }
+        let bytes = bincode::serde::encode_to_vec(&device, bincode::config::standard()).unwrap();
+        let (decoded, _): (JoltDeviceMemory, _) =
+            bincode::serde::decode_from_slice(&bytes, bincode::config::standard()).unwrap();
+        assert_eq!(decoded, device);
+        let mut image = Vec::new();
+        decoded.flags.append_memory(start, &mut image);
+        assert_eq!(
+            image,
+            (0..16)
+                .map(|offset| (start + offset, (offset + 2) as u8))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn finalization_accepts_only_canonical_flag_pairs() {
+        for (panic_word, termination_word, expected) in [
+            (0u64, 1u64, Some(false)),
+            (1, 0, Some(true)),
+            (0, 0, None),
+            (2, 0, None),
+            (1, 1, None),
+            (0, 2, None),
+            (1 << 56, 0, None),
+            (0, 1 << 56, None),
+        ] {
+            let mut device = JoltDeviceMemory::new(&MemoryConfig {
+                program_size: Some(1024),
+                ..Default::default()
+            });
+            for (address, word) in [
+                (device.memory_layout.panic, panic_word),
+                (device.memory_layout.termination, termination_word),
+            ] {
+                for (lane, byte) in word.to_le_bytes().into_iter().enumerate() {
+                    device.store(address + lane as u64, byte);
+                }
+            }
+            match expected {
+                Some(panic) => assert_eq!(device.into_public().unwrap().panic, panic),
+                None => assert_eq!(
+                    device.into_public(),
+                    Err(InvalidFlagWords {
+                        panic_word,
+                        termination_word
+                    })
+                ),
+            }
+        }
+    }
+
+    #[test]
     fn checked_layout_admits_large_advice_and_rejects_zero_address_overlap() {
         let config = MemoryConfig {
             program_size: Some(1024),
@@ -590,6 +824,55 @@ mod tests {
             }),
             Err(MemoryLayoutError::IoRegionTooLarge {
                 padded_bytes: 1 << 31
+            })
+        );
+    }
+
+    #[test]
+    fn checked_layout_requires_eight_byte_heap_headroom() {
+        let config = MemoryConfig {
+            program_size: Some((u64::MAX - 7) - RAM_START_ADDRESS - STACK_CANARY_SIZE),
+            stack_size: 0,
+            heap_size: 0,
+            ..Default::default()
+        };
+        let layout = MemoryLayout {
+            heap_end: u64::MAX - 7,
+            ..MemoryLayout::default()
+        };
+        assert_eq!(layout.validate_heap_end(), Ok(()));
+        assert_eq!(
+            MemoryLayout::try_new(&MemoryConfig {
+                program_size: config.program_size.map(|size| size + 1),
+                ..config
+            }),
+            Err(MemoryLayoutError::HeapEndTooHigh {
+                heap_end: u64::MAX - 6
+            })
+        );
+    }
+
+    #[test]
+    fn checked_layout_checks_the_maximum_padded_ram_extent() {
+        let mut config = MemoryConfig {
+            program_size: Some(1024),
+            stack_size: 0,
+            heap_size: 0,
+            ..Default::default()
+        };
+        let lowest_address = MemoryLayout::try_new(&config).unwrap().get_lowest_address();
+        config.program_size =
+            Some(lowest_address + (1u64 << 63) - RAM_START_ADDRESS - STACK_CANARY_SIZE);
+        assert_eq!(
+            MemoryLayout::try_new(&config).unwrap().max_ram_k(),
+            Ok(1usize << 60)
+        );
+        config.program_size = config.program_size.map(|size| size + 1);
+        assert_eq!(
+            MemoryLayout::try_new(&config),
+            Err(MemoryLayoutError::RamAddressSpaceOverflow {
+                lowest_address,
+                max_ram_k: 1usize << 61,
             })
         );
     }
@@ -640,7 +923,7 @@ mod tests {
             max_output_size: 8,
             ..Default::default()
         };
-        let mut device = JoltDevice::new(&memory_config);
+        let mut device = JoltDeviceMemory::new(&memory_config);
         // Use io_end which bypasses panic/termination early returns
         // but still lands past the output region in convert_write_address
         let overflow_address = device.memory_layout.io_end;

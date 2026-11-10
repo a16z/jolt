@@ -10,6 +10,7 @@
 #![expect(clippy::expect_used, clippy::panic)]
 
 use common::constants::STACK_CANARY_SIZE;
+use common::jolt_device::JoltDeviceMemory;
 use jolt_riscv::{JoltInstructionKind, JoltInstructionRow, NormalizedOperands};
 use jolt_tracer_x86::harness::{
     compile_program, memory_config, run_program, single_row_program, Outcome, TEST_ADDR,
@@ -137,7 +138,7 @@ fn store_to(address: u64) -> Outcome {
 }
 
 fn harness_stack_end() -> u64 {
-    common::jolt_device::JoltDevice::new(&memory_config())
+    JoltDeviceMemory::new(&memory_config())
         .memory_layout
         .stack_end
 }
