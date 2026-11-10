@@ -17,7 +17,6 @@ parallel = ["akita-pcs/parallel"]
 # Akita's NTT kernels over the jolt-inlines NTT inline, for a RISC-V guest
 # verifier. Akita runs on Jolt's Keccak transcript sponge, for which
 # jolt-transcript has no guest inline.
-ntt-inline = ["akita-pcs/ntt-inline"]
 # Enables field-inline schedule coverage alongside the prover's field profile.
 field-inline = []
 # Whiteout (zero knowledge over Akita), verifier half: the zero-knowledge

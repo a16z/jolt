@@ -210,8 +210,7 @@ ark-ec = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist
 ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
 
 # Akita consumes jolt-algebra, jolt-crypto, jolt-poly, jolt-sumcheck,
-# jolt-transcript, jolt-zk and, under `ntt-inline`, jolt-inlines-ntt from this
-# exact Git source. Redirect those packages to the workspace members so Cargo
+# jolt-transcript and jolt-zk from this exact Git source. Redirect those packages to the workspace members so Cargo
 # resolves one shared identity for each: Akita then runs on Jolt's own
 # transcript states.
 [patch."https://github.com/a16z/jolt"]
@@ -221,7 +220,6 @@ jolt-algebra = { path = "crates/jolt-algebra" }
 jolt-crypto = { path = "crates/jolt-crypto" }
 jolt-sumcheck = { path = "crates/jolt-sumcheck" }
 jolt-zk = { path = "crates/jolt-zk" }
-jolt-inlines-ntt = { path = "jolt-inlines/ntt" }
 
 [workspace.metadata.cargo-machete]
 ignored = ["jolt-sdk"]

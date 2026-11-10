@@ -4,7 +4,6 @@ version = "0.1.0"
 edition = "2021"
 
 [features]
-ntt-inline = ["akita", "jolt-akita/ntt-inline"]
 guest = []
 kernel-tests = ["field-inline"]
 field-inline = ["jolt_sdk/field-inline"]

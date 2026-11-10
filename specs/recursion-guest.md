@@ -144,8 +144,11 @@ field-inline instructions (`field_inline.rs`).
 - **Keccak inline** for Akita's SHAKE challenge sampler (`keccak-inline`).
 - **64-point i32 NTT and six-product pointwise dot** (`jolt-inlines-ntt`).
   These expand into existing proved integer instructions, with no advice and no
-  new constraints. Akita's `ntt-inline` feature dispatches the 64-dimension CRT
-  transforms and lazy Montgomery dots to them. The signed-digit conversion is
+  new constraints. On Akita `main`, its `ntt-inline` feature dispatches the
+  64-dimension CRT transforms and lazy Montgomery dots to them. On the Whiteout
+  preview the ring code lives in `jolt-algebra::ring`, which has no inline
+  route, so the preview has no `ntt-inline` feature and runs the portable
+  transforms. The signed-digit conversion is
   fused into the twist (`psi^i · R^2` table). Butterfly sums are reduced by a
   Montgomery product with the stage's first twiddle, the Montgomery form of 1
   (5 rows against a 7-row conditional reduction).
@@ -321,9 +324,9 @@ recognizes the mask blocks cost more rows (0.36M) than it saved, because the
 
 ```bash
 export RAYON_NUM_THREADS=1 RUST_MIN_STACK=268435456 CARGO_BUILD_JOBS=1
-cargo run --release -p recursion --features akita,field-inline,ntt-inline -- \
+cargo run --release -p recursion --features akita,field-inline -- \
   generate --example fibonacci --workdir /tmp/recursion
-cargo run --release -p recursion --features akita,field-inline,ntt-inline -- \
+cargo run --release -p recursion --features akita,field-inline -- \
   trace --embed --example fibonacci --workdir /tmp/recursion
 ```
 

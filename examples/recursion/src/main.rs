@@ -10,8 +10,6 @@ use jolt_akita::{
 };
 use jolt_algebra::Ring;
 use jolt_inlines_blake2::Blake2b;
-#[cfg(feature = "ntt-inline")]
-use jolt_inlines_ntt as _;
 use jolt_poly::{CompressedPoly, UnivariatePoly};
 use jolt_riscv::JoltInstructionRow;
 #[cfg(feature = "akita")]
@@ -952,8 +950,6 @@ fn configured_recursion_program(memory_config: MemoryConfig) -> Program {
     }
     #[cfg(feature = "akita")]
     program.add_guest_feature("akita");
-    #[cfg(feature = "ntt-inline")]
-    program.add_guest_feature("ntt-inline");
     program.add_guest_feature("fast-alloc");
     program.add_guest_feature("hash-inlines");
     program.set_memory_config(memory_config);
