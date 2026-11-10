@@ -5,8 +5,8 @@ use jolt_field::{
     Field, FpExt4, Fr, JoltField, Prime128Offset275, Prime128Offset6A23801F, Prime32Offset99, Ring,
 };
 use jolt_poly::{
-    BindingOrder, EqPolynomial, GruenSplitEqPolynomial, PointRef, Polynomial,
-    TensorEqTable, UnivariatePoly,
+    BindingOrder, EqPolynomial, GruenSplitEqPolynomial, PointRef, Polynomial, TensorEqTable,
+    UnivariatePoly,
 };
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;

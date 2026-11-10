@@ -1,16 +1,10 @@
 use super::GruenSplitEqPolynomial;
-use crate::{BindingOrder, EqBudget, EqPolynomial, EqTableError, PointRef, UnivariatePoly};
+use crate::{BindingOrder, EqPolynomial, PointRef, UnivariatePoly};
 use jolt_field::{Field, FpExt4, Fr, Prime128Offset275, Prime32Offset99, Ring};
 use num_traits::{One, Zero};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
 use std::panic::{catch_unwind, AssertUnwindSafe};
-
-fn budget() -> EqBudget {
-    EqBudget {
-        max_bytes: usize::MAX,
-    }
-}
 
 #[test]
 fn prepared_recovery_obeys_round_products_and_claims() {
@@ -35,14 +29,7 @@ fn recovery_identities<F: Field>() {
                 );
                 for round in 0..coords.len() {
                     let (l0, l1) = split.current_linear_evals();
-                    assert_eq!(
-                        split.try_current_coordinate().unwrap(),
-                        split.current_coordinate()
-                    );
-                    assert_eq!(
-                        split.try_prepare_linear_q_recovery().unwrap().is_some(),
-                        !l1.is_zero()
-                    );
+                    assert_eq!(split.prepare_linear_q_recovery().is_some(), !l1.is_zero());
                     if let Some(prepared) = split.prepare_linear_q_recovery() {
                         for degree in 1..=4 {
                             let coefficients: Vec<F> = (0..=degree)
@@ -94,7 +81,6 @@ fn recovery_identities<F: Field>() {
                     let q =
                         UnivariatePoly::new(vec![F::from_u64(5), F::from_u64(9), F::from_u64(4)]);
                     let s = split.gruen_mul(q.coefficients());
-                    assert_eq!(split.try_gruen_mul(q.coefficients()).unwrap(), s);
                     for x in 0..10 {
                         let x = F::from_u64(x);
                         assert_eq!(
@@ -102,7 +88,7 @@ fn recovery_identities<F: Field>() {
                             (l0 * (F::one() - x) + l1 * x) * q.evaluate(x)
                         );
                     }
-                    split.try_bind(F::from_u64(round as u64 + 11)).unwrap();
+                    split.bind(F::from_u64(round as u64 + 11));
                 }
             }
         }
@@ -159,17 +145,10 @@ fn remaining_tables_after_matches_bound_tables_in_both_orders() {
                         state.remaining_tables_after(binds),
                         Some((future.e_in_current(), future.e_out_current()))
                     );
-                    assert_eq!(
-                        state.try_remaining_tables_after(binds).unwrap(),
-                        (future.e_in_current(), future.e_out_current())
-                    );
                     future.bind(Fr::random(&mut rng));
                 }
                 assert!(state.remaining_tables_after(n - round).is_none());
-                assert!(matches!(
-                    state.try_remaining_tables_after(usize::MAX),
-                    Err(EqTableError::RoundsExhausted)
-                ));
+                assert!(state.remaining_tables_after(usize::MAX).is_none());
                 state.bind(Fr::random(&mut rng));
             }
         }
@@ -183,59 +162,25 @@ fn finished_states_equal_empty_at_the_final_scalar() {
             for scale in [Fr::one(), Fr::zero(), Fr::from_u64(7)] {
                 for coordinate in [Fr::zero(), Fr::from_u64(3)] {
                     let point = vec![coordinate; n];
-                    let mut state = GruenSplitEqPolynomial::try_from_point(
-                        &point,
-                        order,
-                        Some(scale),
-                        budget(),
-                    )
-                    .unwrap();
+                    let mut state = GruenSplitEqPolynomial::from_point(&point, order, Some(scale));
                     for _ in 0..n {
-                        state.try_bind(Fr::one()).unwrap();
+                        state.bind(Fr::one());
                     }
                     let expected_scalar = (0..n).fold(scale, |product, _| product * coordinate);
                     assert_eq!(state.current_scalar(), expected_scalar);
                     let scalar = state.current_scalar();
                     let empty =
                         GruenSplitEqPolynomial::from_point(&[] as &[Fr], order, Some(scalar));
-                    let fallible_empty = GruenSplitEqPolynomial::try_from_point(
-                        &[] as &[Fr],
-                        order,
-                        Some(scalar),
-                        budget(),
-                    )
-                    .unwrap();
-                    assert_eq!(empty, fallible_empty);
-                    for finished in [&state, &empty, &fallible_empty] {
+                    for finished in [&state, &empty] {
                         assert_eq!(finished.remaining_rounds(), 0);
                         assert_eq!(finished.current_scalar(), scalar);
                         assert_eq!(finished.e_in_current(), &[Fr::one()]);
                         assert_eq!(finished.e_out_current(), &[Fr::one()]);
                         assert_eq!(finished.merge().evaluations(), &[scalar]);
-                        assert!(matches!(
-                            finished.try_current_coordinate(),
-                            Err(EqTableError::RoundsExhausted)
-                        ));
-                        assert!(matches!(
-                            finished.try_gruen_mul(&[]),
-                            Err(EqTableError::RoundsExhausted)
-                        ));
-                        assert!(matches!(
-                            finished.try_prepare_linear_q_recovery(),
-                            Err(EqTableError::RoundsExhausted)
-                        ));
                         for binds in [0, 1, usize::MAX] {
-                            assert!(matches!(
-                                finished.try_remaining_tables_after(binds),
-                                Err(EqTableError::RoundsExhausted)
-                            ));
+                            assert!(finished.remaining_tables_after(binds).is_none());
                         }
                         let mut copy = finished.clone();
-                        assert!(matches!(
-                            copy.try_bind(Fr::one()),
-                            Err(EqTableError::RoundsExhausted)
-                        ));
-                        assert_eq!(&copy, finished);
                         macro_rules! panics {
                             ($call:expr) => {
                                 assert!(catch_unwind(AssertUnwindSafe(|| {
@@ -247,7 +192,6 @@ fn finished_states_equal_empty_at_the_final_scalar() {
                         panics!(copy.current_coordinate());
                         panics!(copy.current_linear_evals());
                         panics!(copy.prepare_linear_q_recovery());
-                        panics!(copy.remaining_tables_after(0));
                         panics!(copy.gruen_mul(&[]));
                         panics!(copy.gruen_poly_deg_2(Fr::one(), Fr::zero(), Fr::zero));
                         panics!(copy.gruen_poly_deg_3(Fr::one(), Fr::one(), Fr::zero(), Fr::zero));
@@ -279,7 +223,6 @@ macro_rules! exhausted_panics {
 exhausted_panics!(finished_coordinate_panics, s, s.current_coordinate());
 exhausted_panics!(finished_linear_evals_panics, s, s.current_linear_evals());
 exhausted_panics!(finished_recovery_panics, s, s.prepare_linear_q_recovery());
-exhausted_panics!(finished_tables_panics, s, s.remaining_tables_after(0));
 exhausted_panics!(finished_mul_panics, s, s.gruen_mul(&[]));
 exhausted_panics!(
     finished_degree_2_panics,
@@ -303,22 +246,16 @@ fn generic_callers<F: Field>() {
     let mut s = GruenSplitEqPolynomial::new(&point, BindingOrder::LowToHigh);
     let _ = GruenSplitEqPolynomial::new_with_scaling(&point, BindingOrder::LowToHigh, None);
     let _ = GruenSplitEqPolynomial::from_point(&point, BindingOrder::LowToHigh, None);
-    let _ = GruenSplitEqPolynomial::try_from_point(&point, BindingOrder::LowToHigh, None, budget())
-        .unwrap();
     let _ = s.current_scalar();
     let _ = s.current_index();
     let _ = s.remaining_rounds();
     let _ = s.current_coordinate();
-    let _ = s.try_current_coordinate().unwrap();
     let _ = s.current_linear_evals();
     let _ = s.remaining_tables_after(0);
-    let _ = s.try_remaining_tables_after(0).unwrap();
     let prepared = s.prepare_linear_q_recovery().unwrap();
     let _ = prepared.gruen_poly_deg_3(F::zero(), F::zero(), F::zero());
     let _ = prepared.gruen_poly_from_coeffs_except_linear(&[], F::zero());
-    let _ = s.try_prepare_linear_q_recovery().unwrap();
     let _ = s.gruen_mul(&[]);
-    let _ = s.try_gruen_mul(&[]).unwrap();
     let _ = s.gruen_poly_deg_2(F::zero(), F::zero(), F::zero).unwrap();
     let _ = s
         .gruen_poly_deg_3(F::zero(), F::zero(), F::zero(), F::zero)
@@ -345,7 +282,7 @@ fn generic_callers<F: Field>() {
         |a, b| a + b,
     );
     s.bind(F::one());
-    s.try_bind(F::one()).unwrap();
+    s.bind(F::one());
 }
 
 #[test]
