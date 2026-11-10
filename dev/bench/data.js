@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794350325661,
+  "lastUpdate": 1794350880474,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -240394,6 +240394,270 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 888676,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "qvd@andrew.cmu.edu",
+            "name": "Quang Dao",
+            "username": "quangvdao"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "25d87ba68bde9f4a85ac986f5487b2e7b7db2699",
+          "message": "feat(algebra)!: make Prime128Offset6A23801F the production field (#2403)\n\n* feat(algebra): add Prime128Offset801F\n\nAdd the Fp128 field p = 2^128 - 1780711455 (C = 0x6A23801F) next to\nPrime128OffsetA7F7, the candidate opening field of\nLayerZero-Labs/akita#326. Its p - 1 has the smooth part\n2^5 * 3^3 * 5^8 = 337500000.\n\nThe type reuses the generic Solinas arithmetic and the generic assembly\nbodies. HOL Light gains the modulus definition, its valid-offset and\ngeneric-link lemmas, and a Pocklington certificate. Tests mirror the\nexisting A7F7 coverage; field_arithmetic gains an fp128_801f row.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* feat(algebra)!: make Prime128Offset801F the production field\n\nSwitch the default 128-bit field to Prime128Offset801F\n(p = 2^128 - 1780711455) and remove Prime128OffsetA7F7, completing\nLayerZero-Labs/akita#326.\n\n- Bind the field-inline modulus and guest limbs to the new field.\n- Specialize the BMI2/ADX multiply and the constant-load witnesses to\n  C = 0x6A23801F; on AArch64 the constant needs movz + movk.\n- Port the HOL Light callable-object corollaries to the new modulus and\n  the two-instruction AArch64 load; drop the A7F7 certificate.\n- Pin Akita at the commit that switches it to the same field and\n  regenerate the jolt-akita schedules (same rows, new digests).\n\nBREAKING CHANGE: the default protocol field changes; proofs, digests and\nfield-inline guest arithmetic differ.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* chore(akita): pin Akita at LayerZero-Labs/akita#387 and regenerate the schedules\n\nPin Akita at 33df43e, the head of LayerZero-Labs/akita#387, which uses the\nPrime128Offset6A23801F name. Regenerate the jolt-akita catalogs with\ngen_jolt_schedules: with digests and the q128 label masked, all 703 rows\nin the 6 catalogs match the previous ones; only digests and row order change.\n\n* chore(akita): pin Akita at main 1196c340b (LayerZero-Labs/akita#387 merged)\n\nLayerZero-Labs/akita#387 squash-merged as 1196c340b. Between the old pin\n33df43e and 1196c340b, Akita main gained only challenge-sampling and\noffset_eq changes; no planner, config, params, schedules or artifact\nfile changed, so the committed .aks schedules are unchanged.\n\n* docs(algebra): correct the movz comment in the AArch64 fp128 constant load\n\nThe first instruction loads the low half 0x801f; the following movk\nsupplies 0x6a23. The instruction words were already correct.\n\n* docs(spec): Prime128Offset6A23801F fits a positive imm32\n\nC = 0x6A23_801F is below 2^31, so it is not an example of an offset that\na sign-extended imm32 cannot hold. The retired Prime128OffsetA7F7\n(C = 0xFFFF_A7F7) is.\n\n* fix(hol-light): prove the AArch64 bodies leave x4 unchanged\n\nThe add and subtract generic theorems had X4 in their frames, so no\ntheorem stated that the body preserves C in x4. The inline assembly\npasses C with in(\"x4\"), which Rust requires to be unchanged when the\nblock ends. The multiplication generic theorem has had the same gap\nsince before this PR.\n\nAll three generic frames now leave out X4. Each 6A23801F corollary\nwidens the generic frame with ENSURES_FRAME_SUBSUMED, because\nENSURES_SEQUENCE_TAC gives both halves the corollary frame, which\nincludes X4 for the movz/movk load. The body bytes are unchanged.\n\nThe file headers, the add comment and the README now describe the\nAArch64 constant load as two instructions.\n\n* fix: strip the two-instruction load from AArch64 structural templates\n\nload_structural_templates removed one leading instruction from each\nfp128 proof object. The AArch64 load is now movz plus movk, so the\nAArch64 templates kept the movk. The new strip_fp128_constant_load\nremoves exactly the bytes of the expected load and fails if the\nobject does not start with it. New tests cover both architectures and\nthe failure case.\n\nOther review fixes:\n- The fp128 artifact test fixture shows the disassembly that\n  llvm-objdump prints for movz alone (mov w4, #0x801f).\n- The provenance rows in jolt-field-proof-continuity.md are A7F7\n  history again. New rows credit #2356 for the 6A23801F certificate\n  and #2403 for the load fixtures, BMI2/ADX constant, regenerated\n  objects and AArch64 corollaries. jolt-field-rebuild.md says the\n  same.\n- The trust-boundary chapter says its Akita scan used the A7F7 build\n  and has not been repeated on 6A23801F.\n- field-kernels.md: the akita path does enable asm through\n  akita-algebra, so the remaining gap is the final-binary inspection.\n  The x86-64 row now says which declared inputs the frames do not yet\n  cover. Also the two-instruction load and an a/an slip.\n\n---------\n\nCo-authored-by: Taghi B. <taghi.badakhshan@layerzerolabs.org>\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-10T14:37:47-07:00",
+          "tree_id": "2f748bc0300dfdc58860dbb57da1d82d64c00348",
+          "url": "https://github.com/a16z/jolt/commit/25d87ba68bde9f4a85ac986f5487b2e7b7db2699"
+        },
+        "date": 1794350873528,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 4.3649,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 888348,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.6804,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 463504,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 463700,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 463468,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.8475,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 463428,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-mem",
+            "value": 888912,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 1.8971,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 463636,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 4.8144,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 463256,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 4.8487,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 130160,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.9454,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 888768,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.652,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 463052,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.4824,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 463680,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 25.6855,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 463796,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 5.8325,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 463880,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 36.4913,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 695788,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 18.6471,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 613564,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 73.4135,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 630472,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.8486,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 463372,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 2.1338,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 463444,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 17.9754,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 888008,
             "unit": "KB",
             "extra": ""
           }
