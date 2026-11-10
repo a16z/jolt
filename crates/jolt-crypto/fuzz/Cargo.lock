@@ -411,6 +411,7 @@ dependencies = [
  "ark-ff",
  "ark-serialize",
  "cc",
+ "jolt-utils",
  "num-traits",
  "rand_core",
  "serde",
