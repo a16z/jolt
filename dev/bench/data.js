@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794304148365,
+  "lastUpdate": 1794339719129,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -239602,6 +239602,270 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 889960,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "software@randomwalks.xyz",
+            "name": "Ari",
+            "username": "abiswas3"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "fd51872b7e800ea31f5934948f4f3663cfa4f91c",
+          "message": "fix(jolt-lean-gen): cover floor-addressed memory rows and store-conditional expansions (#2249)\n\n* jolt-lean-gen: cover floor-addressed memory rows and store-conditional expansions\n\njolt-lean-gen prints Jolt's bytecode expansions as Lean definitions, one per\nsource instruction, for a Lean model of Jolt's ISA. It now generates every\nexpansion except the system and CSR instructions and registered inlines:\n\n- LR.W, LR.D, SC.W and SC.D, for both destination branches.\n- The floor-addressed VirtualLoad{B,H,W} and VirtualStore{B,H,W} rows, with\n  their fault class and offset, and the VirtualShiftData{B,H,W} rows with\n  their immediate.\n- Each row's operands as the expander stores them. An immediate that fits\n  the instruction's encoded width (12, 13, 20 or 21 bits) uses the\n  JoltISA.Encoded. constructor, and any other uses the plain constructor\n  with the full value.\n- VirtualAdvice takes a runtime payload parameter; VirtualAdviceLoad keeps\n  its fixed byte-count immediate.\n\n* jolt-lean-gen: drop immediate widths that final_imm_width overrides\n\nlean_imm returns early for every name in final_imm_width, so the 13, 20\nand 21 arms of imm_width (branches, VirtualAssertEQ, AUIPC, JAL) were never\nused, and they disagreed with final_imm_width's 128 and 64. The AUIPC arm\nof encoded_imm_width was also never used, because encoded_literal returns\nNone for AUIPC first. Each width now has one table.\n\nThe generated Lean file is byte-identical before and after.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* jolt-lean-gen: give LR.W the load alignment fault\n\nA misaligned LR raises E_Load_Addr_Align in Sail\n(alignmentFaultFromAccessType maps LoadReserved to the load fault), but\nload_class_and_align_fault put LR with the stores and AMOs, so\nlrwProgramAuto carried E_SAMO_Addr_Align. LR keeps the amo load class.\nSC.W, SC.D and the AMOs keep E_SAMO_Addr_Align; LR.D is unchanged because\nits LD row takes no fault argument.\n\nThe generated Lean file changes in two lines, the VirtualLoadW row in both\nbranches of lrwProgramAuto.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* jolt-lean-gen: give LR its rd/rs1 source shape\n\nLR.W and LR.D have no rs2, but source_shape gave them the default\n{rd, rs1, rs2} shape, so lrwProgramAuto and lrdProgramAuto took an rs2\nparameter that neither body reads. LR now has its own shape with rd and\nrs1, and the TODO on emit_program is gone.\n\nThe generated Lean file changes in two lines, the lrwProgramAuto and\nlrdProgramAuto signatures, which become (rd rs1 : regidx). Lean callers\ndrop their rs2 argument.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* jolt-lean-gen: match the Lean model's header after the Lean 4.35 move\n\nThe Lean model moved to Lean 4.35 with the newer Sail compiler, which\nchanged the namespaces ExpansionsAutomated.lean opens. The generator\nstill printed the old `open Sail PreSail LeanRV64D.Functions`, so its\noutput no longer dropped into the model unchanged. It now prints the\nmodel's current header: `open LeanRV64D` after the imports, and\n`open Sail Sail.ConcurrencyInterfaceV1 Sail.ConcurrencyInterfaceV1.PreSail\nLeanRV64D LeanRV64D.Functions` before the namespace.\n\nWith this commit, the generated file differs from the model's current\ncopy only in the four LR lines changed by the previous two commits.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-10T10:47:53-08:00",
+          "tree_id": "9d19bc5ff02dd89b45438b7dbb39d0c6df83a034",
+          "url": "https://github.com/a16z/jolt/commit/fd51872b7e800ea31f5934948f4f3663cfa4f91c"
+        },
+        "date": 1794339713961,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 2.2781,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 900304,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.0304,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 464264,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 463440,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 463772,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.5232,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 463232,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-mem",
+            "value": 894308,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 1.1636,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 463788,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 2.9313,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 463544,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 3.8216,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 122648,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.1878,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 904600,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.3957,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 463292,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.2931,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 463468,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 15.7595,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 463920,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 3.4017,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 463200,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 21.677,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 705068,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 10.8,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 613412,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 42.7722,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 637152,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.0771,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 463500,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.2607,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 463300,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 11.9289,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 905396,
             "unit": "KB",
             "extra": ""
           }
