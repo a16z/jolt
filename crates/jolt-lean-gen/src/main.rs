@@ -539,11 +539,12 @@ fn expansion_arm(
 
 // The sail specification has two different kinds of exception for normal load vs atomic load/write.
 // Here we are just hardcoding which instructions produce those errors.
+// A misaligned LR raises the load exception, E_Load_Addr_Align, like a normal load
+// (alignmentFaultFromAccessType in Sail's model/core/mem_type_utils.sail).
 fn load_class_and_align_fault(kind: SourceInstructionKind) -> (&'static str, &'static str) {
     let name = kind.name();
-    let write_or_atomic = name.starts_with("AMO")
-        || name.starts_with("LR")
-        || matches!(name, "SB" | "SH" | "SW" | "SD" | "SCD" | "SCW");
+    let write_or_atomic =
+        name.starts_with("AMO") || matches!(name, "SB" | "SH" | "SW" | "SD" | "SCD" | "SCW");
     let align_fault = if write_or_atomic {
         "(ExceptionType.E_SAMO_Addr_Align ())"
     } else {
