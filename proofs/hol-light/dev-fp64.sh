@@ -33,6 +33,8 @@ else
   exit 2
 fi
 
+RUSTUP_TOOLCHAIN="${RUSTUP_TOOLCHAIN:-$(python3 "$MATRIX_TOOL" --matrix "$MATRIX_PATH" toolchain)}"
+export RUSTUP_TOOLCHAIN
 "$PROOF_DIR/check-fp64.sh" bytes "$ARCHITECTURE"
 
 HOST_TRIPLE=$(rustc -Vv | sed -n 's/^host: //p')

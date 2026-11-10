@@ -43,7 +43,7 @@ impl<const XLEN: usize> LookupTable for VirtualROTRTable<XLEN> {
         let mut first_sum = F::zero();
         let mut second_sum = F::zero();
 
-        for (i, chunk) in r.chunks_exact(2).enumerate() {
+        for (i, chunk) in r.as_chunks::<2>().0.iter().enumerate() {
             let r_x = chunk[0];
             let r_y = chunk[1];
 

@@ -66,7 +66,13 @@ impl<F: Field> ProveRounds<F> for ProductOfAffines<F> {
         }
 
         let mut coefficients = [F::zero(); 3];
-        for (left, right) in self.left.chunks_exact(2).zip(self.right.chunks_exact(2)) {
+        for (left, right) in self
+            .left
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .zip(self.right.as_chunks::<2>().0)
+        {
             let left_delta = left[1] - left[0];
             let right_delta = right[1] - right[0];
             coefficients[0] += left[0] * right[0];
