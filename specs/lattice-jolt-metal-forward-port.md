@@ -318,8 +318,8 @@ emitter generated that exact schedule: D512, rank one, one inner digit,
 131,072 positions per block, 512 blocks per column, subring dimension 128,
 and 31 signed-unit challenge terms. The generator passed focused Clippy.
 Catalog hashes and provenance are in `k256-native-catalog-manifest.json`.
-The source candidate selects K256 before preprocessing; commit/root/packing
-kernels are being adapted to this geometry. Do not import the donor capacity-32
+The isolated source candidate selects K256 before preprocessing and adapts
+commit/root/packing kernels to this geometry. Do not import the donor capacity-32
 catalog or pad native columns to fit it. K256 device sources need byte selectors
 plus zero-selection masks, because 255 is a valid selector. Shared source
 ownership and implicit suffixes remain unchanged. Instruction RA, Booleanity
@@ -327,6 +327,29 @@ and Bytecode already admit 8-bit selectors; ReadRAF cycle processing needs
 branch-local two-table products and a five-factor round specialization. Plans
 are in `k256-metal-config-forward-port-plan.json` and
 `k256-sumcheck-admission-audit.json` in the task artifact directory.
+
+The K256 candidate (`ed73e6b5b` / Akita `b177d86c`) passed the three existing
+PCS oracles normally and under Metal validation, parallel/serial companion
+Clippy, integrated prover Clippy, and small/full proofs. Frozen Fib retained
+exactly 134,217,720 actual rows and 134,217,728 padded rows, and verified in
+23.2004 s (5.7852 padded MHz). The separate profile completed 15 native windows
+with retained-source reuse and the five-factor ReadRAF width-four handoff.
+Commitment used 5.4101 s of GPU time; coefficient packing used 0.1193 s and root
+folding 0.2777 s. Several sumcheck families shortened, but the whole proof was
+slower than the saved K16 Registers observation (20.7476 s); K256 remains
+isolated. This is not a paired comparison. Evidence and the repaired final
+runner-status write are preserved in `k256-metal/`; no proof was rerun for
+that postprocessing repair.
+
+The isolated Outer diagnostic (`6cef6ad8a`) also verified. Outer occupied
+2.024 s in its separate profile. Sampled extraction accounted for 13.8%,
+20.3%, and 26.9% of staged worker work across uniskip, remainder preparation
+and final opening, respectively. These include allocation/stores and cannot
+be multiplied by phase wall time to predict savings. The proposed 56-byte
+lookup cache would add 7 GiB retained storage and 21 GiB traffic; defer it.
+The measured allocation call itself took 38 microseconds, while backing-memory
+writes remain inside materialization. Keep the diagnostic isolated; evidence
+is in `outer-source-attribution/analysis.json`.
 
 The isolated Booleanity width-one LUT and ReadRAF width-one message ports
 (`ac6f4feda`) passed focused normal/Metal-validation oracles and small/T27
