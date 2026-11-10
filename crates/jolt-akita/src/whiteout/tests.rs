@@ -294,7 +294,7 @@ fn whiteout_opening_verifies_and_rejects_a_flipped_response_byte() {
 }
 
 /// The honest bound, pinned to Akita's frozen tables: muldiv's `A_p` (d 128,
-/// the residual's ring, width 473) takes rank 8, whose Σ-binding bracket is
+/// the residual's ring, width 489) takes rank 8, whose Σ-binding bracket is
 /// 33 < width ≤ 1226, so rank 7 is under the 128-bit target there, as the
 /// Akita Σ-binding harness's rank 2 is; `A_D` (key Open, d 64, ℓ∞ 15) takes rank 1 at
 /// width 4736, inside the q128 cell's rank-1 width of 13,656 under the
@@ -313,7 +313,7 @@ fn whiteout_ranks_sit_at_the_tables_minimum() {
         let width =
             LatticePadCommitment::<F, D>::width(pads.placement(), pads.randomness_columns())
                 .unwrap();
-        assert_eq!((D, width, pads.image_len() / D), (128, 473, 8));
+        assert_eq!((D, width, pads.image_len() / D), (128, 489, 8));
         Ok::<(), ZkError>(())
     })
     .unwrap();
@@ -327,21 +327,14 @@ fn whiteout_ranks_sit_at_the_tables_minimum() {
     assert!(digit_matrix_rank(13_657).unwrap() > 1);
 }
 
-/// `A_p`'s rank and randomness fixed point across Akita's Σ-binding brackets
-/// at d 128, the residual's ring (`sigma_binding_infinity_width.csv`: rank 6
-/// to width 24, 7 to 33, 8 to 1226, 9 to 104,399). A layout of `operands`
-/// operand pads has base width `16 + 8·operands`, and `r_p` takes 257
-/// columns at rank 8 and 289 at rank 9 (Akita's
-/// `hiding_randomness_columns`), so:
-/// - the empty layout climbs past rank 7's bracket to rank 8 (width 273);
-///   no pad commitment at d 128 lands below rank 8;
-/// - 119 operands sit at width 1225, the last step inside rank 8's bracket;
-/// - 120 operands would take width 1233 at rank 8, past 1226, so the rank
-///   steps to 9 and the wider `r_p` keeps it there (width 1265).
+/// `A_p`'s fixed point at d 128, against Akita's Σ-binding table: rank 8
+/// ends at width 1226. Spec §1.5 sizes `r_p` for the commitment and row L:
+/// 273 columns at rank 8 and 305 at rank 9. With base width `16 + 8·operands`,
+/// 117 operands fit rank 8 at width 1225; 118 need rank 9 at width 1265.
 #[test]
 fn whiteout_pad_rank_steps_at_the_sigma_binding_brackets() {
     for (operands, rank, randomness_columns, width) in
-        [(0, 8, 257, 273), (119, 8, 257, 1225), (120, 9, 289, 1265)]
+        [(0, 8, 273, 289), (117, 8, 273, 1225), (118, 9, 305, 1265)]
     {
         let mut layout = PadLayout::new(operands, 0).unwrap();
         layout.operand_pads = (0..operands).map(PadIndex).collect();
@@ -355,6 +348,28 @@ fn whiteout_pad_rank_steps_at_the_sigma_binding_brackets() {
             LatticePadCommitment::<F, 128>::width(&placement, randomness_columns).unwrap(),
             width
         );
+    }
+}
+
+#[test]
+fn whiteout_pad_randomness_hides_the_commitment_and_row_l() {
+    for ring_dim in [64, 128, 256] {
+        with_ring_dim!(ring_dim, D, {
+            for operands in [0, 117, 118] {
+                let mut layout = PadLayout::new(operands, 0).unwrap();
+                layout.operand_pads = (0..operands).map(PadIndex).collect();
+                let placement = PadPlacement::new(&layout).unwrap();
+                let (rank, randomness) = WhiteoutTail::pad_rank::<D>(&placement).unwrap();
+                let pads = PadGeometry::<D>::new(placement, rank, randomness).unwrap();
+                // Spec §1.5: 128-bit coefficients, L in R_64, λ = 128, slack 8.
+                let required_bits = (pads.matrix_shape().rows * D + 64) * 128 + 2 * 128 + 8;
+                let bits_per_column = D * PAD_RANDOMNESS_LOG_BASIS as usize;
+                assert!(randomness * bits_per_column >= required_bits);
+                assert!((randomness - 1) * bits_per_column < required_bits);
+            }
+            Ok::<(), ZkError>(())
+        })
+        .unwrap();
     }
 }
 

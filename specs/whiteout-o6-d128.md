@@ -116,8 +116,11 @@ three matrices, now Module-SIS hard over `R_128` at `R_Σ` (above).
 **Hiding and statistical zero knowledge.** r_a is sized by the same rule:
 `hiding_randomness_columns` gives entropy at least the image bits plus 264,
 so 321 `R_128` columns for the 1,280-coefficient image (610 `R_64` before).
-r_p follows from the `A_p` fixed point (289 columns at rank 9, 321 at
-rank 10). Lemma `wo:lem:stat-hiding` and Thm `wo:thm:zk` keep their
+r_p follows from the `A_p` fixed point and must also hide row L's 64
+coefficients: 305 columns at rank 9 and 337 at rank 10. The O6 measurements
+below predate J0 and used 289 and 321 columns, omitting L's entropy cost.
+At the current eight-digit Σ radius, rank 8 needs 273 columns.
+Lemma `wo:lem:stat-hiding` and Thm `wo:thm:zk` keep their
 hypotheses: the exact `‖cs‖_σ ≤ 1/α` check, a fresh mask per attempt, a
 secret nonce, and the entropy margin. The terms of the statistical total
 (δ_LHL over the same 14 slices, `T_att·ε/M`, the PRG and sampler terms)

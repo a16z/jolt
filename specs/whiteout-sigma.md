@@ -249,14 +249,21 @@ kernels against these semantics (§7, item 5).
   returns the smallest whole number of ring columns whose entropy is at least
   `(image_coeffs + extra_coeffs)·⌈log₂ q⌉ + 2λ + slack_bits`.
 
-The extra term is `extra_coeffs = 64` for the pad commitment's row **L**, and
-the slack is `slack_bits = 8` (§6.2). The columns follow the matrices'
-rank. With the rank-5 matrices over R_256 of §5.1 this gives:
+The extra term is `extra_coeffs = 64` for the pad commitment's row **L**
+(r_p only, not r_a), and the slack is `slack_bits = 8` (§6.2). The columns
+follow the matrices' rank. With the rank-5 matrices over R_256 of §5.1 this gives:
 
 | Randomness | Columns | Cells | (rank 3, before §5.1) |
 |---|---|---|---|
 | r_p | 169 R_256 | 43,264 | 105, 26,880 |
 | r_a | 161 R_256 | 41,216 | 97, 24,832 |
+
+At the production pad commitment's D = 128, radix 16 and 128-bit field,
+rank 8 needs `ceil(((8·128 + 64)·128 + 264) / 512) = 273` randomness
+columns; rank 9 needs 305. `WhiteoutTail::pad_rank` includes L in each
+iteration of the rank/width fixed point. Muldiv has rank 8 and width 489.
+The empty layout has width 289, 117 operand pads have width 1225 at rank 8,
+and 118 operand pads require rank 9 and width 1265.
 
 Resizing the randomness with the rank keeps every slice at 8 bits of
 entropy beyond its image plus 2λ, so δ_LHL stays at 2^−129.2 (§6). Each
@@ -1148,7 +1155,7 @@ fold in.
 | Per-attempt rejection | 1 − 1/2.37 ≈ 0.58 (implied, `06_evaluation.tex:104`) | ≈ 2^−5.23 | As above. |
 | T_att, E[attempts] | 163 and 2.37 (`06_evaluation.tex:103-104`) | 25 and 1.027 | `(2^−5.23)^25 ≤ 2^−128`, the same completeness target (Thm `wo:thm:completeness`, `05_security.tex:128-141`). |
 | ZK error | about 2^−128.8 with rejection term 2^−130.9 (`06_evaluation.tex:105-107`) | about 2^−129.0 with rejection term 2^−132.4, plus the computational PRG term `n_ch · Adv^PRG_ChaCha20` (≤ 2^−144 for `t ≤ 2^100`) | Thm `wo:thm:zk` (`05_security.tex:332-339`) unchanged except for the mask coins (row below); only T_att moves. |
-| Commitment ranks | collision radii up to 2^36, 704–768 rows, rank 3 over R_256 (`06_evaluation.tex:121-133`) | radius `4Γ_Δ B(8) ≈ 2^39.82` (§5.2; it was `4Γ_Δ B(10) ≈ 2^47.8`, where Akita W5e built `A_a` rank 18–19 and `[B_a \| B′_a]` rank 19 over R_64, randomness r_a 610 R_64 columns); Akita's Σ-binding table is regenerated at the new radius. The pad commitment `A_p` at d 128 drops from rank 9 to 8, and r_p from 289 to 257 columns (pinned by jolt-akita's `whiteout_pad_rank_steps_at_the_sigma_binding_brackets`). The residual's as-built ranks have not been re-read | The radius follows the eight-digit box. Ranks are the setup's (Akita planner), not W4's; the planner's dimension ceiling keeps the cut successor at R_64. This supersedes the W4 estimate of 5 / 5 / 5 over R_256 with r_a 161 (see D29). |
+| Commitment ranks | collision radii up to 2^36, 704–768 rows, rank 3 over R_256 (`06_evaluation.tex:121-133`) | radius `4Γ_Δ B(8) ≈ 2^39.82` (§5.2; it was `4Γ_Δ B(10) ≈ 2^47.8`, where Akita W5e built `A_a` rank 18–19 and `[B_a \| B′_a]` rank 19 over R_64, randomness r_a 610 R_64 columns); Akita's Σ-binding table is regenerated at the new radius. The pad commitment `A_p` at d 128 drops from rank 9 to 8, and r_p from 305 to 273 columns, including row L's 64 coefficients (pinned by jolt-akita's `whiteout_pad_rank_steps_at_the_sigma_binding_brackets`). The residual's as-built ranks have not been re-read | The radius follows the eight-digit box. Ranks are the setup's (Akita planner), not W4's; the planner's dimension ceiling keeps the cut successor at R_64. This supersedes the W4 estimate of 5 / 5 / 5 over R_256 with r_a 161 (see D29). |
 | e, ν, proof, verifier | e ≈ 65.5M (2^26); +7.28 KB; verifier scans +0.7% (`06_evaluation.tex:170-185`, `eval_table.tex`) | e ≈ 84M cells by the §5.2 model (8·\|s\| + 0.4M at sha2-chain 2^24, ν = 27); proof 108,107 B against 108,454 B at α = 2^17 (§5.2) | Consequences of the digits and ranks. The 9.66 KB and +23% scan figures were `whiteout-costs.py` at α = 2^17 (R_256 only) and are not recomputed. |
 | Prover-time model | 2.37 attempts × 10 ns per sample (`06_evaluation.tex:250-253`) | 1.027 attempts; per-sample cost grows with ℓ = 61 bits, about `93 + 2.04·ℓ` ns on one thread with the truncated product (§5.2); the mask is sampled in parallel | The paper's 10 ns is a per-sample cost with no thread count; ours is per thread, divided by the threads. A16 measured 655 ns at ℓ = 77 before the truncated product. |
 | Mask coins | true randomness, implicitly (Thm `wo:thm:zk` is statistical, `05_security.tex:332-339`) | ChaCha20 streams keyed by 256-bit seeds from the prover's RNG, one per 2^14-coordinate chunk | Parallel sampling with an output independent of the thread count. Adds `n_ch · Adv^PRG_ChaCha20` to the ZK error, so the statement becomes computational in that term only (§2.4.1). |

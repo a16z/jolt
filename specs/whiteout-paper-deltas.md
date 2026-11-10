@@ -280,9 +280,10 @@ programs are not protected (`03_setting.tex:167-173`). Def.
 
 **Implementation** (*verified* at `akita:`).
 
-- **One owner.** `akita_params::zk::hiding_randomness_columns` is the only
-  caller of `jolt_crypto::lattice::required_randomness_columns(image_coeffs, 0,
-  ring_dim, log_basis, 8)` (`akita:crates/akita-params/src/zk.rs:18,48`).
+- **Sizing.** `akita_params::zk::hiding_randomness_columns` sizes B and D
+  randomness through `jolt_crypto::lattice::required_randomness_columns`
+  with `extra_coeffs = 0` and slack 8. Jolt's `WhiteoutTail::pad_rank`
+  calls the same sizing function with `extra_coeffs = 64` for row L.
 - **Open alphabet.** B and D randomness is sized and sampled at the **open**
   alphabet of the level that consumes it, which is the alphabet its range check
   proves (`zk.rs:89-130`). It is not sized at the outer matrix's own input
@@ -299,9 +300,14 @@ programs are not protected (`03_setting.tex:167-173`). Def.
   rejects any schedule with hiding randomness as "not selectable"
   (`akita:crates/akita-pcs/tests/hiding_randomness.rs:74-90`). Hiding schedules
   exist only through a test-only constructor until ZK is published (W5d).
-- **jolt side.** r_p and r_a are sized by the same function, with
-  `extra_coeffs = 64` for the row L. That gives 105 and 97 R_256 columns
-  (`jolt:specs/whiteout-sigma.md` §1.5).
+- **jolt side.** Only r_p includes `extra_coeffs = 64` for row L; r_a
+  hides its commitment image alone. At rank 3 this gives 105 and 97 R_256
+  columns (`jolt:specs/whiteout-sigma.md` §1.5). At the production pad
+  commitment's d = 128, r_p needs 273 columns at rank 8 and 305 at rank 9.
+  J0 corrects the previous 257 and 289, which omitted L. Muldiv's pad width
+  grows from 473 to 489 at rank 8. The last rank-8 operand count moves from
+  119 to 117; 118 operands require rank 9. This changes Whiteout proof bytes
+  and requires prover and verifier to use the corrected sizing together.
 
 **Why.**
 
@@ -1812,8 +1818,10 @@ D rings are 64 on every row.
   the residual's ring. D27's ledger depends on ν, which does not grow on
   any measured statement (the Akita single-group statement goes from 24 to
   23), so it stays 310/q ≈ 2^−119.7.
-- *Zero knowledge.* r_a and r_p are sized by the same entropy rule (image
-  plus 264 bits). Every hypothesis of Thm `wo:thm:zk` is checked as before,
+- *Zero knowledge.* r_a and r_p are sized by the same entropy rule
+  (hidden output bits plus 264 bits). For r_p the hidden output includes
+  the commitment image and row L's 64 coefficients; r_a covers its image alone.
+  Every hypothesis of Thm `wo:thm:zk` is checked as before,
   and the statistical total stays 2^−129.1 (O7 §7.4).
 - *Why the ceiling may lift there.* It is a planner search rule, not a
   protocol constraint. No check compares adjacent levels' rings. The
