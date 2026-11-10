@@ -1,6 +1,9 @@
 //! Prover-only operations on `spongefish::ProverState`.
 
 use crate::codec::NargMessage;
+#[cfg(feature = "prover-streams")]
+pub use crate::coins::ChildCoins;
+pub use crate::coins::{OwnedCoins, ProverCoins};
 #[cfg(feature = "prover-grinding")]
 use crate::pow::{nonce_word, Leb128, SpongePow, CHECK_BYTES};
 #[cfg(feature = "prover-entropy")]
@@ -28,6 +31,12 @@ pub trait ProverTranscript: Transcript {
 
     /// Bytes accumulated in the NARG so far.
     fn narg_string(&self) -> &[u8];
+
+    /// Borrow the private RNG without touching the public transcript.
+    fn coins(&mut self) -> ProverCoins<'_>;
+
+    /// Mix a 32-byte hedge into the private RNG only.
+    fn mix_entropy(&mut self, data: &[u8; 32]);
 
     /// An owned callback that writes into its second argument the bytes the
     /// transcript would squeeze right after absorbing its first, a candidate
@@ -98,9 +107,26 @@ pub trait ProverTranscript: Transcript {
 /// A prover transcript that a prover builds itself, bound to the same
 /// instance its verifier binds: from the session and the public statement, as
 /// `prover_transcript` does under the `prover-entropy` feature.
+///
+/// Seeded initialization exists only in this crate's unit tests. Even a
+/// downstream test cannot call it through its production dependency:
+///
+/// ```compile_fail,E0599
+/// use jolt_transcript::{ProverInit, ProverState, Shake128};
+/// let _ = ProverState::<Shake128>::init_seeded(&[0; 32], &[0u8; 32], [7; 32]);
+/// ```
 pub trait ProverInit: ProverTranscript + Sized {
     /// The transcript bound to `session` and `statement`.
     fn init(session: &[u8; TAG_BYTES], statement: &(impl Encoding + ?Sized)) -> Self;
+
+    /// Initialize deterministic private coins for unit tests only.
+    /// Reusing a seed for real proofs compromises zero knowledge.
+    #[cfg(test)]
+    fn init_seeded(
+        session: &[u8; TAG_BYTES],
+        statement: &(impl Encoding + ?Sized),
+        seed: [u8; 32],
+    ) -> Self;
 }
 
 #[cfg(feature = "prover-entropy")]
@@ -111,12 +137,24 @@ where
     fn init(session: &[u8; TAG_BYTES], statement: &(impl Encoding + ?Sized)) -> Self {
         prover_transcript::<H>(session, statement)
     }
+
+    #[cfg(test)]
+    fn init_seeded(
+        session: &[u8; TAG_BYTES],
+        statement: &(impl Encoding + ?Sized),
+        seed: [u8; 32],
+    ) -> Self {
+        use crate::session_id;
+        use crate::setup::Instance;
+
+        Self::new_with_seed(&session_id(), &Instance { session, statement }, seed)
+    }
 }
 
 impl<H, R> ProverTranscript for ProverState<H, R>
 where
     H: DuplexSpongeInterface<U = u8>,
-    R: DuplexSpongeInit<U = u8>,
+    R: DuplexSpongeInit<U = u8> + Send,
 {
     fn send<M: NargMessage + ?Sized>(&mut self, msg: &M) {
         ProverState::prover_message_with(
@@ -131,6 +169,14 @@ where
 
     fn narg_string(&self) -> &[u8] {
         ProverState::narg_string(self)
+    }
+
+    fn coins(&mut self) -> ProverCoins<'_> {
+        ProverCoins::new(self.rng())
+    }
+
+    fn mix_entropy(&mut self, data: &[u8; 32]) {
+        ProverState::mix_entropy(self, data);
     }
 
     #[cfg(feature = "prover-grinding")]

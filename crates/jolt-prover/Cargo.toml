@@ -125,6 +125,7 @@ jolt-transcript = { workspace = true, features = [
   "bn254",
   "prover-grinding",
   "prover-entropy",
+  "prover-streams",
   "transcript-keccak",
 ] }
 jolt-verifier.workspace = true

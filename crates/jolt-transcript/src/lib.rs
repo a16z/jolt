@@ -37,6 +37,7 @@
 
 mod challenge;
 mod codec;
+mod coins;
 mod digest_hash;
 mod grind_bits;
 #[cfg(feature = "transcript-poseidon")]
@@ -59,7 +60,9 @@ pub use grind_bits::{
 };
 #[cfg(feature = "transcript-poseidon")]
 pub use poseidon::PoseidonSponge;
-pub use prover::{ProverInit, ProverTranscript};
+#[cfg(feature = "prover-streams")]
+pub use prover::ChildCoins;
+pub use prover::{OwnedCoins, ProverCoins, ProverInit, ProverTranscript};
 #[cfg(feature = "test-utils")]
 pub use scripted::{Script, ScriptedTranscript, TranscriptEvent};
 #[cfg(feature = "prover-entropy")]

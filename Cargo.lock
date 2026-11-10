@@ -1398,6 +1398,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cdd35008169921d80bc60d3d0ab416eecb028c4cd653352907921d95084790be"
 dependencies = [
  "hybrid-array",
+ "zeroize",
 ]
 
 [[package]]
@@ -1613,6 +1614,7 @@ dependencies = [
  "cfg-if",
  "cpufeatures 0.3.0",
  "rand_core 0.10.1",
+ "zeroize",
 ]
 
 [[package]]
@@ -2257,6 +2259,7 @@ dependencies = [
  "const-oid 0.10.2",
  "crypto-common 0.2.2",
  "ctutils",
+ "zeroize",
 ]
 
 [[package]]
@@ -4087,6 +4090,7 @@ dependencies = [
  "ark-bn254",
  "ark-ff 0.5.0",
  "blake2 0.11.0",
+ "chacha20",
  "criterion",
  "getrandom 0.4.3",
  "jolt-field",
@@ -4094,9 +4098,11 @@ dependencies = [
  "jolt-transcript",
  "light-poseidon",
  "num-bigint",
+ "rand_core 0.6.4",
  "sha3 0.12.0",
  "shake",
  "spongefish",
+ "zeroize",
 ]
 
 [[package]]
@@ -6610,6 +6616,9 @@ name = "sponge-cursor"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3a0219bd7d979d58245a4f41f695e1ac9f8befdffadd7f61f1bae9e39abc6620"
+dependencies = [
+ "zeroize",
+]
 
 [[package]]
 name = "spongefish"
@@ -6620,6 +6629,8 @@ dependencies = [
  "digest 0.11.3",
  "getrandom 0.4.3",
  "keccak",
+ "shake",
+ "turboshake",
  "zeroize",
 ]
 
@@ -7244,6 +7255,17 @@ name = "triomphe"
 version = "0.1.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0d15f4f5898bcfc5d8a8e45ed30b2f108d710c1a2e5489dbf80e078f707181bc"
+
+[[package]]
+name = "turboshake"
+version = "0.7.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f892c6904b0bd5a9241eac848347abcbbbd2b9f3892bad23ac3e6efab8d6f06a"
+dependencies = [
+ "digest 0.11.3",
+ "keccak",
+ "sponge-cursor",
+]
 
 [[package]]
 name = "twox-hash"

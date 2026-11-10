@@ -6,8 +6,8 @@ use std::collections::VecDeque;
 
 use crate::transcript::sealed::Sealed;
 use crate::{
-    ChallengeSetSize, FieldTranscript, NargMessage, ProverInit, ProverTranscript, VerifierInit,
-    VerifierTranscript, TAG_BYTES,
+    ChallengeSetSize, FieldTranscript, NargMessage, ProverCoins, ProverInit, ProverTranscript,
+    VerifierInit, VerifierTranscript, TAG_BYTES,
 };
 use spongefish::{
     DuplexSpongeInit, DuplexSpongeInterface, Encoding, FromNarg, VerificationError, VerifierState,
@@ -219,6 +219,14 @@ impl<T: ProverTranscript, F, S: Script<F>> ProverTranscript for ScriptedTranscri
         self.inner.narg_string()
     }
 
+    fn coins(&mut self) -> ProverCoins<'_> {
+        self.inner.coins()
+    }
+
+    fn mix_entropy(&mut self, data: &[u8; 32]) {
+        self.inner.mix_entropy(data);
+    }
+
     #[cfg(feature = "prover-grinding")]
     fn verifier_message_oracle(&self) -> impl Fn(&[u8], &mut [u8]) + Clone + use<T, F, S> {
         self.inner.verifier_message_oracle()
@@ -285,6 +293,17 @@ impl<T: ProverInit, F, S: Script<F> + Default> ProverInit for ScriptedTranscript
         let mut script = S::default();
         let statement = scripted_statement(&mut script, statement);
         Self::scripted_by(T::init(session, &Absorbed(&statement)), script)
+    }
+
+    #[cfg(test)]
+    fn init_seeded(
+        session: &[u8; TAG_BYTES],
+        statement: &(impl Encoding + ?Sized),
+        seed: [u8; 32],
+    ) -> Self {
+        let mut script = S::default();
+        let statement = scripted_statement(&mut script, statement);
+        Self::scripted_by(T::init_seeded(session, &Absorbed(&statement), seed), script)
     }
 }
 
