@@ -3,13 +3,13 @@
 HOL Light proves that the exact register-parameterized AArch64 and baseline
 x86-64 instruction bodies compute scalar addition, subtraction, and
 multiplication correctly for every valid Fp128 offset. It also proves complete
-callable A7F7 objects and the A7F7-specific BMI2 and ADX multiplication object.
+callable 6A23801F objects and the 6A23801F-specific BMI2 and ADX multiplication object.
 Jolt checks that deliberately compiled inspection functions contain the
 expected bytes. The proof does not cover every inlined caller or a downstream
 executable. This chapter explains the exact claim, its connection to Rust, and
 its limits.
 
-This page focuses on `Prime128OffsetA7F7`. The
+This page focuses on `Prime128Offset6A23801F`. The
 [scalar Fp64 page](field-kernels-fp64.md) describes the separate
 `Prime64Offset59` proofs.
 
@@ -29,10 +29,9 @@ p(C) = 2^128 - C
 ```
 
 The generic theorems assume `0 < C < 2^32` and the reduction bound used by
-the Rust type. The public offsets 275, A7F7 (`2^32 - 22537`) and 6A23801F
-(`1780711455`) satisfy those assumptions. Separate certificates prove that the
-A7F7 modulus `0xffffffffffffffffffffffff00005809` and the 6A23801F modulus
-`0xffffffffffffffffffffffff95dc7fe1` are prime.
+the Rust type. Both public offsets, 275 and 6A23801F (`1780711455`), satisfy
+those assumptions. A separate certificate proves that the 6A23801F modulus
+`0xffffffffffffffffffffffff95dc7fe1` is prime.
 
 Every field value has one canonical integer representative from `0` through
 `p - 1`. Each kernel accepts two canonical values in two 64 bit limbs. It
@@ -43,7 +42,7 @@ operation.
 
 ```mermaid
 flowchart TD
-    Public[Public Prime128OffsetA7F7 operation]
+    Public[Public Prime128Offset6A23801F operation]
     Dispatch[Architecture dispatch]
     Body[Fixed instruction bytes]
     Witness[Compiled inspection witness]
@@ -73,7 +72,7 @@ lists pass by copying bytes from the compiled object. The review must compare
 the source instructions, checker list, and HOL Light import before accepting
 the new proof artifact.
 
-The inspection witness calls the normal `Prime128OffsetA7F7` operation. It does
+The inspection witness calls the normal `Prime128Offset6A23801F` operation. It does
 not call a separate proof function. The checker disassembles each optimized
 witness. The complete AArch64 and Linux x86-64 witness symbols must match the
 proved objects exactly. The Darwin x86-64 witness must have one exact frame
@@ -106,13 +105,13 @@ The AArch64 body uses the following registers.
 | --- | --- |
 | Input `a` and output | `x0:x1` |
 | Input `b` | `x2:x3` |
-| Offset `C = 2^128 - p` | `x4` after the fixed load instruction |
+| Offset `C = 2^128 - p` | `x4` after the fixed two-instruction load (`movz`, `movk`) |
 | Addition temporary values | `x5:x9` |
 | Subtraction temporary values | `x5:x7` |
 
-Each fixture object includes the A7F7 constant load, arithmetic body, and
+Each fixture object includes the 6A23801F constant load, arithmetic body, and
 `ret`. The generic body theorem starts after that load with an arbitrary valid
-`C` in `x4`; the A7F7 corollary proves the literal load as well. Multiplication
+`C` in `x4`; the 6A23801F corollary proves the literal load as well. Multiplication
 also uses `x10:x12` as temporary registers. None of the proved bodies accesses
 memory or the stack. The subroutine theorems prove the return through `x30`
 and use the normal AArch64 set of registers that a callee may change.
@@ -138,8 +137,8 @@ The x86-64 body uses the following registers.
 These registers are caller saved in the System V x86-64 procedure call
 convention. Each standalone object includes its constant load. The generic
 baseline theorem starts after the `r8d` load with an arbitrary valid `C`; its
-A7F7 corollary proves that load too. The BMI2 and ADX object loads its embedded
-A7F7 value into `edx` after it has used the second input. The body does not
+6A23801F corollary proves that load too. The BMI2 and ADX object loads its embedded
+6A23801F value into `edx` after it has used the second input. The body does not
 access memory or the stack. The subroutine theorem also proves
 that `ret` reads the return address from the stack, updates `rsp` by eight
 bytes, and transfers control to that address.
@@ -206,7 +205,7 @@ result = (m + n) mod p
 ```
 
 The code first adds the two 128 bit inputs. This produces a wrapped 128 bit
-sum and a carry bit. It then adds the offset `C = 2^32 - 22537` to make a
+sum and a carry bit. It then adds the offset `C = 1780711455` to make a
 candidate reduced value.
 
 The final instructions choose the candidate when either addition says that
@@ -276,27 +275,27 @@ The machine proof follows the same stages as the code.
 The final result is therefore both congruent to `m * n` and in the canonical
 range. The generic AArch64 theorem covers the exact 35-instruction arithmetic
 body for every valid `C`. One generic x86-64 theorem covers the baseline
-`mulq`, `add`, and `adc` sequence. A separate A7F7 theorem covers the
+`mulq`, `add`, and `adc` sequence. A separate 6A23801F theorem covers the
 31-instruction BMI2 and ADX sequence built from `mulx`, `adcx`, and `adox`.
-Each architecture also has an A7F7 theorem for the callable body followed by
+Each architecture also has a 6A23801F theorem for the callable body followed by
 `ret`.
 
 With `asm`, the register kernels take `C = 2^128 - p` as an operand and run for
 every valid `Fp128` offset. The type-level checks require `C < 2^32`, which is
 the bound used by the two Solinas folds. A test-only offset 173, outside the
 published aliases, exercises this parameterized path in differential tests and
-fuzzing against portable Rust, alongside the public offsets 275 and A7F7.
+fuzzing against portable Rust, alongside the public offsets 275 and 6A23801F.
 
 The generic HOL Light theorem uses the same offset bounds, so adding another
 valid field alias does not require a new baseline arithmetic proof or dispatch
 case. A new alias still needs evidence that its offset satisfies those bounds
 and, if it is intended to be a field, a separate primality argument. On
-x86-64, the BMI2 and ADX fragment remains A7F7-specific because its instruction
+x86-64, the BMI2 and ADX fragment remains 6A23801F-specific because its instruction
 bytes embed that offset directly.
 
 ## The modulus is prime
 
-`JOLT_FP128_A7F7_PRIME` proves `prime p` with a checked Pocklington
+`JOLT_FP128_6A23801F_PRIME` proves `prime p` with a checked Pocklington
 certificate. This is separate from the kernel theorems. Addition,
 subtraction, and multiplication modulo a number do not themselves prove that
 the number is prime. Field algorithms such as inversion rely on this extra
@@ -306,13 +305,16 @@ fact.
 
 Each baseline operation has three theorem levels.
 
-The generic body theorem starts immediately after the constant-load
-instruction and stops before `ret`. Its precondition fixes the loaded bytes,
-program counter, input registers, and a symbolic offset register. Its
-postcondition states the result modulo `2^128 - C` for every valid `C`.
+The generic body theorem starts immediately after the constant load (two
+instructions on AArch64, one on x86-64) and stops before `ret`. Its
+precondition fixes the loaded bytes, program counter, input registers, and a
+symbolic offset register. Its postcondition states the result modulo
+`2^128 - C` for every valid `C`. On AArch64 its frame leaves out `x4`, so it
+also proves that the body does not change the offset register.
 
-The A7F7 body corollary starts at the literal load. It proves that load and
-specializes the generic theorem to A7F7.
+The 6A23801F body corollary starts at the literal load. It proves that load and
+specializes the generic theorem to 6A23801F, widening the frame to include the
+offset register that the load writes.
 
 The AArch64 subroutine theorem adds `ret` and the procedure call convention.
 It states where the return address comes from and which registers a caller
@@ -348,7 +350,7 @@ part of this statement for readers who do not use HOL Light.
 | `fp128_mul_x86_64_bmi2_adx_correct.ml` | Reloadable BMI2 and ADX multiplication theorems |
 | `fp128_mul_object.ml` | Exact AArch64 multiplication words and execution rule |
 | `fp128_mul_correct.ml` | Reloadable AArch64 multiplication theorems |
-| `fp128_prime.ml` | Checked primality certificate for the A7F7 modulus |
+| `fp128_prime.ml` | Checked primality certificate for the 6A23801F modulus |
 | Generated combined entry | One process per architecture that proves all covered operations |
 
 The AArch64 proof files retain one source file per operation. The runner loads
@@ -360,14 +362,14 @@ architectures use the same inspection witness and artifact checker.
 | Architecture | Proved instruction scope | Rust connection |
 | --- | --- | --- |
 | AArch64 baseline bodies | Generic add, subtract, and multiply bodies for every valid `C` | Production passes `C` in the proved register contract and uses the shared instruction bodies |
-| AArch64 A7F7 functions | Constant load, complete body, and `ret` | The proof object and complete optimized witness are byte identical |
-| Linux x86-64 baseline bodies | Generic add, subtract, and multiply bodies for every valid `C` | Production passes `C` in the proved register contract and uses the shared instruction bodies |
-| Linux x86-64 A7F7 functions | Constant load, complete body, ABI result moves, and `ret` | The proof object and complete optimized witness are byte identical |
+| AArch64 6A23801F functions | Constant load, complete body, and `ret` | The proof object and complete optimized witness are byte identical |
+| Linux x86-64 baseline bodies | Generic add, subtract, and multiply bodies for every valid `C` | Production passes `C` in the proved input registers and uses the shared instruction bodies. The frames do not yet prove that the bodies preserve every input register the inline assembly declares unchanged (`rsi` and `r8` for multiplication, `rdx` for add and subtract) |
+| Linux x86-64 6A23801F functions | Constant load, complete body, ABI result moves, and `ret` | The proof object and complete optimized witness are byte identical |
 | Linux x86-64 BMI2 and ADX multiply | Complete BMI2 and ADX body with direct ABI result and `ret` | The proof object and witness built with both features are byte identical |
 | Darwin x86-64 add, subtract, and multiply | Arithmetic and ABI result sequence | The checker requires one exact unproved Darwin frame wrapper around the proved sequence |
 
 The generic claims cover every offset satisfying the stated Fp128 bounds; the
-full callable-object and BMI2/ADX claims specialize to A7F7. Both current
+full callable-object and BMI2/ADX claims specialize to 6A23801F. Both current
 offsets and the test-only generic offset 173 are also differentially tested
 against portable Rust, which checks the dispatch and inline-assembly interface
 outside the isolated machine theorem.
@@ -427,13 +429,16 @@ The result relies on the following assumptions.
   proved operation from the pinned Jolt revision.
 
 Jolt owns the kernel, theorem, proof object, and inspection witness. This
-does not yet prove every executable that depends on Jolt. In particular, the
-`akita` path (`jolt-akita` and the `akita` feature of `jolt-prover`) now uses the shared `jolt_field::Fp128` at
-`Prime128OffsetA7F7`, but it enables only `jolt-field/solinas`, not `asm`, so
-it runs the portable Rust bodies rather than the proved kernels. These
-theorems do not cover that path. A production rollout must forward `asm` from
-the product's feature configuration and inspect that final binary before
-making a claim about the complete production path.
+does not yet prove every executable that depends on Jolt. The `akita` path
+(`jolt-akita` and the `akita` feature of `jolt-prover`) uses the shared
+`jolt_field::Fp128` at `Prime128Offset6A23801F` with `asm` enabled: the pinned
+`akita-algebra` depends on `jolt-field` with `features = ["asm", "solinas"]`,
+and the workspace `[patch]` points that dependency at this repository's
+`jolt-field`. Its x86-64 and AArch64 builds therefore compile the inline
+assembly bodies these theorems cover, plus the BMI2 and ADX body when those
+target features are enabled. No one has yet inspected a final 6A23801F Akita
+binary, so a claim about the complete production path still needs that
+final-binary inspection.
 
 ## Running the checks
 

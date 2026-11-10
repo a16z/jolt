@@ -98,6 +98,7 @@
 )]
 #![deny(unsafe_op_in_unsafe_fn)]
 
+mod accum;
 mod algebra;
 #[cfg(feature = "binary")]
 mod binary;
@@ -120,6 +121,7 @@ pub mod signed;
 pub mod solinas;
 mod unreduced;
 
+pub use accum::reduce_signed_accum;
 pub use algebra::{
     Accumulator, AdditiveGroup, CanonicalBytes, CanonicalEncoding, Field, JoltField,
     MaybeAllocative, MaybeEncoding, NaiveAccumulator, PseudoMersenne, Ring, WithAccumulator,
@@ -143,7 +145,7 @@ pub fn bind_field_inline_modulus() {
         feature = "solinas",
         target_arch = "riscv64"
     ))]
-    field_inline::bind_modulus(&Prime128OffsetA7F7::MODULUS_LIMBS);
+    field_inline::bind_modulus(&Prime128Offset6A23801F::MODULUS_LIMBS);
 }
 #[cfg(all(
     feature = "field-inline-guest-bn254",
@@ -172,10 +174,10 @@ pub use solinas::{
     Fp128MulU64Accum, Fp128Packing, Fp128ProductAccum, Fp128x8i32, Fp32, Fp32Packing,
     Fp32ProductAccum, Fp32x2i32, Fp64, Fp64Packing, Fp64ProductAccum, Fp64x4i32, FpExt2,
     FpExt2Fp64ProductAccum, FpExt4, FpExt4Fp32ProductAccum, FpExt8, PackedFpExt2, PackedFpExt4,
-    PackedFpExt8, Prime128Offset275, Prime128Offset6A23801F, Prime128OffsetA7F7, Prime24Offset3,
-    Prime30Offset35, Prime31Offset19, Prime32Offset99, Prime40Offset195, Prime48Offset59,
-    Prime56Offset27, Prime64Offset59, PrimeOffsetSpec, PRIME_OFFSET_IMPLEMENTED_MAX_BITS,
-    PRIME_OFFSET_MAX, PRIME_OFFSET_SPECS,
+    PackedFpExt8, Prime128Offset275, Prime128Offset6A23801F, Prime24Offset3, Prime30Offset35,
+    Prime31Offset19, Prime32Offset99, Prime40Offset195, Prime48Offset59, Prime56Offset27,
+    Prime64Offset59, PrimeOffsetSpec, PRIME_OFFSET_IMPLEMENTED_MAX_BITS, PRIME_OFFSET_MAX,
+    PRIME_OFFSET_SPECS,
 };
 pub use unreduced::{Fold, Unreduced, WithCommitAccumulator};
 
