@@ -120,7 +120,7 @@ fn round_trips_byte_and_scalar_messages() {
         prover.send(&le_bytes(scalar));
     }
     sent.push(challenges(&mut prover, 5));
-    assert!(challenges(&mut prover, 0).is_empty());
+    assert_eq!(challenges(&mut prover, 0), []);
 
     let mut verifier =
         verifier_transcript::<PoseidonSponge>(&SESSION, &INSTANCE, prover.narg_string());

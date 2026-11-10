@@ -145,11 +145,7 @@ fn constants() -> &'static Constants {
         assert_eq!(params.alpha, 5, "Poseidon S-box exponent");
         let rounds = params.full_rounds + params.partial_rounds;
         assert_eq!(params.ark.len(), rounds * WIDTH, "Poseidon round constants");
-        let ark = params
-            .ark
-            .chunks_exact(WIDTH)
-            .map(|row| <[InnerFr; WIDTH]>::try_from(row).expect("row of WIDTH constants"))
-            .collect();
+        let ark = params.ark.as_chunks::<WIDTH>().0.to_vec();
         let rows: Vec<[InnerFr; WIDTH]> = params
             .mds
             .iter()

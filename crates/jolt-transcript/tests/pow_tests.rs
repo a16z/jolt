@@ -384,7 +384,7 @@ impl PinnedUnit for FrUnit {
 
     fn bytes(units: &[FrUnit]) -> Vec<u8> {
         let mut out = vec![0u8; 32 * units.len()];
-        for (unit, chunk) in units.iter().zip(out.chunks_exact_mut(32)) {
+        for (unit, chunk) in units.iter().zip(out.as_chunks_mut::<32>().0) {
             Fr::from(*unit).to_bytes_le(chunk);
         }
         out
