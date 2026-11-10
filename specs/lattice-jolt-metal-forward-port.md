@@ -1041,3 +1041,46 @@ Evidence is in `booleanity-categorical-metal/`, including its `frozen-suite/`;
 the frozen executable is `booleanity-categorical-jolt-prover`. The filename covers
 both changes. The experimental shared-source Outer implementation is not included
 in this production checkpoint.
+
+## Shared-bin commitment gather checkpoint (2026-11-10)
+
+Measured Jolt `b2fce09d9` changes only the Akita dependency pin to published
+`b8070597`. The K16 source transform accumulates its sixteen bins in an 8 KiB
+threadgroup array, with disjoint lane ownership, instead of a dynamically indexed
+private array. Field arithmetic, source order, key sharing, dot products, inverse
+transform, admission and fallback are unchanged. Production oracle checks passed
+normally and with Metal validation, as did parallel, serial and integrated
+Clippy. The prior within-run comparison checked every output coefficient in all
+32 windows and found lower GPU and inclusive times in both execution orders;
+inclusive component totals were 3.5074 s and 3.2316 s.
+
+The standard release executable verified the small proof and all four frozen
+workloads with both verifiers. Each table entry is one untraced observation under
+the existing full-prover timing boundary.
+
+| Workload | Prove seconds | Padded MHz | Actual MHz |
+| --- | ---: | ---: | ---: |
+| Fibonacci | 17.701625458 | 7.582226181 | 7.582225729 |
+| SHA-2 chain | 20.768694417 | 6.462501942 | 6.462489038 |
+| BTreeMap | 22.736359041 | 5.903219938 | 5.902185955 |
+| BLAKE2b chain | 15.414383417 | 8.707304364 | 5.818107321 |
+| Arithmetic mean of rates | — | 7.163813106 | 6.441252011 |
+
+The separate profile measured inclusive trace commitment at 3.8829 s versus
+4.1278 s in the preceding saved profile; key preparation and source packing are
+included. Peak RSS was 38.6411 GiB and footprint 44.9503 GiB. The four-workload
+mean is effectively unchanged. Development adoption rests on the paired
+component evidence and preserved correctness; these observations do not establish
+a new end-to-end speedup. The 20 MHz target and final matched campaign remain
+outstanding. Evidence is in `shared-bins-only-metal/` and its `frozen-suite/`;
+the executable is `shared-bins-only-jolt-prover`.
+
+The combined Outer/source/partial-reduction experiment `d4c6bde2` remains
+isolated. All proofs passed, but its four-workload mean was 7.1895 padded MHz and
+the matched Fibonacci comparison had substantial upward drift in both roles.
+Its lower median (19.0427 s versus 20.2006 s) does not resolve the mixed workload
+observations or identify Outer's contribution. The additional observed peak
+footprint was about 5.35 GiB. Reducing Outer host reads from 4,737,285 fields to
+4,635 did not measurably shorten uniskip in the saved profiles; a narrow host-phase
+diagnostic is the next step. No Outer implementation is included in this pin-only
+checkpoint.
