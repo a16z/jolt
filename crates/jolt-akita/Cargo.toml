@@ -61,6 +61,7 @@ tracing.workspace = true
 [dev-dependencies]
 bincode.workspace = true
 jolt-transcript = { workspace = true, default-features = false, features = [
+  "prover-entropy",
   "transcript-blake2b",
 ] }
 serde_json = { workspace = true, features = ["std"] }
