@@ -244,7 +244,9 @@ Fibonacci, one inner proof, `--features akita,field-inline,ntt-inline`,
 `trace --embed`, release guest, `RAYON_NUM_THREADS=1`. Each row is the
 cumulative total after its change. From the rebase onto `main` through the
 fast-mem rows, every row traces one freshly generated proof with the pinned
-companion; the last row traces a fresh proof at this revision.
+companion; the last row traces a fresh proof at the revision that added it.
+These are historical measurements: the preview no longer has the `ntt-inline`
+feature named above, so the reproduction commands below omit it.
 
 | Build | Total rows |
 | --- | ---: |
