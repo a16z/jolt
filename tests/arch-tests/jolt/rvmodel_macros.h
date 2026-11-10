@@ -5,10 +5,11 @@
 //
 // ACT4's self-checking ELFs compare their observed signature against a
 // Sail-computed expected signature baked in at build time. On comparison
-// result the ELF invokes either RVMODEL_HALT_PASS (gp == 1) or
-// RVMODEL_HALT_FAIL (gp != 1). Both map onto jolt-emu's existing HTIF
+// result the ELF directly invokes RVMODEL_HALT_PASS or RVMODEL_HALT_FAIL,
+// with arbitrary gp in either case. Both map onto jolt-emu's existing HTIF
 // termination primitive: a doubleword write to `tohost` where
 //   device  = 0x00 (syscall-proxy)
+//   command = 0x00
 //   payload = (exit_code << 1) | 1
 // jolt-emu recognizes this pattern (see tracer/src/emulator/mod.rs::run_test),
 // extracts the endcode, and the main binary propagates it as the process
@@ -29,7 +30,7 @@
     .word 4;
 
 // ---------------------------------------------------------------------------
-// Halt with pass — gp == 1.
+// Halt with pass, independent of gp.
 // Encodes endcode 0 in the payload (0 << 1 | 1 == 1), then spins waiting for
 // HTIF to observe the write. jolt-emu detects the write and exits 0.
 // ---------------------------------------------------------------------------
@@ -40,7 +41,7 @@
 1:  j 1b;
 
 // ---------------------------------------------------------------------------
-// Halt with fail — gp != 1.
+// Halt with fail, independent of gp.
 // Encodes endcode 1 in the payload ((1 << 1) | 1 == 3), spins. jolt-emu
 // detects the write and exits non-zero. The endcode is a constant rather than
 // gp because gp need not fit the 47-bit endcode field. For gp >= 2^47,
@@ -54,7 +55,8 @@
     sd   t0, 0(t1);                                                            \
 1:  j 1b;
 
-// ACT4's generic HALT macro: branch to HALT_PASS if gp == 1, else HALT_FAIL.
+// gp-based dispatcher for callers that encode status in gp. ACT4 calls the
+// pass/fail entry points directly instead.
 #define RVMODEL_HALT                                                           \
     li   t2, 1;                                                                \
     beq  gp, t2, 10f;                                                          \
