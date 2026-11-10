@@ -787,6 +787,9 @@ fn streaming_visitor_borrows_wires_and_stops_on_failure() {
     impl VerifierRoundChannel<Fr> for Borrowed {
         type Error = ChannelError;
         type Slots = usize;
+        fn validate_shape(&self, _shape: SumcheckShape) -> Result<(), ChannelError> {
+            Ok(())
+        }
         fn map_sumcheck_error(&self, _error: SumcheckError<Fr>) -> ChannelError {
             ChannelError::InvalidInput
         }
@@ -875,4 +878,130 @@ fn full_adapter_rejects_invalid_sequences_without_touching_kernel() {
         Err(SumcheckError::InvalidInput { .. })
     ));
     assert_eq!(kernel.seen_claims.len(), 2);
+}
+
+#[test]
+fn verifier_rejects_channel_shape_mismatch_before_claim_binding() {
+    use jolt_sumcheck::{
+        verify_single_with, visit_single_rounds, ClearVerifierRounds, SumcheckShape,
+    };
+    for factored in [false, true] {
+        let mut kernel = ProductKernel::<Fr>::sampled(2, 101, factored, Fr::from_u64);
+        let original = instance(&kernel);
+        let (proof, _, _) = prove(&mut kernel, &original);
+        for (rounds, degree) in [(0, 2), (1, 2), (3, 2), (2, 1)] {
+            let mut wrong = original.clone();
+            wrong.rounds = rounds;
+            wrong.degree = degree;
+            if factored {
+                wrong.format = SingleFormat::EqFactored {
+                    equality_point: Point::low_to_high(vec![Fr::from_u64(7); rounds]),
+                };
+            }
+            let mut transcript = verifier_transcript::<Blake2b512>(&session(), b"", &[]);
+            let mut untouched = verifier_transcript::<Blake2b512>(&session(), b"", &[]);
+            let result = {
+                let mut channel =
+                    ClearVerifierRounds::new(original.shape().unwrap(), &proof, &mut transcript)
+                        .unwrap();
+                verify_single_with(&wrong, &mut channel)
+            };
+            if factored && rounds == 0 {
+                assert!(matches!(result, Err(SumcheckError::EqFactoredZeroRounds)));
+            } else {
+                assert!(matches!(
+                    result,
+                    Err(SumcheckError::ChannelShapeMismatch { .. })
+                ));
+            }
+            assert_eq!(
+                transcript.verifier_message::<[u8; 32]>(),
+                untouched.verifier_message::<[u8; 32]>()
+            );
+        }
+        // Shape checks also protect the raw visitor, including an empty loop.
+        let mut transcript = verifier_transcript::<Blake2b512>(&session(), b"", &[]);
+        let mut channel =
+            ClearVerifierRounds::new(original.shape().unwrap(), &proof, &mut transcript).unwrap();
+        let mut visits = 0;
+        for shape in [
+            SumcheckShape::new(0, 2).unwrap(),
+            SumcheckShape::new(1, 2).unwrap(),
+            SumcheckShape::new(2, 1).unwrap(),
+        ] {
+            let result = visit_single_rounds(shape, &mut channel, |_, _, (), _| {
+                visits += 1;
+                Ok(())
+            });
+            assert!(matches!(
+                result,
+                Err(SumcheckError::ChannelShapeMismatch { .. })
+            ));
+        }
+        assert_eq!(visits, 0);
+    }
+    for format in [
+        SingleFormat::Compressed,
+        SingleFormat::EqFactored {
+            equality_point: Point::low_to_high(vec![Fr::one()]),
+        },
+    ] {
+        let empty = SingleSumcheckProof::<Fr>::default();
+        let mut transcript = verifier_transcript::<Blake2b512>(&session(), b"", &[]);
+        let mut channel =
+            ClearVerifierRounds::new(SumcheckShape::new(0, 2).unwrap(), &empty, &mut transcript)
+                .unwrap();
+        let instance = SingleInstance {
+            input_claim: Fr::one(),
+            rounds: 1,
+            degree: 2,
+            format,
+        };
+        assert!(matches!(
+            verify_single_with(&instance, &mut channel),
+            Err(SumcheckError::ChannelShapeMismatch { .. })
+        ));
+    }
+}
+
+#[test]
+fn clear_prover_moves_native_wire_into_proof() {
+    use jolt_sumcheck::{prove_single_with, ClearProverRounds};
+    struct OwnedWire(Vec<Fr>);
+    impl ProveSingleRounds<Fr> for OwnedWire {
+        fn num_rounds(&self) -> usize {
+            1
+        }
+        fn prove_round(
+            &mut self,
+            _bind: Option<Fr>,
+            _round: usize,
+            _claim: Fr,
+        ) -> Result<ProverRound<Fr>, SumcheckError<Fr>> {
+            Ok(ProverRound::EqFactored {
+                wire: std::mem::take(&mut self.0),
+                tau: Fr::from_u64(7),
+            })
+        }
+        fn finish_rounds(&mut self, _bind: Fr) -> Result<(), SumcheckError<Fr>> {
+            Ok(())
+        }
+    }
+    let mut kernel = OwnedWire(vec![Fr::one(), Fr::zero()]);
+    let pointer = kernel.0.as_ptr();
+    let instance = SingleInstance {
+        input_claim: Fr::from_u64(5),
+        rounds: 1,
+        degree: 2,
+        format: SingleFormat::EqFactored {
+            equality_point: Point::low_to_high(vec![Fr::from_u64(7)]),
+        },
+    };
+    let mut transcript = prover_transcript::<Blake2b512>(&session(), b"");
+    let mut channel = ClearProverRounds::new(instance.shape().unwrap(), &mut transcript);
+    let reduction = prove_single_with(&mut kernel, &instance, &mut channel).unwrap();
+    let proof = channel.into_proof();
+    assert_eq!(proof.rounds[0].as_ptr(), pointer);
+    assert_eq!(proof.rounds[0], vec![Fr::one(), Fr::zero()]);
+    assert_eq!(replay(&instance, &proof).unwrap().0, reduction);
 }

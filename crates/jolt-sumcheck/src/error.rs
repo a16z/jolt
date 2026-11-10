@@ -1,3 +1,4 @@
+use crate::single::SumcheckShape;
 use jolt_field::Field;
 use jolt_transcript::VerificationError;
 
@@ -298,6 +299,12 @@ pub enum SumcheckError<F: Field> {
 
     #[error("invalid sumcheck input: {reason}")]
     InvalidInput { reason: &'static str },
+
+    #[error("sumcheck channel shape {got:?} does not match instance shape {expected:?}")]
+    ChannelShapeMismatch {
+        expected: SumcheckShape,
+        got: SumcheckShape,
+    },
 }
 
 impl<F: Field> From<VerificationError> for SumcheckError<F> {

@@ -17,6 +17,10 @@ pub trait ProverRoundChannel<E: Field> {
     /// Preserve the clear values in `wire`: the driver evaluates them after sending.
     fn send_round(&mut self, round: usize, wire: &mut [E]) -> Result<(), Self::Error>;
     fn round_challenge(&mut self, round: usize, degree: usize) -> Result<E, Self::Error>;
+    /// Take the evaluated wire for proof storage, or drop it for streaming transports.
+    fn finish_round(&mut self, wire: Vec<E>) {
+        drop(wire);
+    }
 }
 
 /// Receive, absorb, check proof of work, then draw the challenge and visit the
@@ -24,6 +28,9 @@ pub trait ProverRoundChannel<E: Field> {
 pub trait VerifierRoundChannel<E: Field> {
     type Error;
     type Slots;
+    /// Reject any mismatch with a transport's predeclared shape before absorption.
+    /// Transports whose shape is supplied solely by the driver may accept it directly.
+    fn validate_shape(&self, shape: SumcheckShape) -> Result<(), Self::Error>;
     fn map_sumcheck_error(&self, error: SumcheckError<E>) -> Self::Error;
     fn verify_round<R>(
         &mut self,
@@ -79,8 +86,10 @@ impl<
     }
     fn send_round(&mut self, _round: usize, wire: &mut [E]) -> Result<(), Err> {
         self.transcript.append_private(wire);
-        self.proof.rounds.push(wire.to_vec());
         Ok(())
+    }
+    fn finish_round(&mut self, wire: Vec<E>) {
+        self.proof.rounds.push(wire);
     }
     fn round_challenge(&mut self, round: usize, degree: usize) -> Result<E, Err> {
         grind_round(degree, round, &mut self.proof.pow_nonces, self.transcript)?;
@@ -94,6 +103,7 @@ pub struct ClearVerifierRounds<'a, E, T> {
     transcript: &'a mut T,
     proof: &'a SingleSumcheckProof<E>,
     pow: RoundNonces<'a>,
+    shape: SumcheckShape,
 }
 
 impl<'a, E: Field + Encoding, T: FieldTranscript<E>> ClearVerifierRounds<'a, E, T> {
@@ -124,6 +134,7 @@ impl<'a, E: Field + Encoding, T: FieldTranscript<E>> ClearVerifierRounds<'a, E, 
             transcript,
             proof,
             pow,
+            shape,
         })
     }
 }
@@ -133,6 +144,15 @@ impl<E: Field + Encoding, T: FieldTranscript<E>> VerifierRoundChannel<E>
 {
     type Error = SumcheckError<E>;
     type Slots = ();
+    fn validate_shape(&self, shape: SumcheckShape) -> Result<(), Self::Error> {
+        if self.shape != shape {
+            return Err(SumcheckError::ChannelShapeMismatch {
+                expected: shape,
+                got: self.shape,
+            });
+        }
+        Ok(())
+    }
     fn map_sumcheck_error(&self, error: SumcheckError<E>) -> Self::Error {
         error
     }

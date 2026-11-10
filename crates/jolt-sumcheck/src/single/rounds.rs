@@ -2,8 +2,9 @@ use super::{ProveRounds, SingleInstance, SumcheckError};
 use jolt_field::Field;
 use jolt_poly::UnivariatePoly;
 
-/// Owned kernel output. Compressed rounds must supply their original linear
-/// coefficient so the driver can check consistency before transmission.
+/// Owned kernel output. Compressed transport requires `Full`, so validation
+/// sees the original linear coefficient. `EqFactored` supplies the nonconstant
+/// coefficients of the inner polynomial and its equality coordinate tau.
 pub enum ProverRound<E: Field> {
     Full(UnivariatePoly<E>),
     EqFactored { wire: Vec<E>, tau: E },

@@ -99,6 +99,7 @@ impl<E: Field> SingleInstance<E> {
         Ok(shape)
     }
 
+    #[cfg(feature = "prover")]
     fn tau(&self, round: usize) -> Result<Option<E>, SumcheckError<E>> {
         match &self.format {
             SingleFormat::Compressed => Ok(None),
@@ -114,17 +115,19 @@ impl<E: Field> SingleInstance<E> {
         }
     }
 
-    fn next_claim(
-        &self,
-        round: usize,
-        claim: E,
-        wire: &[E],
-        challenge: E,
-    ) -> Result<E, SumcheckError<E>> {
-        let format = self
-            .tau(round)?
-            .map_or(WireFormat::Compressed, |tau| WireFormat::EqFactored { tau });
-        Ok(eval_round_wire(format, wire, claim, challenge))
+    // Both drivers validate shape before entering their bounded round loops.
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "shape validates the equality-point length and drivers bound round by that shape"
+    )]
+    fn next_claim(&self, round: usize, claim: E, wire: &[E], challenge: E) -> E {
+        let format = match &self.format {
+            SingleFormat::Compressed => WireFormat::Compressed,
+            SingleFormat::EqFactored { equality_point } => WireFormat::EqFactored {
+                tau: equality_point.as_slice()[round],
+            },
+        };
+        eval_round_wire(format, wire, claim, challenge)
     }
 }
 
@@ -162,9 +165,8 @@ where
             .map_err(|e| channel.map_sumcheck_error(e))?;
         channel.send_round(round, &mut wire)?;
         let challenge = channel.round_challenge(round, shape.degree_bound())?;
-        claim = instance
-            .next_claim(round, claim, &wire, challenge)
-            .map_err(|e| channel.map_sumcheck_error(e))?;
+        claim = instance.next_claim(round, claim, &wire, challenge);
+        channel.finish_round(wire);
         challenges.push(challenge);
     }
     if let Some(&last) = challenges.last() {
@@ -187,6 +189,7 @@ where
     E: Field,
     C: VerifierRoundChannel<E>,
 {
+    channel.validate_shape(shape)?;
     for round in 0..shape.num_rounds() {
         channel
             .verify_round(round, shape.degree_bound(), |wire, slots, challenge| {
@@ -216,23 +219,15 @@ where
     let shape = instance
         .shape()
         .map_err(|e| channel.map_sumcheck_error(e))?;
+    channel.validate_shape(shape)?;
     channel.bind_input_claim(&instance.input_claim)?;
     let mut claim = instance.input_claim;
     let mut challenges = Vec::with_capacity(shape.num_rounds());
-    let mut algebra_error = None;
     visit_single_rounds(shape, channel, |round, wire, (), challenge| {
-        match instance.next_claim(round, claim, &wire, challenge) {
-            Ok(next) => {
-                claim = next;
-                challenges.push(challenge);
-            }
-            Err(error) => algebra_error = Some(error),
-        }
+        claim = instance.next_claim(round, claim, &wire, challenge);
+        challenges.push(challenge);
         Ok(())
     })?;
-    if let Some(error) = algebra_error {
-        return Err(channel.map_sumcheck_error(error));
-    }
     Ok(SingleReduction {
         challenges,
         output_claim: claim,
