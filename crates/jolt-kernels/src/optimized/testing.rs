@@ -285,9 +285,9 @@ pub(crate) fn random_scalars(count: usize, seed: u64) -> Vec<Fr> {
 /// Trailing-zero-insensitive round-polynomial coefficients: the engine sums
 /// members into `max_degree + 1` slots and trims the batched polynomial, so
 /// a member's trailing zeros never reach the wire.
-pub(crate) fn trimmed(poly: &UnivariatePoly<Fr>) -> Vec<Fr> {
+pub(crate) fn trimmed<F: JoltField>(poly: &UnivariatePoly<F>) -> Vec<F> {
     let mut coefficients = poly.coefficients().to_vec();
-    while coefficients.last() == Some(&Fr::from_u64(0)) {
+    while coefficients.last() == Some(&F::from_u64(0)) {
         let _ = coefficients.pop();
     }
     coefficients

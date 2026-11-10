@@ -163,7 +163,7 @@ impl<F: JoltField> PrepareKernel<F, RegistersReadWriteChecking<F>> for Optimized
         inputs: ProverInputs<'_, F, RegistersReadWriteChecking<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = RegistersReadWriteChecking<F>>>, KernelError<F>>
     {
-        match Self::prepare_state(session, witness, inputs, SeedEntryProducer::into_vec)? {
+        match Self::prepare_state(session, witness, inputs, |producer| producer.into_vec())? {
             PreparedReadWrite::Cycle { mut kernel, seed } => {
                 kernel.cycle = Some(seed.into_cycle());
                 Ok(Box::new(kernel))
