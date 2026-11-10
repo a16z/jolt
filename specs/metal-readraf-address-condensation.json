@@ -1,0 +1,39 @@
+{
+  "scope": "Fuse ReadRAF address-weight condensation into the existing RAF histogram pass. The public scanner API, transcript, record order, field formulas, cache formulas, output layout, and cycle phase remain unchanged.",
+  "source_base": "161923068c80a5231a940d5d73722f8e35219959",
+  "measured_candidate": "bff98a7dca18f8f9746969eeea2b4a80292b5933",
+  "ownership": [
+    "Keep the existing single records, weights, cache values, cache-valid flags, partial scratch, and output owners. There is no state clone or extra trace-sized allocation.",
+    "Stable-partition the existing job vector once during layout. Store the RAF partition boundary, not duplicate job vectors. Job descriptors and previous-challenge storage remain alive through the existing single batch completion."
+  ],
+  "correctness": [
+    "Canonical RAF intervals partition every representative exactly once. Only RAF jobs multiply and write weights, including cached representatives.",
+    "Every RAF batch completes before cache construction or suffix readers. Cache construction remains once per phase, including the case with no suffix jobs.",
+    "The first histogram-combine batch clears the whole output; later RAF and suffix batches add. Partial scratch is fully written and consumed before reuse.",
+    "The existing cached predicate is metadata-only. The cache update continues to scale valid entries by previous[0], while newly eligible caches read the now-condensed representative weights.",
+    "Phase zero performs no condensation. Progress advances once after successful GPU completion and owned output construction. Errors propagate."
+  ],
+  "resources": "The existing three-lane histogram uses 15,360 bytes of threadgroup memory, or 30,720 bytes with validation instrumentation. This change does not add scratch or alter reflected admission.",
+  "evidence": {
+    "kind": "Same-source, alternating-order paired diagnostic across all 16 address phases. Every authoritative state element and output matched; the proof and both verifiers passed.",
+    "gpu_seconds": [
+      0.876455709,
+      0.655869833
+    ],
+    "inclusive_component_seconds": [
+      0.94902204,
+      0.673353416
+    ],
+    "conservative_all_in_seconds": [
+      1.055891123,
+      0.883809999
+    ],
+    "candidate_diagnostic_clone_seconds": 0.1035875,
+    "interpretation": "This is component evidence. No production whole-proof speedup has been measured for this extraction. Production removes the diagnostic clone, comparison, baseline execution, and unused condense entry."
+  },
+  "validation": [
+    "Run the existing compact_read_raf_matches_reference_through_device_handoff oracle normally and with Metal validation. It covers range-cache phases, a tail-only block, odd prefix, cycle handoff, and the independent reference backend.",
+    "Run relevant parallel and serial kernel Clippy and integrated prover Clippy. No new fixture or test family is needed.",
+    "Combine the production release measurement with other accepted changes only when root schedules it; attribute any whole-proof change to the combined revision. Require 16 completed metal_read_raf_address_phase spans with algorithm=fused_condense, exact frozen inputs/output/cycles, and no diagnostic spans."
+  ]
+}

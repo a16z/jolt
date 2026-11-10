@@ -4,8 +4,7 @@ use std::mem::MaybeUninit;
 
 use super::*;
 
-pub(super) const KERNELS: [&str; 5] = [
-    "address_condense",
+pub(super) const KERNELS: [&str; 4] = [
     "address_cache",
     "address_histogram",
     "address_combine",
@@ -107,6 +106,7 @@ pub(super) struct DeviceAddressScan {
     #[cfg_attr(feature = "allocative", allocative(skip))]
     output: DeviceBuffer<AkitaField>,
     jobs: Vec<[u32; 5 + 2 * JOB_LANES]>,
+    raf_job_count: usize,
     table_lanes: Vec<Option<(usize, usize)>>,
     caches: usize,
     cache_outputs: [u32; 5],
@@ -278,6 +278,10 @@ impl DeviceAddressScan {
                 }
             }
         }
+        // RAF intervals partition all representatives. Keep them before suffix
+        // readers so each weight is condensed once before cache construction.
+        jobs.sort_by_key(|job| job[3] == 0);
+        let raf_job_count = jobs.partition_point(|job| job[3] != 0);
         drop(layout_span);
         let caches = cache_meta.len();
         let mut cache_outputs = [3, 4, 5, NONE, NONE];
@@ -373,6 +377,7 @@ impl DeviceAddressScan {
             partials,
             output,
             jobs,
+            raf_job_count,
             table_lanes,
             caches,
             cache_outputs,
@@ -387,6 +392,7 @@ impl DeviceAddressScan {
         let span = tracing::info_span!(
             "metal_read_raf_address_phase",
             suffix_len = request.suffix_len,
+            algorithm = "fused_condense",
             gpu_s = tracing::field::Empty,
         );
         let _span = span.enter();
@@ -422,51 +428,44 @@ impl DeviceAddressScan {
             u32::from(CANONICAL_INSTRUCTION_ADDRESS),
         ];
         let mut batch = Batch::new(&self.gpu.device)?;
-        dispatch(
-            &self.gpu,
-            &mut batch,
-            "address_condense",
-            &[
-                Binding::buffer(&self.records),
-                Binding::buffer(&self.weights),
-                Binding::buffer(&rows.prefix),
-                Binding::value(&rows.tail),
-                Binding::buffer(&previous),
-                Binding::value(&params),
-            ],
-            self.records.len(),
-        )?;
-        dispatch(
-            &self.gpu,
-            &mut batch,
-            "address_cache",
-            &[
-                Binding::buffer(&self.records),
-                Binding::buffer(&self.weights),
-                Binding::buffer(&rows.prefix),
-                Binding::value(&rows.tail),
-                Binding::buffer(&previous),
-                Binding::value(&params),
-                Binding::buffer(&self.cache_meta),
-                Binding::buffer(&self.cache_values),
-                Binding::buffer(&self.cache_valid),
-            ],
-            self.caches * THREADS,
-        )?;
+        let cache_bindings = [
+            Binding::buffer(&self.records),
+            Binding::buffer(&self.weights),
+            Binding::buffer(&rows.prefix),
+            Binding::value(&rows.tail),
+            Binding::buffer(&previous),
+            Binding::value(&params),
+            Binding::buffer(&self.cache_meta),
+            Binding::buffer(&self.cache_values),
+            Binding::buffer(&self.cache_valid),
+        ];
         // Job descriptors and their output-lane lists remain alive until the
         // single ordered command buffer completes. Partial storage is reused.
-        let device_jobs: Vec<_> = self
-            .jobs
+        let (raf_jobs, suffix_jobs) = self.jobs.split_at(self.raf_job_count);
+        let job_slices: Vec<_> = raf_jobs
             .chunks(JOB_BATCH)
+            .chain(suffix_jobs.chunks(JOB_BATCH))
+            .collect();
+        let raf_windows = raf_jobs.len().div_ceil(JOB_BATCH);
+        let device_jobs: Vec<_> = job_slices
+            .iter()
             .map(|jobs| DeviceBuffer::from_slice(&self.gpu.device, jobs))
             .collect::<Result<_, _>>()?;
-        let windows: Vec<_> = self
-            .jobs
-            .chunks(JOB_BATCH)
+        let windows: Vec<_> = job_slices
+            .iter()
             .enumerate()
             .map(|(index, jobs)| [jobs.len() as u32, u32::from(index == 0)])
             .collect();
-        for (jobs, window) in device_jobs.iter().zip(&windows) {
+        for (index, (jobs, window)) in device_jobs.iter().zip(&windows).enumerate() {
+            if index == raf_windows {
+                dispatch(
+                    &self.gpu,
+                    &mut batch,
+                    "address_cache",
+                    &cache_bindings,
+                    self.caches * THREADS,
+                )?;
+            }
             dispatch(
                 &self.gpu,
                 &mut batch,
@@ -480,6 +479,7 @@ impl DeviceAddressScan {
                     Binding::buffer(jobs),
                     Binding::buffer(&self.partials),
                     Binding::value(&params),
+                    Binding::buffer(&previous),
                 ],
                 jobs.len() * THREADS,
             )?;
@@ -495,6 +495,15 @@ impl DeviceAddressScan {
                     Binding::value(&params),
                 ],
                 self.output.len(),
+            )?;
+        }
+        if device_jobs.len() == raf_windows {
+            dispatch(
+                &self.gpu,
+                &mut batch,
+                "address_cache",
+                &cache_bindings,
+                self.caches * THREADS,
             )?;
         }
         dispatch(

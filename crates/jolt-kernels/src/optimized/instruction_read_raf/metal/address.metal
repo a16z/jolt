@@ -160,18 +160,6 @@ kernel void address_suffix_oracle(device const ulong4* input [[buffer(0)]],
 }
 
 template <typename F>
-kernel void address_condense(
-    device const uint2* records [[buffer(0)]], device F* weights [[buffer(1)]],
-    device const ulong4* rows [[buffer(2)]], constant ulong4& tail [[buffer(3)]],
-    device const F* previous [[buffer(4)]], constant AddressParams& p [[buffer(5)]],
-    uint i [[thread_position_in_grid]]) {
-    if (i >= p.records || !p.condense) return;
-    uint row = records[i].x;
-    ulong2 key = (row < p.prefix ? rows[row] : tail).xy;
-    weights[i] = weights[i] * previous[address_chunk(key, p.previous_shift)];
-}
-
-template <typename F>
 kernel void address_cache(
     device const uint2* records [[buffer(0)]], device const F* weights [[buffer(1)]],
     device const ulong4* rows [[buffer(2)]], constant ulong4& tail [[buffer(3)]],
@@ -229,10 +217,11 @@ inline jolt::Fp128<C> address_atomic_reduce(threadgroup metal::atomic_uint* bins
 
 template <typename F>
 kernel void address_histogram(
-    device const uint2* records [[buffer(0)]], device const F* weights [[buffer(1)]],
+    device const uint2* records [[buffer(0)]], device F* weights [[buffer(1)]],
     device const ulong4* rows [[buffer(2)]], constant ulong4& tail [[buffer(3)]],
     device const uint4* metadata [[buffer(4)]], device const AddressJob* jobs [[buffer(5)]],
     device F* partials [[buffer(6)]], constant AddressParams& p [[buffer(7)]],
+    device const F* previous [[buffer(8)]],
     uint group [[threadgroup_position_in_grid]], uint tid [[thread_index_in_threadgroup]]) {
     // Three lanes use 15,360 bytes; Metal validation doubles this allocation.
     // RAF and suffix jobs reuse the same bounded histogram layout.
@@ -242,12 +231,20 @@ kernel void address_histogram(
     AddressJob job = jobs[group];
     for (uint i = job.start + tid; i < job.end; i += 256) {
         uint2 record = records[i];
-        if (record.y != 0xffffffffu && address_cached(metadata[record.y].z, p)) continue;
+        bool cached = record.y != 0xffffffffu && address_cached(metadata[record.y].z, p);
+        if (cached && !(job.emit_raf && p.condense)) continue;
         ulong2 key = (record.x < p.prefix ? rows[record.x] : tail).xy;
+        F weight = weights[i];
+        // Cached representatives still need the next weight: a later phase
+        // can leave the cache. RAF jobs uniquely own these writes.
+        if (job.emit_raf && p.condense) {
+            weight = weight * previous[address_chunk(key, p.previous_shift)];
+            weights[i] = weight;
+        }
+        if (cached) continue;
         uint chunk = address_chunk(key, p.suffix_bits);
         ulong2 suffix = address_suffix(key, p.suffix_bits);
         ulong2 operands = address_operands(suffix);
-        F weight = weights[i];
         if (job.emit_raf) {
             address_atomic_add(bins, chunk, weight);
             if (!job.raf_flag) {
