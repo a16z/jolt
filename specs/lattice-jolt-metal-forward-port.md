@@ -881,3 +881,57 @@ unmatched development observations; the final four-workload comparison remains
 pending. The seven-line prepared-increment reuse has no separate measured win.
 Evidence and the frozen binary are in `ram-increment-metal/` and
 `ram-increment-jolt-prover`.
+
+### Shared Product, instruction-claim reduction and Input
+
+The shared-source implementation replaces the previous Product prototype's repeated
+packing and uploads with one directly initialized native source. The source
+contains a 64-byte core (all raw Input operands, lookup output and ten flags)
+and a 24-byte lookup-operand sidecar. It uses canonical witness extraction and
+lowers `InputVirtualization::unbatched_relation` into five flag/operand terms;
+unsupported expressions fail during setup. No instruction formulas or raw Rust
+trace layouts are copied into Metal.
+
+Product uniskip and remainder, instruction claim reduction, and the ten unique
+stage-2 opening columns consume the same source. Claim reuse requires the
+verifier's three declared aliases and identical opening points. Stage 3 retains
+only the core, reads it for Input's first message, and releases it after the first
+bind writes the existing packed state. CPU defaults, implicit constant suffixes,
+Gruen checks and the 4096-row CPU tails remain intact.
+
+Admission precedes capture: at most 12 GiB of source payload and an advisory
+working-set preflight of 152 bytes per stored row plus 64 MiB scratch. At T27
+this covers 11 GiB of source, 6 GiB of Product/ICR state and 2 GiB of next-bind
+output. The runtime uses its existing allocated-byte accounting; this is not a
+reservation, and every allocation still checks current limits. Final typed
+buffers receive disjoint direct writes, including tail representatives and
+reserved bytes, with no full host mirror. Source identity includes the immutable
+trace, preprocessing and logical cycle domain. Only the paired Metal slots use
+this owner.
+
+Its focused oracle uses
+an existing odd-prefix trace fixture and the reference kernels through Product,
+ICR and Input, checking both shared-owner releases. Existing Input and instruction
+claim scalar-boundary tests remain relevant. Unsigned lookup limbs use the
+canonical Fp128 reduction owner; its existing conformance suite adds raw values
+at P−1, P, P+1 and u128::MAX.
+
+Measured source `d173662d9` (Akita `978d7060`) passed the two native GPU oracles
+normally and under Metal validation, field conversion checks in both modes,
+eleven CPU parity cases, runtime/kernel/serial/integrated Clippy, and a separate
+Metal-only Clippy check covering the native test. GPU finalization runs in
+`finish_rounds`; typed output extraction reads only a completed, exact-point cache.
+Small and frozen T27 proofs verified. Fib took 19.761391625 s (6.791916812 padded
+MHz), with unchanged actual/padded counts and public output. This measured branch
+was based on accepted RegistersVal and did not yet contain the RAM carry.
+
+The separate profile reduced whole stage 2 plus Input from 2.3914 s in the saved
+RegistersVal profile to 1.8465 s, including 0.3348 s of source capture and a single
+0.0236 s ten-column opening reduction. Product's own named interval grew; the
+benefit belongs to the combined pipeline. Peak RSS was 39.1921 GiB versus
+39.1985 GiB. The profile confirmed one 11-GiB source, both native Product modes,
+ICR continuation, and Input's shared first message/bind. Evidence and the frozen
+binary are in `product-input-metal/` and `product-input-jolt-prover`. These are
+unmatched development observations. The implementation is combined with RAM on
+the working branch; combined throughput and final four-workload acceptance are
+still pending.

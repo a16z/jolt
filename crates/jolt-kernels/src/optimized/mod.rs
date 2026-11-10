@@ -60,6 +60,8 @@ pub mod hamming_weight_claim_reduction;
 pub mod inc_claim_reduction;
 pub mod instruction_claim_reduction;
 pub mod instruction_input;
+#[cfg(feature = "metal")]
+pub(crate) mod native_operands;
 pub mod instruction_ra_virtualization;
 pub mod instruction_read_raf;
 mod lazy_ra;

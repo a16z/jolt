@@ -1173,6 +1173,12 @@ impl<F: JoltField> PrefixCycleWeights<F> {
         self.prefix.div_ceil(self.block_len()) + 1
     }
 
+    /// Split equality factors; the final suffix singleton remains in `block`.
+    #[cfg(feature = "metal")]
+    pub(crate) fn split_evals(&self) -> (&[F], &[F]) {
+        (self.eq.e_in(), self.eq.e_out())
+    }
+
     /// Each block has one outer factor. The final singleton carries the entire
     /// constant suffix, including the last row when the prefix fills the domain.
     pub(crate) fn block(&self, index: usize) -> PrefixCycleBlock<'_, F> {

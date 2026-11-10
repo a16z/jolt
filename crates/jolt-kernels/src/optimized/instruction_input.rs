@@ -70,7 +70,7 @@ pub struct InstructionInputRow {
 }
 
 impl InstructionInputRow {
-    fn flags(&self) -> [bool; 5] {
+    pub(super) fn flags(&self) -> [bool; 5] {
         [
             self.is_rs1.0,
             self.is_pc.0,
@@ -171,6 +171,15 @@ struct InputPrepared<F: JoltField> {
 /// Optional arithmetic owner; canonical extraction, flag tables, Gruen
 /// checks and opening order remain in the instruction-input implementation.
 trait InputCompute<F: JoltField>: Send + Sync {
+    fn initial_message(
+        &self,
+        _prefix: usize,
+        _tail: [F; NUM_TABLES],
+        _eq: &GruenSplitEqPolynomial<F>,
+        _gamma: F,
+    ) -> Result<Option<[F; 3]>, SumcheckError<F>> {
+        Ok(None)
+    }
     fn admits(&self, prefix: usize, log_t: usize) -> bool;
     fn materialize(
         &self,
@@ -685,6 +694,23 @@ impl<F: JoltField> ProveRounds<F> for OptimizedInstructionInputKernel<F> {
                 return self
                     .gruen
                     .checked_cubic(q0 + suffix, q2, previous_claim, round, || q1 + suffix);
+            }
+        }
+        if round == 0 {
+            if let Some(compute) = &self.compute {
+                if let Some([q0, q2, q1]) =
+                    compute.initial_message(self.prefix_len, self.tail, &self.gruen, self.gamma)?
+                {
+                    let suffix = self.gruen.suffix_weight(self.prefix_len.div_ceil(2))
+                        * Self::operand_product(self.gamma, &self.tail);
+                    return self.gruen.checked_cubic(
+                        q0 + suffix,
+                        q2,
+                        previous_claim,
+                        round,
+                        || q1 + suffix,
+                    );
+                }
             }
         }
         self.message(round, previous_claim)

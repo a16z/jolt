@@ -1,4 +1,5 @@
 //! Bounded native input production and resident fused bind/message rounds.
+mod shared;
 mod source;
 mod state;
 
@@ -14,9 +15,13 @@ use jolt_metal::runtime::{
 use jolt_metal::shaders::FIELD_HEADERS;
 use jolt_metal::MetalError;
 
+use super::super::native_operands::{ForInput, SOURCE_HEADER};
 use super::*;
+use shared::SharedInput;
 use state::ResidentInput;
+use std::sync::Mutex;
 
+const RESIDENT: &str = "instruction_input_resident";
 const NATIVE: &str = "instruction_input_native";
 const BIND_ROUND: &str = "instruction_input_bind_round";
 const THREADS: usize = 256;
@@ -80,7 +85,7 @@ impl Constants {
 }
 
 struct Gpu {
-    device: Device,
+    device: Arc<Device>,
     library: ShaderLibrary,
     min_prefix: usize,
     cpu_tail: usize,
@@ -91,18 +96,23 @@ struct Gpu {
 pub(crate) struct MetalInstructionInput(Arc<Gpu>);
 
 impl MetalInstructionInput {
+    #[cfg(test)]
     pub(crate) fn new() -> Result<Self, MetalError> {
-        let device = Device::system_default()?;
+        Self::with_device(Arc::new(Device::system_default()?))
+    }
+    pub(crate) fn with_device(device: Arc<Device>) -> Result<Self, MetalError> {
         let mut spec = LibrarySpec::new();
         for (name, source) in FIELD_HEADERS {
             spec = spec.source(name, source);
         }
-        spec = spec.source("instruction_input.metal", include_str!("input.metal"));
-        for name in [NATIVE, BIND_ROUND] {
+        spec = spec
+            .source("native_operands.metal", SOURCE_HEADER)
+            .source("instruction_input.metal", include_str!("input.metal"));
+        for name in [NATIVE, BIND_ROUND, RESIDENT] {
             spec = spec.instantiate::<F>(name);
         }
         let library = ShaderLibrary::compile(&device, &spec)?;
-        for name in [NATIVE, BIND_ROUND] {
+        for name in [NATIVE, BIND_ROUND, RESIDENT] {
             let pipeline = library.pipeline(&host_name::<F>(name))?;
             if pipeline.thread_execution_width() != 32
                 || pipeline.max_total_threads_per_threadgroup() < THREADS
@@ -125,7 +135,7 @@ impl MetalInstructionInput {
 impl PrepareKernel<F, InstructionInput<F>> for MetalInstructionInput {
     fn prepare(
         &self,
-        _session: &mut ProofSession,
+        session: &mut ProofSession,
         witness: &dyn JoltWitnessPlane<F>,
         inputs: ProverInputs<'_, F, InstructionInput<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = InstructionInput<F>>>, KernelError<F>> {
@@ -133,7 +143,34 @@ impl PrepareKernel<F, InstructionInput<F>> for MetalInstructionInput {
         let rows = BundleStore::resolve(witness, 1usize << point.len())?;
         let mut kernel =
             OptimizedInstructionInputKernel::new(point, rows, inputs.challenges.gamma)?;
-        kernel.compute = Some(Arc::new(self.clone()));
+        kernel.compute = if let Some(ForInput(source)) = session.take::<ForInput>() {
+            {
+                let core = source
+                    .lock()
+                    .map_err(|_| compute_error(invalid("native input lock poisoned")))?;
+                if core.cycles != 1usize << point.len()
+                    || core.prefix < kernel.prefix_len
+                    || !witness
+                        .random_access()
+                        .is_some_and(|identity| identity.same_source(&core.identity))
+                {
+                    return Err(KernelError::InvariantViolation {
+                        reason: "Input received a different native source/domain",
+                    });
+                }
+            }
+            if self.admits(kernel.prefix_len, point.len()) {
+                Some(Arc::new(SharedInput {
+                    gpu: Arc::clone(&self.0),
+                    source: Mutex::new(Some(source)),
+                }))
+            } else {
+                drop(source);
+                Some(Arc::new(self.clone()))
+            }
+        } else {
+            Some(Arc::new(self.clone()))
+        };
         Ok(Box::new(kernel))
     }
 }

@@ -25,7 +25,8 @@ use rayon::prelude::*;
 
 use super::prefix_product::PrefixColumn;
 use super::support::{
-    fallible_collect_bytes, pin_derived_term, BundleStore, GruenRoundMessage, RoundProgress,
+    fallible_collect_bytes, pin_derived_term, BundleAccess, BundleStore, GruenRoundMessage,
+    RoundProgress,
 };
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -186,6 +187,31 @@ impl<F: JoltField> OptimizedInstructionClaimReductionKernel<F> {
         rows: BundleStore<InstructionOperandRow>,
         gamma: F,
     ) -> Result<Self, KernelError<F>> {
+        Self::new_with_producer(tau_low, rows, gamma, |coefficients, access, prefix, _| {
+            let cell =
+                |j: usize| -> Result<F, WitnessError> { Ok(coefficients.combine(&access.row(j)?)) };
+            #[cfg(feature = "parallel")]
+            {
+                Ok(par_collect_windows(prefix, cell)?)
+            }
+            #[cfg(not(feature = "parallel"))]
+            {
+                Ok((0..prefix).map(cell).collect::<Result<_, _>>()?)
+            }
+        })
+    }
+
+    fn new_with_producer(
+        tau_low: &[F],
+        rows: BundleStore<InstructionOperandRow>,
+        gamma: F,
+        produce: impl FnOnce(
+            &CombineCoefficients<F>,
+            &BundleAccess<'_, InstructionOperandRow>,
+            usize,
+            &GruenSplitEqPolynomial<F>,
+        ) -> Result<Vec<F>, KernelError<F>>,
+    ) -> Result<Self, KernelError<F>> {
         let log_t = tau_low.len();
         if let BundleStore::Retained(rows) = &rows {
             if rows.len() != 1 << log_t {
@@ -201,19 +227,8 @@ impl<F: JoltField> OptimizedInstructionClaimReductionKernel<F> {
         let access = rows.access();
         let prefix_cycles = access.constant_suffix_start(cycles)?;
         let tail = coefficients.combine(&access.row(prefix_cycles.min(cycles - 1))?);
-        let combined: Vec<F> = {
-            let coefficients = &coefficients;
-            let cell =
-                |j: usize| -> Result<F, WitnessError> { Ok(coefficients.combine(&access.row(j)?)) };
-            #[cfg(feature = "parallel")]
-            {
-                par_collect_windows(prefix_cycles, cell)?
-            }
-            #[cfg(not(feature = "parallel"))]
-            {
-                (0..prefix_cycles).map(cell).collect::<Result<_, _>>()?
-            }
-        };
+        let gruen = GruenSplitEqPolynomial::new(tau_low, BindingOrder::LowToHigh);
+        let combined = produce(&coefficients, &access, prefix_cycles, &gruen)?;
         Ok(Self {
             progress: RoundProgress::new(log_t),
             combined: PrefixColumn {
@@ -222,7 +237,7 @@ impl<F: JoltField> OptimizedInstructionClaimReductionKernel<F> {
             },
             prefix_cycles,
             rows,
-            gruen: GruenSplitEqPolynomial::new(tau_low, BindingOrder::LowToHigh),
+            gruen,
             bound_challenges: Vec::with_capacity(log_t),
         })
     }
@@ -664,3 +679,6 @@ mod tests {
         check_operand_claims_at_scalar_boundaries::<Prime128OffsetA7F7>();
     }
 }
+
+#[cfg(feature = "metal")]
+pub(crate) mod metal;

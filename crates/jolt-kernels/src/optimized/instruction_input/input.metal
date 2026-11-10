@@ -159,3 +159,52 @@ kernel void instruction_input_bind_round(
     }
     input_reduce(sums, scratch, partials, e_out[group], c.gamma, group, lane, sg);
 }
+
+// Resident native source: old_bits=0 is the first message; old_bits=1 binds
+// the first cycle bit and writes the ordinary packed Input state.
+template <typename F>
+kernel void instruction_input_resident(
+    device const NativeCore* source [[buffer(0)]], device const F* lut [[buffer(1)]],
+    device const F* e_in [[buffer(2)]], device const F* e_out [[buffer(3)]],
+    device F* output [[buffer(4)]], device uint4* words [[buffer(5)]], device F* partials [[buffer(6)]],
+    constant InputConstants<F>& c [[buffer(7)]], constant InputParams& p [[buffer(8)]],
+    uint group [[threadgroup_position_in_grid]], uint local [[thread_index_in_threadgroup]],
+    ushort lane [[thread_index_in_simdgroup]], ushort sg [[simdgroup_index_in_threadgroup]]) {
+    using Acc = jolt::Accumulator<F>;
+    static_assert(Acc::CAPACITY >= 0xfffffffful, "one equality inner block fits");
+    threadgroup Acc scratch[6][8];
+    Acc sums[6]; for (uint i = 0; i < 6; i++) sums[i] = Acc::zero();
+    for (uint inner = local; inner < p.in_len; inner += 256) {
+        ulong pair = ulong(group) * p.in_len + inner;
+        if (pair >= p.pairs) break;
+        F flags[2][5], values[2][5];
+        for (uint side = 0; side < 2; side++) {
+            ulong row = 2 * pair + side;
+            uint4 word = c.tail_word;
+            for (uint column = 0; column < 5; column++) {
+                F flag = c.tails[2 * column], value = c.tails[2 * column + 1];
+                if (row < p.output_len) {
+                    ulong index = p.old_bits == 0 ? row : 2 * row;
+                    NativeCore low = source[index];
+                    if (p.old_bits == 0) {
+                        flag = F::from_u64((low.flags >> column) & 1u);
+                        value = native_operand<F>(low, column);
+                    } else {
+                        NativeCore high = source[index + 1];
+                        uint pattern = ((low.flags >> column) & 1u) | (((high.flags >> column) & 1u) << 1);
+                        flag = lut[pattern];
+                        uint shift = 2 * column;
+                        word.x = (word.x & ~(3u << shift)) | (pattern << shift);
+                        F lo = native_operand<F>(low, column), hi = native_operand<F>(high, column);
+                        value = lo + c.challenge * (hi - lo);
+                        output[ulong(column) * p.output_len + row] = value;
+                    }
+                }
+                flags[side][column] = flag; values[side][column] = value;
+            }
+            if (p.old_bits != 0 && row < p.output_len) words[row] = word;
+        }
+        input_accumulate(sums, flags, values, e_in[inner], p.need_one != 0);
+    }
+    input_reduce(sums, scratch, partials, e_out[group], c.gamma, group, lane, sg);
+}

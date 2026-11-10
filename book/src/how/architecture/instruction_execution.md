@@ -231,9 +231,14 @@ then stores the operands as fields and the flags as 2-, 4-, 8-, and 16-bit
 patterns. One challenge-dependent lookup table evaluates every flag pattern.
 The next bind materializes the five flags as ordinary field columns.
 
-The Metal backend preserves that progression. After the CPU first round, a
-bounded producer writes canonical native operands and paired flag codes directly
-into shared device storage. The GPU materializes the first bound operand columns
+The Metal backend preserves that progression. When admitted, Product prepares
+one native operand source for Product, instruction claim reduction, and Input.
+The first two consumers share its lookup sidecar and final opening reduction;
+Input retains only the core. Its first message reads that core, and the first
+bind produces the usual packed state before releasing the source. Capacity or
+source admission failure keeps the bounded Input producer: after the CPU first
+round it writes canonical operands and paired flag codes directly into shared
+device storage. The GPU materializes the first bound operand columns
 and combines each later bind with its next round-message reduction. It retains
 the dense columns until at most 4096 rows remain, then restores the CPU state.
 The constant suffix stays implicit; its equality-weighted contribution and
