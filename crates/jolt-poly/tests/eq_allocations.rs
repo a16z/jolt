@@ -140,19 +140,30 @@ fn measure<T>(
     )
 }
 
+#[track_caller]
 fn sweep<T>(allocations: usize, bytes: usize, build: impl Fn() -> Result<T, EqTableError>) {
     // Runtime initialization is outside the table-reservation contract.
     drop(build().unwrap());
     let (ok, attempts, live, allocated) = measure(0, &build);
-    assert!(ok);
-    assert_eq!(attempts, allocations);
-    assert_eq!(allocated, bytes);
-    assert_eq!(live, 0);
+    let result_type = std::any::type_name::<T>();
+    assert!(ok, "{result_type} did not construct successfully");
+    assert_eq!(
+        attempts, allocations,
+        "reservation attempts for {result_type}"
+    );
+    assert_eq!(allocated, bytes, "reserved bytes for {result_type}");
+    assert_eq!(live, 0, "live storage after dropping {result_type}");
     for k in 1..=allocations {
         let (ok, attempts, live, _) = measure(k, &build);
-        assert!(ok, "allocation {k} did not return AllocationFailed");
-        assert_eq!(attempts, k);
-        assert_eq!(live, 0, "allocation {k} leaked an earlier buffer");
+        assert!(
+            ok,
+            "allocation {k} for {result_type} did not return AllocationFailed"
+        );
+        assert_eq!(attempts, k, "reservation attempts for {result_type}");
+        assert_eq!(
+            live, 0,
+            "allocation {k} for {result_type} leaked an earlier buffer"
+        );
     }
 }
 
