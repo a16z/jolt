@@ -188,9 +188,51 @@ struct Fp128SignedAccumulator {
     }
 };
 
+// Sum of canonical field elements, never unreduced products. At most 2^32
+// original terms satisfy sum <= 2^32*(p-1) < 2^160. A merge counts all original
+// terms in both operands; reduction followed by add starts a new term count.
+// Five carried words suffice, and fold2_canonicalize already reduces a128-bit
+// low part plus any64-bit high part. No multiplication operation is exposed.
+template <uint C>
+struct Fp128SumAccumulator {
+    using F = Fp128<C>;
+    static constexpr constant ulong CAPACITY = 1ul << 32;
+    fp128_detail::Words<5> w;
+
+    static Fp128SumAccumulator zero() {
+        Fp128SumAccumulator result;
+        for (uint i = 0; i < 5; i++) result.w[i] = 0;
+        return result;
+    }
+    void add(F value) {
+        ulong carry = 0;
+        for (uint i = 0; i < 4; i++) {
+            carry = ulong(w[i]) + value.limb[i] + (carry >> 32);
+            w[i] = uint(carry);
+        }
+        w[4] += uint(carry >> 32);
+    }
+    void merge(Fp128SumAccumulator other) {
+        ulong carry = 0;
+        for (uint i = 0; i < 5; i++) {
+            carry = ulong(w[i]) + other.w[i] + (carry >> 32);
+            w[i] = uint(carry);
+        }
+    }
+    F reduce() {
+        return F{fp128_detail::fold2_canonicalize<C>(uint4(w[0], w[1], w[2], w[3]), ulong(w[4]))};
+    }
+    friend Fp128SumAccumulator simd_shuffle_xor(Fp128SumAccumulator a, ushort mask) {
+        Fp128SumAccumulator result;
+        for (uint i = 0; i < 5; i++) result.w[i] = metal::simd_shuffle_xor(a.w[i], mask);
+        return result;
+    }
+};
+
 template <uint C>
 struct WithAccumulator<Fp128<C>> {
     using Accumulator = Fp128Accumulator<C>;
+    using SumAccumulator = Fp128SumAccumulator<C>;
     using SmallScalarAccumulator = Fp128SignedAccumulator<C>;
 };
 

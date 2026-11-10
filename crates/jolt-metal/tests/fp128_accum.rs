@@ -35,7 +35,11 @@ mod gpu {
     const SMALL_SCALAR_FILL: &str = "jolt_test_accum_small_scalar_fill";
     const MERGE: &str = "jolt_test_accum_merge";
     const SMALL_SCALAR_MERGE: &str = "jolt_test_accum_small_scalar_merge";
-    const KERNELS: [&str; 6] = [
+    const SUM: &str = "jolt_test_accum_sum";
+    const SUM_CAPACITY: &str = "jolt_test_accum_sum_capacity";
+    const KERNELS: [&str; 8] = [
+        SUM,
+        SUM_CAPACITY,
         FMADD,
         SMALL_SCALAR,
         FILL,
@@ -167,6 +171,21 @@ mod gpu {
             DeviceBuffer::from_slice(device, &a).unwrap(),
             DeviceBuffer::from_slice(device, &b).unwrap(),
         );
+        // Reuse the existing canonical edges and a bounded random prefix.
+        let sum_pipeline = pipeline::<F>(library, SUM);
+        let sum_terms = &a[..a.len().min(edges.len() * edges.len() + 1024)];
+        for group in group_sizes(sum_pipeline) {
+            for terms in [1, 16] {
+                check_groups(
+                    device,
+                    sum_pipeline,
+                    &[Binding::buffer(&a_dev)],
+                    sum_terms,
+                    terms,
+                    group,
+                );
+            }
+        }
         let pipeline = pipeline::<F>(library, FMADD);
         for group in group_sizes(pipeline) {
             for terms in [1, 16] {
@@ -263,6 +282,20 @@ mod gpu {
     fn capacity<F: TestField>(device: &Device, library: &ShaderLibrary) {
         let x: F = element(modulus::<F>() - 1);
         let x_dev = DeviceBuffer::from_slice(device, &[x]).unwrap();
+        let mut sum_output = DeviceBuffer::<F>::zeroed(device, 3).unwrap();
+        // SAFETY: thread0 reads x[0] and writes exactly three allocated fields.
+        unsafe {
+            dispatch(
+                device,
+                pipeline::<F>(library, SUM_CAPACITY),
+                &[Binding::buffer(&x_dev), Binding::buffer(&sum_output)],
+                Grid::linear(1, 1),
+            );
+        }
+        let got = sum_output.read().unwrap();
+        assert_eq!(got[0], -F::from_u64(CAPACITY));
+        assert_eq!(got[1], -F::from_u64(CAPACITY + 1));
+        assert_ne!(got[2], -F::from_u64(CAPACITY + 1));
         let count = u32::try_from(FILL_THREADS).unwrap();
         let fill_group = |pipeline: &Pipeline| pipeline.thread_execution_width() * 8;
 

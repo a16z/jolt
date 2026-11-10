@@ -1,9 +1,11 @@
 // jolt::WithAccumulator<F>: the deferred-reduction accumulators of a field,
 // mirroring jolt_field::WithAccumulator.
 //
-// Each field header specializes WithAccumulator with two member types:
+// Each field header specializes WithAccumulator with these member types:
 // - Accumulator: sums of field elements and of products of two field
 //   elements (add, fmadd);
+// - SumAccumulator: sums of canonical field elements only (add), with no
+//   product operation; merge counts the original terms, not just partials.
 // - SmallScalarAccumulator: sums of field elements times signed or unsigned
 //   64-bit scalars (add, fmadd_u64, fmadd_i64, fmadd_signed_u64).
 //
@@ -36,6 +38,9 @@ struct WithAccumulator;
 
 template <typename F>
 using Accumulator = typename WithAccumulator<F>::Accumulator;
+
+template <typename F>
+using SumAccumulator = typename WithAccumulator<F>::SumAccumulator;
 
 template <typename F>
 using SmallScalarAccumulator = typename WithAccumulator<F>::SmallScalarAccumulator;

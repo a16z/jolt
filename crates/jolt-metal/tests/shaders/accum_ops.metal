@@ -196,3 +196,36 @@ kernel void jolt_test_accum_small_scalar_merge(
         out[0] = total.reduce();
     }
 }
+
+// The same group oracle, restricted to canonical additions.
+template <typename F>
+kernel void jolt_test_accum_sum(device const F* a [[buffer(0)]],
+    constant uint& n [[buffer(1)]], constant uint& terms [[buffer(2)]],
+    device F* out [[buffer(3)]], uint i [[thread_position_in_grid]],
+    ushort lane [[thread_index_in_simdgroup]], ushort sg [[simdgroup_index_in_threadgroup]],
+    ushort groups [[simdgroups_per_threadgroup]], ushort width [[threads_per_simdgroup]]) {
+    using Acc = jolt::SumAccumulator<F>;
+    threadgroup Acc scratch[32];
+    Acc sum = Acc::zero();
+    for (uint k = 0; k < terms; k++) {
+        uint index = i * terms + k;
+        if (index < n) sum.add(a[index]);
+    }
+    out[i] = jolt::threadgroup_merge(sum, scratch, lane, sg, groups, width).reduce();
+}
+
+//32 exact doublings represent2^32 original terms without billions of test
+// operations. The raw extra-term result deliberately exceeds the contract.
+template <typename F>
+kernel void jolt_test_accum_sum_capacity(device const F* x [[buffer(0)]],
+    device F* out [[buffer(1)]], uint i [[thread_position_in_grid]]) {
+    if (i != 0) return;
+    using Acc = jolt::SumAccumulator<F>;
+    static_assert(Acc::CAPACITY == (1ul << 32), "test follows the declared capacity");
+    Acc sum = Acc::zero(); sum.add(x[0]);
+    for (uint k = 0; k < 32; k++) sum.merge(sum);
+    out[0] = sum.reduce();
+    Acc restarted = Acc::zero(); restarted.add(out[0]); restarted.add(x[0]);
+    out[1] = restarted.reduce();
+    sum.add(x[0]); out[2] = sum.reduce();
+}
