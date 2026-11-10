@@ -219,7 +219,9 @@ mod metal {
 
     fn to_words(values: &[u64]) -> Vec<Word> {
         values
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .map(|pair| {
                 let [a, b] = [pair[0], pair[1]];
                 [a as u32, (a >> 32) as u32, b as u32, (b >> 32) as u32]

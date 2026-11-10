@@ -49,7 +49,7 @@ functions. The baseline x86-64 bodies copy their internal results to the
 System V return registers `rax:rdx`. The BMI2 and ADX multiplication body
 creates its result directly in those registers. These corollaries prove the
 literal load, result moves where present, `ret` behavior, and an ABI-safe
-frame. A separate certificate proves that the A7F7 modulus is prime.
+frame. Separate certificates prove that the A7F7 and 6A23801F moduli are prime.
 
 The [scalar Fp64 guide](../../book/src/how/formal-verification/field-kernels-fp64.md)
 states the precise Fp64 claim, explains the `2^64 - 59` reduction, and lists
@@ -169,6 +169,9 @@ outside the present Fp128 machine-proof scope. They retain differential or
 ordinary test coverage as described in the Book chapter.
 
 ## Scalar Fp64 checks
+
+The runners select the Rust toolchain recorded in `fp64-certified-builds.json`.
+An explicit `RUSTUP_TOOLCHAIN` override must match that matrix's compiler identity.
 
 Run the fast Fp64 byte check with
 

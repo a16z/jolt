@@ -430,7 +430,7 @@ impl<F: JoltField> Polynomial<F> {
             }
         }
 
-        for pair in self.evals.chunks_exact(2) {
+        for pair in self.evals.as_chunks::<2>().0 {
             scratch.push(scalar.mul_add(pair[1] - pair[0], pair[0]));
         }
         std::mem::swap(&mut self.evals, scratch);

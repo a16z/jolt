@@ -1200,7 +1200,7 @@ impl<const P: u128> CanonicalEncoding for Fp128<P> {
 
     #[inline]
     fn num_bits(&self) -> u32 {
-        u128::BITS - join(self.0).leading_zeros()
+        join(self.0).bit_width()
     }
 }
 
@@ -1337,7 +1337,7 @@ unsafe impl<const P: u128> CheckedBitPattern for Fp128<P> {
 
 #[cfg(all(test, feature = "bytemuck"))]
 mod bytemuck_tests {
-    use super::super::{Prime128Offset275, Prime128OffsetA7F7};
+    use super::super::{Prime128Offset275, Prime128Offset6A23801F, Prime128OffsetA7F7};
     use super::split;
     use bytemuck::checked::{self, CheckedCastError};
     use bytemuck::CheckedBitPattern;
@@ -1361,6 +1361,7 @@ mod bytemuck_tests {
     #[test]
     fn only_canonical_limbs_are_valid_bit_patterns() {
         check::<Prime128OffsetA7F7>(0u128.wrapping_sub(0xFFFF_A7F7));
+        check::<Prime128Offset6A23801F>(0u128.wrapping_sub(0x6A23_801F));
         check::<Prime128Offset275>(0u128.wrapping_sub(275));
     }
 }

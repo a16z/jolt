@@ -75,3 +75,4 @@ postcard = { workspace = true, features = ["use-std"] }
 serde_json = { workspace = true, features = ["std"] }
 quote.workspace = true
 syn = { workspace = true, features = ["visit"] }
+tempfile = "3.27.0"
