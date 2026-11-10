@@ -450,9 +450,8 @@ impl MetalReadRafKernel {
         else {
             return Ok(None);
         };
-        if bind.is_none() && *width == 1 {
-            return Ok(None);
-        }
+        // A no-bind width-one message borrows the lazy owner and leaves its
+        // equality state unchanged for the existing first-bind handoff.
         let resident = self
             .rows
             .as_ref()

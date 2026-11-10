@@ -44,6 +44,8 @@ fn compact_read_raf_matches_reference_through_device_handoff() {
         let gamma = AkitaField::from_u64(if zero_tail { 0 } else { 37 });
         let mut point: Vec<_> = (0..log_t).map(challenge::<AkitaField>).collect();
         point[log_t - if virtuals == 8 { 2 } else { 3 }] = AkitaField::from_u64(1);
+        // The first no-bind GPU message must evaluate exceptional q(0).
+        point[log_t - 1] = AkitaField::from_u64(1);
         let mut reference =
             InstructionReadRafKernel::new(dimensions, &point, witness.clone(), gamma).unwrap();
         let source = Arc::new(ConstantSuffix::from(pack(&witness)));
@@ -92,6 +94,13 @@ fn compact_read_raf_matches_reference_through_device_handoff() {
                 .as_ref()
                 .is_some_and(|state| state.prefixes[0].max(state.prefixes[1]) > CPU_TAIL_ROWS);
             let actual = kernel.round_with_cutoff(bind, round, claim, 0).unwrap();
+            if round == kernel.cpu.address_bits() {
+                assert!(kernel.device.is_none());
+                let cycle = kernel.cpu.cycle.as_ref().unwrap();
+                assert!(matches!(&cycle.ra, LazyFoldedRa::Lazy { width: 1, .. }));
+                assert!(cycle.gruen.current_linear_evals().0.is_zero());
+                assert!(!cycle.gruen.current_scalar().is_zero());
+            }
             assert_eq!(
                 actual.coefficients(),
                 expected.coefficients(),
