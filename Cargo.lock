@@ -2664,6 +2664,7 @@ dependencies = [
 name = "field-limbs-guest"
 version = "0.1.0"
 dependencies = [
+ "jolt-field",
  "jolt-sdk",
 ]
 
@@ -3412,6 +3413,7 @@ dependencies = [
  "bytemuck",
  "cc",
  "criterion",
+ "jolt-platform",
  "jolt-riscv",
  "num-bigint",
  "num-traits",

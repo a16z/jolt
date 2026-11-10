@@ -9,7 +9,10 @@
 //! `FIELD_ADVICE_LIMB` (one range-bound low limb per row, the quotient staying
 //! in the register file) closed by `FIELD_ASSERT_ZERO`. These relations bind
 //! the result modulo the field characteristic. The field wrappers check
-//! that the returned integer is below the modulus before using it.
+//! that the returned integer is below the modulus before using it, and call
+//! `jolt_platform::spoil_proof` when it is not: the limbs of p satisfy every
+//! row as a reading of zero, so an ordinary panic would let a dishonest prover
+//! force a provable panicking outcome.
 //!
 //! The routed field's arithmetic owns field registers 1 through 14 (the BN254
 //! Montgomery constants stay in 1 and 2 for the whole run); guest code that
