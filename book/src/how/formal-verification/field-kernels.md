@@ -105,7 +105,7 @@ The AArch64 body uses the following registers.
 | --- | --- |
 | Input `a` and output | `x0:x1` |
 | Input `b` | `x2:x3` |
-| Offset `C = 2^128 - p` | `x4` after the fixed load instruction |
+| Offset `C = 2^128 - p` | `x4` after the fixed two-instruction load (`movz`, `movk`) |
 | Addition temporary values | `x5:x9` |
 | Subtraction temporary values | `x5:x7` |
 
@@ -277,7 +277,7 @@ range. The generic AArch64 theorem covers the exact 35-instruction arithmetic
 body for every valid `C`. One generic x86-64 theorem covers the baseline
 `mulq`, `add`, and `adc` sequence. A separate 6A23801F theorem covers the
 31-instruction BMI2 and ADX sequence built from `mulx`, `adcx`, and `adox`.
-Each architecture also has an 6A23801F theorem for the callable body followed by
+Each architecture also has a 6A23801F theorem for the callable body followed by
 `ret`.
 
 With `asm`, the register kernels take `C = 2^128 - p` as an operand and run for
@@ -305,13 +305,16 @@ fact.
 
 Each baseline operation has three theorem levels.
 
-The generic body theorem starts immediately after the constant-load
-instruction and stops before `ret`. Its precondition fixes the loaded bytes,
-program counter, input registers, and a symbolic offset register. Its
-postcondition states the result modulo `2^128 - C` for every valid `C`.
+The generic body theorem starts immediately after the constant load (two
+instructions on AArch64, one on x86-64) and stops before `ret`. Its
+precondition fixes the loaded bytes, program counter, input registers, and a
+symbolic offset register. Its postcondition states the result modulo
+`2^128 - C` for every valid `C`. On AArch64 its frame leaves out `x4`, so it
+also proves that the body does not change the offset register.
 
 The 6A23801F body corollary starts at the literal load. It proves that load and
-specializes the generic theorem to 6A23801F.
+specializes the generic theorem to 6A23801F, widening the frame to include the
+offset register that the load writes.
 
 The AArch64 subroutine theorem adds `ret` and the procedure call convention.
 It states where the return address comes from and which registers a caller
@@ -360,7 +363,7 @@ architectures use the same inspection witness and artifact checker.
 | --- | --- | --- |
 | AArch64 baseline bodies | Generic add, subtract, and multiply bodies for every valid `C` | Production passes `C` in the proved register contract and uses the shared instruction bodies |
 | AArch64 6A23801F functions | Constant load, complete body, and `ret` | The proof object and complete optimized witness are byte identical |
-| Linux x86-64 baseline bodies | Generic add, subtract, and multiply bodies for every valid `C` | Production passes `C` in the proved register contract and uses the shared instruction bodies |
+| Linux x86-64 baseline bodies | Generic add, subtract, and multiply bodies for every valid `C` | Production passes `C` in the proved input registers and uses the shared instruction bodies. The frames do not yet prove that the bodies preserve every input register the inline assembly declares unchanged (`rsi` and `r8` for multiplication, `rdx` for add and subtract) |
 | Linux x86-64 6A23801F functions | Constant load, complete body, ABI result moves, and `ret` | The proof object and complete optimized witness are byte identical |
 | Linux x86-64 BMI2 and ADX multiply | Complete BMI2 and ADX body with direct ABI result and `ret` | The proof object and witness built with both features are byte identical |
 | Darwin x86-64 add, subtract, and multiply | Arithmetic and ABI result sequence | The checker requires one exact unproved Darwin frame wrapper around the proved sequence |
@@ -426,13 +429,16 @@ The result relies on the following assumptions.
   proved operation from the pinned Jolt revision.
 
 Jolt owns the kernel, theorem, proof object, and inspection witness. This
-does not yet prove every executable that depends on Jolt. In particular, the
-`akita` path (`jolt-akita` and the `akita` feature of `jolt-prover`) now uses the shared `jolt_field::Fp128` at
-`Prime128Offset6A23801F`, but it enables only `jolt-field/solinas`, not `asm`, so
-it runs the portable Rust bodies rather than the proved kernels. These
-theorems do not cover that path. A production rollout must forward `asm` from
-the product's feature configuration and inspect that final binary before
-making a claim about the complete production path.
+does not yet prove every executable that depends on Jolt. The `akita` path
+(`jolt-akita` and the `akita` feature of `jolt-prover`) uses the shared
+`jolt_field::Fp128` at `Prime128Offset6A23801F` with `asm` enabled: the pinned
+`akita-algebra` depends on `jolt-field` with `features = ["asm", "solinas"]`,
+and the workspace `[patch]` points that dependency at this repository's
+`jolt-field`. Its x86-64 and AArch64 builds therefore compile the inline
+assembly bodies these theorems cover, plus the BMI2 and ADX body when those
+target features are enabled. No one has yet inspected a final 6A23801F Akita
+binary, so a claim about the complete production path still needs that
+final-binary inspection.
 
 ## Running the checks
 

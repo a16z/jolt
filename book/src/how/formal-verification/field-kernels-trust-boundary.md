@@ -227,12 +227,15 @@ or prove the earlier instructions that prepared it. The report marks that
 register as an external input. Reviewers must not treat an unproved input value
 as a checked constant.
 
-The current external Akita path demonstrates both issues. Its AArch64 compiler
-output contains many addition and multiplication bodies with the same decoded
-pattern as the Jolt proof objects. LLVM chose different registers and moved the
-6A23801F constant load. Its subtraction allocation also differs in how input and
-output registers share storage. The exact Jolt object theorem therefore does
-not apply to those copies.
+An earlier external Akita build, which used the retired A7F7 field,
+demonstrated both issues. Its AArch64 compiler output contained many addition
+and multiplication bodies with the same decoded pattern as the Jolt proof
+objects of that time. LLVM chose different registers and moved the A7F7
+constant load, which was then a single `movn` instruction. Its subtraction
+allocation also differed in how input and output registers share storage. The
+exact Jolt object theorem therefore did not apply to those copies. This scan
+has not been repeated on a 6A23801F Akita binary, whose constant load is a
+`movz`, `movk` pair.
 
 The scan proves neither reachability nor completeness by itself. A matching
 sequence can belong to prover code, unused generic code, or another operation

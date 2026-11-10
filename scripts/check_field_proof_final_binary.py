@@ -69,6 +69,18 @@ X86_REGISTER_RE = re.compile(
 )
 
 
+def fp128_constant_load(architecture: str) -> bytes:
+    """Return the bytes that load C into the fp128 proof objects' offset register.
+
+    AArch64 needs two instructions (movz, movk). x86-64 needs one (mov r8d).
+    """
+    if architecture == "aarch64":
+        return b"".join(
+            word.to_bytes(4, "little") for word in fp128.AARCH64_LOAD_6A23801F_INTO_W4
+        )
+    return fp128.X86_64_LOAD_6A23801F_INTO_R8D
+
+
 def expected_patterns(architecture: str) -> dict[str, dict[str, bytes]]:
     if architecture == "aarch64":
         word_bytes = lambda words: b"".join(
@@ -432,9 +444,24 @@ def load_structural_templates(
             "mul",
             "mul_baseline",
         }:
-            body = body[1:]
+            body = strip_fp128_constant_load(body, architecture, path)
         templates.setdefault(family, {})[operation] = body
     return templates
+
+
+def strip_fp128_constant_load(
+    body: list[Instruction], architecture: str, path: Path
+) -> list[Instruction]:
+    """Drop the leading constant load, which may span several instructions."""
+    load = fp128_constant_load(architecture)
+    prefix = b""
+    for count, instruction in enumerate(body, start=1):
+        prefix += instruction.encoding
+        if prefix == load:
+            return body[count:]
+        if not load.startswith(prefix):
+            break
+    raise SystemExit(f"fp128 proof object does not start with the constant load: {path}")
 
 
 def sha256_file(path: Path) -> str:
