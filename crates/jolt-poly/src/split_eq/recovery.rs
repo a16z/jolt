@@ -59,9 +59,10 @@ impl<F: Field> PreparedLinearRecovery<'_, F> {
     }
 }
 
+#[inline(always)]
 pub(super) fn mul_linear<F: Field>(q_coeffs: &[F], at_zero: F, slope: F) -> UnivariatePoly<F> {
     let mut coefficients = vec![F::zero(); q_coeffs.len() + 1];
-    for (index, &q_coeff) in q_coeffs.iter().enumerate() {
+    for (index, q_coeff) in q_coeffs.iter().copied().enumerate() {
         coefficients[index] += q_coeff * at_zero;
         coefficients[index + 1] += q_coeff * slope;
     }

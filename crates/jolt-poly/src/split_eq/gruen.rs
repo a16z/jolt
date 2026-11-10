@@ -213,8 +213,12 @@ impl<F: Field> GruenSplitEqPolynomial<F> {
     ///
     /// # Panics
     /// Panics if no rounds remain.
+    #[inline(always)]
     pub fn current_coordinate(&self) -> F {
-        self.point[self.coordinate_index()]
+        match self.binding_order {
+            BindingOrder::LowToHigh => self.point[self.current_index.wrapping_sub(1)],
+            BindingOrder::HighToLow => self.point[self.current_index],
+        }
     }
 
     /// Returns [`EqTableError::RoundsExhausted`] if no rounds remain.
@@ -233,6 +237,7 @@ impl<F: Field> GruenSplitEqPolynomial<F> {
         self.linear_evals_at(self.current_coordinate())
     }
 
+    #[inline(always)]
     fn linear_evals_at(&self, point: F) -> (F, F) {
         let at_one = self.current_scalar * point;
         (self.current_scalar - at_one, at_one)
@@ -347,20 +352,9 @@ impl<F: Field> GruenSplitEqPolynomial<F> {
     /// # Panics
     /// Panics if no rounds remain.
     pub fn bind(&mut self, challenge: F) {
-        let point = self.current_coordinate();
-        self.bind_coordinate(challenge, point);
-    }
-
-    /// Returns `RoundsExhausted` without mutation if no rounds remain.
-    pub fn try_bind(&mut self, challenge: F) -> Result<(), EqTableError> {
-        let point = self.try_current_coordinate()?;
-        self.bind_coordinate(challenge, point);
-        Ok(())
-    }
-
-    fn bind_coordinate(&mut self, challenge: F, point: F) {
         match self.binding_order {
             BindingOrder::LowToHigh => {
+                let point = self.point[self.current_index.wrapping_sub(1)];
                 let product = point * challenge;
                 self.current_scalar *= F::one() - point - challenge + product + product;
                 self.current_index -= 1;
@@ -371,6 +365,7 @@ impl<F: Field> GruenSplitEqPolynomial<F> {
                 }
             }
             BindingOrder::HighToLow => {
+                let point = self.point[self.current_index];
                 let product = point * challenge;
                 self.current_scalar *= F::one() - point - challenge + product + product;
                 self.current_index += 1;
@@ -381,6 +376,13 @@ impl<F: Field> GruenSplitEqPolynomial<F> {
                 }
             }
         }
+    }
+
+    /// Returns `RoundsExhausted` without mutation if no rounds remain.
+    pub fn try_bind(&mut self, challenge: F) -> Result<(), EqTableError> {
+        let _coordinate = self.try_current_coordinate()?;
+        self.bind(challenge);
+        Ok(())
     }
 
     pub fn merge(&self) -> Polynomial<F> {
@@ -442,11 +444,12 @@ impl<F: Field> GruenSplitEqPolynomial<F> {
     }
 
     /// Toom samples are `q(1)..q(d-1), q`'s leading coefficient, with `d>=2`.
-    /// `q_evals` must contain at least two entries.
+    /// The caller must supply at least two entries in `q_evals`.
     /// The missing `q(0)` is evaluated only when `l(0)` vanishes.
     ///
     /// # Panics
-    /// Panics if no rounds remain or `q_evals` has fewer than two entries.
+    /// Panics if no rounds remain, or if `q_evals` is empty and the current
+    /// scalar is nonzero. The zero-scalar shortcut does not inspect `q_evals`.
     pub fn gruen_poly_from_evals(
         &self,
         q_evals: &[F],
@@ -454,7 +457,7 @@ impl<F: Field> GruenSplitEqPolynomial<F> {
         q_at_zero: impl FnOnce() -> F,
     ) -> Result<UnivariatePoly<F>, F> {
         if self.current_scalar.is_zero() {
-            let _ = self.current_coordinate();
+            self.assert_current_round();
             return Self::zero_round(q_evals.len() + 2, s_0_plus_s_1);
         }
         let q_zero = self.recover_q_zero(q_evals[0], s_0_plus_s_1, q_at_zero)?;
@@ -476,7 +479,7 @@ impl<F: Field> GruenSplitEqPolynomial<F> {
         q_at_zero: impl FnOnce() -> F,
     ) -> Result<UnivariatePoly<F>, F> {
         if self.current_scalar.is_zero() {
-            let _ = self.current_coordinate();
+            self.assert_current_round();
             return Self::zero_round(3, s_0_plus_s_1);
         }
         let q_zero = self.recover_q_zero(q_one, s_0_plus_s_1, q_at_zero)?;
@@ -511,6 +514,11 @@ impl<F: Field> GruenSplitEqPolynomial<F> {
     pub fn try_gruen_mul(&self, q_coeffs: &[F]) -> Result<UnivariatePoly<F>, EqTableError> {
         let (at_zero, at_one) = self.linear_evals_at(self.try_current_coordinate()?);
         Ok(mul_linear(q_coeffs, at_zero, at_one - at_zero))
+    }
+
+    #[inline(never)]
+    fn assert_current_round(&self) {
+        let _ = self.current_coordinate();
     }
 
     fn zero_round(coefficients: usize, hint: F) -> Result<UnivariatePoly<F>, F> {
