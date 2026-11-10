@@ -868,7 +868,7 @@ fn materialize_paired_rows<F: JoltField, S: ChunkIndexSource>(
 mod prefix_tests {
     use super::{ChunkIndexSource, LazyFoldedRa};
     #[cfg(feature = "akita")]
-    use jolt_field::Prime128OffsetA7F7;
+    use jolt_field::Prime128Offset6A23801F;
     use jolt_field::{Fr, JoltField};
 
     struct Source {
@@ -971,7 +971,7 @@ mod prefix_tests {
     #[cfg(feature = "akita")]
     #[test]
     fn constant_tail_binds_match_dense_multilinears_fp128() {
-        check::<Prime128OffsetA7F7>();
+        check::<Prime128Offset6A23801F>();
     }
 }
 

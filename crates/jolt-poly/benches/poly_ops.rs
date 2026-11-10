@@ -1,7 +1,7 @@
 #![expect(unused_results)]
 
 use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion};
-use jolt_field::{Field, FpExt4, Fr, JoltField, Prime128OffsetA7F7, Prime32Offset99};
+use jolt_field::{Field, FpExt4, Fr, JoltField, Prime128Offset6A23801F, Prime32Offset99};
 use jolt_poly::{EqPolynomial, PointRef, Polynomial, TensorEqTable, UnivariatePoly};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
@@ -33,7 +33,7 @@ fn bench_bind(c: &mut Criterion) {
 
 fn bench_bind_low_to_high_in_place(c: &mut Criterion) {
     bench_inplace_field::<Fr>(c, "Fr");
-    bench_inplace_field::<Prime128OffsetA7F7>(c, "Prime128OffsetA7F7");
+    bench_inplace_field::<Prime128Offset6A23801F>(c, "Prime128Offset6A23801F");
 }
 
 fn bench_inplace_field<F: JoltField>(c: &mut Criterion, field: &str) {
@@ -111,7 +111,7 @@ fn bench_eq_evals(c: &mut Criterion) {
 
 fn bench_eq_orders(c: &mut Criterion) {
     bench_eq_field::<Fr>(c, "Fr");
-    bench_eq_field::<Prime128OffsetA7F7>(c, "Prime128OffsetA7F7");
+    bench_eq_field::<Prime128Offset6A23801F>(c, "Prime128Offset6A23801F");
     bench_eq_field::<FpExt4<Prime32Offset99>>(c, "FpExt4");
 }
 

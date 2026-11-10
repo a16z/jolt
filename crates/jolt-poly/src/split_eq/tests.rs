@@ -1,4 +1,4 @@
-use jolt_field::{Field, Fr, Prime128OffsetA7F7, Ring};
+use jolt_field::{Field, Fr, Prime128Offset6A23801F, Ring};
 use num_traits::{One, Zero};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
@@ -413,7 +413,7 @@ fn exceptional_gruen_rounds_match_true_products_bn254() {
 
 #[test]
 fn exceptional_gruen_rounds_match_true_products_akita_field() {
-    exceptional_rounds_match_products::<Prime128OffsetA7F7>();
+    exceptional_rounds_match_products::<Prime128Offset6A23801F>();
 }
 
 #[test]
