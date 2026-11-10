@@ -144,6 +144,8 @@ fn compact_booleanity_matches_dense_rounds_and_releases_shared_rows() {
             device: None,
             tail_rows: 32,
             gpu: Arc::clone(&gpu.0),
+            table_policy_cycles: None,
+            cached_widths: 0,
         };
         let mut claim = None;
         let mut saw_device = false;

@@ -599,6 +599,15 @@ impl<'a, F: JoltField, S: ChunkIndexSource, const TRIANGULAR: bool>
         }
     }
 
+    /// Borrow the canonical constant and difference-square tables without
+    /// changing the CPU visitor or making a flattened host copy.
+    #[cfg(feature = "metal")]
+    fn column_tables(&self) -> impl ExactSizeIterator<Item = (&[F], &[F])> {
+        self.products
+            .iter()
+            .map(|(constants, squares)| (constants.as_slice(), squares.as_slice()))
+    }
+
     #[inline]
     fn state(&self, family: usize, row: usize) -> usize {
         let first = self

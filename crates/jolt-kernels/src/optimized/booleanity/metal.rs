@@ -12,6 +12,9 @@ use super::super::metal_ra::{DeviceRa, MetalRaFold, CPU_TAIL_ROWS};
 use super::super::metal_rows::ResidentInstructionRows;
 use super::*;
 
+mod tables;
+use tables::CachedTables;
+
 const MIN_GPU_PREFIX: usize = 1 << 16;
 
 pub(crate) struct MetalBooleanity(Arc<BooleanityGpu>);
@@ -28,7 +31,12 @@ impl MetalBooleanity {
                 "lazy_booleanity.metal",
                 include_str!("lazy_booleanity.metal"),
             )
-            .instantiate::<AkitaField>("lazy_booleanity");
+            .source(
+                "cached_booleanity.metal",
+                include_str!("cached_booleanity.metal"),
+            )
+            .instantiate::<AkitaField>("lazy_booleanity")
+            .instantiate::<AkitaField>("lazy_booleanity_cached");
         let library = ShaderLibrary::compile(&device, &spec)?;
         Ok(Self(Arc::new(BooleanityGpu {
             device,
@@ -61,6 +69,10 @@ impl PrepareKernel<AkitaField, Booleanity<AkitaField>> for MetalBooleanity {
             device: None,
             tail_rows: CPU_TAIL_ROWS,
             gpu: Arc::clone(&self.0),
+            #[cfg(test)]
+            table_policy_cycles: None,
+            #[cfg(test)]
+            cached_widths: 0,
         }))
     }
 }
@@ -80,6 +92,12 @@ struct MetalBooleanityKernel {
     tail_rows: usize,
     #[cfg_attr(feature = "allocative", allocative(skip))]
     gpu: Arc<BooleanityGpu>,
+    // The dense oracle uses a small domain but exercises the same bounded
+    // cache construction as a large trace, without a new full-trace fixture.
+    #[cfg(test)]
+    table_policy_cycles: Option<usize>,
+    #[cfg(test)]
+    cached_widths: u32,
 }
 
 impl MetalBooleanityKernel {
@@ -98,7 +116,7 @@ impl MetalBooleanityKernel {
             .iter()
             .take_while(|rho| !rho.is_zero())
             .count();
-        let (tables, width, radix, prefix, tails, selectors, columns) =
+        let (tables, width, radix, prefix, tails, selectors, columns, lazy_source) =
             if let Some(device) = &self.device {
                 (
                     &[][..],
@@ -108,6 +126,7 @@ impl MetalBooleanityKernel {
                     device.tails.as_slice(),
                     Vec::new(),
                     device.tails.len(),
+                    None,
                 )
             } else {
                 let Some(LazyFoldedRa::Lazy {
@@ -146,6 +165,7 @@ impl MetalBooleanityKernel {
                     tail.as_slice(),
                     selectors,
                     tables.len(),
+                    Some(source),
                 )
             };
         let resident = if self.device.is_none() {
@@ -176,6 +196,9 @@ impl MetalBooleanityKernel {
                 "metal_booleanity_dispatch",
                 width,
                 initial_constant_lut = width == 1,
+                table_mode = tracing::field::Empty,
+                table_device_bytes = tracing::field::Empty,
+                table_peak_bytes = tracing::field::Empty,
                 gpu_s = tracing::field::Empty
             );
             let _span = span.enter();
@@ -194,12 +217,90 @@ impl MetalBooleanityKernel {
                 *out = u32::try_from(value)
                     .map_err(|_| compute_error(invalid("shape exceeds 32-bit indexing")))?;
             }
-            let flat: Vec<_> = tables.iter().take(active).flatten().copied().collect();
+            let groups = pairs.div_ceil(in_len);
+            let partial_len = groups
+                .checked_mul(3)
+                .filter(|len| u32::try_from(*len).is_ok())
+                .ok_or_else(|| compute_error(invalid("partial output exceeds 32-bit indexing")))?;
+            // Count the other host/device round buffers with checked arithmetic.
+            // Existing retained trace rows are shared, not a new cache cost.
+            let auxiliary_bytes = [
+                eq.e_in_current().len(),
+                eq.e_out_current().len(),
+                partial_len,
+                active,
+                tails.len(),
+                selectors.len(),
+                columns,
+            ]
+            .into_iter()
+            .try_fold(0usize, |sum, len| sum.checked_add(len))
+            .and_then(|len| len.checked_mul(2 * std::mem::size_of::<AkitaField>()))
+            .and_then(|bytes| bytes.checked_add(4096))
+            .ok_or_else(|| compute_error(invalid("round buffer budget overflows")))?;
+            let cached_pipeline = self
+                .gpu
+                .library
+                .pipeline(&host_name::<AkitaField>("lazy_booleanity_cached"))
+                .map_err(compute_error)?;
+            let cached_width = cached_pipeline.thread_execution_width();
+            let cached_group = if cached_width == 0 {
+                0
+            } else {
+                cached_pipeline.max_total_threads_per_threadgroup().min(128) / cached_width
+                    * cached_width
+            };
+            let cached_admitted = cached_group != 0
+                && cached_group / cached_width <= 32
+                && cached_group / cached_width <= cached_width
+                && cached_pipeline.static_threadgroup_memory_length()
+                    <= self.gpu.device.limits().max_threadgroup_memory_length;
+            let cached = if cached_admitted {
+                if let Some(source) = lazy_source {
+                    #[cfg(not(test))]
+                    let policy_cycles = source.cycles();
+                    #[cfg(test)]
+                    let policy_cycles = self.table_policy_cycles.unwrap_or_else(|| source.cycles());
+                    CachedTables::prepare(
+                        &self.gpu.device,
+                        tables,
+                        width,
+                        source,
+                        &self.cpu.gamma_powers,
+                        auxiliary_bytes,
+                        policy_cycles,
+                    )
+                    .map_err(compute_error)?
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+            let mode = cached.as_ref().map_or(0, |tables| tables.mode);
+            let _ = span.record("table_mode", mode);
+            let _ = span.record(
+                "table_device_bytes",
+                cached.as_ref().map_or(0, |tables| tables.device_bytes),
+            );
+            let _ = span.record(
+                "table_peak_bytes",
+                cached.as_ref().map_or(0, |tables| tables.peak_bytes),
+            );
+            #[cfg(test)]
+            if cached.is_some() {
+                self.cached_widths |= 1 << width;
+            }
+            let flat: Vec<_> = if cached.is_none() {
+                tables.iter().take(active).flatten().copied().collect()
+            } else {
+                Vec::new()
+            };
             let placeholder = [AkitaField::zero()];
             // Donor 7aa549cc9 booleanity::write_initial_constant_table uses a
             // radix+1 lookup, including cold RAM, rather than a square cache.
             // Keep the canonical CPU categorical constant formula as owner.
-            let initial_constants: Vec<_> = if width == 1 {
+            let initial_constants: Vec<_> = if width == 1 && cached.is_none() {
                 let _ = active
                     .checked_mul(radix + 1)
                     .filter(|len| u32::try_from(*len).is_ok())
@@ -220,7 +321,7 @@ impl MetalBooleanityKernel {
             } else {
                 Vec::new()
             };
-            let initial_constants = if width == 1 {
+            let initial_constants = if width == 1 && cached.is_none() {
                 Some(
                     DeviceBuffer::from_slice(&self.gpu.device, &initial_constants)
                         .map_err(compute_error)?,
@@ -255,11 +356,6 @@ impl MetalBooleanityKernel {
                 .map_err(compute_error)?;
             let e_out = DeviceBuffer::from_slice(&self.gpu.device, eq.e_out_current())
                 .map_err(compute_error)?;
-            let groups = pairs.div_ceil(in_len);
-            let partial_len = groups
-                .checked_mul(3)
-                .filter(|len| u32::try_from(*len).is_ok())
-                .ok_or_else(|| compute_error(invalid("partial output exceeds 32-bit indexing")))?;
             let mut partials = DeviceBuffer::<AkitaField>::zeroed(&self.gpu.device, partial_len)
                 .map_err(compute_error)?;
             let pipeline = self
@@ -279,33 +375,69 @@ impl MetalBooleanityKernel {
             {
                 return Err(compute_error(invalid("unsupported SIMD-group geometry")));
             }
+            let mut cached_params = [0u32; 12];
+            cached_params[..9].copy_from_slice(&params);
+            if let Some(cache) = &cached {
+                cached_params[9..].copy_from_slice(&[
+                    cache.mode,
+                    cache.states,
+                    cache.square_stride,
+                ]);
+            }
             let mut batch = Batch::new(&self.gpu.device).map_err(compute_error)?;
-            // SAFETY: compact-row loads use the tail beyond the checked prefix.
-            // Selectors and branch tables cover every active column; each group
-            // owns three partials and all its lanes reach the group barriers.
-            // Width-one constants cover radix+1 states for each active column;
-            // other routes reuse the typed table binding which the shader never reads.
-            unsafe {
-                batch
-                    .dispatch_unchecked(
-                        pipeline,
-                        &[
-                            Binding::buffer(rows),
-                            Binding::buffer(&tables),
-                            Binding::buffer(&rho),
-                            Binding::buffer(&selectors),
-                            Binding::buffer(&e_in),
-                            Binding::buffer(&e_out),
-                            Binding::buffer(&partials),
-                            Binding::value(&params),
-                            Binding::value(&packed_tail),
-                            Binding::buffer(dense),
-                            Binding::buffer(&device_tails),
-                            Binding::buffer(initial_constants.as_ref().unwrap_or(&tables)),
-                        ],
-                        Grid::linear(groups * group_size, group_size),
-                    )
-                    .map_err(compute_error)?;
+            if let Some(cache) = &cached {
+                // SAFETY: canonical tables cover every checked category and
+                // active column. The two layouts have distinct mode tags.
+                // All row loads use the retained prefix/tail; all groups write
+                // three partials. Cache owners and 48-byte params outlive wait.
+                unsafe {
+                    batch
+                        .dispatch_unchecked(
+                            cached_pipeline,
+                            &[
+                                Binding::buffer(rows),
+                                Binding::buffer(&rho),
+                                Binding::buffer(&selectors),
+                                Binding::buffer(&e_in),
+                                Binding::buffer(&e_out),
+                                Binding::buffer(&partials),
+                                Binding::value(&cached_params),
+                                Binding::value(&packed_tail),
+                                Binding::buffer(&cache.values),
+                                Binding::buffer(cache.squares.as_ref().unwrap_or(&cache.values)),
+                            ],
+                            Grid::linear(groups * cached_group, cached_group),
+                        )
+                        .map_err(compute_error)?;
+                }
+            } else {
+                // SAFETY: compact-row loads use the tail beyond the checked prefix.
+                // Selectors and branch tables cover every active column; each group
+                // owns three partials and all its lanes reach the group barriers.
+                // Width-one constants cover radix+1 states for each active column;
+                // other routes reuse the typed table binding which the shader never reads.
+                unsafe {
+                    batch
+                        .dispatch_unchecked(
+                            pipeline,
+                            &[
+                                Binding::buffer(rows),
+                                Binding::buffer(&tables),
+                                Binding::buffer(&rho),
+                                Binding::buffer(&selectors),
+                                Binding::buffer(&e_in),
+                                Binding::buffer(&e_out),
+                                Binding::buffer(&partials),
+                                Binding::value(&params),
+                                Binding::value(&packed_tail),
+                                Binding::buffer(dense),
+                                Binding::buffer(&device_tails),
+                                Binding::buffer(initial_constants.as_ref().unwrap_or(&tables)),
+                            ],
+                            Grid::linear(groups * group_size, group_size),
+                        )
+                        .map_err(compute_error)?;
+                }
             }
             let gpu_time = batch.commit_and_wait().map_err(compute_error)?;
             let _ = span.record("gpu_s", gpu_time.as_secs_f64());

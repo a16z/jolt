@@ -33,6 +33,20 @@ impl<F: JoltField> PairedBranchTables<F> {
         branches / 2 * STATES
     }
 
+    /// The canonical paired-gather policy, shared with the device consumer.
+    pub(crate) fn fits_budget(tables: &[Vec<F>], width: usize, prefix: usize) -> bool {
+        matches!(width, 4 | 8)
+            && tables
+                .iter()
+                .all(|table| table.len() == width * PAIR_ADDRESSES)
+            && Self::entries(width) <= prefix / MIN_ROWS_PER_CACHED_VALUE
+    }
+
+    #[cfg(feature = "metal")]
+    pub(crate) fn column_tables(&self) -> impl ExactSizeIterator<Item = &[F]> {
+        self.tables.iter().map(Vec::as_slice)
+    }
+
     /// `tables[c]` holds an even number of 16-address branch blocks.
     pub(crate) fn new(tables: &[Vec<F>]) -> Self {
         let tables = tables
@@ -148,12 +162,7 @@ impl<'a, F: JoltField, S: ChunkIndexSource> PairedLoHi<'a, F, S> {
             8 => PairWidth::Eight,
             _ => return None,
         };
-        if tables
-            .iter()
-            .any(|table| table.len() != width * PAIR_ADDRESSES)
-            || PairedBranchTables::<F>::entries(width)
-                > source.constant_suffix_start() / MIN_ROWS_PER_CACHED_VALUE
-        {
+        if !PairedBranchTables::<F>::fits_budget(tables, width, source.constant_suffix_start()) {
             return None;
         }
         Some(Self {
