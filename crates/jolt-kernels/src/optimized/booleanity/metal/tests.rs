@@ -78,6 +78,9 @@ fn compact_booleanity_matches_dense_rounds_and_releases_shared_rows() {
             .map(|i| AkitaField::from_u64(700 + 29 * i as u64))
             .collect();
         if exceptional {
+            // Exercise q1 while the width-one constant lookup is active,
+            // as well as the existing later lazy/dense exceptional round.
+            cycle_point[log_t - 1] = AkitaField::zero();
             cycle_point[log_t - 3] = AkitaField::zero();
         }
         let scalar = AkitaField::from_u64(7);

@@ -25,6 +25,7 @@ kernel void lazy_booleanity(
     constant ulong4& tail [[buffer(8)]],
     device const F* dense [[buffer(9)]],
     device const F* tails [[buffer(10)]],
+    device const F* initial_constant [[buffer(11)]],
     uint group [[threadgroup_position_in_grid]],
     ushort lane [[thread_index_in_simdgroup]],
     ushort simdgroup [[simdgroup_index_in_threadgroup]],
@@ -43,23 +44,33 @@ kernel void lazy_booleanity(
         for (uint k = 0; k < 3; k++) values[k] = Acc::zero();
         for (uint column = lane; column < p.columns; column += simdwidth) {
             F lo = F::zero(), hi = F::zero();
+            uint l = p.radix, h = p.radix;
             if (p.dense) {
                 lo = 2 * pair < p.prefix ? dense[2 * pair * p.stride + column] : tails[column];
                 hi = 2 * pair + 1 < p.prefix ? dense[(2 * pair + 1) * p.stride + column] : tails[column];
             } else {
             for (uint branch = 0; branch < p.width; branch++) {
                 ulong lo_row = 2 * pair * p.width + branch, hi_row = lo_row + p.width;
-                uint l = booleanity_index(lo_row < p.prefix ? rows[lo_row] : tail, selectors[column], p.radix);
-                uint h = booleanity_index(hi_row < p.prefix ? rows[hi_row] : tail, selectors[column], p.radix);
+                l = booleanity_index(lo_row < p.prefix ? rows[lo_row] : tail, selectors[column], p.radix);
+                h = booleanity_index(hi_row < p.prefix ? rows[hi_row] : tail, selectors[column], p.radix);
                 uint base = (column * p.width + branch) * p.radix;
                 if (l < p.radix) lo = lo + tables[base + l];
                 if (h < p.radix) hi = hi + tables[base + h];
             }
             }
             F delta = hi - lo;
-            values[0].fmadd(lo, lo - rho[column]);
+            // Donor 7aa549cc9 booleanity_lazy_pair: width 1 has only radix+1
+            // possible constants. Keep the delta square on device. The cold
+            // RAM category maps to the final zero entry, not hot address zero.
+            if (!p.dense && p.width == 1) {
+                uint base = column * (p.radix + 1);
+                values[0].add(initial_constant[base + l]);
+                if (p.need_one) values[2].add(initial_constant[base + h]);
+            } else {
+                values[0].fmadd(lo, lo - rho[column]);
+                if (p.need_one) values[2].fmadd(hi, hi - rho[column]);
+            }
             values[1].fmadd(delta, delta);
-            if (p.need_one) values[2].fmadd(hi, hi - rho[column]);
         }
         for (uint k = 0; k < 3; k++) {
             Acc value = jolt::simd_merge(values[k], simdwidth);

@@ -501,6 +501,15 @@ impl<F: JoltField> OptimizedBooleanityCycleKernel<F> {
     }
 }
 
+// Shared nonlinear constant for categorical CPU products and the Metal
+// width-one lookup. Callers supply the cold category as an ordinary zero.
+fn categorical_constants<F: JoltField>(
+    values: impl IntoIterator<Item = F>,
+    rho: F,
+) -> impl Iterator<Item = F> {
+    values.into_iter().map(move |value| value * (value - rho))
+}
+
 /// After address binding, every unbound value comes from a small alphabet.
 /// Cache the two nonlinear coefficients over that alphabet, retaining the
 /// existing exact split-equality fold. The extra category is a cold RAM row;
@@ -571,7 +580,7 @@ impl<'a, F: JoltField, S: ChunkIndexSource, const TRIANGULAR: bool>
                         value
                     })
                     .collect();
-                let constants = values.iter().map(|v| *v * (*v - *rho)).collect();
+                let constants = categorical_constants(values.iter().copied(), *rho).collect();
                 let mut squares = Vec::with_capacity(Self::square_entries(states));
                 for (row, lo) in values.iter().enumerate() {
                     // (hi - lo)^2 = (lo - hi)^2, including cold RAM categories.

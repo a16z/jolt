@@ -1,3 +1,5 @@
+use std::iter::once;
+
 use jolt_akita::AkitaField;
 use jolt_field::Zero;
 use jolt_metal::runtime::{
@@ -173,6 +175,7 @@ impl MetalBooleanityKernel {
             let span = tracing::info_span!(
                 "metal_booleanity_dispatch",
                 width,
+                initial_constant_lut = width == 1,
                 gpu_s = tracing::field::Empty
             );
             let _span = span.enter();
@@ -193,6 +196,38 @@ impl MetalBooleanityKernel {
             }
             let flat: Vec<_> = tables.iter().take(active).flatten().copied().collect();
             let placeholder = [AkitaField::zero()];
+            // Donor 7aa549cc9 booleanity::write_initial_constant_table uses a
+            // radix+1 lookup, including cold RAM, rather than a square cache.
+            // Keep the canonical CPU categorical constant formula as owner.
+            let initial_constants: Vec<_> = if width == 1 {
+                let _ = active
+                    .checked_mul(radix + 1)
+                    .filter(|len| u32::try_from(*len).is_ok())
+                    .ok_or_else(|| {
+                        compute_error(invalid("initial constant table exceeds 32-bit indexing"))
+                    })?;
+                tables
+                    .iter()
+                    .take(active)
+                    .zip(&self.cpu.gamma_powers)
+                    .flat_map(|(table, rho)| {
+                        categorical_constants(
+                            table.iter().copied().chain(once(AkitaField::zero())),
+                            *rho,
+                        )
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            let initial_constants = if width == 1 {
+                Some(
+                    DeviceBuffer::from_slice(&self.gpu.device, &initial_constants)
+                        .map_err(compute_error)?,
+                )
+            } else {
+                None
+            };
             let tables = DeviceBuffer::from_slice(
                 &self.gpu.device,
                 if flat.is_empty() { &placeholder } else { &flat },
@@ -248,6 +283,8 @@ impl MetalBooleanityKernel {
             // SAFETY: compact-row loads use the tail beyond the checked prefix.
             // Selectors and branch tables cover every active column; each group
             // owns three partials and all its lanes reach the group barriers.
+            // Width-one constants cover radix+1 states for each active column;
+            // other routes reuse the typed table binding which the shader never reads.
             unsafe {
                 batch
                     .dispatch_unchecked(
@@ -264,6 +301,7 @@ impl MetalBooleanityKernel {
                             Binding::value(&packed_tail),
                             Binding::buffer(dense),
                             Binding::buffer(&device_tails),
+                            Binding::buffer(initial_constants.as_ref().unwrap_or(&tables)),
                         ],
                         Grid::linear(groups * group_size, group_size),
                     )
