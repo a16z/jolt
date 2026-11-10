@@ -701,7 +701,7 @@ pub(super) fn decompose_fold_columns_with_mode<const D: usize>(
                     if source.one_hot_k < D {
                         let num_columns = source.rows.num_columns();
                         let rows_per_ring = D / source.one_hot_k;
-                        let mut coefficients = Vec::with_capacity(rows_per_ring);
+                        let mut coefficients = vec![0usize; rows_per_ring];
                         visit_segment_ring_row_range::<D>(
                             source,
                             ring_start,
@@ -740,7 +740,7 @@ pub(super) fn decompose_fold_columns_with_mode<const D: usize>(
                                     for column in 0..num_columns {
                                         let dst = &mut compressed
                                             [(position - position_start) * num_chunks + chunk];
-                                        coefficients.clear();
+                                        let mut count = 0;
                                         for (row_offset, (row_indices, &committed_zero_mask)) in
                                             selected_rows
                                                 .chunks_exact(num_columns)
@@ -748,19 +748,22 @@ pub(super) fn decompose_fold_columns_with_mode<const D: usize>(
                                                 .enumerate()
                                         {
                                             let hot = row_indices[column];
-                                            if row_is_committed(hot, committed_zero_mask, column) {
-                                                coefficients.push(
-                                                    row_offset * source.one_hot_k
-                                                        + usize::from(hot),
-                                                );
-                                            }
+                                            // At most row_offset entries precede this row,
+                                            // so the speculative store stays inside the buffer.
+                                            coefficients[count] =
+                                                row_offset * source.one_hot_k + usize::from(hot);
+                                            count += usize::from(row_is_committed(
+                                                hot,
+                                                committed_zero_mask,
+                                                column,
+                                            ));
                                         }
                                         let prepared_block = trace_block * num_columns + column;
                                         add_rotated_rows(
                                             dst,
                                             &rotations,
                                             prepared_block,
-                                            &coefficients,
+                                            &coefficients[..count],
                                         );
                                     }
                                 }

@@ -190,9 +190,9 @@ fn packed_fp64_wide_sub_word_matches_integer_reference() {
 #[test]
 fn packed_fp128_matches_scalar() {
     check_prime_field::<<two::Prime128Offset275 as WithPacking>::Packing>(pm(128, 275), 0x12801);
-    check_prime_field::<<two::Prime128OffsetA7F7 as WithPacking>::Packing>(
-        pm(128, 0xFFFF_A7F7),
-        0x12804,
+    check_prime_field::<<two::Prime128Offset6A23801F as WithPacking>::Packing>(
+        pm(128, 0x6A23_801F),
+        0x12805,
     );
 }
 
@@ -273,10 +273,10 @@ fn packed_ext4_matches_scalar() {
     check_ext_field::<<two::FpExt4<F31> as WithPacking>::Packing, F31>(pm(31, 19), 0xE402);
     type F64 = two::Prime64Offset59;
     check_ext_field::<<two::FpExt4<F64> as WithPacking>::Packing, F64>(pm(64, 59), 0xE403);
-    type F128 = two::Prime128OffsetA7F7;
-    check_ext_field::<<two::FpExt4<F128> as WithPacking>::Packing, F128>(
-        pm(128, 0xFFFF_A7F7),
-        0xE404,
+    type F6a23801f = two::Prime128Offset6A23801F;
+    check_ext_field::<<two::FpExt4<F6a23801f> as WithPacking>::Packing, F6a23801f>(
+        pm(128, 0x6A23_801F),
+        0xE405,
     );
 }
 
@@ -301,11 +301,11 @@ fn with_packing_associated_types() {
     check_with_packing::<two::Prime56Offset27>(0x5107);
     check_with_packing::<two::Prime64Offset59>(0x5108);
     check_with_packing::<two::Prime128Offset275>(0x5109);
-    check_with_packing::<two::Prime128OffsetA7F7>(0x510c);
+    check_with_packing::<two::Prime128Offset6A23801F>(0x510b);
     check_with_packing::<two::Ext2<two::Prime32Offset99>>(0x510d);
     check_with_packing::<two::FpExt2<two::Fp32<251>, two::NegOneNr>>(0x510e);
     check_with_packing::<two::FpExt4<two::Prime32Offset99>>(0x510f);
-    check_with_packing::<two::FpExt4<two::Prime128OffsetA7F7>>(0x5110);
+    check_with_packing::<two::FpExt4<two::Prime128Offset6A23801F>>(0x5110);
     check_with_packing::<two::FpExt8<two::Prime32Offset99>>(0x5111);
     check_with_packing::<two::FpExt8<two::Prime64Offset59>>(0x5112);
 }

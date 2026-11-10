@@ -19,6 +19,7 @@ jolt-sumcheck = { path = "../..", default-features = false, features = [
   "prover",
 ] }
 jolt-transcript = { path = "../../../jolt-transcript", default-features = false, features = [
+  "prover-entropy",
   "solinas",
   "transcript-keccak",
 ] }

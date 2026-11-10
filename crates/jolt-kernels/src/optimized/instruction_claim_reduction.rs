@@ -429,7 +429,7 @@ mod tests {
         InstructionClaimReductionPublic, JoltDerivedId, TraceDimensions,
     };
     #[cfg(feature = "akita")]
-    use jolt_field::Prime128OffsetA7F7;
+    use jolt_field::Prime128Offset6A23801F;
     use jolt_field::{Fr, JoltField, Ring};
     use jolt_poly::{BindingOrder, Polynomial};
     use jolt_sumcheck::ProveRounds;
@@ -661,6 +661,6 @@ mod tests {
     fn operand_claims_match_dense_evaluation_at_scalar_boundaries() {
         check_operand_claims_at_scalar_boundaries::<Fr>();
         #[cfg(feature = "akita")]
-        check_operand_claims_at_scalar_boundaries::<Prime128OffsetA7F7>();
+        check_operand_claims_at_scalar_boundaries::<Prime128Offset6A23801F>();
     }
 }
