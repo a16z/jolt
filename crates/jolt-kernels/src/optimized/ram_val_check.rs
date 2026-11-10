@@ -60,28 +60,14 @@ impl<F: JoltField> PrepareKernel<F, RamValCheck<F>> for OptimizedBackend {
         witness: &dyn JoltWitnessPlane<F>,
         inputs: ProverInputs<'_, F, RamValCheck<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = RamValCheck<F>>>, KernelError<F>> {
-        let relation = inputs.relation;
-        let log_t = relation.trace_dimensions().log_t();
-        let ram_log_k = relation.ram_log_k();
-        let ram_val_point: &[F] = &inputs.points.ram_val;
-        if ram_val_point.len() != ram_log_k + log_t {
-            return Err(KernelError::InvariantViolation {
-                reason: "RAM value-check input point has the wrong variable count",
-            });
-        }
-        let (r_address, r_cycle) = ram_val_point.split_at(ram_log_k);
-
-        // Reuse stage 2 addresses; collect only the short-lived values.
+        let log_t = inputs.relation.trace_dimensions().log_t();
         let columns = RamAccessColumns::collect_full(session, witness, log_t)?;
-        super::ram_trace::validate_addresses(&columns.addresses, 1usize << ram_log_k)?;
         let addresses = Arc::clone(&columns.addresses);
-
-        Ok(Box::new(RamValCheckKernel {
-            progress: RoundProgress::new(log_t),
-            inc: IncColumn::Raw(columns),
-            ra: LazyFoldedRa::new(vec![eq_table(r_address)], RamAddressIndices { addresses }),
-            lt: SplitLt::new_plus_constant(r_cycle, inputs.challenges.gamma),
-        }))
+        Ok(Box::new(RamValCheckKernel::prepare_state(
+            inputs,
+            addresses,
+            IncColumn::Raw(columns),
+        )?))
     }
 }
 
@@ -246,6 +232,28 @@ struct RamValCheckKernel<F: JoltField> {
 }
 
 impl<F: JoltField> RamValCheckKernel<F> {
+    fn prepare_state(
+        inputs: ProverInputs<'_, F, RamValCheck<F>>,
+        addresses: Arc<RamAddresses>,
+        inc: IncColumn<F>,
+    ) -> Result<Self, KernelError<F>> {
+        let log_t = inputs.relation.trace_dimensions().log_t();
+        let ram_log_k = inputs.relation.ram_log_k();
+        if inputs.points.ram_val.len() != ram_log_k + log_t {
+            return Err(KernelError::InvariantViolation {
+                reason: "RAM value-check input point has the wrong variable count",
+            });
+        }
+        super::ram_trace::validate_addresses(&addresses, 1usize << ram_log_k)?;
+        let (r_address, r_cycle) = inputs.points.ram_val.split_at(ram_log_k);
+        Ok(Self {
+            progress: RoundProgress::new(log_t),
+            inc,
+            ra: LazyFoldedRa::new(vec![eq_table(r_address)], RamAddressIndices { addresses }),
+            lt: SplitLt::new_plus_constant(r_cycle, inputs.challenges.gamma),
+        })
+    }
+
     fn bind(&mut self, challenge: F) {
         let mut freed_columns = false;
         if let IncColumn::Bound(inc) = &mut self.inc {
@@ -573,3 +581,6 @@ mod tests {
         );
     }
 }
+
+#[cfg(feature = "metal")]
+pub(crate) mod metal;

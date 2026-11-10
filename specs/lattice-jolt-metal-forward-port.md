@@ -826,3 +826,33 @@ MIN/MAX immediates, every packed width, dense continuation, an exceptional GPU
 equality endpoint, and the CPU handoff. Compilation, Metal validation and an
 inclusive full-proof timing must pass before accepting this candidate; no
 performance gain is inferred from its buffer sizes.
+
+### RAM value sparse carry candidate
+
+The paired RAM read/write and value factories capture nonzero increments during
+stage 2's existing canonical increment production. Each ordered 16,384-row chunk
+first fills the ordinary CPU field vector, then reserves its exact sparse cycle
+and field payload against one global 512 MiB budget before allocating. The budget
+also includes all chunk headers; allocator bookkeeping is excluded. If any chunk
+fails admission, the complete CPU vector remains usable and the entire carry is
+discarded. The carry retains the existing address owner, exact trace/preprocessing
+identity and logical cycle domain, but no pre/post value columns or new raw rows.
+
+Stage 4 checks that identity, uploads the sparse arrays directly into their final
+buffers, and uploads the address prefix once. The donor
+`solinas_ram_val_sparse_prefix` parent-leader traversal evaluates only parents
+with nonzero increments; RA gathers still include every address sibling. Current
+`LazyFoldedRa` branch tables and `SplitLt` supply the factors for the cubic
+samples at 0, 2 and 3. At the canonical lazy materialization boundary, the incoming
+challenge advances once and the captured increments materialize directly at the
+new width. CPU code finishes the remaining rounds and all output claims, including
+the independent RA claim.
+
+The capture requests at most 512 MiB beyond the normal CPU state. Its GPU copy
+adds the same sparse payload plus four bytes per explicit address; at T27 this
+address upload is at most 512 MiB. Sources are dropped at handoff. Capture, upload,
+dispatch and handoff have separate spans, and any comparison must include the
+stage-2 capture cost. This candidate has source review only; correctness and
+inclusive performance measurements remain pending. The existing reference parity
+case covers multiple producer chunks, global-budget failure, signed increments,
+zero-increment siblings, odd prefix, lazy messages and the CPU handoff.

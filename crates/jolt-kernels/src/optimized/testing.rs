@@ -93,6 +93,16 @@ pub(crate) fn with_ram_fixture_init<R>(
     ops: Vec<RamOp>,
     f: impl FnOnce(&dyn JoltWitnessPlane<Fr>) -> R,
 ) -> R {
+    with_ram_fixture_field(shape, init_words, ops, f)
+}
+
+/// The same scripted RAM witness with the caller's field backend.
+pub(crate) fn with_ram_fixture_field<F: JoltField, R>(
+    shape: FixtureShape,
+    init_words: Vec<u64>,
+    ops: Vec<RamOp>,
+    f: impl FnOnce(&dyn JoltWitnessPlane<F>) -> R,
+) -> R {
     assert!(ops.len() < 1usize << shape.log_t, "script too long");
     assert!(
         init_words.is_empty() || 2 + init_words.len() <= shape.ram_k,

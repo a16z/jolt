@@ -8,6 +8,7 @@ use crate::optimized::bytecode_read_raf::metal::MetalBytecodeReadRafAddress;
 use crate::optimized::instruction_input::metal::MetalInstructionInput;
 use crate::optimized::instruction_ra_virtualization::metal::MetalInstructionRa;
 use crate::optimized::instruction_read_raf::metal::MetalInstructionReadRaf;
+use crate::optimized::ram_val_check::metal::MetalRamVal;
 use crate::optimized::registers_read_write::metal::MetalRegistersReadWrite;
 use crate::{
     CommitWitness, JoltBackend, KernelError, ProofSession, WitnessCommitRequest, WitnessCommitment,
@@ -31,6 +32,9 @@ impl<PCS: CommitmentScheme<Field = AkitaField>> JoltBackend<AkitaField, PCS> {
         let mut registers = MetalRegistersReadWrite::new()?;
         self.registers_val_evaluation = Box::new(registers.value_evaluation()?);
         self.registers_read_write = Box::new(registers);
+        let ram = MetalRamVal::new()?;
+        self.ram_read_write = Box::new(ram.preparation());
+        self.ram_val_check = Box::new(ram);
         self.instruction_input = Box::new(MetalInstructionInput::new()?);
         self.instruction_read_raf = Box::new(MetalInstructionReadRaf::new()?);
         self.instruction_ra_virtualization = Box::new(MetalInstructionRa::new()?);

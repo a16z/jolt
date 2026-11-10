@@ -394,6 +394,20 @@ impl<F: JoltField> PrepareKernel<F, RamReadWriteChecking<F>> for OptimizedBacken
         inputs: ProverInputs<'_, F, RamReadWriteChecking<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = RamReadWriteChecking<F>>>, KernelError<F>>
     {
+        Self::prepare_ram_with_increments(session, witness, inputs, |_, columns| {
+            map_indices(columns.value_prefix_len(), |cycle| columns.increment(cycle))
+        })
+    }
+}
+
+impl OptimizedBackend {
+    pub(super) fn prepare_ram_with_increments<F: JoltField>(
+        session: &mut ProofSession,
+        witness: &dyn JoltWitnessPlane<F>,
+        inputs: ProverInputs<'_, F, RamReadWriteChecking<F>>,
+        produce: impl FnOnce(&mut ProofSession, &RamAccessColumns) -> Vec<F>,
+    ) -> Result<Box<dyn SumcheckKernel<F, Relation = RamReadWriteChecking<F>>>, KernelError<F>>
+    {
         let relation = inputs.relation;
         let dimensions = relation.dimensions();
         let log_t = dimensions.log_t();
@@ -417,7 +431,7 @@ impl<F: JoltField> PrepareKernel<F, RamReadWriteChecking<F>> for OptimizedBacken
 
         let inc_rows = witness.shape(ram_inc().polynomial_id())?.rows();
         let inc = PrefixColumn {
-            values: map_indices(columns.value_prefix_len(), |cycle| columns.increment(cycle)),
+            values: produce(session, &columns),
             tail: [F::zero(); 2],
         };
         let val_final = witness.oracle_table(JoltPolynomialId::Virtual(
