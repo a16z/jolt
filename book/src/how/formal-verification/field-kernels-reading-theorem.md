@@ -62,7 +62,7 @@ read RIP s = word body_pc
 
 This says generic execution starts immediately after the fixture's literal
 constant load. The precondition also puts symbolic `c` in `r8`. The separate
-A7F7 corollary starts at the first instruction and proves that literal load.
+6A23801F corollary starts at the first instruction and proves that literal load.
 
 The register equations place the four input limbs in the physical registers
 used by the object. The values are variables, but the register names are fixed
@@ -115,7 +115,7 @@ Each baseline kernel has three theorem levels.
 
 The generic body theorem starts after the fixture's constant load and stops
 before `ret`. It states the arithmetic result for every valid offset and the
-exact state that the body may change. The A7F7 body corollary starts at the
+exact state that the body may change. The 6A23801F body corollary starts at the
 literal load and specializes the generic theorem.
 
 The subroutine theorem adds the procedure call convention. On x86-64 it states

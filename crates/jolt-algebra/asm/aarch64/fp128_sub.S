@@ -11,7 +11,7 @@
 .type C_SYMBOL(jolt_fp128_sub_asm), %function
 #endif
 C_SYMBOL(jolt_fp128_sub_asm):
-#include "fp128_load_a7f7.inc"
+#include "fp128_load_6a23801f.inc"
 #include "fp128_sub_body.inc"
 ret
 #if !defined(__APPLE__)
