@@ -421,7 +421,15 @@ writer finishes. The existing runtime API is reused without runtime changes;
 CPU topology and coefficient-table policy remain canonical. Allocation and
 seed-fill spans charge preparation to the proof. Compilation, the existing
 reference oracle, Metal validation and an inclusive full-proof comparison are
-still required. GPU dispatch time alone
+still required. The next isolated change transplants the donor's cooperative
+indexed/transition/direct bind-message schedule from
+`7aa549cc9:crates/jolt-kernels/src/metal/solinas/registers_read_write/fused_sequence.metal`.
+It retains current CPU topology and direct seed production, adapts masks to 128
+columns and guards odd/missing rows. Both bind-only and fused paths call the
+same transition, increment and message helpers. The canonical LUT advances
+once; indexed messages use the new codebook and transition messages resolve
+the old saturated codebook. Seed rounds and natural small-tail handoff stay
+unchanged. GPU dispatch time alone
 (0.5208 s) is not evidence of an improvement. The frozen prototype and profile
 remain in `registers-metal/` under the artifact directory.
 

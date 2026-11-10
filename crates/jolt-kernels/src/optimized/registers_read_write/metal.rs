@@ -14,7 +14,9 @@ use super::sparse::layout::SparseEntry;
 use super::sparse::{CoeffLut, SeedEntry};
 use super::*;
 
+mod message;
 mod state;
+use message::RoundWeights;
 use state::DeviceCycle;
 
 const MIN_GPU_ROWS: usize = 1 << 16;
@@ -41,6 +43,7 @@ impl MetalRegistersReadWrite {
             "rw_seed_bind",
             "rw_sparse_message",
             "rw_sparse_bind",
+            "rw_sparse_bind_message_cooperative",
         ] {
             spec = spec.instantiate::<F>(name);
         }
@@ -169,44 +172,47 @@ impl ProveRounds<F> for MetalRegisterKernel {
         round: usize,
         claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
+        let mut fused_message = None;
         if let Some(r) = bind {
             if let Some(device) = self.device.take() {
-                let device = device.bind(&self.gpu, r).map_err(compute_error)?;
-                self.device = Some(device);
-                let device = self
-                    .device
-                    .as_ref()
-                    .ok_or_else(|| compute_error(invalid("device owner disappeared")))?;
-                if device.ready_for_cpu(self.tail_entries)
-                    || self.cpu.challenges.bound() + 1 == self.cpu.dimensions.log_t()
-                {
-                    let device = self
-                        .device
-                        .take()
-                        .ok_or_else(|| compute_error(invalid("device owner disappeared")))?;
-                    self.cpu.cycle = Some(device.restore().map_err(compute_error)?);
+                let final_cycle = self.cpu.challenges.bound() + 1 == self.cpu.dimensions.log_t();
+                if !final_cycle {
+                    // Fused messages use the equality state after this bind.
+                    self.cpu.advance_cycle(r)?;
                 }
-                self.cpu.advance_cycle(r)?;
+                let weights = (!final_cycle).then(|| RoundWeights::new(&self.cpu.gruen));
+                let bound = device
+                    .bind(&self.gpu, r, weights, self.tail_entries)
+                    .map_err(compute_error)?;
+                fused_message = bound.message;
+                if bound.cycle.ready_for_cpu(self.tail_entries) || final_cycle {
+                    self.cpu.cycle = Some(bound.cycle.restore().map_err(compute_error)?);
+                } else {
+                    self.device = Some(bound.cycle);
+                }
+                if final_cycle {
+                    self.cpu.advance_cycle(r)?;
+                }
             } else {
                 self.cpu.bind(r)?;
             }
         }
-        if let Some(device) = self.device.as_mut() {
-            let need_one = self.cpu.gruen.current_linear_evals().1.is_zero()
-                && !self.cpu.gruen.current_scalar().is_zero();
-            let [q0, leading, q1] = device
-                .message(
-                    &self.gpu,
-                    self.cpu.gruen.e_in_current(),
-                    self.cpu.gruen.e_out_current(),
-                    need_one,
-                )
-                .map_err(compute_error)?;
-            self.cpu
-                .gruen
-                .checked_cubic(q0, leading, claim, round, || q1)
-        } else {
-            self.cpu.prove_round(None, round, claim)
+        let message = match (fused_message, self.device.as_mut()) {
+            (Some(message), _) => Some(message),
+            (None, Some(device)) => Some(
+                device
+                    .message(&self.gpu, RoundWeights::new(&self.cpu.gruen))
+                    .map_err(compute_error)?,
+            ),
+            (None, None) => None,
+        };
+        match message {
+            Some([q0, leading, q1]) => {
+                self.cpu
+                    .gruen
+                    .checked_cubic(q0, leading, claim, round, || q1)
+            }
+            None => self.cpu.prove_round(None, round, claim),
         }
     }
 

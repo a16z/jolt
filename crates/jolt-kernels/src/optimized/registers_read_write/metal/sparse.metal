@@ -192,6 +192,23 @@ kernel void rw_seed_bind(
 }
 
 template <typename F>
+F register_bound_increment(device const F* inc, uint count, uint row, F r) {
+    F lo = 2 * row < count ? inc[2 * row] : F::zero();
+    F hi = 2 * row + 1 < count ? inc[2 * row + 1] : F::zero();
+    return lo + r * (hi - lo);
+}
+
+template <typename F>
+void register_store_sparse(RegisterCell<F> cell, uint index, bool direct,
+    device F* values, device ulong2* boundaries, device uint* codes,
+    device F* ra, device F* wa) {
+    values[index] = cell.val;
+    boundaries[index] = ulong2(cell.prev, cell.next);
+    if (direct) { ra[index] = cell.ra; wa[index] = cell.wa; }
+    else codes[index] = (cell.wa_code << 16) | cell.ra_code;
+}
+
+template <typename F>
 kernel void rw_sparse_bind(
     device const F* values [[buffer(0)]],
     device const ulong2* boundaries [[buffer(1)]],
@@ -221,14 +238,11 @@ kernel void rw_sparse_bind(
         RegisterCell<F> even=register_sparse_cell(values,boundaries,codes,ra,wa,masks,offsets,ra_lut,wa_lut,p.rows,2*row,col,p.direct!=0,p.out_direct!=0);
         RegisterCell<F> odd=register_sparse_cell(values,boundaries,codes,ra,wa,masks,offsets,ra_lut,wa_lut,p.rows,2*row+1,col,p.direct!=0,p.out_direct!=0);
         RegisterCell<F> cell=register_bind_cell(even,odd,r,p.ra_bits,p.wa_bits,p.out_direct!=0);
-        out_values[index]=cell.val; out_boundaries[index]=ulong2(cell.prev,cell.next);
-        if(p.out_direct) {out_ra[index]=cell.ra;out_wa[index]=cell.wa;}
-        else out_codes[index]=(cell.wa_code<<16)|cell.ra_code;
+        register_store_sparse(cell,index,p.out_direct!=0,out_values,out_boundaries,out_codes,out_ra,out_wa);
         index++;
     }
     if(row<((p.inc_len>>1)+(p.inc_len&1))) {
-        F lo=inc[2*row],hi=2*row+1<p.inc_len?inc[2*row+1]:F::zero();
-        out_inc[row]=lo+r*(hi-lo);
+        out_inc[row]=register_bound_increment(inc,p.inc_len,row,r);
     }
 }
 
@@ -275,5 +289,121 @@ kernel void rw_sparse_message(
     for(uint k=0;k<3;k++) {
         Acc sum=jolt::threadgroup_merge(sums[k],scratch[k],lane,simdgroup,simdgroups,simdwidth);
         if(simdgroup==0&&lane==0)partials[3*group+k]=sum.reduce();
+    }
+}
+
+struct RegisterCooperativeParams {
+    RegisterSparseBindParams bind;
+    uint pairs, in_len, need_one;
+};
+
+template <typename F>
+F register_shuffle_field(F value, ushort source_lane) {
+    return F{uint4(metal::simd_shuffle(value.limb.x, source_lane),
+                  metal::simd_shuffle(value.limb.y, source_lane),
+                  metal::simd_shuffle(value.limb.z, source_lane),
+                  metal::simd_shuffle(value.limb.w, source_lane))};
+}
+
+// Work assignment and fused indexed/transition/direct flow are ported from
+// 7aa549cc9, metal/solinas/registers_read_write/fused_sequence.metal's
+// *_bind_message_cooperative kernels. Current helpers own the arithmetic.
+template <typename F>
+kernel void rw_sparse_bind_message_cooperative(
+    device const F* values [[buffer(0)]],
+    device const ulong2* boundaries [[buffer(1)]],
+    device const uint* codes [[buffer(2)]],
+    device const F* ra [[buffer(3)]],
+    device const F* wa [[buffer(4)]],
+    device const uint4* masks [[buffer(5)]],
+    device const uint* offsets [[buffer(6)]],
+    device const F* inc [[buffer(7)]],
+    device const F* ra_lut [[buffer(8)]],
+    device const F* wa_lut [[buffer(9)]],
+    device F* out_values [[buffer(10)]],
+    device ulong2* out_boundaries [[buffer(11)]],
+    device uint* out_codes [[buffer(12)]],
+    device F* out_ra [[buffer(13)]],
+    device F* out_wa [[buffer(14)]],
+    device const uint4* out_masks [[buffer(15)]],
+    device const uint* out_offsets [[buffer(16)]],
+    device F* out_inc [[buffer(17)]],
+    constant RegisterCooperativeParams& params [[buffer(18)]],
+    constant F& r [[buffer(19)]],
+    device const F* e_in [[buffer(20)]],
+    device const F* e_out [[buffer(21)]],
+    device F* partials [[buffer(22)]],
+    uint group [[threadgroup_position_in_grid]],
+    uint tid [[thread_index_in_threadgroup]],
+    ushort lane [[thread_index_in_simdgroup]],
+    ushort simdgroup [[simdgroup_index_in_threadgroup]],
+    ushort simdgroups [[simdgroups_per_threadgroup]],
+    ushort simdwidth [[threads_per_simdgroup]]) {
+    using Acc = jolt::Accumulator<F>;
+    static_assert(Acc::CAPACITY >= 256ul, "128 register columns contribute at most 256 products");
+    constant RegisterSparseBindParams& p = params.bind;
+    const ushort cooperating = p.direct ? 8 : 4;
+    const ushort local_lane = lane % cooperating;
+    const ushort subgroup_base = lane - local_lane;
+    const uint work = group * (256u / cooperating) + tid / cooperating;
+    const uint low_row = 2 * work, high_row = low_row + 1;
+    F inc_zero = F::zero(), inc_high = F::zero();
+    if (work < params.pairs && local_lane == 0) {
+        inc_zero = register_bound_increment(inc, p.inc_len, low_row, r);
+        inc_high = register_bound_increment(inc, p.inc_len, high_row, r);
+        const uint inc_rows = (p.inc_len >> 1) + (p.inc_len & 1);
+        if (low_row < inc_rows) out_inc[low_row] = inc_zero;
+        if (high_row < inc_rows) out_inc[high_row] = inc_high;
+    }
+    // Shuffles stay outside per-work guards so every SIMD lane participates.
+    inc_zero = register_shuffle_field(inc_zero, subgroup_base);
+    inc_high = register_shuffle_field(inc_high, subgroup_base);
+    Acc terms[3] = {Acc::zero(), Acc::zero(), Acc::zero()};
+    if (work < params.pairs) {
+        uint4 low_mask = low_row < p.out_rows ? out_masks[low_row] : uint4(0);
+        uint4 high_mask = high_row < p.out_rows ? out_masks[high_row] : uint4(0);
+        uint4 remaining = low_mask | high_mask;
+        while (register_any(remaining)) {
+            uint4 lane_mask = remaining;
+            for (ushort i = 0; i < local_lane && register_any(lane_mask); i++)
+                register_next(lane_mask);
+            if (register_any(lane_mask)) {
+                uint col = register_next(lane_mask);
+                RegisterCell<F> cells[2];
+                for (uint side = 0; side < 2; side++) {
+                    uint row = low_row + side;
+                    RegisterCell<F> a = register_sparse_cell(values,boundaries,codes,ra,wa,
+                        masks,offsets,ra_lut,wa_lut,p.rows,2*row,col,p.direct!=0,p.out_direct!=0);
+                    RegisterCell<F> b = register_sparse_cell(values,boundaries,codes,ra,wa,
+                        masks,offsets,ra_lut,wa_lut,p.rows,2*row+1,col,p.direct!=0,p.out_direct!=0);
+                    RegisterCell<F> cell = register_bind_cell(a,b,r,p.ra_bits,p.wa_bits,p.out_direct!=0);
+                    if (cell.present) {
+                        uint4 mask = side == 0 ? low_mask : high_mask;
+                        uint index = out_offsets[row] + register_rank(mask,col);
+                        register_store_sparse(cell,index,p.out_direct!=0,
+                            out_values,out_boundaries,out_codes,out_ra,out_wa);
+                    }
+                    if (!p.out_direct) {
+                        // Indexed output codes address the host's newly bound LUT.
+                        cell.ra = ra_lut[cell.ra_code]; cell.wa = wa_lut[cell.wa_code];
+                    }
+                    cells[side] = cell;
+                }
+                register_pair_evals(cells[0],cells[1],inc_zero,inc_high,params.need_one!=0,terms);
+            }
+            for (ushort i = 0; i < cooperating && register_any(remaining); i++)
+                register_next(remaining);
+        }
+    }
+    F weight = F::zero();
+    if (work < params.pairs && local_lane == 0)
+        weight = e_in[work % params.in_len] * e_out[work / params.in_len];
+    threadgroup Acc scratch[3][32];
+    for (uint k = 0; k < 3; k++) {
+        Acc pair = jolt::simd_merge(terms[k], cooperating);
+        Acc weighted = Acc::zero();
+        if (work < params.pairs && local_lane == 0) weighted.fmadd(weight,pair.reduce());
+        Acc sum = jolt::threadgroup_merge(weighted,scratch[k],lane,simdgroup,simdgroups,simdwidth);
+        if (simdgroup == 0 && lane == 0) partials[3*group+k] = sum.reduce();
     }
 }

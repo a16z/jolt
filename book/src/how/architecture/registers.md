@@ -75,3 +75,11 @@ suffixes, CPU tail handoff and address rounds retain their existing owners.
 Small prefixes and address-first relations use the CPU implementation. This
 candidate requires inclusive full-proof measurement: the preceding verified
 prototype lost more time preparing buffers than it saved in GPU arithmetic.
+
+The sparse resident transitions port the donor's cooperative bind/message
+schedule: four lanes share indexed work and eight share direct field work.
+Each work item binds four old rows, stores two new rows and evaluates their
+next message using the existing transition and quadratic helpers. The current
+128-register masks, independent increment prefix and exceptional equality
+endpoint remain supported. Seed rounds and the final small CPU tail keep their
+existing paths. The candidate still needs an inclusive performance comparison.

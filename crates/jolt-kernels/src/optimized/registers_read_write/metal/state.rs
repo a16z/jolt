@@ -1,3 +1,4 @@
+use super::message::MessageBuffers;
 use super::*;
 
 // Rows cover the explicit prefix, including empty rows. Values are compact:
@@ -105,8 +106,8 @@ impl PendingSparse {
             inc: DeviceBuffer::uninit(&gpu.device, inc_len)?,
         })
     }
-    /// The caller must have completed rw_seed_bind or rw_sparse_bind over
-    /// every topology row, with the matching input/output extents.
+    /// The caller must have completed a seed bind, sparse bind or cooperative
+    /// sparse bind/message over every topology row with matching extents.
     unsafe fn finish(self) -> Result<Sparse, MetalError> {
         // SAFETY: the caller supplies the completed full-write dispatch;
         // inactive placeholders are already initialized by new().
@@ -168,6 +169,11 @@ pub(super) struct DeviceCycle {
     phase: Phase,
     ra_lut: CoeffLut<F>,
     wa_lut: CoeffLut<F>,
+}
+
+pub(super) struct BoundCycle {
+    pub cycle: DeviceCycle,
+    pub message: Option<[F; 3]>,
 }
 
 impl DeviceCycle {
@@ -239,18 +245,27 @@ impl DeviceCycle {
         matches!(&self.phase, Phase::Sparse(state) if state.direct() && state.topology.entries() <= entries)
     }
 
-    pub(super) fn bind(mut self, gpu: &RegisterGpu, r: F) -> Result<Self, MetalError> {
+    pub(super) fn bind(
+        mut self,
+        gpu: &RegisterGpu,
+        r: F,
+        weights: Option<RoundWeights<'_>>,
+        tail_entries: usize,
+    ) -> Result<BoundCycle, MetalError> {
         let _span = tracing::info_span!("metal_registers_bind").entered();
         if let Phase::Seed(seed) = &mut self.phase {
             if seed.first.is_none() {
                 seed.first = Some(r);
                 self.ra_lut.bind(r);
                 self.wa_lut.bind(r);
-                return Ok(self);
+                return Ok(BoundCycle {
+                    cycle: self,
+                    message: None,
+                });
             }
         }
-        let ra_lut = DeviceBuffer::from_slice(&gpu.device, &self.ra_lut.values)?;
-        let wa_lut = DeviceBuffer::from_slice(&gpu.device, &self.wa_lut.values)?;
+        let mut message = None;
+        let mut lut_advanced = false;
         let next = match self.phase {
             Phase::Seed(seed) => {
                 // Structural topology is independent of either binding challenge.
@@ -293,47 +308,107 @@ impl DeviceCycle {
                     old.inc.len().div_ceil(2),
                     direct,
                 )?;
+                let ra_bits = self.ra_lut.bits();
+                let wa_bits = self.wa_lut.bits();
+                let fused_weights =
+                    weights.filter(|_| !(direct && next.topology.entries() <= tail_entries));
+                if fused_weights.is_some() && !direct {
+                    // Indexed outputs use the bound codebook in their message;
+                    // transition outputs instead resolve the old saturated LUT.
+                    self.ra_lut.bind(r);
+                    self.wa_lut.bind(r);
+                    lut_advanced = true;
+                }
+                let ra_lut = DeviceBuffer::from_slice(&gpu.device, &self.ra_lut.values)?;
+                let wa_lut = DeviceBuffer::from_slice(&gpu.device, &self.wa_lut.values)?;
+                let lanes = if old.direct() { 8 } else { 4 };
+                let mut buffers = fused_weights
+                    .map(|weights| {
+                        MessageBuffers::new(
+                            gpu,
+                            next.topology.masks.len(),
+                            weights,
+                            THREADS / lanes,
+                        )
+                    })
+                    .transpose()?;
                 let params = [
                     u32_shape(old.topology.masks.len())?,
                     u32_shape(next.topology.masks.len())?,
                     u32_shape(old.inc.len())?,
                     u32::from(old.direct()),
                     u32::from(direct),
-                    self.ra_lut.bits(),
-                    self.wa_lut.bits(),
+                    ra_bits,
+                    wa_bits,
                 ];
-                gpu.dispatch(
-                    "rw_sparse_bind",
-                    &[
-                        Binding::buffer(&old.values),
-                        Binding::buffer(&old.boundaries),
-                        old.codes(),
-                        old.ra(),
-                        old.wa(),
-                        Binding::buffer(&old.topology.device_masks),
-                        Binding::buffer(&old.topology.device_offsets),
-                        Binding::buffer(&old.inc),
-                        Binding::buffer(&ra_lut),
-                        Binding::buffer(&wa_lut),
-                        Binding::buffer(&next.values),
-                        Binding::buffer(&next.boundaries),
-                        next.codes(),
-                        next.ra(),
-                        next.wa(),
-                        Binding::buffer(&next.topology.device_masks),
-                        Binding::buffer(&next.topology.device_offsets),
-                        Binding::buffer(&next.inc),
-                        Binding::value(&params),
-                        Binding::value(&r),
-                    ],
-                    next.topology.masks.len(),
-                )?;
+                let fused_params = if let (Some(weights), Some(buffers)) = (fused_weights, &buffers)
+                {
+                    [
+                        params[0],
+                        params[1],
+                        params[2],
+                        params[3],
+                        params[4],
+                        params[5],
+                        params[6],
+                        u32_shape(buffers.pairs)?,
+                        u32_shape(weights.e_in.len())?,
+                        u32::from(weights.need_one),
+                    ]
+                } else {
+                    [0; 10]
+                };
+                let constants = if buffers.is_some() {
+                    Binding::value(&fused_params)
+                } else {
+                    Binding::value(&params)
+                };
+                let mut bindings = vec![
+                    Binding::buffer(&old.values),
+                    Binding::buffer(&old.boundaries),
+                    old.codes(),
+                    old.ra(),
+                    old.wa(),
+                    Binding::buffer(&old.topology.device_masks),
+                    Binding::buffer(&old.topology.device_offsets),
+                    Binding::buffer(&old.inc),
+                    Binding::buffer(&ra_lut),
+                    Binding::buffer(&wa_lut),
+                    Binding::buffer(&next.values),
+                    Binding::buffer(&next.boundaries),
+                    next.codes(),
+                    next.ra(),
+                    next.wa(),
+                    Binding::buffer(&next.topology.device_masks),
+                    Binding::buffer(&next.topology.device_offsets),
+                    Binding::buffer(&next.inc),
+                    constants,
+                    Binding::value(&r),
+                ];
+                let (name, threads) = if let Some(buffers) = &buffers {
+                    bindings.extend([
+                        Binding::buffer(&buffers.e_in),
+                        Binding::buffer(&buffers.e_out),
+                        Binding::buffer(&buffers.partials),
+                    ]);
+                    (
+                        "rw_sparse_bind_message_cooperative",
+                        buffers.groups * THREADS,
+                    )
+                } else {
+                    ("rw_sparse_bind", next.topology.masks.len())
+                };
+                gpu.dispatch(name, &bindings, threads)?;
+                drop(bindings);
+                if let Some(buffers) = &mut buffers {
+                    message = Some(buffers.totals()?);
+                }
                 // SAFETY: the completed sparse bind writes each union cell,
                 // both active coefficient planes and every bound increment.
                 unsafe { next.finish()? }
             }
         };
-        if !next.direct() {
+        if !next.direct() && !lut_advanced {
             self.ra_lut.bind(r);
             self.wa_lut.bind(r);
         }
@@ -342,15 +417,16 @@ impl DeviceCycle {
             self.wa_lut = CoeffLut::new(vec![F::zero()]);
         }
         self.phase = Phase::Sparse(next);
-        Ok(self)
+        Ok(BoundCycle {
+            cycle: self,
+            message,
+        })
     }
 
     pub(super) fn message(
         &mut self,
         gpu: &RegisterGpu,
-        e_in: &[F],
-        e_out: &[F],
-        need_one: bool,
+        weights: RoundWeights<'_>,
     ) -> Result<[F; 3], MetalError> {
         let rows = match &self.phase {
             Phase::Seed(seed) => {
@@ -362,36 +438,21 @@ impl DeviceCycle {
             }
             Phase::Sparse(state) => state.topology.masks.len(),
         };
-        let pairs = rows.div_ceil(2);
-        if e_in.is_empty()
-            || !e_in.len().is_power_of_two()
-            || pairs.div_ceil(e_in.len()) > e_out.len()
-        {
-            return Err(invalid("equality tables do not cover sparse prefix"));
-        }
-        let groups = pairs.div_ceil(PAIRS_PER_GROUP);
-        let mut partials = DeviceBuffer::<F>::zeroed(
-            &gpu.device,
-            groups
-                .checked_mul(3)
-                .ok_or_else(|| invalid("partial length overflow"))?,
-        )?;
-        if groups == 0 {
+        let mut buffers = MessageBuffers::new(gpu, rows, weights, PAIRS_PER_GROUP)?;
+        if buffers.groups == 0 {
             return Ok([F::zero(); 3]);
         }
-        let in_values = DeviceBuffer::from_slice(&gpu.device, e_in)?;
-        let out_values = DeviceBuffer::from_slice(&gpu.device, e_out)?;
         let ra_lut = DeviceBuffer::from_slice(&gpu.device, &self.ra_lut.values)?;
         let wa_lut = DeviceBuffer::from_slice(&gpu.device, &self.wa_lut.values)?;
         match &self.phase {
             Phase::Seed(seed) => {
                 let params = [
                     u32_shape(rows)?,
-                    u32_shape(pairs)?,
-                    u32_shape(e_in.len())?,
+                    u32_shape(buffers.pairs)?,
+                    u32_shape(weights.e_in.len())?,
                     u32_shape(seed.raw_inc.len())?,
                     u32::from(seed.first.is_some()),
-                    u32::from(need_one),
+                    u32::from(weights.need_one),
                 ];
                 let first = seed.first.unwrap_or_else(F::zero);
                 gpu.dispatch(
@@ -403,23 +464,23 @@ impl DeviceCycle {
                         Binding::buffer(&seed.topology.device_masks),
                         Binding::buffer(&ra_lut),
                         Binding::buffer(&wa_lut),
-                        Binding::buffer(&in_values),
-                        Binding::buffer(&out_values),
-                        Binding::buffer(&partials),
+                        Binding::buffer(&buffers.e_in),
+                        Binding::buffer(&buffers.e_out),
+                        Binding::buffer(&buffers.partials),
                         Binding::value(&params),
                         Binding::value(&first),
                     ],
-                    groups * THREADS,
+                    buffers.groups * THREADS,
                 )?;
             }
             Phase::Sparse(state) => {
                 let params = [
                     u32_shape(rows)?,
-                    u32_shape(pairs)?,
-                    u32_shape(e_in.len())?,
+                    u32_shape(buffers.pairs)?,
+                    u32_shape(weights.e_in.len())?,
                     u32_shape(state.inc.len())?,
                     u32::from(state.direct()),
-                    u32::from(need_one),
+                    u32::from(weights.need_one),
                 ];
                 gpu.dispatch(
                     "rw_sparse_message",
@@ -434,22 +495,16 @@ impl DeviceCycle {
                         Binding::buffer(&state.inc),
                         Binding::buffer(&ra_lut),
                         Binding::buffer(&wa_lut),
-                        Binding::buffer(&in_values),
-                        Binding::buffer(&out_values),
-                        Binding::buffer(&partials),
+                        Binding::buffer(&buffers.e_in),
+                        Binding::buffer(&buffers.e_out),
+                        Binding::buffer(&buffers.partials),
                         Binding::value(&params),
                     ],
-                    groups * THREADS,
+                    buffers.groups * THREADS,
                 )?;
             }
         }
-        let mut sums = [F::zero(); 3];
-        for part in partials.read()?.chunks_exact(3) {
-            for (sum, value) in sums.iter_mut().zip(part) {
-                *sum += *value;
-            }
-        }
-        Ok(sums)
+        buffers.totals()
     }
 
     pub(super) fn restore(self) -> Result<CycleState<F>, MetalError> {
@@ -504,6 +559,8 @@ impl RegisterGpu {
             || !THREADS.is_multiple_of(width)
             || THREADS / width > 32
             || THREADS / width > width
+            || (name == "rw_sparse_bind_message_cooperative"
+                && (width < 8 || !width.is_multiple_of(8)))
             || pipeline.max_total_threads_per_threadgroup() < THREADS
             || pipeline.static_threadgroup_memory_length()
                 > self.device.limits().max_threadgroup_memory_length

@@ -29,8 +29,9 @@ fn sparse_metal_rounds_preserve_boundaries_and_lut_transition() {
         Some(ExceptionalEq::ZeroPrefix),
     ] {
         // Includes duplicate operands, absent sides, writes, high addresses,
-        // interleaved no-ops, and an odd prefix followed by the default tail.
-        structured_fixture(61).with_plane(log_t, |witness| {
+        // interleaved no-ops, and 65 live rows: the first sparse fold has an
+        // odd 9-row prefix, so the fused message must fill a missing high row.
+        structured_fixture(65).with_plane(log_t, |witness| {
             let point = exceptional.map_or_else(
                 || sequence(log_t, 47),
                 |case| case.point(log_t, round_challenges[0]),
