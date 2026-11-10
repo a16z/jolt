@@ -471,7 +471,7 @@ fn l_row_is_row_rank_of_the_pad_view() {
     let randomness = setup.table().unique(SegmentRole::PadRandomness).unwrap();
     let r = &instance.s[randomness.coefficients()];
     let mut row = CyclotomicRing::<F, 256>::zero();
-    for (j, chunk) in r.chunks_exact(256).enumerate() {
+    for (j, chunk) in r.as_chunks::<256>().0.iter().enumerate() {
         let entry = CyclotomicRing::<F, 256>::from_slice(
             view.entry(PAD_RANK, width - PAD_RANDOMNESS_COLUMNS + j)
                 .unwrap(),
@@ -764,7 +764,7 @@ fn rho_binds_the_compressed_targets() {
         capture.0.into_inner().unwrap()
     };
     let honest = rho(|_| {});
-    assert!(!honest.is_empty());
+    assert_ne!(honest, []);
     let moved = rho(|targets| {
         if let BlockTarget::Compressed { payload, .. } = &mut targets[0] {
             payload[1] += F::one();
