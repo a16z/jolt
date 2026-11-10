@@ -9,8 +9,16 @@ field-inline = ["jolt/field-inline"]
 # `scalar_product_is_zero`, which multiplies through jolt-field's routed scalar
 # type. jolt-field needs std. Select the field the tracer executes.
 scalar = ["field-inline", "jolt/guest-std", "dep:jolt-field"]
-scalar-bn254 = ["scalar", "jolt-field/bn254", "jolt-field/field-inline-guest-bn254"]
-scalar-fp128 = ["scalar", "jolt-field/solinas", "jolt-field/field-inline-guest-fp128"]
+scalar-bn254 = [
+  "scalar",
+  "jolt-field/bn254",
+  "jolt-field/field-inline-guest-bn254",
+]
+scalar-fp128 = [
+  "scalar",
+  "jolt-field/solinas",
+  "jolt-field/field-inline-guest-fp128",
+]
 
 [dependencies]
 jolt = { package = "jolt-sdk", path = "../../../jolt-sdk" }

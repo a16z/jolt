@@ -35,11 +35,11 @@ fn check_limb_conversions(value: Option<[u64; 6]>, readout_width: Option<u8>) ->
     readout
 }
 
-/// The scalar type whose arithmetic the field-inline unit computes.
+// The scalar type whose arithmetic the field-inline unit computes.
 #[cfg(feature = "scalar-bn254")]
-type Scalar = jolt_field::Fr;
+use jolt_field::Fr as Scalar;
 #[cfg(feature = "scalar-fp128")]
-type Scalar = jolt_field::Prime128OffsetA7F7;
+use jolt_field::Prime128OffsetA7F7 as Scalar;
 
 /// Whether `a * b` is zero, multiplied through the scalar type's `*`, which
 /// runs one field-inline multiplication and reads the product out as advice
