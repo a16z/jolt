@@ -154,9 +154,9 @@ pub type Prime128Offset275 = Fp128<{ pm(128, 275) }>;
 /// default protocol prime. Here `p ≡ 1 (mod 32)`, so neither `Ext2`
 /// (non-residue 2 or −1), `FpExt4` nor `FpExt8` over it is a field: use it at
 /// extension degree 1.
-pub type Prime128Offset801F = Fp128<FIELD_INLINE_FP128_MODULUS>;
+pub type Prime128Offset6A23801F = Fp128<FIELD_INLINE_FP128_MODULUS>;
 
-/// The modulus of [`Prime128Offset801F`], the Fp128 field the field-inline
+/// The modulus of [`Prime128Offset6A23801F`], the Fp128 field the field-inline
 /// unit computes in under `field-inline-guest-fp128`.
 pub(crate) const FIELD_INLINE_FP128_MODULUS: u128 = pm(128, 0x6A23_801F);
 
@@ -200,7 +200,9 @@ pub(crate) fn reduce_le_bytes_mod_order<F: Ring>(bytes: &[u8]) -> F {
 mod reduction_tests {
     use num_bigint::BigUint;
 
-    use super::{reduce_le_bytes_mod_order, Prime128Offset801F, Prime32Offset99, Prime64Offset59};
+    use super::{
+        reduce_le_bytes_mod_order, Prime128Offset6A23801F, Prime32Offset99, Prime64Offset59,
+    };
     use crate::PseudoMersenne;
 
     fn check<F: PseudoMersenne>() {
@@ -223,13 +225,15 @@ mod reduction_tests {
     fn word_fold_matches_big_integer_reduction() {
         check::<Prime32Offset99>();
         check::<Prime64Offset59>();
-        check::<Prime128Offset801F>();
+        check::<Prime128Offset6A23801F>();
     }
 }
 
 #[cfg(test)]
 mod sampling_tests {
-    use super::{pm, sample_uniform_below, Prime128Offset801F, Prime32Offset99, Prime64Offset59};
+    use super::{
+        pm, sample_uniform_below, Prime128Offset6A23801F, Prime32Offset99, Prime64Offset59,
+    };
     use crate::Field;
     use rand_core::{Error, RngCore};
 
@@ -321,9 +325,9 @@ mod sampling_tests {
         fp128_bytes.extend_from_slice(&42u128.to_le_bytes());
         let mut fp128_rng = ScriptedRng::new(fp128_bytes);
         assert_eq!(
-            Prime128Offset801F::random(&mut fp128_rng),
-            // SAFETY: 42 is below Prime128Offset801F::MODULUS.
-            unsafe { Prime128Offset801F::from_canonical_u128(42) }
+            Prime128Offset6A23801F::random(&mut fp128_rng),
+            // SAFETY: 42 is below Prime128Offset6A23801F::MODULUS.
+            unsafe { Prime128Offset6A23801F::from_canonical_u128(42) }
         );
         assert_eq!(fp128_rng.cursor, 32);
     }

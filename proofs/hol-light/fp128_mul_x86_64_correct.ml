@@ -332,12 +332,12 @@ let JOLT_FP128_MUL_X86_64_CORRECT = time prove
                read RDX s = b0 /\
                read RCX s = b1)
           (\s. read RIP s = word (pc + 0x9e) /\
-               (bignum_of_wordlist [a0; a1] < jolt_fp128_801f_p /\
-                bignum_of_wordlist [b0; b1] < jolt_fp128_801f_p
+               (bignum_of_wordlist [a0; a1] < jolt_fp128_6a23801f_p /\
+                bignum_of_wordlist [b0; b1] < jolt_fp128_6a23801f_p
                 ==> bignum_of_wordlist [read RAX s; read RDX s] =
                     (bignum_of_wordlist [a0; a1] *
                      bignum_of_wordlist [b0; b1]) MOD
-                    jolt_fp128_801f_p))
+                    jolt_fp128_6a23801f_p))
           (MAYCHANGE [RIP; RAX; RCX; RDX; RDI; RSI; R8; R9; R10; R11] ,,
            MAYCHANGE SOME_FLAGS ,, MAYCHANGE [events])`,
   MAP_EVERY X_GEN_TAC
@@ -353,8 +353,8 @@ let JOLT_FP128_MUL_X86_64_CORRECT = time prove
     MP_TAC(SPECL
      [`1780711455`; `a0:int64`; `a1:int64`; `b0:int64`; `b1:int64`; `pc:num`]
      JOLT_FP128_MUL_X86_64_GENERIC_CORRECT) THEN
-    REWRITE_TAC[SOME_FLAGS; JOLT_FP128_OFFSET801F_VALID;
-                JOLT_FP128_801F_P_GENERIC] THEN
+    REWRITE_TAC[SOME_FLAGS; JOLT_FP128_OFFSET6A23801F_VALID;
+                JOLT_FP128_6A23801F_P_GENERIC] THEN
     MATCH_MP_TAC(REWRITE_RULE[IMP_CONJ] ENSURES_PRECONDITION_THM) THEN
     SIMP_TAC[]]);;
 
@@ -371,12 +371,12 @@ let JOLT_FP128_MUL_X86_64_SUBROUTINE_CORRECT = time prove
                read RCX s = b1)
           (\s. read RIP s = returnaddress /\
                read RSP s = word_add stackpointer (word 8) /\
-               (bignum_of_wordlist [a0; a1] < jolt_fp128_801f_p /\
-                bignum_of_wordlist [b0; b1] < jolt_fp128_801f_p
+               (bignum_of_wordlist [a0; a1] < jolt_fp128_6a23801f_p /\
+                bignum_of_wordlist [b0; b1] < jolt_fp128_6a23801f_p
                 ==> bignum_of_wordlist [read RAX s; read RDX s] =
                     (bignum_of_wordlist [a0; a1] *
                      bignum_of_wordlist [b0; b1]) MOD
-                    jolt_fp128_801f_p))
+                    jolt_fp128_6a23801f_p))
           (MAYCHANGE [RSP] ,, MAYCHANGE_REGS_AND_FLAGS_PERMITTED_BY_ABI)`,
   X86_PROMOTE_RETURN_NOSTACK_TAC
     jolt_fp128_mul_x86_64_mc JOLT_FP128_MUL_X86_64_CORRECT);;

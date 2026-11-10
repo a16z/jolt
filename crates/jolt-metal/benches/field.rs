@@ -7,8 +7,8 @@
 //! Every kernel's output is checked against the CPU once before it is
 //! timed.
 //!
-//! Fields, each a group prefix `metal/{field}`: `fp128_801f`
-//! (`Prime128Offset801F`), `fp64_59` (`Prime64Offset59`) and `ext2_fp64_59`
+//! Fields, each a group prefix `metal/{field}`: `fp128_6a23801f`
+//! (`Prime128Offset6A23801F`), `fp64_59` (`Prime64Offset59`) and `ext2_fp64_59`
 //! (its `Ext2`, Akita's fp64 extension field). Groups, for every field:
 //! - `chain/{add,mul,mul4,square}`: dependent operations per thread in
 //!   registers, reported as operations per second;
@@ -19,7 +19,7 @@
 //!   partials with inputs already resident. `cpu_complete_wall` returns the
 //!   same scalar on the CPU.
 //!
-//! For `fp128_801f`, whose accumulators are the only ones in MSL so far:
+//! For `fp128_6a23801f`, whose accumulators are the only ones in MSL so far:
 //! - `accum/{fmadd,fmadd4,fmadd_i64}`: deferred-reduction terms per thread in
 //!   registers, reported as terms per second, against `jolt_field`'s
 //!   accumulators;
@@ -39,7 +39,7 @@ mod metal {
     use std::time::Duration;
 
     use criterion::{BenchmarkId, Criterion, Throughput};
-    use jolt_field::solinas::{Ext2, Prime128Offset801F, Prime64Offset59};
+    use jolt_field::solinas::{Ext2, Prime128Offset6A23801F, Prime64Offset59};
     use jolt_field::{Accumulator, WithAccumulator};
     use jolt_metal::runtime::{Binding, Device, DeviceBuffer, Grid, ShaderLibrary};
     use rayon::prelude::*;
@@ -47,7 +47,7 @@ mod metal {
     use super::support::{dispatch, elements, library, pipeline, threadgroup, words, Sample};
 
     /// The field of the accumulator benchmarks.
-    type F = Prime128Offset801F;
+    type F = Prime128Offset6A23801F;
 
     const FIELD_OPS: &str = include_str!("../tests/shaders/field_ops.metal");
     const FIELD_BENCH: &str = include_str!("shaders/field_bench.metal");
@@ -115,13 +115,13 @@ mod metal {
             &[&FIELD_KERNELS[..], &ACCUM_KERNELS[..]].concat(),
             &[],
         );
-        field::<F>(c, &device, &fp128, "fp128_801f");
+        field::<F>(c, &device, &fp128, "fp128_6a23801f");
         accumulators(c, &device, &fp128);
         inner_products(
             c,
             &device,
             &fp128,
-            "fp128_801f/accum_inner_product",
+            "fp128_6a23801f/accum_inner_product",
             ACCUM_INNER_PRODUCT,
             |a, b| {
                 a.par_iter()
@@ -438,7 +438,7 @@ mod metal {
         );
         let mut out = DeviceBuffer::<F>::zeroed(device, CHAIN_THREADS).expect("allocate");
 
-        let mut group = c.benchmark_group("metal/fp128_801f/accum");
+        let mut group = c.benchmark_group("metal/fp128_6a23801f/accum");
         group.sample_size(10);
         group.throughput(Throughput::Elements(
             CHAIN_THREADS as u64 * u64::from(FMADD_ROUNDS) * 4,

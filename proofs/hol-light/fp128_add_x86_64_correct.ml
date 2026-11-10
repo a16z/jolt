@@ -5,7 +5,7 @@
  * b is stored in RDX:RCX. The first instruction loads C = 2^128 - p into R8.
  * The arithmetic result is formed in RDI:RSI, then copied to the System V
  * return registers RAX:RDX. The object file imports the complete optimized
- * public witness bytes for Prime128Offset801F.
+ * public witness bytes for Prime128Offset6A23801F.
  *)
 
 needs (Filename.concat (Sys.getenv "JOLT_FP128_PROOF_DIR")
@@ -94,12 +94,12 @@ let JOLT_FP128_ADD_X86_64_CORRECT = time prove
                read RDX s = b0 /\
                read RCX s = b1)
           (\s. read RIP s = word (pc + 0x2d) /\
-               (bignum_of_wordlist [a0; a1] < jolt_fp128_801f_p /\
-                bignum_of_wordlist [b0; b1] < jolt_fp128_801f_p
+               (bignum_of_wordlist [a0; a1] < jolt_fp128_6a23801f_p /\
+                bignum_of_wordlist [b0; b1] < jolt_fp128_6a23801f_p
                 ==> bignum_of_wordlist [read RAX s; read RDX s] =
                     (bignum_of_wordlist [a0; a1] +
                      bignum_of_wordlist [b0; b1]) MOD
-                    jolt_fp128_801f_p))
+                    jolt_fp128_6a23801f_p))
           (MAYCHANGE [RIP; RAX; RDX; RDI; RSI; R8; R9; R10; R11] ,,
            MAYCHANGE SOME_FLAGS ,, MAYCHANGE [events])`,
   MAP_EVERY X_GEN_TAC
@@ -147,14 +147,14 @@ let JOLT_FP128_ADD_X86_64_CORRECT = time prove
      ASSUME_TAC(ASSUME `carry_s8:bool`);
      RULE_ASSUM_TAC(REWRITE_RULE[ASSUME `~carry_s8:bool`; BITVAL_CLAUSES]) THEN
      ASSUME_TAC(ASSUME `~carry_s8:bool`)]) THEN
-  ASM_CASES_TAC `jolt_fp128_801f_p <= m + n` THEN
+  ASM_CASES_TAC `jolt_fp128_6a23801f_p <= m + n` THEN
   ASM_REWRITE_TAC
    [WORD_SUB_0; VAL_WORD_BITVAL; BITVAL_EQ_0; BITVAL_CLAUSES;
-    jolt_fp128_801f_p; MOD_ADD_CASES; GSYM NOT_LE; COND_SWAP] THEN
+    jolt_fp128_6a23801f_p; MOD_ADD_CASES; GSYM NOT_LE; COND_SWAP] THEN
   CONV_TAC WORD_REDUCE_CONV THEN ASM_REWRITE_TAC[] THEN
-  RULE_ASSUM_TAC(REWRITE_RULE[jolt_fp128_801f_p; BITVAL_CLAUSES]) THEN
+  RULE_ASSUM_TAC(REWRITE_RULE[jolt_fp128_6a23801f_p; BITVAL_CLAUSES]) THEN
   RULE_ASSUM_TAC(CONV_RULE NUM_REDUCE_CONV) THEN
-  ASM_SIMP_TAC[MOD_ADD_CASES; jolt_fp128_801f_p; GSYM NOT_LE; COND_SWAP] THEN
+  ASM_SIMP_TAC[MOD_ADD_CASES; jolt_fp128_6a23801f_p; GSYM NOT_LE; COND_SWAP] THEN
   CONV_TAC NUM_REDUCE_CONV THEN
   POP_ASSUM_LIST(MP_TAC o end_itlist CONJ) THEN ARITH_TAC);;
 
@@ -171,12 +171,12 @@ let JOLT_FP128_ADD_X86_64_SUBROUTINE_CORRECT = time prove
                read RCX s = b1)
           (\s. read RIP s = returnaddress /\
                read RSP s = word_add stackpointer (word 8) /\
-               (bignum_of_wordlist [a0; a1] < jolt_fp128_801f_p /\
-                bignum_of_wordlist [b0; b1] < jolt_fp128_801f_p
+               (bignum_of_wordlist [a0; a1] < jolt_fp128_6a23801f_p /\
+                bignum_of_wordlist [b0; b1] < jolt_fp128_6a23801f_p
                 ==> bignum_of_wordlist [read RAX s; read RDX s] =
                     (bignum_of_wordlist [a0; a1] +
                      bignum_of_wordlist [b0; b1]) MOD
-                    jolt_fp128_801f_p))
+                    jolt_fp128_6a23801f_p))
           (MAYCHANGE [RSP] ,, MAYCHANGE_REGS_AND_FLAGS_PERMITTED_BY_ABI)`,
   X86_PROMOTE_RETURN_NOSTACK_TAC
     jolt_fp128_add_mc JOLT_FP128_ADD_X86_64_CORRECT);;

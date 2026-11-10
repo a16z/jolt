@@ -191,7 +191,7 @@ mod tests {
     /// `2^10` would cost 11.
     #[test]
     fn site_loss_costs_ten_bits_over_a_128_bit_field() {
-        // 2^128 − 0x6a23_801f, the modulus of `Prime128Offset801F`.
+        // 2^128 − 0x6a23_801f, the modulus of `Prime128Offset6A23801F`.
         let set = ChallengeSetSize::field_order(u128::MAX - 0x6a23_801e, 1).unwrap();
         assert_eq!(grind_bits_for_loss(SITE_LOSS, set, SECURITY_BITS), Ok(10));
         assert_eq!(

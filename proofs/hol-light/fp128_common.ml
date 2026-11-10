@@ -7,12 +7,12 @@ let jolt_fp128_valid_offset = new_definition
  `jolt_fp128_valid_offset c <=>
     0 < c /\ c < 2 EXP 32 /\ c * (c + 1) < jolt_fp128_p c`;;
 
-let jolt_fp128_801f_p = new_definition
- `jolt_fp128_801f_p = 0xffffffffffffffffffffffff95dc7fe1`;;
+let jolt_fp128_6a23801f_p = new_definition
+ `jolt_fp128_6a23801f_p = 0xffffffffffffffffffffffff95dc7fe1`;;
 
-let JOLT_FP128_801F_P_GENERIC = prove
- (`jolt_fp128_p 1780711455 = jolt_fp128_801f_p`,
-  REWRITE_TAC[jolt_fp128_p; jolt_fp128_801f_p] THEN
+let JOLT_FP128_6A23801F_P_GENERIC = prove
+ (`jolt_fp128_p 1780711455 = jolt_fp128_6a23801f_p`,
+  REWRITE_TAC[jolt_fp128_p; jolt_fp128_6a23801f_p] THEN
   CONV_TAC NUM_REDUCE_CONV);;
 
 let JOLT_FP128_OFFSET275_VALID = prove
@@ -20,7 +20,7 @@ let JOLT_FP128_OFFSET275_VALID = prove
   REWRITE_TAC[jolt_fp128_valid_offset; jolt_fp128_p] THEN
   CONV_TAC NUM_REDUCE_CONV);;
 
-let JOLT_FP128_OFFSET801F_VALID = prove
+let JOLT_FP128_OFFSET6A23801F_VALID = prove
  (`jolt_fp128_valid_offset 1780711455`,
   REWRITE_TAC[jolt_fp128_valid_offset; jolt_fp128_p] THEN
   CONV_TAC NUM_REDUCE_CONV);;
@@ -183,18 +183,18 @@ let JOLT_FP128_NO_TOP_CARRY = prove
 
 let JOLT_FP128_FOLD_128 = prove
  (`!lo hi.
-      (2 EXP 128 * hi + lo) MOD jolt_fp128_801f_p =
-      (1780711455 * hi + lo) MOD jolt_fp128_801f_p`,
+      (2 EXP 128 * hi + lo) MOD jolt_fp128_6a23801f_p =
+      (1780711455 * hi + lo) MOD jolt_fp128_6a23801f_p`,
   REPEAT GEN_TAC THEN ONCE_REWRITE_TAC[GSYM MOD_ADD_MOD] THEN
   ONCE_REWRITE_TAC[GSYM MOD_MULT_LMOD] THEN
-  REWRITE_TAC[jolt_fp128_801f_p] THEN CONV_TAC NUM_REDUCE_CONV);;
+  REWRITE_TAC[jolt_fp128_6a23801f_p] THEN CONV_TAC NUM_REDUCE_CONV);;
 
 let JOLT_FP128_SECOND_FOLD_BOUND = prove
  (`!lo q v.
       lo < 2 EXP 128 /\ q <= 1780711455 /\
       v = lo + 1780711455 * q
-      ==> v < 2 * jolt_fp128_801f_p`,
-  REPEAT GEN_TAC THEN REWRITE_TAC[jolt_fp128_801f_p] THEN
+      ==> v < 2 * jolt_fp128_6a23801f_p`,
+  REPEAT GEN_TAC THEN REWRITE_TAC[jolt_fp128_6a23801f_p] THEN
   CONV_TAC NUM_REDUCE_CONV THEN ARITH_TAC);;
 
 let JOLT_FP128_TWO_FOLDS = prove
@@ -203,10 +203,10 @@ let JOLT_FP128_TWO_FOLDS = prove
       t = lo + 1780711455 * hi /\
       t = 2 EXP 128 * q + lo' /\
       v = lo' + 1780711455 * q
-      ==> mn MOD jolt_fp128_801f_p = v MOD jolt_fp128_801f_p`,
+      ==> mn MOD jolt_fp128_6a23801f_p = v MOD jolt_fp128_6a23801f_p`,
   REPEAT GEN_TAC THEN STRIP_TAC THEN
   MATCH_MP_TAC EQ_TRANS THEN
-  EXISTS_TAC `(1780711455 * hi + lo) MOD jolt_fp128_801f_p` THEN
+  EXISTS_TAC `(1780711455 * hi + lo) MOD jolt_fp128_6a23801f_p` THEN
   CONJ_TAC THENL
    [ASM_REWRITE_TAC[JOLT_FP128_FOLD_128];
     SUBGOAL_THEN
@@ -219,13 +219,13 @@ let JOLT_FP128_CANONICALIZE = prove
  (`!v r u c1 c2.
       v = 2 EXP 128 * bitval c1 + r /\
       2 EXP 128 * bitval c2 + u = r + 1780711455 /\
-      v < 2 * jolt_fp128_801f_p /\
+      v < 2 * jolt_fp128_6a23801f_p /\
       r < 2 EXP 128 /\ u < 2 EXP 128
-      ==> (if c1 \/ c2 then u else r) = v MOD jolt_fp128_801f_p`,
+      ==> (if c1 \/ c2 then u else r) = v MOD jolt_fp128_6a23801f_p`,
   REPEAT GEN_TAC THEN STRIP_TAC THEN
   SUBGOAL_THEN
-   `v MOD jolt_fp128_801f_p =
-    if v < jolt_fp128_801f_p then v else v - jolt_fp128_801f_p`
+   `v MOD jolt_fp128_6a23801f_p =
+    if v < jolt_fp128_6a23801f_p then v else v - jolt_fp128_6a23801f_p`
   SUBST1_TAC THENL
    [MATCH_MP_TAC MOD_CASES THEN ASM_REWRITE_TAC[];
     ALL_TAC] THEN
@@ -239,7 +239,7 @@ let JOLT_FP128_CANONICALIZE = prove
      ASSUME_TAC(ASSUME `c2:bool`);
      RULE_ASSUM_TAC(REWRITE_RULE[ASSUME `~c2:bool`; BITVAL_CLAUSES]) THEN
      ASSUME_TAC(ASSUME `~c2:bool`)]) THEN
-  RULE_ASSUM_TAC(REWRITE_RULE[jolt_fp128_801f_p]) THEN
-  ASM_REWRITE_TAC[BITVAL_CLAUSES; jolt_fp128_801f_p] THEN
+  RULE_ASSUM_TAC(REWRITE_RULE[jolt_fp128_6a23801f_p]) THEN
+  ASM_REWRITE_TAC[BITVAL_CLAUSES; jolt_fp128_6a23801f_p] THEN
   CONV_TAC NUM_REDUCE_CONV THEN
   POP_ASSUM_LIST(MP_TAC o end_itlist CONJ) THEN ARITH_TAC);;

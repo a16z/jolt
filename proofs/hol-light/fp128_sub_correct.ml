@@ -42,7 +42,7 @@ let jolt_fp128_sub_mc =
 let JOLT_FP128_SUB_EXEC = ARM_MK_EXEC_RULE jolt_fp128_sub_mc;;
 
 (*** Generic theorem for the register-parameterized body. X4 supplies C; the
-     proof starts after the fixture's 801F constant load. ***)
+     proof starts after the fixture's 6A23801F constant load. ***)
 let JOLT_FP128_SUB_GENERIC_CORRECT = time prove
  (`!c a0 a1 b0 b1 pc.
       jolt_fp128_valid_offset c
@@ -134,13 +134,13 @@ let JOLT_FP128_SUB_CORRECT = time prove
                read X2 s = b0 /\
                read X3 s = b1)
           (\s. read PC s = word (pc + 0x1c) /\
-               (bignum_of_wordlist [a0; a1] < jolt_fp128_801f_p /\
-                bignum_of_wordlist [b0; b1] < jolt_fp128_801f_p
+               (bignum_of_wordlist [a0; a1] < jolt_fp128_6a23801f_p /\
+                bignum_of_wordlist [b0; b1] < jolt_fp128_6a23801f_p
                 ==> bignum_of_wordlist [read X0 s; read X1 s] =
                     (bignum_of_wordlist [a0; a1] +
-                     jolt_fp128_801f_p -
+                     jolt_fp128_6a23801f_p -
                      bignum_of_wordlist [b0; b1]) MOD
-                    jolt_fp128_801f_p))
+                    jolt_fp128_6a23801f_p))
           (MAYCHANGE [PC; X0; X1; X4; X5; X6; X7] ,,
            MAYCHANGE SOME_FLAGS ,, MAYCHANGE [events])`,
   MAP_EVERY X_GEN_TAC
@@ -158,8 +158,8 @@ let JOLT_FP128_SUB_CORRECT = time prove
     MP_TAC(SPECL
      [`1780711455`; `a0:int64`; `a1:int64`; `b0:int64`; `b1:int64`; `pc:num`]
      JOLT_FP128_SUB_GENERIC_CORRECT) THEN
-    REWRITE_TAC[SOME_FLAGS; JOLT_FP128_OFFSET801F_VALID;
-                JOLT_FP128_801F_P_GENERIC] THEN
+    REWRITE_TAC[SOME_FLAGS; JOLT_FP128_OFFSET6A23801F_VALID;
+                JOLT_FP128_6A23801F_P_GENERIC] THEN
     MATCH_MP_TAC(REWRITE_RULE[IMP_CONJ] ENSURES_PRECONDITION_THM) THEN
     SIMP_TAC[]]);;
 
@@ -178,13 +178,13 @@ let JOLT_FP128_SUB_SUBROUTINE_CORRECT = time prove
                read X2 s = b0 /\
                read X3 s = b1)
           (\s. read PC s = returnaddress /\
-               (bignum_of_wordlist [a0; a1] < jolt_fp128_801f_p /\
-                bignum_of_wordlist [b0; b1] < jolt_fp128_801f_p
+               (bignum_of_wordlist [a0; a1] < jolt_fp128_6a23801f_p /\
+                bignum_of_wordlist [b0; b1] < jolt_fp128_6a23801f_p
                 ==> bignum_of_wordlist [read X0 s; read X1 s] =
                     (bignum_of_wordlist [a0; a1] +
-                     jolt_fp128_801f_p -
+                     jolt_fp128_6a23801f_p -
                      bignum_of_wordlist [b0; b1]) MOD
-                    jolt_fp128_801f_p))
+                    jolt_fp128_6a23801f_p))
           (MAYCHANGE_REGS_AND_FLAGS_PERMITTED_BY_ABI)`,
   ARM_ADD_RETURN_NOSTACK_TAC
     JOLT_FP128_SUB_EXEC JOLT_FP128_SUB_CORRECT);;

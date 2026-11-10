@@ -95,7 +95,7 @@ same sizing law on both sides of the PCS boundary.
 ## Field-specific execution encoding
 
 Akita proves over fp128. Its feature chain selects the tracer's `ProofField`
-as `jolt_field::Prime128Offset801F`; Dory uses BN254 Fr. The tracer's
+as `jolt_field::Prime128Offset6A23801F`; Dory uses BN254 Fr. The tracer's
 `decode_field` and `encode_field` in
 `tracer/src/instruction/field_inline/mod.rs` operate on the selected field.
 Both use the fixed 32-byte `FieldEncodedValue` buffer: fp128 occupies the low

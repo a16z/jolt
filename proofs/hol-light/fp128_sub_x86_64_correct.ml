@@ -5,7 +5,7 @@
  * b is stored in RDX:RCX. The first instruction loads C = 2^128 - p into R8.
  * The arithmetic result is formed in RDI:RSI, then copied to the System V
  * return registers RAX:RDX. The object file imports the complete optimized
- * public witness bytes for Prime128Offset801F.
+ * public witness bytes for Prime128Offset6A23801F.
  *)
 
 needs (Filename.concat (Sys.getenv "JOLT_FP128_PROOF_DIR")
@@ -90,13 +90,13 @@ let JOLT_FP128_SUB_X86_64_CORRECT = time prove
                read RDX s = b0 /\
                read RCX s = b1)
           (\s. read RIP s = word (pc + 0x1f) /\
-               (bignum_of_wordlist [a0; a1] < jolt_fp128_801f_p /\
-                bignum_of_wordlist [b0; b1] < jolt_fp128_801f_p
+               (bignum_of_wordlist [a0; a1] < jolt_fp128_6a23801f_p /\
+                bignum_of_wordlist [b0; b1] < jolt_fp128_6a23801f_p
                 ==> bignum_of_wordlist [read RAX s; read RDX s] =
                     (bignum_of_wordlist [a0; a1] +
-                     jolt_fp128_801f_p -
+                     jolt_fp128_6a23801f_p -
                      bignum_of_wordlist [b0; b1]) MOD
-                    jolt_fp128_801f_p))
+                    jolt_fp128_6a23801f_p))
           (MAYCHANGE [RIP; RAX; RDX; RDI; RSI; R8; R9] ,,
            MAYCHANGE SOME_FLAGS ,, MAYCHANGE [events])`,
   MAP_EVERY X_GEN_TAC
@@ -136,8 +136,8 @@ let JOLT_FP128_SUB_X86_64_CORRECT = time prove
     ALL_TAC] THEN
   DISCARD_STATE_TAC "s9" THEN
   ACCUMULATOR_POP_ASSUM_LIST(K ALL_TAC) THEN
-  RULE_ASSUM_TAC(REWRITE_RULE[jolt_fp128_801f_p]) THEN
-  REWRITE_TAC[jolt_fp128_801f_p] THEN
+  RULE_ASSUM_TAC(REWRITE_RULE[jolt_fp128_6a23801f_p]) THEN
+  REWRITE_TAC[jolt_fp128_6a23801f_p] THEN
 
   SUBGOAL_THEN
    `m + 340282366920938463463374607429987500001 - n <
@@ -193,13 +193,13 @@ let JOLT_FP128_SUB_X86_64_SUBROUTINE_CORRECT = time prove
                read RCX s = b1)
           (\s. read RIP s = returnaddress /\
                read RSP s = word_add stackpointer (word 8) /\
-               (bignum_of_wordlist [a0; a1] < jolt_fp128_801f_p /\
-                bignum_of_wordlist [b0; b1] < jolt_fp128_801f_p
+               (bignum_of_wordlist [a0; a1] < jolt_fp128_6a23801f_p /\
+                bignum_of_wordlist [b0; b1] < jolt_fp128_6a23801f_p
                 ==> bignum_of_wordlist [read RAX s; read RDX s] =
                     (bignum_of_wordlist [a0; a1] +
-                     jolt_fp128_801f_p -
+                     jolt_fp128_6a23801f_p -
                      bignum_of_wordlist [b0; b1]) MOD
-                    jolt_fp128_801f_p))
+                    jolt_fp128_6a23801f_p))
           (MAYCHANGE [RSP] ,, MAYCHANGE_REGS_AND_FLAGS_PERMITTED_BY_ABI)`,
   X86_PROMOTE_RETURN_NOSTACK_TAC
     jolt_fp128_sub_mc JOLT_FP128_SUB_X86_64_CORRECT);;

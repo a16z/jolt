@@ -1,7 +1,7 @@
 #![expect(unused_results)]
 
 use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion};
-use jolt_field::{Field, Fr, JoltField, Prime128Offset801F};
+use jolt_field::{Field, Fr, JoltField, Prime128Offset6A23801F};
 use jolt_poly::{EqPolynomial, Polynomial, UnivariatePoly};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
@@ -33,7 +33,7 @@ fn bench_bind(c: &mut Criterion) {
 
 fn bench_bind_low_to_high_in_place(c: &mut Criterion) {
     bench_inplace_field::<Fr>(c, "Fr");
-    bench_inplace_field::<Prime128Offset801F>(c, "Prime128Offset801F");
+    bench_inplace_field::<Prime128Offset6A23801F>(c, "Prime128Offset6A23801F");
 }
 
 fn bench_inplace_field<F: JoltField>(c: &mut Criterion, field: &str) {

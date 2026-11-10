@@ -464,11 +464,11 @@ mod tests {
     #[test]
     fn fp128_codecs_use_the_full_order() {
         use crate::{ChallengeCodec, SECURITY_BITS};
-        use jolt_field::{Prime128Offset275, Prime128Offset801F};
+        use jolt_field::{Prime128Offset275, Prime128Offset6A23801F};
 
         for set in [
             <Prime128Offset275 as ChallengeCodec>::CHALLENGE_SET_SIZE,
-            <Prime128Offset801F as ChallengeCodec>::CHALLENGE_SET_SIZE,
+            <Prime128Offset6A23801F as ChallengeCodec>::CHALLENGE_SET_SIZE,
         ] {
             for (loss, bits) in [(1, 1), (2, 2), (3, 2), (6, 3), (10, 4), (27, 5), (42, 6)] {
                 assert_eq!(

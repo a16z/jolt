@@ -108,8 +108,8 @@ and fold matrices; `S64`–`S256` + hi32 variants; `Limbs<N>`; rayon helpers;
   qualitative comments. The portable path is branchless and compiles to a
   near-identical adds/adcs/csel (resp. add/adc/cmov) sequence. The x86-64
   imm-vs-reg dispatch subtlety matters because a sign-extended imm32 is
-  unusable for C ≥ 2^31, including `Prime128Offset801F`. The proof continuity
-  follow-up restores both architecture families. It also binds the 801F
+  unusable for C ≥ 2^31, including `Prime128Offset6A23801F`. The proof continuity
+  follow-up restores both architecture families. It also binds the 6A23801F
   AArch64 words and x86-64 bytes to HOL Light theorems and an optimized public witness. See
   `specs/jolt-field-proof-continuity.md`.
 - **Initially dropped:** the AArch64 `mul_add` asm kernel together with the
@@ -321,7 +321,7 @@ Final per-file actuals are recorded in the file-structure table below
    while Fp64/Fp128 results were mixed and near noise. The x86-64 hook now
    reuses the canonical `FpExt4Fp32ProductAccum` formula and reduces four
    slots once; sub-32-bit Fp32 moduli retain the generic schedule.
-7. **Fp128 architecture add and subtract kernels are restored.** The 801F
+7. **Fp128 architecture add and subtract kernels are restored.** The 6A23801F
    AArch64 and x86-64 instruction bodies are shared by production inline assembly and
    standalone proof objects. HOL Light proves the object bytes. An optimized
    public witness checks that Rust includes the same words.

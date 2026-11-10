@@ -141,14 +141,14 @@ const fn hex8(value: u32) -> [u8; 8] {
 
 #[cfg(test)]
 mod tests {
-    use jolt_field::solinas::{Prime128Offset275, Prime128Offset801F, Prime64Offset59};
+    use jolt_field::solinas::{Prime128Offset275, Prime128Offset6A23801F, Prime64Offset59};
 
     use super::*;
 
     #[test]
     fn spellings_come_from_the_modulus() {
-        assert_eq!(Prime128Offset801F::MSL_NAME, "jolt::Fp128<0x6a23801fu>");
-        assert_eq!(Prime128Offset801F::HOST_SUFFIX, "fp128_6a23801f");
+        assert_eq!(Prime128Offset6A23801F::MSL_NAME, "jolt::Fp128<0x6a23801fu>");
+        assert_eq!(Prime128Offset6A23801F::HOST_SUFFIX, "fp128_6a23801f");
         assert_eq!(Prime128Offset275::MSL_NAME, "jolt::Fp128<0x00000113u>");
         assert_eq!(Prime128Offset275::HOST_SUFFIX, "fp128_00000113");
         assert_eq!(Prime64Offset59::MSL_NAME, "jolt::Fp64<0x0000003bu>");

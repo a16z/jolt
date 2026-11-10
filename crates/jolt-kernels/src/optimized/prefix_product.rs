@@ -75,7 +75,7 @@ mod tests {
     use super::*;
     use jolt_field::Fr;
     #[cfg(feature = "akita")]
-    use jolt_field::Prime128Offset801F;
+    use jolt_field::Prime128Offset6A23801F;
     use jolt_poly::{BindingOrder, EqPolynomial, Polynomial};
 
     fn check<F: JoltField>() {
@@ -138,6 +138,6 @@ mod tests {
     fn product_sums_match_dense_multilinears() {
         check::<Fr>();
         #[cfg(feature = "akita")]
-        check::<Prime128Offset801F>();
+        check::<Prime128Offset6A23801F>();
     }
 }
