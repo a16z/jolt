@@ -39,6 +39,10 @@ pub trait Packed:
     ///
     /// Panics if the length is not divisible by [`WIDTH`](Self::WIDTH).
     #[inline]
+    #[expect(
+        clippy::chunks_exact_to_as_chunks,
+        reason = "Self::WIDTH cannot be used as a const generic argument"
+    )]
     fn pack_slice(buf: &[Self::Scalar]) -> Vec<Self> {
         assert_eq!(buf.len() % Self::WIDTH, 0, "length not divisible by width");
         buf.chunks_exact(Self::WIDTH)

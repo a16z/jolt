@@ -45,7 +45,8 @@ use rayon::prelude::*;
 use super::prefix_product::PrefixColumn;
 use super::registers_read_write::{RegisterCycleRow, SharedRdIndices};
 use super::support::{
-    collect_rows, pin_derived_term, triple_product_round_evals, BundleStore, RoundProgress, SplitLt,
+    collect_rows, fallible_collect_bytes, pin_derived_term, triple_product_round_evals,
+    BundleStore, RoundProgress, SplitLt,
 };
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -136,6 +137,27 @@ impl<F: JoltField> WaState<F> {
 }
 
 pub struct OptimizedRegistersValEvaluation;
+
+impl OptimizedRegistersValEvaluation {
+    /// Reservation over `2^log_t >= 2^8` cycles whose first `prefix_cycles`
+    /// precede the constant suffix, or `None` past `usize::MAX`. The retained
+    /// fallible-collect allowance bounds the increment materialization,
+    /// both retained field columns and a possible binding shrink copy;
+    /// `par_collect_windows` fills its destination directly. Alongside it
+    /// count the moved `rd` indices, the address eq table and the LT tables
+    /// at their largest. Not counted: the increment row store and the row
+    /// collect `prepare` falls back to when stage 4 parked no indices.
+    pub fn peak_bytes<F: JoltField>(log_t: usize, prefix_cycles: usize) -> Option<usize> {
+        [
+            prefix_cycles.checked_mul(size_of::<Option<u8>>())?,
+            (1usize << REGISTER_ADDRESS_BITS) * size_of::<F>(),
+            SplitLt::<F>::peak_bytes(log_t)?,
+            fallible_collect_bytes::<F>(prefix_cycles.div_ceil(2))?,
+        ]
+        .into_iter()
+        .try_fold(0usize, usize::checked_add)
+    }
+}
 
 impl<F: JoltField> PrepareKernel<F, RegistersValEvaluation<F>> for OptimizedRegistersValEvaluation {
     fn prepare(
@@ -520,5 +542,20 @@ mod tests {
     #[test]
     fn parity_with_stale_parked_indices_falls_back() {
         run_parity(structured_fixture(8), 3, 73, &IndexSource::StaleParked);
+    }
+
+    /// Stage 5's side of the `rd` handoff, at 2^13 cycles with Fr, the first
+    /// 5000 before the constant suffix: the indices stage 4 parked, moved in
+    /// and counted once (10000 bytes), the 128-entry address eq table (4096),
+    /// the split LT tables of 2^6 and twice 2^7 entries with the 2^7-entry
+    /// dense table their switch builds beside them (14336), and 2500
+    /// increments reserved at the conservative 200-byte fallible-collect
+    /// allowance each; direct materialization and in-place binds need less.
+    #[test]
+    fn peak_bytes_holds_the_parked_rd_indices_once() {
+        assert_eq!(
+            OptimizedRegistersValEvaluation::peak_bytes::<Fr>(13, 5000),
+            Some(10_000 + 4_096 + 14_336 + 500_000)
+        );
     }
 }

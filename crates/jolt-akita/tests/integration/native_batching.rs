@@ -7,10 +7,13 @@ use crate::support::{
     single_statement,
 };
 use akita_params::PolynomialGroupLayout;
+use akita_types::setup_claims::{SetupPolynomialId, SetupQuery};
+use jolt_akita::deferred::{SetupClaimAccumulator, SetupClaimAdvice, SetupMode};
 use jolt_akita::{
-    AkitaBatchProof, AkitaChunkProfile, AkitaCommitment, AkitaNativeBatching, AkitaProverHint,
-    AkitaScheduleArtifacts, AkitaScheme, AkitaSetupParams, AkitaVerifierSetup,
-    GroupedScheduleParams, TraceOneHotRows, AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256,
+    AkitaBatchProof, AkitaChunkProfile, AkitaCommitment, AkitaError, AkitaField,
+    AkitaNativeBatching, AkitaProverHint, AkitaProverSetup, AkitaScheduleArtifacts, AkitaScheme,
+    AkitaSetupParams, AkitaVerificationContext, AkitaVerifierSetup, GroupedScheduleParams,
+    TraceOneHotRows, AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256,
 };
 use jolt_openings::{
     BatchOpeningScheme, CommitmentScheme, EvaluationClaim, GroupBatchOpening, GroupOpeningClaim,
@@ -21,6 +24,17 @@ use jolt_transcript::{protocol_tag, prover_transcript, verifier_transcript, Blak
 
 struct TraceRows {
     indices: Vec<[u8; 2]>,
+}
+
+struct SetupAnswers<'a> {
+    setup: &'a AkitaProverSetup,
+    polynomial: SetupPolynomialId,
+}
+
+impl SetupClaimAdvice<AkitaField> for SetupAnswers<'_> {
+    fn answer(&mut self, query: &SetupQuery<AkitaField>) -> Result<AkitaField, AkitaError> {
+        self.setup.prepare_setup_answer(&self.polynomial, query)
+    }
 }
 
 impl TraceOneHotRows for TraceRows {
@@ -102,7 +116,14 @@ fn akita_streamed_trace_batch_rejects_swapped_evaluations() {
                         proof: &AkitaBatchProof,
                         narg: &[u8]| {
         let mut verifier_state = verifier_transcript::<Keccak>(&session, b"", narg);
-        let pending = AkitaScheme::verify_batch(setup, &[], statement, proof, &mut verifier_state)?;
+        let pending = AkitaScheme::verify_batch(
+            setup,
+            &[],
+            statement,
+            proof,
+            &mut verifier_state,
+            &mut Default::default(),
+        )?;
         let tail = verifier_state.verifier_message::<[u8; 32]>();
         AkitaScheme::check_eof(pending, verifier_state).map(|()| tail)
     };
@@ -134,10 +155,9 @@ fn akita_streamed_trace_batch_rejects_swapped_evaluations() {
         "expected the embedded-argument rejection, got: {err}"
     );
 
-    // The embedded opening absorbs no setup bytes of its own. Akita's
-    // descriptor binds the backend setup and the selected schedule, and the
-    // trace batch must match the verifier setup's shape, layout digest and K
-    // exactly, so a setup that differs in any of them rejects the proof.
+    // The trace batch must match the verifier setup's shape, layout digest
+    // and K exactly. Jolt's statement check rejects each mismatch below
+    // before Akita runs; Akita's descriptor binding is tested upstream.
     let setup_json =
         serde_json::to_value(&verifier_setup).expect("verifier setup should serialize");
     for (field, value) in [
@@ -177,6 +197,60 @@ fn akita_streamed_trace_batch_rejects_swapped_evaluations() {
         matches!(&err, OpeningsError::InvalidBatch(message) if message.contains("coefficients")),
         "expected a shape-guard rejection, got: {err}"
     );
+
+    let fields = prover_setup
+        .required_setup_domain_len()
+        .expect("setup length");
+    let advice_setup = prover_setup
+        .clone()
+        .with_setup_domain(fields)
+        .expect("advice setup");
+    let polynomial = verifier_setup
+        .setup_polynomial(fields)
+        .expect("setup polynomial");
+    let mut answers = SetupAnswers {
+        setup: &advice_setup,
+        polynomial: polynomial.clone(),
+    };
+    let mut deferred = AkitaVerificationContext {
+        mode: SetupMode::Defer,
+        accumulator: Some(SetupClaimAccumulator::new(polynomial).with_advice(&mut answers)),
+        ..Default::default()
+    };
+    let mut deferred_state = verifier_transcript::<Keccak>(&session, b"", &narg);
+    let pending = AkitaScheme::verify_batch(
+        &verifier_setup,
+        &[],
+        &statement,
+        &proof,
+        &mut deferred_state,
+        &mut deferred,
+    )
+    .expect("deferred verification must retain the direct setup obligations");
+    let _ = deferred_state.verifier_message::<[u8; 32]>();
+    AkitaScheme::check_eof(pending, deferred_state)
+        .expect("deferred verification must read the whole argument");
+    assert!(!deferred
+        .accumulator
+        .expect("deferred accumulator")
+        .into_pending()
+        .is_empty());
+
+    // Defer must never silently accept a valid proof without retaining its obligations.
+    let mut deferred = AkitaVerificationContext {
+        mode: SetupMode::Defer,
+        ..Default::default()
+    };
+    let mut deferred_state = verifier_transcript::<Keccak>(&session, b"", &narg);
+    assert!(AkitaScheme::verify_batch(
+        &verifier_setup,
+        &[],
+        &statement,
+        &proof,
+        &mut deferred_state,
+        &mut deferred,
+    )
+    .is_err());
 
     statement.evaluations.swap(0, 1);
     assert!(verify(&statement, &narg).is_err());

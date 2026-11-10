@@ -1158,6 +1158,13 @@ pub const AKITA_TARGETS: &[TamperTarget] = &[
         TamperCoverage::Active,
         "the dense increment commitment is required and its wire leaves are covered by the Akita commitment sweep",
     ),
+    final_opening_standard(
+        "proof.narg",
+        "proof.narg",
+        MutationStrategy::ExtendVector,
+        TamperCoverage::Active,
+        "Akita's opening is in the argument string: an appended, flipped or removed byte rejects",
+    ),
     #[cfg(feature = "field-inline")]
     checked_standard(
         "proof.field_inc_commitment",
@@ -1241,6 +1248,8 @@ pub fn proof_field_paths() -> &'static [&'static str] {
         "proof.untrusted_advice_commitment",
         #[cfg(feature = "akita")]
         "proof.fused_inc_commitment",
+        #[cfg(feature = "akita")]
+        "proof.narg",
         #[cfg(all(feature = "akita", feature = "field-inline"))]
         "proof.field_inc_commitment",
         "proof.claims",

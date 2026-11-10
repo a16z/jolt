@@ -104,7 +104,7 @@ impl<const D: usize> DigitWindows<D> {
         if views.is_empty() {
             return;
         }
-        for (tile, out) in dst.chunks_exact_mut(TILE).enumerate() {
+        for (tile, out) in dst.as_chunks_mut::<TILE>().0.iter_mut().enumerate() {
             // Start with the destination so the tile needs no final addition pass.
             // Each digit is non-negative, so every intermediate sum lies between
             // the original destination and the bounded final accumulator.

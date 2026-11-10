@@ -31,11 +31,10 @@
 //! - **Split-eq flag claims**: the output lookup-table/RAF flag sums use the
 //!   `E_hi ⊗ E_lo` factorization of `eq(r_cycle, ·)` instead of a `T`-sized
 //!   eq table.
-//! - **Shared witness rows**: re-emulating sources keep a strong
-//!   `SharedInstructionRows` carry in the [`ProofSession`]; slice-backed
-//!   sources keep only `SharedInstructionRowsWeak` and rebuild index-parallel
-//!   once the last owner drops. Queued destruction can extend sharing across
-//!   stages.
+//! - **Shared witness rows**: stage 5 and the address preparations carry rows
+//!   through the [`ProofSession`] to the cycle kernels. Random-access cycle
+//!   consumers release the session's strong reference once they own the rows;
+//!   streaming witnesses retain it to avoid replaying execution.
 
 mod cycle_groups;
 
@@ -67,9 +66,7 @@ use jolt_witness::{stream_witnesses, JoltWitnessPlane, StreamConsumer, WitnessBu
 use rayon::prelude::*;
 
 use super::constant_suffix::ConstantSuffix;
-use super::lazy_ra::{
-    ChunkIndexSource, LazyFoldedRa, PairedBranchTables, PAIRED_MATERIALIZE_BRANCHES,
-};
+use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa, PairedBranchTables};
 use super::support::{
     accumulate_product_grid, collect_par_map, map_indices, map_reduce_chunks,
     product_grid_scratch_len, repeat_hash, repeats_often, scan_chunk_size, BundleAccess,
@@ -264,11 +261,18 @@ impl InstructionCycleRow {
 
 /// The collected stage-5 rows, parked in the [`ProofSession`] for the
 /// stage-6b instruction RA virtualization kernel (its committed one-hot
-/// chunks are chunks of the same per-cycle lookup index) and the
-/// stage-6a/6b booleanity kernels (all three one-hot chunk families).
+/// chunks are chunks of the same per-cycle lookup index), the stage-6a/6b
+/// booleanity and bytecode read-RAF kernels, and the stage-7 Hamming-weight
+/// reduction.
 ///
-/// Non-final consumers reclaim with `take`, clone the [`Arc`], and park the
-/// carry back for the later stages.
+/// Streaming witnesses keep this carry for the whole proof, since collecting
+/// again would replay execution. For random-access witnesses, stage 5 and the
+/// stage-6a address preparations park it so the rows outlive their kernels,
+/// and the first [`InstructionCycleRow::shared`] call (any optimized stage-6b
+/// cycle consumer, else the stage-7 Hamming-weight reduction) replaces it
+/// with [`SharedInstructionRowsWeak`]. A registry with none of those
+/// consumers optimized keeps the rows alive until
+/// [`KernelContext::finish`](crate::KernelContext::finish).
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(crate) struct SharedInstructionRows(pub(crate) Arc<ConstantSuffix<InstructionCycleRow>>);
 
@@ -296,6 +300,21 @@ impl InstructionCycleRow {
             .state::<SharedInstructionRowsWeak>()
             .and_then(|weak| weak.0.upgrade())
             .filter(|rows| rows.len() == cycles)
+    }
+
+    /// Reuse cached rows or collect them, retaining a strong carry for a later
+    /// consumer whatever the witness kind.
+    pub(crate) fn shared_for_next_consumer<F: JoltField>(
+        session: &mut ProofSession,
+        witness: &dyn JoltWitnessPlane<F>,
+        cycles: usize,
+    ) -> Result<Arc<ConstantSuffix<Self>>, KernelError<F>> {
+        let rows = match Self::cached(session, witness, cycles) {
+            Some(rows) => rows,
+            None => Arc::new(Self::collect(witness, cycles)?),
+        };
+        session.park(SharedInstructionRows(Arc::clone(&rows)));
+        Ok(rows)
     }
 
     /// Reuse cached rows or collect them, retaining a strong carry only for
@@ -350,6 +369,41 @@ impl LookupIndexChunks {
             chunk_bits,
         }
     }
+
+    /// `gather_pairs` at `bits`-wide chunks. Always inlined, so a caller
+    /// passing a literal `bits` gets immediate shifts instead of the generic
+    /// u128 shift by a runtime amount.
+    #[inline(always)]
+    fn gather_chunk_pairs<F: JoltField>(
+        &self,
+        bits: usize,
+        tables: &[Vec<F>],
+        width: usize,
+        row: usize,
+        out: &mut [(F, F)],
+    ) {
+        let mask = (1u128 << bits) - 1;
+        let stride = 1usize << bits;
+        for branch in 0..width {
+            let mut lo = self.rows[2 * row * width + branch].lookup_index();
+            let mut hi = self.rows[(2 * row + 1) * width + branch].lookup_index();
+            let base = branch * stride;
+            for (out, table) in out.iter_mut().zip(tables).rev() {
+                let pair = (
+                    table[base + (lo & mask) as usize],
+                    table[base + (hi & mask) as usize],
+                );
+                if branch == 0 {
+                    *out = pair;
+                } else {
+                    out.0 += pair.0;
+                    out.1 += pair.1;
+                }
+                lo >>= bits;
+                hi >>= bits;
+            }
+        }
+    }
 }
 
 impl ChunkIndexSource for LookupIndexChunks {
@@ -402,27 +456,21 @@ impl ChunkIndexSource for LookupIndexChunks {
         }
     }
 
-    fn visit_paired_values<F: JoltField>(
+    #[inline(always)]
+    fn visit_paired_branches<F: JoltField, const BRANCHES: usize>(
         &self,
         tables: &PairedBranchTables<F>,
-        row: usize,
+        start: usize,
         visit: impl FnMut(usize, F),
     ) {
-        let start = row * PAIRED_MATERIALIZE_BRANCHES;
         if self.chunk_bits == 4 {
-            tables.visit_four_bit::<PAIRED_MATERIALIZE_BRANCHES>(
+            tables.visit_four_bit::<BRANCHES>(
                 tables.columns(),
                 |branch| self.packed_index(start + branch),
                 visit,
             );
         } else {
-            tables.visit_indexed(
-                self,
-                0..tables.columns(),
-                start,
-                PAIRED_MATERIALIZE_BRANCHES / 2,
-                visit,
-            );
+            tables.visit_indexed(self, 0..tables.columns(), start, BRANCHES / 2, visit);
         }
     }
 
@@ -434,26 +482,10 @@ impl ChunkIndexSource for LookupIndexChunks {
         row: usize,
         out: &mut [(F, F)],
     ) {
-        let mask = (1u128 << self.chunk_bits) - 1;
-        let stride = 1usize << self.chunk_bits;
-        for branch in 0..width {
-            let mut lo = self.rows[2 * row * width + branch].lookup_index();
-            let mut hi = self.rows[(2 * row + 1) * width + branch].lookup_index();
-            let base = branch * stride;
-            for (out, table) in out.iter_mut().zip(tables).rev() {
-                let pair = (
-                    table[base + (lo & mask) as usize],
-                    table[base + (hi & mask) as usize],
-                );
-                if branch == 0 {
-                    *out = pair;
-                } else {
-                    out.0 += pair.0;
-                    out.1 += pair.1;
-                }
-                lo >>= self.chunk_bits;
-                hi >>= self.chunk_bits;
-            }
+        match self.chunk_bits {
+            4 => self.gather_chunk_pairs(4, tables, width, row, out),
+            16 => self.gather_chunk_pairs(16, tables, width, row, out),
+            bits => self.gather_chunk_pairs(bits, tables, width, row, out),
         }
     }
 }
@@ -495,11 +527,7 @@ impl<F: JoltField> PrepareKernel<F, InstructionReadRaf<F>> for OptimizedInstruct
         let rows: Arc<ConstantSuffix<InstructionCycleRow>> = Arc::new(
             InstructionCycleRow::collect(witness, 1 << dimensions.log_t())?,
         );
-        if witness.random_access().is_some() {
-            session.park(SharedInstructionRowsWeak(Arc::downgrade(&rows)));
-        } else {
-            session.park(SharedInstructionRows(Arc::clone(&rows)));
-        }
+        session.park(SharedInstructionRows(Arc::clone(&rows)));
         Ok(Box::new(OptimizedInstructionReadRafKernel::new(
             dimensions,
             &inputs.points.lookup_output,
@@ -1010,7 +1038,7 @@ impl<F: JoltField> TableScan<F> {
             } => {
                 for (&suffix, row) in suffixes
                     .iter()
-                    .zip(accumulators.chunks_exact_mut(CHUNK_SIZE))
+                    .zip(accumulators.as_chunks_mut::<CHUNK_SIZE>().0)
                 {
                     suffix.accumulate(row, chunk, bits, value);
                 }
@@ -1172,7 +1200,9 @@ impl<F: JoltField> PhaseScan<'_, F> {
             let into = suffixes[range_table.index()]
                 .get_or_insert_with(|| vec![F::zero(); range_table.suffixes().len() * CHUNK_SIZE]);
             for (row, suffix) in into
-                .chunks_exact_mut(CHUNK_SIZE)
+                .as_chunks_mut::<CHUNK_SIZE>()
+                .0
+                .iter_mut()
                 .zip(range_table.suffixes())
             {
                 row[0] += match suffix {
@@ -1510,7 +1540,9 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
             .zip(suffixes)
             .filter_map(|(table, sums)| {
                 let polynomials = sums?
-                    .chunks_exact(CHUNK_SIZE)
+                    .as_chunks::<CHUNK_SIZE>()
+                    .0
+                    .iter()
                     .map(|coefficients| Polynomial::new(coefficients.to_vec()))
                     .collect();
                 Some((table, polynomials))
@@ -2045,15 +2077,17 @@ mod tests {
     use jolt_claims::protocols::jolt::relations::instruction::InstructionReadRafInputClaims;
     use jolt_lookup_tables::{LookupBits, LookupTableKind, XLEN as RISCV_XLEN};
     use jolt_sumcheck::ProveRounds;
+    use jolt_witness::testing::with_sample_backend;
     #[cfg(feature = "akita")]
     use jolt_witness::witnesses::FusedInc;
     use jolt_witness::witnesses::{InstructionRafFlag, LookupIndex, TableIndex};
+    use jolt_witness::RowSource;
 
     use crate::reference::instruction_read_raf::{
         InstructionReadRafKernel, InstructionReadRafWitness,
     };
     use crate::reference::views::eq_table;
-    use crate::SumcheckKernel;
+    use crate::{ProofSession, SumcheckKernel};
 
     use super::{
         InstructionCycleRow, LookupIndexChunks, OptimizedInstructionReadRafKernel, RepeatCache,
@@ -2125,6 +2159,32 @@ mod tests {
                 }
             })
             .collect()
+    }
+
+    #[test]
+    fn shared_rows_survive_handoff_then_release() {
+        with_sample_backend(|backend| {
+            let cycles = backend.random_access().unwrap().cycles();
+            let mut session = ProofSession::default();
+            let rows =
+                InstructionCycleRow::shared_for_next_consumer::<Fr>(&mut session, backend, cycles)
+                    .unwrap();
+            let weak = Arc::downgrade(&rows);
+            drop(rows);
+            assert!(weak.upgrade().is_some());
+
+            let rows =
+                InstructionCycleRow::shared_for_next_consumer::<Fr>(&mut session, backend, cycles)
+                    .unwrap();
+            assert!(Arc::ptr_eq(&weak.upgrade().unwrap(), &rows));
+            drop(rows);
+            assert!(weak.upgrade().is_some());
+
+            let rows = InstructionCycleRow::shared::<Fr>(&mut session, backend, cycles).unwrap();
+            assert!(Arc::ptr_eq(&weak.upgrade().unwrap(), &rows));
+            drop(rows);
+            assert!(weak.upgrade().is_none());
+        });
     }
 
     #[test]

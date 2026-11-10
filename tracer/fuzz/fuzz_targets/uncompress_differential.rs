@@ -29,9 +29,9 @@ fuzz_target!(|data: &[u8]| {
          tracer {tracer_word:#010x} vs jolt-riscv {program_word:#010x}"
     );
 
-    // An expansion of 0 marks an illegal/reserved compressed encoding in both
-    // implementations; there is nothing to decode.
-    if program_word == 0 {
+    // An expansion of 0xffff_ffff marks an illegal or reserved compressed
+    // encoding in both implementations; there is nothing to decode.
+    if program_word == 0xffff_ffff {
         return;
     }
 

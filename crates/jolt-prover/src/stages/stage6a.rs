@@ -246,7 +246,7 @@ mod field_inline_round_trip {
             &stage5.clear_output.output_values,
         );
         let zero = Fr::from_u64(0);
-        assert!(appendage.rd_wa_read_write != zero);
+        assert_ne!(appendage.rd_wa_read_write, zero);
 
         let mut transcript = prover_transcript::<Keccak>(
             &jolt_transcript::protocol_tag(b"stage6a-field-inline"),

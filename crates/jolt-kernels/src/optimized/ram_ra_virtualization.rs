@@ -117,6 +117,22 @@ struct RamAddressChunks {
 }
 
 impl ChunkIndexSource for RamAddressChunks {
+    fn gather_pairs<F: JoltField>(
+        &self,
+        tables: &[Vec<F>],
+        width: usize,
+        row: usize,
+        out: &mut [(F, F)],
+    ) {
+        let start = 2 * row * width;
+        // Every committed selector vanishes on a no-access cycle.
+        if self.addresses.no_access_in(start..start + 2 * width) {
+            out.fill((F::zero(), F::zero()));
+        } else {
+            super::lazy_ra::gather_pairs_by_index(self, tables, width, row, out);
+        }
+    }
+
     fn constant_suffix_start(&self) -> usize {
         self.addresses.prefix_len()
     }
@@ -600,6 +616,21 @@ mod tests {
                 RamOp::Read { word: 200 },
             ],
             457,
+        );
+    }
+
+    #[test]
+    fn parity_cold_groups_through_all_lazy_widths() {
+        let mut ops = vec![RamOp::None; 49];
+        ops[0] = RamOp::Read { word: 0 };
+        ops[48] = RamOp::Read { word: 0 };
+        run_parity(
+            FixtureShape {
+                log_t: 11,
+                ram_k: 256,
+            },
+            ops,
+            467,
         );
     }
 

@@ -336,7 +336,9 @@ where
             }
             let mut blocks = vec![E::zero(); num_columns * subring_dimension];
             for (column_sums, column_blocks) in sums
-                .chunks_exact(D)
+                .as_chunks::<D>()
+                .0
+                .iter()
                 .zip(blocks.chunks_exact_mut(subring_dimension))
             {
                 for (coefficient, sum) in column_sums.iter().enumerate() {
@@ -429,12 +431,27 @@ pub(super) struct TraceBlockTaskSchedule {
 }
 
 impl TraceBlockTaskSchedule {
+    /// Start every part of an unaligned schedule at a multiple of `batch`
+    /// positions. `batch` need not divide `num_positions`: the last part
+    /// absorbs the remainder instead of becoming a short task of its own.
+    pub(super) fn with_ring_alignment(mut self, batch: usize) -> Self {
+        debug_assert_eq!(self.ring_alignment, 1);
+        self.ring_alignment = batch;
+        self.parts = self.parts.min((self.num_positions / batch).max(1));
+        self
+    }
+
     pub(super) fn part_range(&self, part: usize) -> (usize, usize) {
         debug_assert!(part < self.parts);
         let aligned_positions = self.num_positions / self.ring_alignment;
+        let end = if part + 1 == self.parts {
+            self.num_positions
+        } else {
+            (part + 1) * aligned_positions / self.parts * self.ring_alignment
+        };
         (
             part * aligned_positions / self.parts * self.ring_alignment,
-            (part + 1) * aligned_positions / self.parts * self.ring_alignment,
+            end,
         )
     }
 }

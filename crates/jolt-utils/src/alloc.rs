@@ -48,7 +48,7 @@ mod tests {
     fn zero_vec_field_elements() {
         let table: Vec<Fr> = unsafe_allocate_zero_vec(1 << 10);
         assert_eq!(table, vec![Fr::from_u64(0); 1 << 10]);
-        assert!(unsafe_allocate_zero_vec::<Fr>(0).is_empty());
+        assert_eq!(unsafe_allocate_zero_vec::<Fr>(0), [] as [Fr; 0]);
     }
 
     #[test]

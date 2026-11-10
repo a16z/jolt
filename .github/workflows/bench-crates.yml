@@ -45,7 +45,7 @@ jobs:
           # base leg can check out the exact main tip this PR merges against.
           fetch-depth: 2
 
-      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2
+      - uses: actions-rust-lang/setup-rust-toolchain@a188e68d0fd2bd36ad51dccb2b07ba6e75105f30 # v2
 
       - name: Resolve base and head
         id: refs
@@ -72,18 +72,22 @@ jobs:
             read -r sha baseline <<< "$leg"
             echo "::group::$baseline @ $sha"
             git checkout --quiet "$sha"
-            features=jolt-algebra/solinas,jolt-algebra/asm
+            # A base that predates the jolt-field -> jolt-algebra rename has
+            # only the old crate.
+            field=jolt-algebra
+            [[ -d crates/jolt-algebra ]] || field=jolt-field
+            features=$field/solinas,$field/asm
             # `--bench '*'` rejects a bench whose required feature is off, and a
             # base that predates a feature cannot enable it.
-            if grep -q '^binary = ' crates/jolt-algebra/Cargo.toml; then
-              features+=,jolt-algebra/binary
+            if grep -q '^binary = ' "crates/$field/Cargo.toml"; then
+              features+=,$field/binary
             fi
             if grep -q '^transcript-blake2b = ' crates/jolt-transcript/Cargo.toml; then
               features+=,jolt-transcript/transcript-blake2b,jolt-transcript/transcript-keccak,jolt-transcript/transcript-poseidon
             fi
             cargo bench \
               -p jolt-crypto \
-              -p jolt-algebra \
+              -p "$field" \
               -p jolt-poly \
               -p jolt-transcript \
               --features "$features" \

@@ -86,7 +86,7 @@ pub(crate) fn sample_uniform_below<R: rand_core::RngCore>(
     modulus_bits: u32,
 ) -> u128 {
     debug_assert!(modulus > 0);
-    debug_assert_eq!(modulus_bits, u128::BITS - modulus.leading_zeros());
+    debug_assert_eq!(modulus_bits, modulus.bit_width());
     let byte_len = modulus_bits.div_ceil(8) as usize;
     let mask = if modulus_bits == u128::BITS {
         u128::MAX
@@ -158,6 +158,12 @@ pub type Prime128Offset275 = Fp128<{ pm(128, 275) }>;
 /// so neither `Ext2` (non-residue 2 or −1), `FpExt4` nor `FpExt8` over it is
 /// a field: use it at extension degree 1.
 pub type Prime128OffsetA7F7 = Fp128<FIELD_INLINE_FP128_MODULUS>;
+
+/// Prime field for `2^128 − 1_780_711_455` (`C = 0x6A23_801F`): smooth
+/// multiplicative subgroup of order `2^5 · 3^3 · 5^8 = 337_500_000`. Here
+/// `p ≡ 1 (mod 32)`, so neither `Ext2` (non-residue 2 or −1), `FpExt4` nor
+/// `FpExt8` over it is a field: use it at extension degree 1.
+pub type Prime128Offset6A23801F = Fp128<{ pm(128, 0x6A23_801F) }>;
 
 /// The modulus of [`Prime128OffsetA7F7`], the Fp128 field the field-inline
 /// unit computes in under `field-inline-guest-fp128`.

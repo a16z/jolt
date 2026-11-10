@@ -54,10 +54,10 @@ use std::borrow::BorrowMut;
 use crate::proof::JoltCommitments;
 #[cfg(not(all(feature = "akita", feature = "zk")))]
 use crate::stages::stage8;
-#[cfg(all(feature = "akita", not(feature = "zk")))]
-use crate::stages::stage8::OneHotTraceCommitmentMetadata;
 #[cfg(not(feature = "akita"))]
 use crate::stages::stage8::Stage8Output;
+#[cfg(all(feature = "akita", not(feature = "zk")))]
+use crate::stages::stage8::{OneHotTraceCommitmentMetadata, OneHotTraceSetupMetadata};
 use crate::{
     config::{
         validate_proof_config, CommitmentConfig, JoltProtocolConfig, ZkConfig,
@@ -137,7 +137,39 @@ where
     F: JoltField + Encoding,
     PCS: CommitmentScheme<Field = F> + GroupBatchOpening,
     PCS::Output: Clone + Encoding + OneHotTraceCommitmentMetadata,
-    PCS::VerifierSetup: stage8::OneHotTraceSetupMetadata,
+    PCS::VerifierSetup: OneHotTraceSetupMetadata,
+    VC: VectorCommitment<Field = F>,
+    VC::Output: Copy + Encoding,
+    T: FieldTranscript<F>
+        + VerifierInit<'a>
+        + BorrowMut<VerifierState<'a, PCS::Sponge>>
+        + Into<VerifierState<'a, PCS::Sponge>>,
+{
+    verify_with_context::<F, PCS, VC, T>(
+        preprocessing,
+        public_io,
+        proof,
+        trusted_advice_commitment,
+        &mut PCS::VerificationContext::default(),
+    )
+}
+
+/// Verify with backend-owned runtime state, keeping the stage replay shared.
+/// Deferred callers must authenticate and discharge every exported setup claim
+/// in an enclosing proof before treating this result as acceptance.
+#[cfg(all(feature = "akita", not(feature = "zk")))]
+pub fn verify_with_context<'a, F, PCS, VC, T>(
+    preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
+    public_io: &JoltDevice,
+    proof: &'a JoltProof<PCS, VC>,
+    trusted_advice_commitment: Option<&PCS::Output>,
+    context: &mut PCS::VerificationContext<'_>,
+) -> Result<(), VerifierError>
+where
+    F: JoltField + Encoding,
+    PCS: CommitmentScheme<Field = F> + GroupBatchOpening,
+    PCS::Output: Clone + Encoding + OneHotTraceCommitmentMetadata,
+    PCS::VerifierSetup: OneHotTraceSetupMetadata,
     VC: VectorCommitment<Field = F>,
     VC::Output: Copy + Encoding,
     T: FieldTranscript<F>
@@ -183,6 +215,7 @@ where
         &stages.stage4,
         &stages.stage6b,
         &stages.stage7,
+        context,
     )?;
 
     PCS::check_eof(pending, transcript.into()).map_err(|_| VerifierError::NargNotConsumed)
@@ -1485,6 +1518,7 @@ mod tests {
         type Proof = ();
         type ProverSetup = ();
         type VerifierSetup = ();
+        type VerificationContext<'a> = ();
         type OpeningHint = ();
         type SetupParams = ();
 
@@ -1852,7 +1886,7 @@ mod tests {
 
         public_io.outputs = vec![0, 0];
         let checked = validate_inputs(&preprocessing, &public_io, &proof, false).unwrap();
-        assert!(checked.public_io.outputs.is_empty());
+        assert_eq!(checked.public_io.outputs, [0u8; 0]);
     }
 
     #[test]

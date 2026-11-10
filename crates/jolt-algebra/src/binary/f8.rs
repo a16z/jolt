@@ -129,7 +129,7 @@ impl CanonicalEncoding for F8 {
     }
 
     fn num_bits(&self) -> u32 {
-        u8::BITS - self.0.leading_zeros()
+        self.0.bit_width()
     }
 }
 

@@ -282,7 +282,7 @@ if [[ "$ARCHITECTURE" == x86_64 ]]; then
   printf 'print_endline "[HOL 4/5] Proving BMI2 and ADX x86-64 multiplication";;\n' >>"$COMBINED_SOURCE"
   printf 'loadt "%s/fp128_mul_x86_64_bmi2_adx_object.ml";;\n' "$PROOF_DIR" >>"$COMBINED_SOURCE"
   printf 'loadt "%s/fp128_mul_x86_64_bmi2_adx_correct.ml";;\n' "$PROOF_DIR" >>"$COMBINED_SOURCE"
-  printf 'print_endline "[HOL 5/5] Certifying the A7F7 modulus";;\n' >>"$COMBINED_SOURCE"
+  printf 'print_endline "[HOL 5/5] Certifying the A7F7 and 6A23801F moduli";;\n' >>"$COMBINED_SOURCE"
   printf 'loadt "%s/fp128_prime.ml";;\n' "$PROOF_DIR" >>"$COMBINED_SOURCE"
   PROOF_SOURCES=(
     "$COMBINED_SOURCE"
@@ -316,7 +316,7 @@ else
   printf 'print_endline "[HOL 3/4] Proving AArch64 multiplication";;\n' >>"$COMBINED_SOURCE"
   printf 'loadt "%s/fp128_mul_object.ml";;\n' "$PROOF_DIR" >>"$COMBINED_SOURCE"
   printf 'loadt "%s/fp128_mul_correct.ml";;\n' "$PROOF_DIR" >>"$COMBINED_SOURCE"
-  printf 'print_endline "[HOL 4/4] Certifying the A7F7 modulus";;\n' >>"$COMBINED_SOURCE"
+  printf 'print_endline "[HOL 4/4] Certifying the A7F7 and 6A23801F moduli";;\n' >>"$COMBINED_SOURCE"
   printf 'loadt "%s/fp128_prime.ml";;\n' "$PROOF_DIR" >>"$COMBINED_SOURCE"
   PROOF_SOURCES=(
     "$COMBINED_SOURCE"
@@ -348,6 +348,8 @@ if [[ -n "$BMI2_ADX_MUL_THEOREM" ]]; then
     "$BMI2_ADX_MUL_THEOREM" "$BMI2_ADX_MUL_THEOREM" >>"$COMBINED_SOURCE"
 fi
 printf 'Printf.printf "val JOLT_FP128_A7F7_PRIME : thm = %%s\\n" (string_of_thm JOLT_FP128_A7F7_PRIME);;\n' \
+  >>"$COMBINED_SOURCE"
+printf 'Printf.printf "val JOLT_FP128_6A23801F_PRIME : thm = %%s\\n" (string_of_thm JOLT_FP128_6A23801F_PRIME);;\n' \
   >>"$COMBINED_SOURCE"
 
 CACHE_KEY=$(
@@ -386,5 +388,6 @@ if [[ -n "$BMI2_ADX_MUL_THEOREM" ]]; then
   grep -F "val $BMI2_ADX_MUL_THEOREM : thm" "$LOG_PATH"
 fi
 grep -F "val JOLT_FP128_A7F7_PRIME : thm" "$LOG_PATH"
+grep -F "val JOLT_FP128_6A23801F_PRIME : thm" "$LOG_PATH"
 
 echo "Fp128 $ARCHITECTURE inspection witness proofs passed."

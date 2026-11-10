@@ -54,7 +54,7 @@ These Claude Code skills are available in this repo:
 | `/new-spec <name>` | Create a new spec file from the template |
 | `/analyze-spec` | Interactive Socratic analysis of a spec (local) |
 | `/implement-spec` | Autonomous implementation from an approved spec (local/cloud) |
-| `/ci-code-review` | Deepest possible PR review outside CI, subagents encouraged, before a review attestation |
+| `/ci-code-review` | Extremely thorough PR review outside CI before a review attestation: fanned-out subagents, checks run in a credential-free sandbox |
 | `/verifier-classifier` | Classify verifier impact and assign review-risk levels |
 
 Spec analysis can also be triggered externally by adding the `claude-spec-review-request` label to a PR.
@@ -65,17 +65,11 @@ Once its admin setup is in place, merging into `main` needs one approving review
 approvals dismissed on push, plus the required CI checks. A person's approval counts on its own.
 The gate approves as `github-actions[bot]` when a maintainer listed in
 `AI_MERGE_GATE_MAINTAINERS` and currently holding write access wrote the pull request,
-an allowed account attested a review of its current head, the verifier classifier put it at
-`risk-1` (tests/scripts/CI/docs), `risk-2` (non-verifier code or dependency bumps outside the
-verifier dependency closure) or `risk-3` (dependency bumps in that closure or code changes under
-the minimality rule), and it changes none of the gate's inputs. Affecting or uncertain changes
-must be minimal: at most 20 added plus removed code lines across paths at effective risk-3,
-excluding lockfiles and dependency-only
-files; the guide specifies comment/test exclusions and conservative counting. It never
-approves `risk-4` (including runtime-code edits on verifier paths and non-minimal affecting or
-uncertain changes), for which the policy asks for a current-head approval by a maintainer other
-than the PR author. The classifier is the only model
-the gate calls.
+an allowed account attested a review of its current head, and the verifier classifier rated it
+`risk-1`, `risk-2` or `risk-3`. The head's risk is the highest per-path level the classifier
+returns, using the [verifier-classifier skill](.claude/skills/verifier-classifier/SKILL.md).
+It never approves `risk-4` or an unclassified head; those need a current-head approval from a
+maintainer other than the PR author. The classifier is the only model the gate calls.
 
 Run code review outside CI. Once it finds no issues, the Pika App bot or a maintainer listed in
 the repository variable `AI_MERGE_GATE_MAINTAINERS`, with current write access, posts the exact
@@ -88,12 +82,12 @@ This pull request #2203 has been reviewed at commit f316de7b96be3846a36713175d95
 ```
 
 The skill name is free text; the model and effort must be a pair that
-[the gate guide](.github/ai-merge-gate.md#the-attestation-is-an-exact-standalone-comment-line)
+[the gate guide](.github/ai-merge-gate.md#review-attestation)
 accepts. Being the PR author alone does not qualify. A new head requires a new attestation;
 editing away or deleting the line invalidates it and withdraws the gate's approval. Review
 bodies, old markers and cached CI reviews cannot replace it, and the `ai-review` label starts no
 review. See [the gate guide](.github/ai-merge-gate.md) for maintainer eligibility, the labels,
-the risk policy, spend limits, admin setup and turning the gate off.
+approval policy, limits, admin setup and turning the gate off.
 
 ## Development Setup
 

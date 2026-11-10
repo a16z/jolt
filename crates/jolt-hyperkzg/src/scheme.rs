@@ -151,6 +151,7 @@ impl CommitmentScheme for HyperKZGScheme {
     type Proof = HyperKZGProof;
     type ProverSetup = HyperKZGProverSetup;
     type VerifierSetup = HyperKZGVerifierSetup;
+    type VerificationContext<'a> = ();
     /// The commitment returned by `commit`. `open` binds it into the statement
     /// without recomputing it, so a mismatched hint yields a rejected proof.
     type OpeningHint = Bn254G1;

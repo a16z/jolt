@@ -46,6 +46,19 @@ pub struct ProverConfig {
 }
 
 impl ProverConfig {
+    /// Reserve the final no-op row and select the protocol's padded trace domain.
+    pub fn padded_trace_length<F: JoltField>(
+        executed_rows: usize,
+    ) -> Result<usize, ProverError<F>> {
+        executed_rows
+            .checked_add(1)
+            .and_then(usize::checked_next_power_of_two)
+            .map(|length| length.max(MIN_PADDED_TRACE_LENGTH))
+            .ok_or(ProverError::Unsupported {
+                reason: "trace length overflows the padded domain",
+            })
+    }
+
     /// Derive the proof shape from execution facts without accessing trace rows.
     /// Pad the trace length past its final no-op, size RAM to cover accessed
     /// addresses and the program image, and select chunking policies.
@@ -60,14 +73,7 @@ impl ProverConfig {
         if dimensions.trace_length != 0 && !dimensions.ends_in_jump {
             return Err(ProverError::TraceDoesNotEndInJump);
         }
-        let trace_length = dimensions
-            .trace_length
-            .checked_add(1)
-            .and_then(usize::checked_next_power_of_two)
-            .ok_or(ProverError::Unsupported {
-                reason: "trace length overflows the padded domain",
-            })?
-            .max(MIN_PADDED_TRACE_LENGTH);
+        let trace_length = Self::padded_trace_length::<F>(dimensions.trace_length)?;
         if let Some(min) = dimensions.ram_bounds.min() {
             let _ = checked_remap_address(min, memory_layout)
                 .map_err(|reason| ProverError::Unsupported { reason })?;

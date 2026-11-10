@@ -128,7 +128,13 @@ mod tests {
     fn only_the_executing_modulus_reduces_to_zero() {
         let encode_limbs = |limbs: &[u64]| {
             let mut encoded = FieldEncodedValue::zero();
-            for (chunk, limb) in encoded.bytes_le.chunks_exact_mut(8).zip(limbs) {
+            for (chunk, limb) in encoded
+                .bytes_le
+                .as_chunks_mut::<8>()
+                .0
+                .iter_mut()
+                .zip(limbs)
+            {
                 chunk.copy_from_slice(&limb.to_le_bytes());
             }
             encoded

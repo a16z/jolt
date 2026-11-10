@@ -211,10 +211,8 @@ impl Mmu {
             false => {
                 let mut data = 0_u32;
                 for i in 0..width {
-                    match self.fetch(v_address.wrapping_add(i)) {
-                        Ok(byte) => data |= (byte as u32) << (i * 8),
-                        Err(e) => return Err(e),
-                    };
+                    let byte = self.fetch(v_address.wrapping_add(i))?;
+                    data |= (byte as u32) << (i * 8);
                 }
                 Ok(data)
             }

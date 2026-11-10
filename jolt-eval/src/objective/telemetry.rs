@@ -9,7 +9,7 @@
 //! <metric>   ::= prover_time_s         (root-span duration, seconds)
 //!              | peak_rss_gib          (process-lifetime getrusage high-water mark)
 //!              | peak_memory_gib       (max over memory samples in the root span)
-//!              | instructions          (user-space instructions retired in the root span)
+//!              | instructions          (hardware instructions retired in the root span)
 //!              | instructions:<span-label> (the same, summed over all instances)
 //!              | total:<span-label>    (inclusive time summed over all instances, seconds)
 //!              | self:<span-label>     (exclusive time summed over all instances, seconds)
@@ -56,9 +56,9 @@ pub enum TelemetryMetric {
     PeakRssGib,
     /// Max over memory samples inside the root span, GiB.
     PeakMemoryGib,
-    /// User-space instructions the process retired inside the root span.
+    /// Instructions retired inside the root span, with the summary's platform scope.
     Instructions,
-    /// User-space instructions the process retired inside one span label,
+    /// Instructions retired inside one span label with the summary's platform scope,
     /// summed over all instances; present only for labels that run on the
     /// profiled orchestrating thread.
     SpanInstructions(&'static str),

@@ -53,10 +53,10 @@ use rayon::prelude::*;
 mod paired;
 
 pub(crate) use paired::PairedBranchTables;
-use paired::PAIR_ADDRESSES;
+use paired::{PairedLoHi, PAIR_ADDRESSES};
 
 /// The default widest lazy branch set: the fourth bind materializes `T/16`.
-const DEFAULT_MAX_WIDTH: usize = 8;
+pub(super) const DEFAULT_MAX_WIDTH: usize = 8;
 
 /// Per-cycle hot indices of `N` point-mass columns (one per committed
 /// one-hot selector, or `factors` per factored polynomial) over a shared
@@ -128,23 +128,17 @@ pub(crate) trait ChunkIndexSource: Send + Sync + 'static {
         }
     }
 
-    /// Every column's value at bound row `row` of a
-    /// `PAIRED_MATERIALIZE_BRANCHES`-wide lazy set.
-    fn visit_paired_values<F: JoltField>(
+    /// Every column's value summed over the `BRANCHES` branch rows from
+    /// `start`.
+    fn visit_paired_branches<F: JoltField, const BRANCHES: usize>(
         &self,
         tables: &PairedBranchTables<F>,
-        row: usize,
+        start: usize,
         visit: impl FnMut(usize, F),
     ) where
         Self: Sized,
     {
-        tables.visit_indexed(
-            self,
-            0..tables.columns(),
-            row * PAIRED_MATERIALIZE_BRANCHES,
-            PAIRED_MATERIALIZE_BRANCHES / 2,
-            visit,
-        );
+        tables.visit_indexed(self, 0..tables.columns(), start, BRANCHES / 2, visit);
     }
 
     fn gather_pairs<F: JoltField>(
@@ -156,11 +150,61 @@ pub(crate) trait ChunkIndexSource: Send + Sync + 'static {
     ) where
         Self: Sized,
     {
-        for (i, (out, table)) in out.iter_mut().zip(tables).enumerate() {
-            *out = (
-                gather(table, width, self, i, 2 * row),
-                gather(table, width, self, i, 2 * row + 1),
-            );
+        gather_pairs_by_index(self, tables, width, row, out);
+    }
+}
+
+pub(super) fn gather_pairs_by_index<F: JoltField, S: ChunkIndexSource>(
+    source: &S,
+    tables: &[Vec<F>],
+    width: usize,
+    row: usize,
+    out: &mut [(F, F)],
+) {
+    for (i, (out, table)) in out.iter_mut().zip(tables).enumerate() {
+        *out = (
+            gather(table, width, source, i, 2 * row),
+            gather(table, width, source, i, 2 * row + 1),
+        );
+    }
+}
+
+/// How [`LazyFoldedRa::bind`] proceeds from `width` branches.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum LazyBind {
+    /// Double the branch tables and stay lazy.
+    Double,
+    /// Double the branch tables, then materialize at twice the width.
+    DoubleThenMaterialize,
+    /// Materialize at the current width, binding each gathered pair, because
+    /// the doubled branch tables would hold at least as many field elements as
+    /// the dense tables.
+    FusedMaterialize,
+}
+
+impl LazyBind {
+    /// The step for branch tables of `table_lens` entries, in polynomial
+    /// order with `factors` tables per polynomial (only each polynomial's
+    /// first table doubles), over `cycles` cycles at `width` of at most
+    /// `max_width` branches.
+    pub(super) fn new(
+        width: usize,
+        max_width: usize,
+        factors: usize,
+        cycles: usize,
+        table_lens: impl ExactSizeIterator<Item = usize>,
+    ) -> Self {
+        let dense_elements = cycles / (2 * width) * (table_lens.len() / factors);
+        let branch_elements = table_lens
+            .enumerate()
+            .map(|(column, len)| len * if column.is_multiple_of(factors) { 2 } else { 1 })
+            .sum::<usize>();
+        if branch_elements >= dense_elements {
+            Self::FusedMaterialize
+        } else if width < max_width {
+            Self::Double
+        } else {
+            Self::DoubleThenMaterialize
         }
     }
 }
@@ -297,6 +341,22 @@ impl<F: JoltField, S: ChunkIndexSource> LazyFoldedRa<F, S> {
         (self.value(i, 2 * row), self.value(i, 2 * row + 1))
     }
 
+    /// The leading `columns` polynomials' `(lo, hi)` pairs through paired
+    /// branch tables, when [`PairedLoHi`] admits this single-factor lazy set.
+    pub(crate) fn paired_lo_hi(&self, columns: usize) -> Option<PairedLoHi<'_, F, S>> {
+        let Self::Lazy {
+            tables,
+            width,
+            factors: 1,
+            source,
+            ..
+        } = self
+        else {
+            return None;
+        };
+        PairedLoHi::new(&tables[..columns], *width, source)
+    }
+
     /// All polynomials' `(lo, hi)` pairs at `row`, into `out` (length
     /// `num_polys`). One state dispatch per row instead of `2N`, with
     /// per-polynomial table slices hoisted out of the gather loop — the
@@ -384,15 +444,14 @@ impl<F: JoltField, S: ChunkIndexSource> LazyFoldedRa<F, S> {
                 source,
             } => {
                 let next_width = width * 2;
-                let dense_elements = source.cycles() / next_width * (tables.len() / factors);
-                let branch_elements = tables
-                    .iter()
-                    .enumerate()
-                    .map(|(column, table)| {
-                        table.len() * if column.is_multiple_of(factors) { 2 } else { 1 }
-                    })
-                    .sum::<usize>();
-                if width < max_width && branch_elements < dense_elements {
+                let step = LazyBind::new(
+                    width,
+                    max_width,
+                    factors,
+                    source.cycles(),
+                    tables.iter().map(Vec::len),
+                );
+                if step == LazyBind::Double {
                     Self::Lazy {
                         tables: double_branches(tables, factors, challenge),
                         width: next_width,
@@ -405,7 +464,7 @@ impl<F: JoltField, S: ChunkIndexSource> LazyFoldedRa<F, S> {
                 } else {
                     let log_t = source.cycles().ilog2() as usize;
                     // Gather and bind directly before a wide address table would expand.
-                    let (tables, branches, bind) = if branch_elements >= dense_elements {
+                    let (tables, branches, bind) = if step == LazyBind::FusedMaterialize {
                         (tables, width, Some(challenge))
                     } else {
                         (
@@ -606,7 +665,7 @@ fn materialize<F: JoltField, S: ChunkIndexSource>(
 /// the row-major fill touches all tables per row, which only pays while they
 /// stay cache-resident.
 const ROW_MAJOR_FILL_MAX_TABLE_BYTES: usize = 1 << 20;
-pub(super) const PAIRED_MATERIALIZE_BRANCHES: usize = 16;
+const PAIRED_MATERIALIZE_BRANCHES: usize = 16;
 const PAIRED_MATERIALIZE_MIN_ROWS: usize = 1 << 12;
 const PAIRED_MATERIALIZE_MAX_BYTES: usize = 2 << 20;
 /// Round messages read every polynomial at a row; once a row spans this many
@@ -757,9 +816,11 @@ fn materialize_paired_values<F: JoltField, S: ChunkIndexSource>(
             return;
         }
         for row in 0..len {
-            source.visit_paired_values(paired, start + row, |column, value| {
-                out[column][row] = value;
-            });
+            source.visit_paired_branches::<F, PAIRED_MATERIALIZE_BRANCHES>(
+                paired,
+                (start + row) * PAIRED_MATERIALIZE_BRANCHES,
+                |column, value| out[column][row] = value,
+            );
         }
     }
     fill(
@@ -786,7 +847,11 @@ fn materialize_paired_rows<F: JoltField, S: ChunkIndexSource>(
     #[cfg(not(feature = "parallel"))]
     let mut values = vec![F::zero(); len * columns];
     let fill = |(row, out): (usize, &mut [F])| {
-        source.visit_paired_values(&paired, row, |column, value| out[column] = value);
+        source.visit_paired_branches::<F, PAIRED_MATERIALIZE_BRANCHES>(
+            &paired,
+            row * PAIRED_MATERIALIZE_BRANCHES,
+            |column, value| out[column] = value,
+        );
     };
     #[cfg(feature = "parallel")]
     values
@@ -889,7 +954,9 @@ mod prefix_tests {
                 let challenge = F::from_u64([0, 1, 13, 29, 41, 53, 67][round % 7]);
                 for values in &mut dense {
                     *values = values
-                        .chunks_exact(2)
+                        .as_chunks::<2>()
+                        .0
+                        .iter()
                         .map(|p| p[0] + challenge * (p[1] - p[0]))
                         .collect();
                 }

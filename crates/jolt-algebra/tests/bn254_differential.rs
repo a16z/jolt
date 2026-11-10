@@ -1,4 +1,4 @@
-//! Differential tests: jolt-field's BN254 backend against exact
+//! Differential tests: jolt-algebra's BN254 backend against exact
 //! num-bigint modular arithmetic. The canonical value of an element is read
 //! through `to_bytes_le`, whose faithfulness is pinned by the golden
 //! fixtures in golden_bytes.rs.

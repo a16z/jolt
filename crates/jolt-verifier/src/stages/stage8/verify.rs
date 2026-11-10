@@ -660,6 +660,9 @@ mod tests {
     }
 }
 
+/// Runs the Akita opening on the caller's transcript. `Ok` does not mean the
+/// opening was accepted: the caller must pass the returned token and its
+/// transcript to [`GroupBatchOpening::check_eof`] after its own last message.
 #[cfg(feature = "akita")]
 #[expect(
     clippy::too_many_arguments,
@@ -676,6 +679,7 @@ pub fn verify<'a, F, PCS, VC, T, ZkProof>(
     stage4: &Stage4Output<F>,
     stage6: &Stage6bOutput<F>,
     stage7: &Stage7Output<F>,
+    context: &mut PCS::VerificationContext<'_>,
 ) -> Result<PCS::PendingEof, VerifierError>
 where
     F: JoltField,
@@ -702,5 +706,6 @@ where
         stage4.clear()?,
         stage6.clear()?,
         stage7.clear()?,
+        context,
     )
 }

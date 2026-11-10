@@ -32,8 +32,6 @@ jolt-riscv = { path = "../../crates/jolt-riscv" }
 jolt-inlines-ntt = { workspace = true, features = ["host"], optional = true }
 # Registers the Blake2b inline with the tracer for the guest transcripts.
 jolt-inlines-blake2 = { workspace = true, features = ["host"] }
-# Registers the Keccak inline the Akita SHAKE samplers use.
-jolt-inlines-keccak256 = { workspace = true, features = ["host"] }
 jolt-sdk = { workspace = true, features = ["host", "transcript-blake2b"] }
 tracing-subscriber.workspace = true
 tracing.workspace = true

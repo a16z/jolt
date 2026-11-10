@@ -110,6 +110,11 @@ members = [
   "examples/backtrace",
   "examples/backtrace/guest-nostd",
   "examples/backtrace/guest-std",
+  "examples/akita-recursion",
+  "examples/akita-recursion/guest",
+  "examples/akita-recursion/replay",
+  "examples/akita-recursion/external-guest",
+  "examples/akita-recursion/advice-guest",
   "examples/recursion",
   "examples/recursion/guest",
   "examples/recover-ecdsa",
@@ -322,6 +327,7 @@ akita-challenges = { git = "https://github.com/LayerZero-Labs/akita.git", branch
 akita-types = { git = "https://github.com/LayerZero-Labs/akita.git", branch = "whiteout/preview", default-features = false }
 akita-params = { git = "https://github.com/LayerZero-Labs/akita.git", branch = "whiteout/preview", default-features = false }
 akita-transcript = { git = "https://github.com/LayerZero-Labs/akita.git", branch = "whiteout/preview", default-features = false }
+akita-prover = { git = "https://github.com/LayerZero-Labs/akita.git", branch = "whiteout/preview", default-features = false }
 akita-verifier = { git = "https://github.com/LayerZero-Labs/akita.git", branch = "whiteout/preview", default-features = false }
 
 # Core Utilities
@@ -385,7 +391,7 @@ num-traits = { version = "0.2.19", default-features = false }
 libm = "0.2.16"
 
 # System and Platform
-sysinfo = "0.39"
+sysinfo = "0.40"
 memory-stats = { version = "1.0.0", features = ["always_use_statm"] }
 libc = "0.2"
 
@@ -466,7 +472,7 @@ jolt-dory = { path = "./crates/jolt-dory" }
 jolt-hyperkzg = { path = "./crates/jolt-hyperkzg" }
 jolt-spartan-verifier = { path = "./crates/jolt-spartan-verifier" }
 jolt-spartan-prover = { path = "./crates/jolt-spartan-prover" }
-jolt-algebra = { path = "./crates/jolt-algebra" }
+jolt-algebra = { path = "./crates/jolt-algebra", default-features = false }
 jolt-host = { path = "./crates/jolt-host" }
 jolt-openings = { path = "./crates/jolt-openings" }
 jolt-verifier = { path = "./crates/jolt-verifier" }

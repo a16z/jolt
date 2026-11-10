@@ -152,11 +152,12 @@ statistical distance $2^{-161}$ of uniform:
   over: every byte pattern of the right length is a field element, so
   decoding is a bijection.
 
-Every challenge drawn on Jolt's transcript is full width, including the ones
+Every challenge Jolt's own code draws is full width, including the ones
 Dory's verifier multiplies into group elements. The Dory adapter
 (`crates/jolt-dory/src/transcript.rs`) ignores dory-pcs's challenge labels
 and draws each challenge with `challenge`. Akita's opening squeezes its own
-challenges from the same sponge, decoded by Akita's code.
+challenges from the same sponge and decodes them with Akita's code, which
+includes sparse ring challenges that are not full width.
 
 ## Proof of work
 

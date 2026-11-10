@@ -8,15 +8,13 @@ akita-cpu-backend::sources/onehot/decompose_fold/rotations.rs::prepare_rotations
 akita-cpu-backend::sources/poly_helpers/decompose_fold_partitioned.rs::FoldAccumulator<'_,D>::accumulate::challenge#0
 akita-cpu-backend::sources/poly_helpers/decompose_fold_partitioned.rs::element_partitioned_decompose_fold::challenge#0
 jolt-akita::native_batching.rs::AkitaNativeBatching::verify_trace_batch::batched_verify_embedded#1
+jolt-akita::native_batching.rs::AkitaNativeBatching::verify_trace_batch::batched_verify_embedded#3
 jolt-akita::native_batching.rs::standalone_session::challenge_vector#0
-jolt-akita::scheme.rs::AkitaScheme::check_eof::check_eof#1
-jolt-akita::scheme.rs::AkitaScheme::verify::verify_batch#1
 jolt-dory::transcript.rs::JoltToDoryTranscript<'_,T>::challenge_scalar::challenge#0
 jolt-hyperkzg::kzg.rs::absorb_evaluations::challenge_powers#1
 jolt-hyperkzg::kzg.rs::absorb_witnesses::challenge#1
 jolt-hyperkzg::scheme.rs::HyperKZGScheme::open_table::challenge#1
 jolt-hyperkzg::scheme.rs::HyperKZGScheme::verify_opening::challenge#1
-jolt-hyperkzg::scheme.rs::HyperKZGScheme::verify_opening::verify_batch#3
 jolt-openings::prefix.rs::PrefixPackedLayout<Id>::select::challenge_vector#5
 jolt-openings::schemes.rs::HomomorphicBatch<PCS>::verify_batch::challenge_powers#1
 jolt-openings::schemes.rs::HomomorphicBatch<PCS>::verify_batch_zk::challenge_powers#0
@@ -49,13 +47,11 @@ jolt-verifier::stages/stage6b/batch.rs::Stage6bDraws<F>::draw::challenge#2
 jolt-verifier::stages/stage6b/batch.rs::Stage6bDraws<F>::draw::challenge#3
 jolt-verifier::stages/stage6b/outputs.rs::Stage6bSumchecks::<generated>::batching_coefficient[*]
 jolt-verifier::stages/stage7/outputs.rs::Stage7Sumchecks::<generated>::batching_coefficient[*]
-jolt-verifier::stages/stage8/akita.rs::verify::verify_batch#1
 jolt-verifier::stages/stage8/verify.rs::verify::challenge_powers#0
 jolt-verifier::stages/stage8/verify.rs::verify::challenge_powers#3
 jolt-verifier::stages/uniskip.rs::draw_spartan_outer_tau::challenge_vector#0
 jolt-verifier::stages/uniskip.rs::draw_spartan_product_tau_high::challenge#0
 jolt-verifier::stages/zk/mod.rs::MaskedVerifier<'_,'_,F,C,T>::challenge::challenge#0
-jolt-verifier::verifier.rs::verify::check_eof#5
 jolt-zk::blindfold/verify.rs::BlindFoldProtocol<F,Com>::folded_instance::challenge#0
 jolt-zk::blindfold/verify.rs::BlindFoldProtocol<F,Com>::verify_inner_folded_r1cs::challenge#0
 jolt-zk::blindfold/verify.rs::BlindFoldProtocol<F,Com>::verify_inner_folded_r1cs::challenge#1
@@ -63,4 +59,3 @@ jolt-zk::blindfold/verify.rs::BlindFoldProtocol<F,Com>::verify_inner_folded_r1cs
 jolt-zk::blindfold/verify.rs::BlindFoldProtocol<F,Com>::verify_outer_folded_r1cs::challenge_vector#0
 jolt-zk::masking/pads.rs::MaskedVerifier<'_,'_,F,C,T>::read_round::challenge#0
 jolt-zk::masking/recorder.rs::MaskingRecorder<'_,F,O>::absorb_round::challenge#0
-jolt-zk::whiteout/test_support.rs::verify_instance::check_eof#1

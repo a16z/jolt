@@ -27,7 +27,8 @@ use rayon::prelude::*;
 use super::rows::{raw_rd_inc, RegisterCycleRow, SharedRdIndices};
 use crate::optimized::prefix_product::PrefixColumn;
 use crate::optimized::support::{
-    map_indices, pin_derived_term, BundleStore, GruenRoundMessage, RoundProgress,
+    fallible_collect_bytes, map_indices, pin_derived_term, pool_workers, BundleStore,
+    GruenRoundMessage, RoundProgress,
 };
 use crate::{KernelError, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError};
 
@@ -89,6 +90,42 @@ pub(super) struct AddressFirstKernel<F: JoltField> {
 }
 
 impl<F: JoltField> AddressFirstKernel<F> {
+    /// Peak bytes over the `prefix_cycles` cycles before the trace's constant
+    /// suffix that `prepare` keeps, or `None` past `usize::MAX`: the most of
+    /// the access rows' fallible collect (`fallible_collect_bytes`), the
+    /// handoff to the cycle rounds and the cycle rounds. The handoff holds the
+    /// rows, the increment checkpoints, the final register values and the `K`
+    /// bound address weights while it fills the five `prefix_cycles`-entry
+    /// cycle tables (`rs1` in the address eq table's allocation) through one
+    /// checkpoint value per chunk task; the cycle rounds hold the five tables
+    /// and reserve half their initial prefix for a possible binding
+    /// shrink copy. Preparation after the collect and
+    /// the address rounds hold the rows, the checkpoints, the eq table and at
+    /// most `K` checkpoint values per chunk task, less than the handoff; the
+    /// eq table's tensor factors, live while it fills, are not counted.
+    pub(super) fn peak_bytes(prefix_cycles: usize) -> Option<usize> {
+        let field = |count: usize| count.checked_mul(size_of::<F>());
+        let checkpoint = size_of::<[i128; 1 << REGISTER_ADDRESS_BITS]>();
+        let chunks = prefix_cycles.div_ceil(CHUNK);
+        let tables = field(prefix_cycles.checked_mul(5)?)?;
+        let handoff = [
+            prefix_cycles.checked_mul(size_of::<Access>())?,
+            chunks.checked_mul(checkpoint)?,
+            checkpoint,
+            field(1 << REGISTER_ADDRESS_BITS)?,
+            tables,
+            field(pool_workers().min(chunks))?,
+        ]
+        .into_iter()
+        .try_fold(0usize, usize::checked_add)?;
+        let cycle_rounds = tables.checked_add(field(prefix_cycles.div_ceil(2))?)?;
+        Some(
+            fallible_collect_bytes::<Access>(prefix_cycles)?
+                .max(handoff)
+                .max(cycle_rounds),
+        )
+    }
+
     pub(super) fn prepare(
         session: &mut ProofSession,
         witness: &dyn JoltWitnessPlane<F>,

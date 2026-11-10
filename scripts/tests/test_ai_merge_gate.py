@@ -1,20 +1,25 @@
-import contextlib
 import difflib
 import hashlib
 import io
 import json
 import os
+import signal
+import subprocess
 from pathlib import Path
 import sys
 import tarfile
 import tempfile
+import tomllib
 import unittest
 from unittest import mock
+from urllib.error import HTTPError
 from urllib.parse import parse_qs, urlsplit
+from urllib.request import Request, urlopen
 
 # The gate imports its sibling diff_classifier the way it runs in CI, from scripts/ci.
 sys.path.insert(0, str(Path(__file__).parents[1] / "ci"))
 import ai_merge_gate as GATE
+import classifier_agent as AGENT
 
 REPO = "a16z/jolt"
 HEAD = "a" * 40
@@ -31,7 +36,7 @@ PR_RUN = "8003"
 PIKA_LOGIN = "0xandoroid-ai-agent"
 PIKA_ID = "BOT_kgDOFAtqNQ"
 ENV = {"GH_TOKEN": "token", "GITHUB_REPOSITORY": REPO, "DEFAULT_BRANCH": "main",
-       "AI_MERGE_GATE_MAINTAINERS": MAINTAINERS, "GITHUB_RUN_ID": RUN_ID}
+       "AI_MERGE_GATE_MAINTAINERS": MAINTAINERS, "GITHUB_RUN_ID": RUN_ID, "CLASSIFIER_DIRECTORY": "/unused-fixture"}
 DIFF = """diff --git a/crates/jolt-prover/src/lib.rs b/crates/jolt-prover/src/lib.rs
 index 1111111..2222222 100644
 --- a/crates/jolt-prover/src/lib.rs
@@ -105,9 +110,6 @@ def trees_for(files):
     base, head = {}, {}
     for entry in files:
         new, status = entry["filename"], entry.get("status", "modified")
-        if status == "renamed":
-            base[entry["previous_filename"]] = head[new] = f"moved to {new}\n"
-            continue
         if status != "added":
             base[new] = f"old {new}\n"
         if status != "removed":
@@ -130,34 +132,33 @@ def changed_contents(base, head, **kwargs):
 
 
 class FakeApis:
-    """GitHub and OpenAI as the gate reaches them: canned state in, every request recorded."""
+    """GitHub state and classifier answers, with every publication recorded."""
 
     def __init__(self, author="core-a", comments=(), reviews=(), labels=(), draft=False,
                  records=(), heads=(HEAD,), diff=PLAIN_DIFF, files=("crates/jolt-prover/src/lib.rs",),
-                 counts=(1, 1, 1), verdict="SAFE", risk=2, risks=None, answer_text=None,
-                 served_model="gpt-6.1-sol", trees=None, tool_calls=(),
-                 reviewers=(), teams=(), assignees=(), state="open", base="main", merged_at=None) -> None:
+                 counts=(1, 1, 1), risk=2, risks=None, answer_text=None,
+                 served_model="gpt-6.1-sol", trees=None,
+                 reviewers=(), teams=(), assignees=(), state="open", base="main", merged_at=None,
+                 mergeability=(True,)) -> None:
         # The pull request's file list, which follows its branch; the commits' trees do not move.
         self.files = [entry if isinstance(entry, dict) else {"filename": entry} for entry in files]
-        self.changed_paths = {entry["filename"] for entry in self.files} | {
-            entry["previous_filename"] for entry in self.files if "previous_filename" in entry}
         self.author, self.comments, self.reviews = author, list(comments), list(reviews)
         self.labels, self.draft, self.heads, self.diff, self.counts = list(labels), draft, list(heads), diff, counts
         self.reviewers, self.teams, self.assignees = list(reviewers), list(teams), list(assignees)
         self.state, self.base, self.merged_at = state, base, merged_at
+        self.mergeability = list(mergeability)
         self.head_repo_id = 2
         # The pull requests branch forker:fix heads, most recently updated first; 7 stands for this one.
         self.branch_pulls = [{"number": 9, "state": "open", "base": {"ref": "release"}}, 7]
-        self.verdict, self.answer_text = verdict, answer_text
+        self.other_pulls = {}
+        self.answer_text = answer_text
         self.risk, self.risks = risk, risks
-        self.served_model, self.tool_calls = served_model, tool_calls
-        # Input and output tokens a response reports, given the size in bytes of its request.
-        self.usage = lambda size: (1_000, 100)
+        self.served_model = served_model
         self.trees = dict(trees) if trees is not None else trees_for(self.files)
         self.exported, self.during_model, self.truncated = dict(self.trees), None, False
         self.during_recheck, self.pr_reads = None, 0
         self.writers = {"core-a", "core-b", "maintainer", "ci-bot"}
-        self.label_definitions = set(GATE.MANAGED_LABELS)
+        self.label_definitions = set(GATE.MANAGED_LABELS) | {"merge-conflict"}
         self.label_writes, self.during_label_write = [], None
         self.review_writes, self.during_approve = [], None
         gate_run = {"path": f"{GATE.WORKFLOW}@main", "event": "workflow_run", "head_repository": {"full_name": REPO}}
@@ -178,15 +179,17 @@ class FakeApis:
         self.requests.append((method, url))
         parts = urlsplit(url)
         data = json.loads(body) if body else None
-        if parts.netloc == "api.openai.com":
-            return self.openai(method, parts.path, data, len(body or b""))
         path, query = parts.path, parse_qs(parts.query)
+        if method == "GET" and path in self.other_pulls:
+            return self.ok(self.other_pulls[path])
         if (method, path) == ("GET", f"/repos/{REPO}/pulls/7"):
             self.pr_reads += 1
             if self.pr_reads == 2 and self.during_recheck:
                 self.during_recheck(self)
             head = self.heads.pop(0) if len(self.heads) > 1 else self.heads[0]
+            mergeable = self.mergeability.pop(0) if len(self.mergeability) > 1 else self.mergeability[0]
             return self.ok({"number": 7, "state": self.state, "merged_at": self.merged_at, "draft": self.draft,
+                            "mergeable": mergeable,
                             "base": {"ref": self.base, "repo": {"id": 1}},
                             "head": {"sha": head, "ref": "fix", "repo": {"id": self.head_repo_id}}, "user": {"login": self.author},
                             "labels": [{"name": name} for name in self.labels],
@@ -195,9 +198,6 @@ class FakeApis:
                             "assignees": [{"login": login} for login in self.assignees],
                             "changed_files": self.counts[0], "additions": self.counts[1],
                             "deletions": self.counts[2]})
-        if (method, path) == ("GET", f"/repos/{REPO}/pulls/7/files"):
-            page = int(query["page"][0])
-            return self.ok(self.files[100 * (page - 1):100 * page])
         if (method, path) == ("POST", "/graphql"):
             nodes = self.comments if "comments(" in data["query"] else self.reviews
             return self.ok({"data": {"repository": {"pullRequest": {
@@ -283,28 +283,10 @@ class FakeApis:
             pulls = [{"number": 7, "state": self.state, "base": {"ref": self.base}} if pull == 7 else pull
                      for pull in self.branch_pulls]
             listed = [pull for pull in pulls if query["state"] in (["all"], [pull["state"]])]
+            if "base" in query:
+                return self.ok([pull for pull in listed if query["base"] == [pull["base"]["ref"]]])
             return self.ok(listed if query["head"] == ["forker:fix"] else [])
         raise AssertionError(f"unexpected request {method} {url}")
-
-    def openai(self, method, path, data, size):
-        assert (method, path) == ("POST", "/v1/responses"), (method, path)
-        assert data["text"]["format"]["name"] == "verifier_classification", "only the classifier may call a model"
-        self.model_requests.append(data)
-        if self.during_model:
-            self.during_model(self)
-        if self.tool_calls and "previous_response_id" not in data:
-            output = [{"type": "function_call", "id": f"fc_{index}", "call_id": f"call_{index}", "name": name,
-                       "arguments": json.dumps(arguments)} for index, (name, arguments) in enumerate(self.tool_calls)]
-        else:
-            risks = self.risks if self.risks is not None else [
-                {"path": path, "level": self.risk, "reasoning": "Classified this changed path."}
-                for path in sorted(self.changed_paths)]
-            text = self.answer_text or json.dumps({"verdict": self.verdict, "reasoning": "prover-only", "risks": risks})
-            output = [{"type": "message", "content": [{"type": "output_text", "text": text}]}]
-        input_tokens, output_tokens = self.usage(size)
-        return self.ok({"id": f"resp_{len(self.model_requests)}", "status": "completed", "model": self.served_model,
-                        "reasoning": data["reasoning"], "output": output,
-                        "usage": {"input_tokens": input_tokens, "output_tokens": output_tokens}})
 
     @staticmethod
     def ok(value):
@@ -323,17 +305,47 @@ class FakeApis:
                 and node["body"].startswith(GATE.APPROVAL) and node["author"]["login"] == "github-actions"]
 
 
-def evaluate(apis):
-    def no_polling(_seconds):
-        raise AssertionError("a completed response needs no polling")
+RealClassifier = GATE.Classifier
 
-    model = GATE.Model(apis, "sk-test", sleep=no_polling)
-    GATE.Gate(GATE.GitHub(apis, "token", REPO), model, "main", MAINTAINERS, RUN_ID).evaluate(7)
+
+class FakeClassifier:
+    def __init__(self, apis):
+        self.apis = apis
+
+    def prepaid(self, _source):
+        return False
+
+    def ask(self, instructions, source, admit, counts):
+        with tempfile.TemporaryDirectory() as directory:
+            prepared = RealClassifier(Path(directory), prepare=True)
+            try:
+                prepared.ask(instructions, source, admit, counts)
+            except GATE.Prepared:
+                pass
+            manifest = (Path(directory) / "workspace/change.json").read_text()
+        self.apis.model_requests.append({"input": manifest, "instructions": instructions})
+        if self.apis.during_model:
+            self.apis.during_model(self.apis)
+        if self.apis.served_model != AGENT.MODEL:
+            raise AGENT.AgentFailure("unexpected served model")
+        risks = self.apis.risks if self.apis.risks is not None else [
+            {"path": path, "level": self.apis.risk, "reasoning": "Classified this changed path."}
+            for path in sorted(source.changed())]
+        try:
+            return json.loads(self.apis.answer_text) if self.apis.answer_text else {
+                "reasoning": "prover-only", "risks": risks}
+        except ValueError as error:
+            raise AGENT.AgentFailure("invalid JSON") from error
+
+
+def evaluate(apis):
+    GATE.Gate(GATE.GitHub(apis, "token", REPO), FakeClassifier(apis), "main", MAINTAINERS, RUN_ID).evaluate(7)
     return apis
 
 
 def run_main(apis, *argv, env=ENV):
-    with mock.patch.dict(os.environ, env, clear=True), mock.patch.object(GATE, "http", apis):
+    with mock.patch.dict(os.environ, env, clear=True), mock.patch.object(GATE, "http", apis), \
+            mock.patch.object(GATE, "Classifier", return_value=FakeClassifier(apis)):
         return GATE.main(["ai_merge_gate.py", *argv])
 
 
@@ -353,161 +365,6 @@ class AiMergeGateTests(unittest.TestCase):
         self.assertEqual((apis.model_requests, apis.approved()), ([], []))
         self.assertIn("needs-maintainer-review", apis.labels)
 
-    def test_verifier_floor_exempts_only_comments_blanks_and_cfg_test_code(self) -> None:
-        path = "crates/jolt-verifier/src/config.rs"
-        for old, new, expected in [
-            ("fn verify() { reject(); }\n", "fn verify() { accept(); }\n", 4),
-            ("#[cfg(test)]\nmod tests { fn check() { reject(); } }\n",
-             "#[cfg(test)]\nmod tests { fn check() { accept(); } }\n", 1),
-            ('#[cfg(any(test, feature = "prover-fixtures"))]\nfn check() { reject(); }\n',
-             '#[cfg(any(test, feature = "prover-fixtures"))]\nfn check() { accept(); }\n', 4),
-            ("#[cfg(test)]\nfn check() { reject(); }\n", "fn check() { reject(); }\n", 4),
-            ("// old\n/// old\n//! old\n/* old\n * old\n */\nfn verify() {}\n",
-             "// new\n/// new\n//! new\n/* new\n * new\n */\n\nfn verify() {}\n", 1),
-            ("/*\nfn verify() {}\n*/\n", "fn verify() {}\n", 4),
-            ('const TEXT: &str = r#"\n// old\n"#;\n', 'const TEXT: &str = r#"\n// new\n"#;\n', 4),
-            ("#[cfg(test)] fn check() {}\nfn verify() { reject(); }\n",
-             "#[cfg(test)] fn check() {}\nfn verify() { accept(); }\n", 4),
-            ("mod tests {\n#![cfg(test)]\nfn check() {}\n}\nfn verify() { reject(); }\n",
-             "mod tests {\n#![cfg(test)]\nfn check() {}\n}\nfn verify() { accept(); }\n", 4),
-            ("#![cfg(test)]\nfn check() { reject(); }\n", "#![cfg(test)]\nfn check() { accept(); }\n", 1),
-            ("production! {\n#[cfg(test)]\nfn input() { reject(); }\n}\n",
-             "production! {\n#[cfg(test)]\nfn input() { accept(); }\n}\n", 4),
-            ('#[cfg(test)]\n#[doc = "test"] fn check() {}\nfn verify() { reject(); }\n',
-             '#[cfg(test)]\n#[doc = "test"] fn check() {}\nfn verify() { accept(); }\n', 4),
-            ("#[cfg(test)]\nfn check() {} fn verify() { reject(); }\n",
-             "#[cfg(test)]\nfn check() {} fn verify() { accept(); }\n", 4),
-            ("#[cfg(test)]\nconst TEST: bool = true; fn verify() { reject(); }\n",
-             "#[cfg(test)]\nconst TEST: bool = true; fn verify() { accept(); }\n", 4),
-            ("#[cfg_attr(all(test), inline)]\nfn verify() { reject(); }\n",
-             "#[cfg_attr(all(test), inline)]\nfn verify() { accept(); }\n", 4),
-            ('#[cfg_attr(all(test, feature = "x"), derive(Debug))]\nstruct Proof { value: u8 }\n',
-             '#[cfg_attr(all(test, feature = "x"), derive(Debug))]\nstruct Proof { value: bool }\n', 4),
-            ("#![cfg_attr(all(test), allow(dead_code))]\nfn verify() { reject(); }\n",
-             "#![cfg_attr(all(test), allow(dead_code))]\nfn verify() { accept(); }\n", 4),
-            *[(f"// note{separator}/*\nfn verify() -> bool {{ false }}\n// */\n",
-               f"// note{separator}/*\nfn verify() -> bool {{ true }}\n// */\n", 4)
-              for separator in ("\x0c", "\r", "\u2028")],
-        ]:
-            with self.subTest(old=old, new=new):
-                apis = evaluate(changed_contents({path: old}, {path: new}, risk=1))
-                self.assertIn(f"risk-{expected}", apis.labels)
-                self.assertEqual(apis.approved(), [HEAD] if expected == 1 else [])
-
-    def test_affecting_or_uncertain_risk_three_changes_must_be_minimal_in_aggregate(self) -> None:
-        for verdict in ("AFFECTS", "UNCERTAIN"):
-            for crate in ("jolt-field", "jolt-prover", "jolt-akita"):
-                for file_count, lines, expected in [(1, 10, 3), (1, 11, 4), (2, 6, 4), (1, 200, 4)]:
-                    with self.subTest(verdict=verdict, crate=crate, file_count=file_count, lines=lines):
-                        base = {f"crates/{crate}/src/part{i}.rs": "old();\n" * lines for i in range(file_count)}
-                        head = {path: "new();\n" * lines for path in base}
-                        apis = evaluate(changed_contents(base, head, verdict=verdict, risk=3))
-                        wanted = 4 if crate == "jolt-akita" else expected
-                        self.assertIn(f"risk-{wanted}", apis.labels)
-                        self.assertEqual(apis.approved(), [HEAD] if wanted == 3 else [])
-        prover, field = "crates/jolt-prover/src/big.rs", "crates/jolt-field/src/lib.rs"
-        apis = evaluate(changed_contents({prover: "old();\n" * 200, field: "// old\nfn helper() {}\n"},
-                                         {prover: "new();\n" * 200, field: "// new\nfn helper() {}\n"},
-                                         verdict="UNCERTAIN", risk=3))
-        self.assertIn("risk-4", apis.labels)
-        self.assertEqual(apis.approved(), [])
-
-    def test_traced_prover_only_changes_override_path_defaults(self) -> None:
-        for path in (
-            "crates/jolt-akita/src/trace_onehot/decomposition.rs",
-            "crates/jolt-sumcheck/src/prover.rs",
-            "crates/jolt-prover/src/stages/stage3.rs",
-            "crates/jolt-field/src/lib.rs",
-            "crates/jolt-transcript/src/prover.rs",
-            "crates/jolt-verifier-derive/src/lib.rs",
-        ):
-            with self.subTest(path=path):
-                apis = evaluate(changed_contents({path: "old();\n" * 11},
-                                                 {path: "new();\n" * 11}, risk=2))
-                self.assertEqual(set(apis.labels), {"risk-2", "merge-eligible"})
-                self.assertEqual(apis.approved(), [HEAD])
-
-        prover = "crates/jolt-akita/src/trace_onehot/decomposition.rs"
-        shared = "crates/jolt-field/src/lib.rs"
-        apis = evaluate(changed_contents(
-            {prover: "old();\n" * 11, shared: "old();\n"},
-            {prover: "new();\n" * 11, shared: "new();\n"}, verdict="AFFECTS",
-            risks=[{"path": prover, "level": 2, "reasoning": "Only prover callers use this helper."},
-                   {"path": shared, "level": 3, "reasoning": "Bounded shared arithmetic change."}]))
-        self.assertEqual(set(apis.labels), {"risk-3", "merge-eligible"})
-        self.assertEqual(apis.approved(), [HEAD])
-
-    def test_unreadable_inputs_fail_early_only_on_floor_paths(self) -> None:
-        for crate in ("jolt-field", "jolt-verifier"):
-            path = f"crates/{crate}/src/data.bin"
-            for data in (b"\xff", b"x" * (GATE.MAX_FILE_BYTES + 1)):
-                with self.subTest(crate=crate, bytes=len(data)):
-                    apis = FakeApis(files=[path], trees={BASE: {path: "old"}, HEAD: {path: data}})
-                    with self.assertRaises(GATE.GateError):
-                        evaluate(apis)
-                    self.assertEqual(apis.model_requests, [])
-                    self.assertEqual(apis.posted, [], "no paid attempt is admitted")
-        for binary, text, level in [
-            ("book/image.png", "book/chapter.md", 1),
-            ("crates/jolt-verifier/fuzz/fixtures/input.bin", "crates/jolt-prover/src/lib.rs", 2),
-        ]:
-            with self.subTest(binary=binary):
-                diff = (f"diff --git a/{binary} b/{binary}\nBinary files a/{binary} and b/{binary} differ\n"
-                        + unified_diff(text, "old\n", "new\n"))
-                apis = evaluate(FakeApis(files=[binary, text], diff=diff, counts=(2, 1, 1),
-                                         trees={BASE: {binary: b"\xff", text: "old\n"},
-                                                HEAD: {binary: b"\xfe", text: "new\n"}},
-                                         risk=level, comments=[comment("core-a", attestation())]))
-                self.assertIn(f"risk-{level}", apis.labels)
-                self.assertEqual(apis.approved(), [HEAD])
-
-    def test_dependency_bumps_follow_both_lockfile_closures_without_a_classifier(self) -> None:
-        lock = ('version = 4\n\n[[package]]\nname = "jolt-verifier"\nversion = "0.1.0"\n'
-                'dependencies = ["middle"]\n\n[[package]]\nname = "middle"\nversion = "1.0.0"\n'
-                'dependencies = ["runtime-dep 1.0.0"]\n\n[[package]]\nname = "runtime-dep"\n'
-                'version = "1.0.0"\n\n[[package]]\nname = "outside"\nversion = "1.0.0"\n')
-        for dependency, expected in [("runtime-dep", 3), ("outside", 2)]:
-            for manifest in (None, "version", "rev", "tag"):
-                with self.subTest(dependency=dependency, manifest=manifest):
-                    old = {"Cargo.lock": lock}
-                    new = {"Cargo.lock": lock.replace(f'name = "{dependency}"\nversion = "1.0.0"',
-                                                     f'name = "{dependency}"\nversion = "2.0.0"')}
-                    if manifest:
-                        section = "workspace.dependencies" if manifest == "version" else "patch.crates-io"
-                        git = '' if manifest == "version" else ', git = "https://example.invalid/fork"'
-                        old["Cargo.toml"] = (f'[{section}]\nalias = {{ package = "{dependency}"{git}, '
-                                             f'{manifest} = "1" }}\n')
-                        new["Cargo.toml"] = old["Cargo.toml"].replace(f'{manifest} = "1"', f'{manifest} = "2"')
-                    apis = evaluate(changed_contents(old, new, verdict="UNCERTAIN", risk=4))
-                    self.assertIn(f"risk-{expected}", apis.labels)
-                    self.assertEqual(apis.approved(), [HEAD])
-                    self.assertEqual(apis.model_requests, [])
-        prover = "crates/jolt-prover/src/big.rs"
-        for verdict in ("UNCERTAIN", "AFFECTS"):
-            with self.subTest(mixed_bump_verdict=verdict):
-                old = {"Cargo.lock": lock, prover: "old();\n" * 200}
-                new = {"Cargo.lock": lock.replace('name = "runtime-dep"\nversion = "1.0.0"',
-                                                  'name = "runtime-dep"\nversion = "2.0.0"'),
-                       prover: "new();\n" * 200}
-                apis = evaluate(changed_contents(old, new, verdict=verdict, risk=2))
-                self.assertIn("risk-4", apis.labels)
-                self.assertEqual(apis.approved(), [])
-
-    def test_other_manifest_edits_keep_the_shared_code_floor(self) -> None:
-        path = "Cargo.toml"
-        lock = 'version = 4\n[[package]]\nname = "jolt-verifier"\nversion = "0.1.0"\n'
-        for old, new in [
-            ('[dependencies]\nfoo = "1"\n', '[dependencies]\nfoo = "1"\nbar = "2"\n'),
-            ('[dependencies]\nfoo = { version = "1", features = ["a"] }\n',
-             '[dependencies]\nfoo = { version = "2", features = ["b"] }\n'),
-            ('[workspace]\nresolver = "2"\n', '[workspace]\nresolver = "3"\n'),
-        ]:
-            with self.subTest(new=new):
-                apis = evaluate(changed_contents({path: old, "Cargo.lock": lock},
-                                                 {path: new, "Cargo.lock": lock}, risk=1))
-                self.assertIn("risk-3", apis.labels)
-                self.assertEqual(len(apis.model_requests), 1)
-
     def test_risk_four_requires_a_current_head_maintainer_approval_and_never_gets_the_gates(self) -> None:
         for reviews, expected in [
             ([], "neutral"),
@@ -518,39 +375,56 @@ class AiMergeGateTests(unittest.TestCase):
             ([review("core-b", "APPROVED")], "success"),
         ]:
             with self.subTest(reviews=reviews):
-                apis = evaluate(FakeApis(files=["crates/jolt-verifier/src/lib.rs"], verdict="AFFECTS", risk=4,
+                apis = evaluate(FakeApis(files=["crates/jolt-verifier/src/lib.rs"], risk=4,
                                          reviews=reviews, comments=[comment("core-a", attestation())]))
                 self.assert_completed(apis, expected)
                 wanted = {"merge-eligible"} if expected == "success" else {"no-reviewer-assigned"}
-                self.assertEqual(set(apis.labels), {"risk-4"} | wanted)
+                self.assertEqual(set(apis.labels), wanted if expected == "success" else {"risk-4"} | wanted)
                 self.assertEqual(apis.review_writes, [], "the attestation never earns a risk-4 approval")
 
-    def test_risk_three_attestation_earns_the_gates_approval_of_the_head(self) -> None:
-        apis = evaluate(FakeApis(verdict="AFFECTS", risk=3, comments=[comment("core-a", attestation())]))
-        self.assertEqual(apis.gate(), ("success", "Review attested by core-a"))
-        self.assertEqual(apis.record(GATE.CLASSIFIER), ["neutral"])
-        self.assertEqual(set(apis.labels), {"risk-3", "merge-eligible"})
-        self.assertEqual(apis.review_writes, [("APPROVE", HEAD)])
+    def test_auto_approval_requires_current_head_attestation_at_each_eligible_risk(self) -> None:
+        for risk in (1, 2, 3):
+            for sha in (HEAD, OLD):
+                with self.subTest(risk=risk, attested_head=sha):
+                    apis = evaluate(FakeApis(risk=risk, comments=[comment("core-a", attestation(sha))]))
+                    self.assert_completed(apis, "success" if sha == HEAD else "neutral")
+                    self.assertEqual(apis.record(GATE.CLASSIFIER), ["success"])
+                    self.assertIn(f"risk-{risk}", apis.labels)
+                    self.assertEqual(apis.approved(), [HEAD] if sha == HEAD else [])
 
     def test_current_head_maintainer_approval_satisfies_risk_four_without_a_model(self) -> None:
         apis = FakeApis(reviews=[review("core-b", "APPROVED")])
         self.assertEqual(run_main(apis, "evaluate", "7"), 0)
         self.assertEqual(apis.gate(), ("success", "Risk 4 approved by core-b"))
-        self.assertEqual(set(apis.labels), {"risk-4", "merge-eligible"})
+        self.assertEqual(set(apis.labels), {"merge-eligible"})
         self.assertEqual((apis.model_requests, apis.review_writes), ([], []))
 
-    def test_risk_paths_and_semantic_results_choose_the_highest_level(self) -> None:
+    def test_binary_files_are_exported_and_classified(self) -> None:
+        binary, text = "book/image.png", "book/chapter.md"
+        diff = (f"diff --git a/{binary} b/{binary}\nBinary files a/{binary} and b/{binary} differ\n"
+                + unified_diff(text, "old\n", "new\n"))
+        apis = evaluate(FakeApis(files=[binary, text], diff=diff, counts=(2, 1, 1),
+                                 trees={BASE: {binary: b"\xff", text: "old\n"},
+                                        HEAD: {binary: b"\xfe", text: "new\n"}},
+                                 risk=1, comments=[comment("core-a", attestation())]))
+        self.assertIn("risk-1", apis.labels)
+        self.assertEqual(apis.approved(), [HEAD])
+
+    def test_classifier_risks_choose_the_highest_level(self) -> None:
         for levels, expected in [
             ({"README.md": 1}, 1),
             ({"crates/jolt-kernels/src/lib.rs": 2}, 2),
             ({"Cargo.lock": 2}, 2),
-            ({"Cargo.lock": 1}, 3),
+            ({"Cargo.lock": 1}, 1),
             ({"crates/jolt-prover/src/stages/stage3.rs": 2}, 2),
-            ({"crates/jolt-verifier/src/config.rs": 1}, 4),
+            ({"crates/jolt-verifier/src/config.rs": 1}, 1),
             ({"README.md": 1, "crates/jolt-prover/src/stages/stage3.rs": 2}, 2),
             ({"crates/jolt-akita/src/native_batching.rs": 4}, 4),
-            ({"crates/jolt-akita/src/adapters.rs": 3}, 4),
+            ({"crates/jolt-akita/src/adapters.rs": 3}, 3),
             ({"new/shared.rs": 3}, 3),
+            ({".claude/skills/verifier-classifier/SKILL.md": 1}, 1),
+            ({"docs/a.md": 1, "src/a.rs": 2, "src/b.rs": 3}, 3),
+            ({"src/a.rs": 2, "src/b.rs": 4}, 4),
         ]:
             with self.subTest(levels=levels):
                 files = [{"filename": name} for name in levels]
@@ -573,9 +447,7 @@ class AiMergeGateTests(unittest.TestCase):
             ({}, {"risk-2"}, 1),
             ({"author": "outsider", "files": ["docs/guide.md"]},
              {"needs-maintainer-review", "no-reviewer-assigned"}, 0),
-            ({"files": [".claude/skills/verifier-classifier/SKILL.md"]}, {"risk-1", "no-reviewer-assigned"}, 0),
             ({"author": "outsider"}, {"needs-maintainer-review", "no-reviewer-assigned"}, 0),
-            ({"draft": True}, {"risk-4"}, 0),
         ]:
             with self.subTest(kwargs=kwargs):
                 apis = FakeApis(**kwargs)
@@ -591,10 +463,8 @@ class AiMergeGateTests(unittest.TestCase):
             ("requested reviewer", dict(outsider, reviewers=["core-b"]), {"needs-maintainer-review"}),
             ("requested team", dict(outsider, teams=["core"]), {"needs-maintainer-review"}),
             ("assignee", dict(outsider, assignees=["core-b"]), {"needs-maintainer-review"}),
-            # A writer's approval satisfies the policy for the outsider's documentation change; the
-            # agent path still lacks a maintainer's authorization.
             ("approved, unauthorized", dict(outsider, files=["docs/guide.md"], reviews=[review("maintainer", "APPROVED")]),
-             {"needs-maintainer-review", "merge-eligible"}),
+             {"needs-maintainer-review", "no-reviewer-assigned"}),
             ("outsider risk-4, writer approved", dict(outsider, reviews=[review("maintainer", "APPROVED")]),
              {"needs-maintainer-review", "no-reviewer-assigned"}),
             ("outsider risk-4, maintainer approved", dict(outsider, reviews=[review("core-b", "APPROVED")]),
@@ -602,8 +472,8 @@ class AiMergeGateTests(unittest.TestCase):
             ("maintainer and attested", {"comments": [comment("core-a", attestation())]}, {"risk-2", "merge-eligible"}),
             ("draft, approved and attested", {"draft": True, "records": [record(GATE.CLASSIFIER)],
                                               "reviews": [review("maintainer", "APPROVED")],
-                                              "comments": [comment("core-a", attestation())]}, {"risk-2"}),
-            ("reclassified to risk-4", {"verdict": "AFFECTS", "risk": 4, "comments": [comment("core-a", attestation())]},
+                                              "comments": [comment("core-a", attestation())]}, set()),
+            ("reclassified to risk-4", {"risk": 4, "comments": [comment("core-a", attestation())]},
              {"risk-4", "no-reviewer-assigned"}),
         ]:
             with self.subTest(case=case):
@@ -612,7 +482,7 @@ class AiMergeGateTests(unittest.TestCase):
                 self.assertEqual(set(apis.labels), wanted | {"keep"})
                 self.assertEqual(apis.approved(), [HEAD] if case == "maintainer and attested" else [])
                 if case == "draft, approved and attested":
-                    self.assertEqual(apis.gate(), ("success", "Approved by maintainer"))
+                    self.assertEqual(apis.created, [])
 
     def test_reclassification_replaces_only_the_managed_labels(self) -> None:
         apis = evaluate(FakeApis(risk=3, records=[record(GATE.CLASSIFIER, conclusion="neutral")],
@@ -623,6 +493,82 @@ class AiMergeGateTests(unittest.TestCase):
         self.assertEqual(apis.label_writes, [("POST", ["merge-eligible", "risk-3"]),
                                              ("DELETE", "no-reviewer-assigned"), ("DELETE", "risk-4")])
         self.assertEqual(apis.model_requests, [])
+
+    def test_refresh_clears_managed_labels_without_a_trusted_gate_check_on_this_head(self) -> None:
+        cases = [
+            (None, False),
+            (record(GATE.GATE, OLD), False),
+            (record(GATE.CLASSIFIER, NEW_HEAD), False),
+            (record(GATE.GATE, NEW_HEAD, app={"id": 1}), False),
+            (record(GATE.GATE, NEW_HEAD, external_id=OTHER_RUN), False),
+            (record(GATE.GATE, NEW_HEAD, external_id=PR_RUN), False),
+            (record(GATE.GATE, NEW_HEAD, status="queued", conclusion=None), True),
+            (record(GATE.GATE, NEW_HEAD, status="in_progress", conclusion=None), True),
+            (record(GATE.GATE, NEW_HEAD, conclusion="failure"), True),
+        ]
+        for command in (("refresh", "7"), ("refresh-all",)):
+            for check, evaluated in cases:
+                with self.subTest(command=command, check=check):
+                    kept = {"merge-conflict", "keep-healed"}
+                    labels = GATE.MANAGED_LABELS | kept
+                    apis = FakeApis(heads=[NEW_HEAD], labels=labels, records=[check] if check else [],
+                                    mergeability=[False])
+                    self.assertEqual(run_main(apis, *command), 0)
+                    self.assertEqual(set(apis.labels), labels if evaluated else kept)
+                    self.assertEqual((apis.created, apis.review_writes, apis.model_requests), ([], [], []))
+
+    def test_merge_conflicts_follow_mergeability_including_base_pushes_and_unknown_state(self) -> None:
+        for command in (("refresh", "7"), ("refresh-all",)):
+            for mergeability, present, expected, retries in [
+                ([False], False, True, 0),
+                ([True], True, False, 0),
+                ([None, False], False, True, 1),
+                ([None] * 5 + [False], False, True, 5),
+                ([None], True, True, 30),
+                ([None], False, False, 30),
+            ]:
+                with self.subTest(command=command, mergeability=mergeability, present=present):
+                    labels = {"keep-healed"} | ({"merge-conflict"} if present else set())
+                    reads = [None, *mergeability]
+                    apis = FakeApis(labels=labels, mergeability=reads, draft=True)
+                    with mock.patch("time.monotonic", return_value=0.0) as clock:
+                        def advance(seconds):
+                            clock.return_value += seconds
+
+                        with mock.patch("time.sleep", side_effect=advance) as delay:
+                            self.assertEqual(run_main(apis, *command), 0)
+                    self.assertEqual(set(apis.labels), {"keep-healed"} | ({"merge-conflict"} if expected else set()))
+                    self.assertEqual(delay.call_count, retries)
+                    self.assertEqual((apis.created, apis.review_writes, apis.model_requests), ([], [], []))
+        for change in ({"state": "closed"}, {"base": "release"}):
+            apis = FakeApis(labels=["merge-conflict"], mergeability=[True], **change)
+            self.assertEqual(run_main(apis, "refresh-all"), 0)
+            self.assertEqual(apis.labels, ["merge-conflict"])
+            self.assertEqual(run_main(apis, "refresh", "7"), 0)
+            self.assertIn("merge-conflict", apis.labels)
+        missing = FakeApis(mergeability=[False])
+        missing.label_definitions.remove("merge-conflict")
+        self.assertEqual(run_main(missing, "refresh-all"), 1)
+        self.assertEqual(missing.label_writes, [])
+
+        apis = FakeApis(mergeability=[None] * 4 + [False])
+        settled_path = f"/repos/{REPO}/pulls/8"
+        apis.branch_pulls.append({"number": 8, "state": "open", "base": {"ref": "main"}})
+        apis.other_pulls[settled_path] = {"number": 8, "state": "open", "base": {"ref": "main"},
+                                         "head": {"sha": HEAD}, "labels": [], "mergeable": True}
+        first_pass_reads = []
+        with mock.patch("time.monotonic", return_value=0.0) as clock:
+            def advance(seconds):
+                reads = sum(urlsplit(url).path == settled_path for method, url in apis.requests)
+                self.assertGreater(reads, 0, "every PR must be read before the first retry delay")
+                if not first_pass_reads:
+                    first_pass_reads.append(reads)
+                self.assertEqual(reads, first_pass_reads[0], "settled PRs must not be retried")
+                clock.return_value += seconds
+
+            with mock.patch("time.sleep", side_effect=advance):
+                self.assertEqual(run_main(apis, "refresh-all"), 0)
+        self.assertIn("merge-conflict", apis.labels)
 
     def test_risk_cache_reuse_is_head_bound_and_already_correct_labels_are_not_rewritten(self) -> None:
         for cached_head in (HEAD, OLD):
@@ -636,18 +582,15 @@ class AiMergeGateTests(unittest.TestCase):
                 self.assertEqual(set(apis.labels), {"merge-eligible", "risk-2", "keep-healed"})
 
     def test_invalid_cached_risk_results_cannot_waive_review(self) -> None:
-        for case in ("failed check", "old inputs", "policy-only result", "legacy result"):
+        for case in ("failed check", "old inputs", "legacy result"):
             with self.subTest(case=case):
-                apis = FakeApis(records=[record(GATE.CLASSIFIER)], verdict="UNCERTAIN",
+                apis = FakeApis(records=[record(GATE.CLASSIFIER)], risk=4,
                                 comments=[comment("core-a", attestation())])
                 cached = apis.check_runs[0]
                 if case == "failed check":
                     cached["conclusion"] = "failure"
                 elif case == "old inputs":
                     cached["output"]["text"] = json.dumps({"risk": 2, "classifier_inputs_sha256": "0" * 64})
-                elif case == "policy-only result":
-                    cached["output"]["text"] = json.dumps({"risk": 2, "policy_sha256": hashlib.sha256(
-                        (GATE.ROOT / GATE.RISK_POLICY).read_bytes()).hexdigest()})
                 else:
                     cached["output"].pop("text")
                 evaluate(apis)
@@ -664,11 +607,10 @@ class AiMergeGateTests(unittest.TestCase):
             with self.subTest(risks=risks):
                 apis = FakeApis(risks=risks, labels=["merge-eligible", "risk-2", "keep-healed"],
                                 comments=[comment("core-a", attestation())])
-                with self.assertRaises(GATE.GateError):
-                    evaluate(apis)
-                self.assert_completed(apis, "failure")
-                self.assertEqual(set(apis.labels), {"risk-4", "no-reviewer-assigned", "keep-healed"})
-                self.assertEqual(apis.record(GATE.CLASSIFIER), [])
+                evaluate(apis)
+                self.assert_completed(apis, "neutral")
+                self.assertEqual(set(apis.labels), {"no-reviewer-assigned", "keep-healed"})
+                self.assertEqual(apis.record(GATE.CLASSIFIER), ["neutral"])
                 self.assertEqual(apis.review_writes, [])
 
     def test_risk_labels_do_not_publish_for_a_superseded_head(self) -> None:
@@ -705,17 +647,10 @@ class AiMergeGateTests(unittest.TestCase):
                 title = ("Risk 4: current-head maintainer approval required" if cached else
                          "The pull request changed while the gate ran")
                 self.assertEqual(apis.gate()[1], title)
-                self.assertEqual(set(apis.labels), {"risk-4"} | ({"no-reviewer-assigned"} if cached else set()))
+                self.assertEqual(set(apis.labels), {"risk-4", "no-reviewer-assigned"} if cached else set())
                 self.assertEqual((apis.model_requests, apis.review_writes), ([], []))
 
-    def test_pr_risk_policy_is_data_and_missing_admin_labels_fail_closed(self) -> None:
-        files = [{"filename": GATE.RISK_POLICY}, {"filename": "crates/jolt-prover/src/stages/stage3.rs"}]
-        trees = trees_for(files)
-        trees[HEAD][GATE.RISK_POLICY] = '{"risk-1": {"paths": ["**"]}}'
-        apis = evaluate(FakeApis(files=files, trees=trees, reviews=[review("maintainer", "APPROVED")]))
-        self.assert_completed(apis, "neutral")
-        self.assertEqual(set(apis.labels), {"risk-4", "no-reviewer-assigned"})
-        self.assertEqual(apis.model_requests, [])
+    def test_missing_admin_labels_fail_closed(self) -> None:
         missing = FakeApis(comments=[comment("core-a", attestation())])
         missing.label_definitions.clear()
         with self.assertRaisesRegex(GATE.GateError, "admin must create"):
@@ -821,10 +756,10 @@ class AiMergeGateTests(unittest.TestCase):
         for case, failing, comments, reviews, writes, author, wanted in [
             # The attestation was deleted, and the in-progress check cannot be created.
             ("check creation", "POST", [], [gate_approval()], [("DISMISS", HEAD)],
-             "core-a", {"risk-4", "no-reviewer-assigned"}),
+             "core-a", {"risk-2", "no-reviewer-assigned"}),
             # The gate approves the head, and its decision cannot be written to the check.
             ("check completion", "PATCH", [comment("core-a", attestation())], [], [("APPROVE", HEAD), ("DISMISS", HEAD)],
-             "core-a", {"risk-4", "no-reviewer-assigned"}),
+             "core-a", {"risk-2", "no-reviewer-assigned"}),
             ("outsider check creation", "POST", [], [gate_approval()], [("DISMISS", HEAD)],
              "outsider", {"needs-maintainer-review", "no-reviewer-assigned"}),
             ("outsider check completion", "PATCH", [], [gate_approval()], [("DISMISS", HEAD)],
@@ -928,10 +863,122 @@ class AiMergeGateTests(unittest.TestCase):
                             (draft, "Draft: agent checks start when the PR is ready for review")]:
             with self.subTest(title=title):
                 evaluate(apis)
-                self.assertEqual(apis.gate(), ("neutral", title))
+                if apis.draft:
+                    self.assertEqual(apis.created, [])
+                else:
+                    self.assertEqual(apis.gate(), ("neutral", title))
                 self.assertEqual((apis.model_requests, apis.review_writes), ([], []))
                 self.assertFalse([url for _, url in apis.requests
                                   if any(part in url for part in ("api.openai.com", f"/compare/{BASE}...", "/tarball/"))])
+
+    def test_drafts_create_no_checks_or_labels_and_clear_prior_gate_state(self) -> None:
+        for prior_state in (False, True):
+            with self.subTest(prior_state=prior_state):
+                apis = FakeApis(draft=True, comments=[comment("core-a", attestation())],
+                                labels=[*GATE.MANAGED_LABELS, "keep"] if prior_state else [],
+                                reviews=[gate_approval(), review("core-b", "APPROVED")] if prior_state else [],
+                                records=[record(GATE.GATE), record(GATE.CLASSIFIER)] if prior_state else [])
+                previous_checks = list(apis.check_runs)
+                with tempfile.TemporaryDirectory() as directory:
+                    output = Path(directory) / "output"
+                    self.assertEqual(run_main(apis, "prepare", "7", env={
+                        **ENV, "GITHUB_OUTPUT": str(output), "CLASSIFIER_DIRECTORY": directory}), 0)
+                    self.assertEqual(output.read_text(), "needed=false\n")
+                self.assertEqual((apis.model_requests, apis.posted), ([], []))
+                evaluate(apis)
+                self.assertEqual(apis.created, [])
+                self.assertEqual(apis.model_requests, [])
+                self.assertEqual(apis.check_runs, previous_checks)
+                self.assertEqual(set(apis.labels), {"keep"} if prior_state else set())
+                self.assertEqual(apis.review_writes, [("DISMISS", HEAD)] if prior_state else [])
+                self.assertEqual(apis.approved(), [])
+                if not prior_state:
+                    self.assertEqual(apis.label_writes, [])
+
+    def test_conversion_to_draft_during_classification_suppresses_result_publication(self) -> None:
+        apis = FakeApis(comments=[comment("core-a", attestation())],
+                        labels=[*GATE.MANAGED_LABELS, "keep"], reviews=[gate_approval()])
+        apis.during_model = lambda apis: setattr(apis, "draft", True)
+        evaluate(apis)
+        self.assertEqual(apis.record(GATE.CLASSIFIER), [])
+        self.assertEqual([run["name"] for run in apis.created], [GATE.GATE])
+        self.assertEqual(apis.gate()[0], "neutral")
+        self.assertEqual(set(apis.labels), {"keep"})
+        self.assertEqual(apis.approved(), [])
+        self.assertEqual(apis.review_writes, [("DISMISS", HEAD)])
+
+    def test_unclassified_heads_have_no_risk_labels_and_need_current_maintainer_approval(self) -> None:
+        for kwargs in (
+            {"answer_text": "invalid JSON"},
+            {"files": ["scripts/ci/build-input.py"], "comments": [ledger({HEAD: 2})]},
+            {"author": "outsider", "files": ["docs/guide.md"]},
+        ):
+            for approver, sha, expected in (("maintainer", HEAD, "neutral"),
+                                            ("core-b", OLD, "neutral"), ("core-b", HEAD, "success")):
+                with self.subTest(kwargs=kwargs, approver=approver, sha=sha):
+                    apis = evaluate(FakeApis(labels=[*GATE.RISK_LABELS, "keep"],
+                                             reviews=[review(approver, "APPROVED", sha=sha)], **kwargs))
+                    self.assertEqual(set(apis.labels) & GATE.RISK_LABELS, set())
+                    self.assertEqual(apis.gate()[0], expected)
+                    self.assertEqual(apis.approved(), [])
+
+    def test_cached_low_risk_never_waives_an_outsiders_current_maintainer_approval(self) -> None:
+        for risk in (1, 2, 3):
+            for approver, sha, expected in (("maintainer", HEAD, "neutral"),
+                                            ("core-b", OLD, "neutral"), ("core-b", HEAD, "success")):
+                with self.subTest(risk=risk, approver=approver, sha=sha):
+                    apis = evaluate(FakeApis(author="outsider", risk=risk, records=[record(GATE.CLASSIFIER)],
+                                             reviews=[review(approver, "APPROVED", sha=sha)]))
+                    self.assertEqual(apis.gate()[0], expected)
+                    self.assertEqual(GATE.MERGE_ELIGIBLE in apis.labels, expected == "success")
+                    self.assertEqual(set(apis.labels) & GATE.RISK_LABELS, set())
+                    self.assertEqual((apis.model_requests, apis.review_writes), ([], []))
+
+    def test_conversion_to_draft_as_the_gate_approves_withdraws_approval_and_labels(self) -> None:
+        apis = FakeApis(records=[record(GATE.CLASSIFIER)], labels=["keep"],
+                        comments=[comment("core-a", attestation())])
+        apis.during_approve = lambda apis: setattr(apis, "draft", True)
+        evaluate(apis)
+        self.assertEqual(apis.review_writes, [("APPROVE", HEAD), ("DISMISS", HEAD)])
+        self.assertEqual(apis.approved(), [])
+        self.assertEqual(set(apis.labels), {"keep"})
+        self.assertEqual(apis.gate()[0], "neutral")
+
+    def test_classifier_per_path_ratings_are_collapsed(self) -> None:
+        answer = {"reasoning": "Summary </details>.", "risks": [
+            {"path": "docs/</details>.md", "level": 1, "reasoning": "Docs </details>."},
+            {"path": "src/a.rs", "level": 2, "reasoning": "Prover only."},
+        ]}
+        apis = evaluate(FakeApis(files=[item["path"] for item in answer["risks"]],
+                                 answer_text=json.dumps(answer)))
+        expected = (
+            "Summary &lt;/details&gt;\\.\n\nRisk: risk-2\n\n"
+            "<details>\n<summary>Per-path ratings (2 files)</summary>\n\n"
+            "- docs/&lt;/details&gt;\\.md: risk-1 — Docs &lt;/details&gt;\\.\n"
+            "- src/a\\.rs: risk-2 — Prover only\\.\n\n</details>\n\n"
+            "_gpt-6.1-sol, reasoning effort xhigh_"
+        )
+        [classification] = [run for run in apis.created if run["name"] == GATE.CLASSIFIER]
+        self.assertEqual(classification["output"]["summary"], expected)
+        self.assertEqual(apis.posted[-1],
+                         "<!-- ai-merge-gate/classifier -->\n### Verifier classifier: risk-2\n\n"
+                         f"Head `{HEAD}`\n\n{expected}\n\n"
+                         f'<!-- ai-merge-gate/attempts {{"{HEAD}": 1}} -->')
+
+        answer = {"reasoning": "Classified changed files.", "risks": [
+            {"path": f"docs/file{i}.md", "level": 1, "reasoning": "Text <code> & API. " * 90}
+            for i in range(30)
+        ]}
+        apis = evaluate(FakeApis(files=[item["path"] for item in answer["risks"]],
+                                 answer_text=json.dumps(answer)))
+        [classification] = [run for run in apis.created if run["name"] == GATE.CLASSIFIER]
+        for body in (classification["output"]["summary"], apis.posted[-1]):
+            self.assertIn("[display clipped:", body)
+            self.assertEqual(body.count("<details>"), 1)
+            self.assertEqual(body.count("</details>"), 1)
+            self.assertIn("\n\n</details>\n\n_gpt-6.1-sol, reasoning effort xhigh_", body)
+        self.assertEqual(json.loads(GATE.LEDGER.fullmatch(apis.posted[-1].splitlines()[-1]).group(1)),
+                         {HEAD: 1})
 
     def test_maintainer_pr_content_stays_data(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -945,72 +992,19 @@ class AiMergeGateTests(unittest.TestCase):
             self.assertFalse(sentinel.exists())
         self.assertEqual(apis.gate(), ("success", "Review attested by " + PIKA_LOGIN))
         [request] = apis.model_requests
-        self.assertEqual((request["model"], request["reasoning"]), ("gpt-6.1-sol", {"effort": "xhigh"}))
-        self.assertEqual(request["prompt_cache_key"], "a16z/jolt#7")
-        self.assertEqual((request["max_output_tokens"], request["service_tier"]), (GATE.MAX_OUTPUT_TOKENS, "default"))
-        self.assertEqual(request["text"]["format"]["name"], "verifier_classification")
-        self.assertTrue(request["text"]["format"]["strict"])
-        self.assertEqual([tool["name"] for tool in request["tools"]], ["read_file", "search"])
+        self.assertNotIn(diff, request["input"])
+        self.assertEqual(json.loads(request["input"])["shas"], {"base": BASE, "head": HEAD})
         self.assertIn("# Verifier classifier", request["instructions"])
+        self.assertEqual(request["instructions"], (GATE.ROOT / ".claude/skills/verifier-classifier/SKILL.md").read_text())
         self.assertNotIn(diff, request["instructions"])
-        self.assertIn(diff, request["input"])
         self.assertEqual([run["name"] for run in apis.created], [GATE.GATE, GATE.CLASSIFIER])
         admission, verdict = apis.posted
         self.assertTrue(admission.startswith(f"<!-- {GATE.CLASSIFIER} -->\n### Verifier classifier: running"))
         self.assertTrue(verdict.startswith(f"<!-- {GATE.CLASSIFIER} -->"))
-        self.assertIn("prover-only", verdict)
+        self.assertIn(GATE.model_text("prover-only"), verdict)
         [approval] = [node for node in apis.reviews if node["author"]["login"] == "github-actions"]
         self.assertEqual((approval["commit"]["oid"], approval["state"]), (HEAD, "APPROVED"))
         self.assertTrue(approval["body"].startswith(GATE.APPROVAL))
-
-    def test_changed_files_reach_the_model_whole(self) -> None:
-        # A one-line edit inside an existing verifier test, shaped like the one in
-        # crates/jolt-verifier/src/config.rs: the diff's context reaches neither attribute.
-        path = "crates/jolt-verifier/src/config.rs"
-        old = "\n".join(["pub struct JoltProtocolConfig;", "", "#[cfg(test)]", "mod tests {", "    #[test]",
-                         "    fn protocol_config_wire_format() {",
-                         *[f"        let step{index} = {index};" for index in range(8)],
-                         "        assert_eq!(bytes, [0, 1, 0, 4, 0]);", "    }", "}", ""])
-        new = old.replace("[0, 1, 0, 4, 0]", "[0, 1, 0, 4, 1]")
-        diff = unified_diff(path, old, new)
-        self.assertNotIn("#[test]", diff)
-        apis = evaluate(FakeApis(files=[path], diff=diff, trees={BASE: {path: old}, HEAD: {path: new}},
-                                 comments=[comment("core-a", attestation())]))
-        [request] = apis.model_requests
-        self.assertIn(f"## {path} at the head\n\n1\tpub struct JoltProtocolConfig;\n2\t\n3\t#[cfg(test)]\n"
-                      "4\tmod tests {\n5\t    #[test]\n", request["input"])
-        self.assertIn(f"Head, revision `head` for the tools: {HEAD}", request["input"])
-        self.assertIn(("GET", f"https://api.github.com/repos/{REPO}/tarball/{HEAD}"), apis.requests)
-
-    def test_tool_reads_are_pinned_to_the_merge_base_and_head_and_bounded(self) -> None:
-        manifest = '[package]\nname = "jolt-verifier"\n'
-        unchanged = {"crates/jolt-verifier/Cargo.toml": manifest, "crates/big.rs": "x" * 500}
-        trees = {BASE: {**TREES[BASE], **unchanged}, HEAD: {**TREES[HEAD], **unchanged}}
-        calls = [("read_file", {"revision": "base", "path": "crates/jolt-verifier/Cargo.toml"}),
-                 ("search", {"revision": "head", "text": "fn helper", "path_prefix": "crates/"}),
-                 ("read_file", {"revision": "head", "path": "crates/big.rs"})]
-        attested = [comment("core-a", attestation())]
-        apis = FakeApis(trees=trees, tool_calls=calls, comments=attested)
-        with mock.patch.object(GATE, "MAX_ANSWER_CHARS", 300), mock.patch.object(GATE, "MAX_TOOL_ROUNDS", 1):
-            evaluate(apis)
-        self.assertEqual(apis.gate(), ("success", "Review attested by core-a"))
-        fetched = [urlsplit(url).path.rsplit("/", 2)[1:] for _, url in apis.requests
-                   if "/tarball/" in url or "/git/trees/" in url]
-        self.assertEqual(sorted(fetched), sorted([["tarball", HEAD], ["trees", HEAD], ["tarball", BASE], ["trees", BASE]]))
-        first, second = apis.model_requests
-        self.assertEqual((second["previous_response_id"], second["tool_choice"]), ("resp_1", "none"))
-        fields = ("instructions", "tools", "prompt_cache_key")
-        self.assertEqual([second[field] for field in fields], [first[field] for field in fields])
-        answers = {item["call_id"]: item["output"] for item in second["input"]}
-        self.assertEqual(answers["call_0"], '1\t[package]\n2\tname = "jolt-verifier"\n')
-        self.assertEqual(answers["call_1"], "crates/jolt-prover/src/lib.rs:1: fn helper() {}")
-        self.assertTrue(answers["call_2"].startswith("error: the answer holds 503 characters"), answers["call_2"])
-        # An archive that differs from the commit's tree, as export-ignore makes it, is refused.
-        dropped = FakeApis(trees=trees, tool_calls=calls[:1], comments=attested)
-        dropped.exported[BASE] = TREES[BASE]
-        with self.assertRaisesRegex(GATE.GateError, "lacks 2 files"):
-            evaluate(dropped)
-        self.assertEqual(dropped.gate(), ("failure", "Gate error: human approval required"))
 
     def test_a_pass_rests_on_state_read_after_the_model_work(self) -> None:
         attested = [comment("core-a", attestation())]
@@ -1065,7 +1059,7 @@ class AiMergeGateTests(unittest.TestCase):
             ("the gate's file run by a pull request", record(GATE.CLASSIFIER, external_id=PR_RUN)),
         ]:
             with self.subTest(case=case):
-                apis = evaluate(FakeApis(verdict="AFFECTS", records=[forged], comments=[comment("core-a", attestation())]))
+                apis = evaluate(FakeApis(risk=4, records=[forged], comments=[comment("core-a", attestation())]))
                 self.assertEqual(apis.gate(), ("neutral", "Risk 4: current-head maintainer approval required"))
                 self.assertEqual((len(apis.model_requests), apis.review_writes), (1, []))
 
@@ -1076,31 +1070,25 @@ class AiMergeGateTests(unittest.TestCase):
         self.assertEqual(apis.review_writes, [])
         self.assertEqual(apis.record(GATE.CLASSIFIER), ["success"], "the paid verdict stays cached for its head")
 
-    def test_uncertain_or_inconsistent_classification_requires_human_review(self) -> None:
+    def test_failed_classification_requires_human_review(self) -> None:
         attested = [comment("core-a", attestation())]
-        for verdict in ("AFFECTS", "UNCERTAIN"):
-            with self.subTest(verdict=verdict):
-                apis = evaluate(FakeApis(verdict=verdict, comments=attested))
-                self.assertEqual(apis.gate(), ("neutral", "Risk 4: current-head maintainer approval required"))
-                self.assertEqual(apis.record(GATE.CLASSIFIER), ["neutral"])
-                self.assertEqual(set(apis.labels), {"risk-4", "no-reviewer-assigned"})
-        for case, overrides in [("unknown verdict", {"answer_text": '{"verdict": "LIKELY_SAFE", "reasoning": "x"}'}),
+        for case, overrides in [("missing risks", {"answer_text": '{"reasoning": "x"}'}),
                                 ("not JSON", {"answer_text": "SAFE"}),
                                 ("other model", {"served_model": "gpt-6-luna"})]:
             with self.subTest(case=case):
                 apis = FakeApis(comments=attested, **overrides)
-                with self.assertRaises(GATE.GateError):
-                    evaluate(apis)
-                self.assertEqual(apis.gate(), ("failure", "Gate error: human approval required"))
-                self.assertEqual(apis.record(GATE.CLASSIFIER), [], "a failed classification is not cached")
+                evaluate(apis)
+                self.assertEqual(apis.gate(), ("neutral", "Risk 4: current-head maintainer approval required"))
+                self.assertEqual(apis.record(GATE.CLASSIFIER), ["neutral"])
 
     def test_human_review_path_follows_latest_review_state(self) -> None:
         cases = [
-            ("writer approved head", [review("maintainer", "APPROVED")], ("success", "Approved by maintainer")),
+            ("writer approved head", [review("maintainer", "APPROVED")],
+             ("neutral", "Risk 4: current-head maintainer approval required")),
             ("approval of an earlier commit, not dismissed", [review("maintainer", "APPROVED", sha=OLD)],
-             ("success", "Approved by maintainer")),
+             ("neutral", "Risk 4: current-head maintainer approval required")),
             ("approval then comment", [review("maintainer", "APPROVED"), review("maintainer", "COMMENTED")],
-             ("success", "Approved by maintainer")),
+             ("neutral", "Risk 4: current-head maintainer approval required")),
             ("changes requested", [review("maintainer", "APPROVED"), review("core-b", "CHANGES_REQUESTED", sha=OLD)],
              ("neutral", "Changes requested by core-b")),
             ("dismissed approval", [review("maintainer", "DISMISSED")], ("neutral", "Human approval required")),
@@ -1122,39 +1110,47 @@ class AiMergeGateTests(unittest.TestCase):
                 self.assertEqual(apis.gate(), ("neutral", "Needs an approval or a current-head review attestation"))
                 self.assertEqual((apis.model_requests, apis.review_writes), ([], []))
 
-    def test_incomplete_or_oversized_input_fails_closed_before_the_model(self) -> None:
+    def test_incomplete_input_fails_closed_before_the_model(self) -> None:
         two_files = ("crates/jolt-prover/src/lib.rs", "crates/jolt-prover/src/stages.rs")
         truncated = FakeApis()
         truncated.truncated = True
-        for case, apis, limit in [
-            ("diff misses a file", FakeApis(counts=(2, 1, 1), files=two_files), GATE.MAX_CALL_INPUT_TOKENS),
-            ("tree listing truncated", truncated, GATE.MAX_CALL_INPUT_TOKENS),
-            ("request over the input bound", FakeApis(), 100),
+        for case, apis in [
+            ("diff misses a file", FakeApis(counts=(2, 1, 1), files=two_files)),
+            ("tree listing truncated", truncated),
         ]:
-            with self.subTest(case=case), mock.patch.object(GATE, "MAX_CALL_INPUT_TOKENS", limit):
+            with self.subTest(case=case):
                 with self.assertRaises(GATE.GateError):
                     evaluate(apis)
                 self.assertEqual(apis.gate(), ("failure", "Gate error: human approval required"))
                 self.assertEqual(apis.model_requests, [])
                 self.assertEqual(apis.posted, [], "no paid attempt is counted")
-                self.assertEqual(set(apis.labels), {"risk-4", "no-reviewer-assigned"})
+                self.assertEqual(set(apis.labels), {"no-reviewer-assigned"})
 
-    def test_classifier_attempts_are_capped_per_head_and_per_pull_request(self) -> None:
+    def test_large_diff_is_prepared_on_disk_and_classified(self) -> None:
+        path = "scripts/large.py"
+        apis = changed_contents({path: "x" * 160_000 + "\n"}, {path: "y" * 160_000 + "\n"}, risk=1)
+        evaluate(apis)
+        self.assertEqual(apis.record(GATE.CLASSIFIER), ["success"])
+        self.assertEqual(len(apis.model_requests), 1)
+        self.assertLess(len(apis.model_requests[0]["input"]), 1000)
+        self.assertIn("risk-1", apis.labels)
+
+    def test_classifier_attempts_are_capped_only_per_head(self) -> None:
         attested = comment("core-a", attestation())
         # A malformed answer fails the attempt without caching a result, as a timeout would.
         for case, comments, paid in [("two per head", [attested], 2),
-                                     ("three per pull request, across heads", [ledger({OLD: 2}), attested], 1)]:
+                                     ("other heads do not spend this head's attempts",
+                                      [ledger({OLD: 2, NEW_HEAD: 1}), attested], 2)]:
             with self.subTest(case=case):
                 apis = FakeApis(comments=comments, answer_text="SAFE")
                 counted = []
-                apis.during_model = lambda apis, counted=counted: counted.append(len(apis.posted))
+                apis.during_model = lambda apis, counted=counted: counted.append(json.loads(GATE.LEDGER.fullmatch(apis.posted[-1].splitlines()[-1]).group(1))[HEAD])
                 for _ in range(paid):
-                    with self.assertRaises(GATE.GateError):
-                        evaluate(apis)
+                    evaluate(apis)
                 evaluate(apis)
                 self.assertEqual(len(apis.model_requests), paid)
                 self.assertEqual(counted, list(range(1, paid + 1)), "each attempt is recorded before it is paid")
-                self.assertEqual(apis.record(GATE.CLASSIFIER), ["skipped"])
+                self.assertEqual(apis.record(GATE.CLASSIFIER), ["neutral"] * paid + ["skipped"])
                 self.assertEqual(apis.gate(), ("neutral", "Risk 4: current-head maintainer approval required"))
         cached = evaluate(FakeApis(comments=[ledger({HEAD: 2, OLD: 1}), attested], records=[record(GATE.CLASSIFIER)]))
         self.assertEqual((cached.model_requests, cached.gate()), ([], ("success", "Review attested by core-a")))
@@ -1164,13 +1160,12 @@ class AiMergeGateTests(unittest.TestCase):
             evaluate(FakeApis(comments=[corrupt, attested]))
 
     def test_spent_classifier_attempts_never_earn_the_gates_approval(self) -> None:
-        # The path rule rates scripts/** risk-1, yet crates/jolt-field/build.rs runs this script:
-        # without a classifier result for the head, only a person can approve it.
+        # crates/jolt-algebra/build.rs runs this script; its directory cannot establish verifier safety.
         for case, reviews, expected, labels in [
-            ("attested", [], ("neutral", "Human approval required: the head has no classifier result"),
-             {"risk-1", "no-reviewer-assigned"}),
+            ("attested", [], ("neutral", "Risk 4: current-head maintainer approval required"),
+             {"no-reviewer-assigned"}),
             ("attested and approved by a writer", [review("maintainer", "APPROVED")],
-             ("success", "Approved by maintainer"), {"risk-1", "merge-eligible"}),
+             ("neutral", "Risk 4: current-head maintainer approval required"), {"no-reviewer-assigned"}),
         ]:
             with self.subTest(case=case):
                 apis = evaluate(FakeApis(files=["scripts/fp64_certified_matrix.py"], reviews=reviews,
@@ -1179,55 +1174,6 @@ class AiMergeGateTests(unittest.TestCase):
                 self.assertEqual(set(apis.labels), labels)
                 self.assertEqual(apis.record(GATE.CLASSIFIER), ["skipped"])
                 self.assertEqual((apis.model_requests, apis.review_writes), ([], []))
-
-    def test_a_continuation_over_the_input_bound_withholds_the_tool_answers(self) -> None:
-        unchanged = {"crates/big.rs": "x" * 20_000}
-        apis = FakeApis(trees={BASE: {**TREES[BASE], **unchanged}, HEAD: {**TREES[HEAD], **unchanged}},
-                        tool_calls=[("read_file", {"revision": "head", "path": "crates/big.rs"})],
-                        comments=[comment("core-a", attestation())])
-        # The chain the next request continues leaves room for the request, not for the answer.
-        apis.usage = lambda size: (GATE.MAX_CALL_INPUT_TOKENS - size - 2_000, 0)
-        evaluate(apis)
-        _, second = apis.model_requests
-        self.assertEqual(([item["output"] for item in second["input"]], second["tool_choice"]),
-                         ([GATE.BUDGET_SPENT], "none"))
-        self.assertEqual(apis.gate(), ("success", "Review attested by core-a"))
-
-    def test_a_model_call_past_its_deadline_is_cancelled_and_fails_closed(self) -> None:
-        now, calls = [0.0], []
-
-        def openai(method, url, headers, body):
-            calls.append((method, urlsplit(url).path))
-            return 200, json.dumps({"id": "resp_1", "status": "in_progress"}).encode()
-
-        def sleep(seconds):
-            now[0] += seconds
-
-        model = GATE.Model(openai, "sk-test", sleep=sleep, clock=lambda: now[0])
-        with self.assertRaisesRegex(GATE.GateError, "no answer before the gate's deadline"):
-            model.run({"input": "x"}, GATE.MODEL_DEADLINE_SECONDS)
-        self.assertEqual(calls[-1], ("POST", "/v1/responses/resp_1/cancel"))
-        self.assertLessEqual(now[0], GATE.MODEL_CALL_SECONDS + GATE.POLL_SECONDS)
-
-    def test_each_model_turn_logs_the_token_counts_openai_reports(self) -> None:
-        reported = {"input_tokens": 30_000, "output_tokens": 900,
-                    "input_tokens_details": {"cached_tokens": 24_000, "cache_write_tokens": 5_000}}
-        for usage, logged in [
-            (reported, ["input 30000", "cache reads 24000", "cache writes 5000", "output 900"]),
-            # A count the response leaves out is named, never logged as zero.
-            ({"input_tokens": 30_000, "output_tokens": 900}, ["cache reads not reported", "cache writes not reported"]),
-        ]:
-            with self.subTest(usage=usage):
-                def openai(method, url, headers, body, usage=usage):
-                    return 200, json.dumps({"id": "resp_1", "status": "completed", "model": GATE.MODEL,
-                                            "reasoning": {"effort": GATE.EFFORT}, "usage": usage}).encode()
-
-                with contextlib.redirect_stdout(io.StringIO()) as out:
-                    GATE.Model(openai, "sk-test", clock=lambda: 0.0).run({"input": "x"}, GATE.MODEL_DEADLINE_SECONDS)
-                [line] = out.getvalue().splitlines()
-                self.assertTrue(line.startswith(f"ai-merge-gate: {GATE.MODEL} response resp_1 completed"), line)
-                for count in logged:
-                    self.assertIn(count, line)
 
     def test_path_rows_and_model_input_read_the_evaluated_commits(self) -> None:
         # While the gate evaluates head A, the author pushes B and then restores A. The pull
@@ -1255,7 +1201,7 @@ class AiMergeGateTests(unittest.TestCase):
             ("classifier instruction added on A", BranchMovesToBAndBack(
                 [{"filename": ".claude/skills/verifier-classifier/new.md", "status": "added"}],
                 b_files, comments=attested),
-             ("neutral", "Human approval required: the change edits the gate's inputs")),
+             ("success", "Review attested by core-a")),
             ("prover file changed on A", BranchMovesToBAndBack(
                 ["crates/jolt-prover/src/lib.rs"], b_files, comments=attested),
              ("success", "Review attested by core-a")),
@@ -1268,54 +1214,13 @@ class AiMergeGateTests(unittest.TestCase):
                 inputs = [request["input"] for request in apis.model_requests]
                 self.assertEqual(len(inputs), expected[0] == "success")
                 for material in inputs:
-                    self.assertIn("## crates/jolt-prover/src/lib.rs at the head", material)
+                    self.assertEqual(json.loads(material)["paths"], sorted(apis.trees[HEAD]))
                     self.assertNotIn("CONTRIBUTING.md", material)
                 trees = {urlsplit(url).path.rsplit("/", 1)[1] for _, url in apis.requests if "/git/trees/" in url}
                 self.assertEqual(trees, {BASE, HEAD})
 
-    def test_changes_to_gate_inputs_never_get_the_gates_approval(self) -> None:
-        attested = [comment("core-a", attestation())]
-        renamed = {"filename": "docs/classifier.md", "previous_filename": ".claude/skills/verifier-classifier/SKILL.md",
-                   "status": "renamed"}
-        for case, files in [("classifier skill renamed away", [renamed]),
-                            ("closure spec removed", [{"filename": "specs/verifier-closure-lints.md",
-                                                       "status": "removed"}]),
-                            ("closure spec", ["specs/verifier-closure-lints.md"]),
-                            ("risk policy", [GATE.RISK_POLICY]),
-                            ("classifier workflow", [GATE.WORKFLOW]),
-                            ("events workflow", [".github/workflows/ai-merge-gate-events.yml"]),
-                            ("classifier skill", [".claude/skills/verifier-classifier/SKILL.md"])]:
-            with self.subTest(case=case):
-                apis = evaluate(FakeApis(comments=attested, files=files, counts=(len(files), 1, 1)))
-                self.assertEqual(apis.gate(), ("neutral", "Human approval required: the change edits the gate's inputs"))
-                self.assertEqual((apis.model_requests, apis.review_writes), ([], []))
-        # A writer's approval satisfies the policy; the gate still does not add its own.
-        approved = evaluate(FakeApis(comments=attested, files=[".claude/skills/verifier-classifier/SKILL.md"],
-                                     reviews=[review("maintainer", "APPROVED")]))
-        self.assertEqual((approved.gate(), approved.review_writes), (("success", "Approved by maintainer"), []))
-        path = ".github/ISSUE_TEMPLATE/bug_report.md"
-        old, new = "Describe the bug\n", "Describe the bug and how to reproduce it\n"
-        template = evaluate(FakeApis(comments=attested, files=[path], diff=unified_diff(path, old, new),
-                                     trees={BASE: {path: old}, HEAD: {path: new}}))
-        self.assertEqual(template.gate(), ("success", "Review attested by core-a"))
-        self.assertEqual((len(template.model_requests), template.approved()), (1, [HEAD]))
-
-    def test_unprotected_gate_and_review_files_use_the_classifier(self) -> None:
-        for path in ("scripts/ci/ai_merge_gate.py", "scripts/ci/json.py", ".github/workflows/other.yml",
-                     ".github/workflows/diff-classifier.yml",
-                     ".claude/skills/ci-code-review/SKILL.md", ".claude/skills/comment-policy/SKILL.md",
-                     ".claude/skills/test-policy/SKILL.md", "CLAUDE.md", "AGENTS.md", "CONTRIBUTING.md",
-                     ".github/ai-merge-gate.md"):
-            with self.subTest(path=path):
-                apis = evaluate(changed_contents({path: "old\n"}, {path: "new\n"}, risk=1))
-                self.assertEqual(apis.gate(), ("success", "Review attested by core-a"))
-                self.assertEqual(set(apis.labels), {"risk-1", "merge-eligible"})
-                self.assertEqual((len(apis.model_requests), apis.approved()), (1, [HEAD]))
-
     def test_trusted_input_changes_invalidate_verdict_without_resetting_attempts(self) -> None:
-        paths = ("scripts/ci/ai_merge_gate.py", "scripts/ci/diff_classifier.py",
-                 ".github/workflows/ai-merge-gate.yml", ".claude/skills/verifier-classifier/SKILL.md",
-                 "specs/verifier-closure-lints.md", GATE.RISK_POLICY)
+        paths = GATE.CLASSIFIER_INPUTS
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             for path in paths:
@@ -1389,8 +1294,7 @@ class AiMergeGateTests(unittest.TestCase):
                     apis = evaluate(FakeApis(labels=["ai-review"], records=old_review + cached_classifier,
                                              comments=comments))
                     self.assert_completed(apis, "success" if comments else "neutral")
-                    self.assertEqual([request["text"]["format"]["name"] for request in apis.model_requests],
-                                     [] if cached_classifier else ["verifier_classification"])
+                    self.assertEqual(len(apis.model_requests), 0 if cached_classifier else 1)
                     self.assertEqual(apis.record("ai-merge-gate/review"), [])
 
     def test_resolve_maps_events_to_their_own_pull_request(self) -> None:
@@ -1471,6 +1375,232 @@ class AiMergeGateTests(unittest.TestCase):
                     self.assertEqual(apis.review_writes, writes + [("APPROVE", HEAD)])
                     self.assertEqual(set(apis.labels), {"risk-2", "merge-eligible", "keep"})
 
+
+class ClassifierAgentTests(unittest.TestCase):
+    def test_upstream_failures_keep_safe_bounded_diagnostics(self):
+        key = "fixture-secret-key"
+        for phase, status, body, details in (
+            ("preflight", 401, {"error": {"type": "invalid_request_error", "code": "invalid_api_key",
+                                         "message": key}}, ("invalid_request_error", "invalid_api_key")),
+            ("request", 429, {"error": {"type": "insufficient_quota", "code": "insufficient_quota",
+                                       "message": key}}, ("insufficient_quota",)),
+            ("preflight", 502, b"not JSON: " + key.encode(), ()),
+            ("request", 503, {"error": {"type": key + "x" * 5000, "code": "code_" + key}},
+             ("[REDACTED]", "code_[REDACTED]")),
+            ("request", None, key + "x" * 5000, ("[REDACTED]",)),
+        ):
+            with self.subTest(phase=phase, status=status):
+                payload = body if isinstance(body, bytes) else json.dumps(body).encode()
+                def upstream(request, **_kwargs):
+                    if phase == "request" and request.full_url.endswith("input_tokens"):
+                        response = io.BytesIO(b'{"input_tokens": 100}')
+                        response.status = 200
+                        return response
+                    if status is None:
+                        raise RuntimeError(body)
+                    raise HTTPError(request.full_url, status, "upstream refused", None, io.BytesIO(payload))
+                broker = AGENT.ModelBroker(key)
+                with mock.patch.object(AGENT.urllib.request, "urlopen", side_effect=upstream), broker.serve() as endpoint:
+                    with self.assertRaises(HTTPError) as stopped:
+                        urlopen(Request(endpoint + "/v1/responses", json.dumps({"model": AGENT.MODEL}).encode(),
+                                        {"Content-Type": "application/json"}), timeout=5)
+                    with stopped.exception as response:
+                        self.assertEqual(json.load(response)["error"]["message"], "classifier stopped")
+                if status is not None:
+                    self.assertIn(f"HTTP {status}", broker.failure)
+                self.assertNotIn(key, broker.failure)
+                self.assertLessEqual(len(broker.failure), 512)
+                for detail in details:
+                    self.assertIn(detail, broker.failure)
+                self.assertEqual(broker.usage, [])
+
+    def test_cached_context_can_repeat_within_spend_budget(self):
+        usage = {"input_tokens": 100_000, "output_tokens": 4000,
+                 "input_tokens_details": {"cached_tokens": 100_000}}
+        response = {"type": "response.completed", "response": {
+            "model": AGENT.MODEL, "status": "completed", "usage": usage}}
+        payload = json.dumps(response).encode()
+        def request(endpoint, _body, _headers):
+            return 200, (json.dumps({"input_tokens": 100_000}).encode()
+                         if endpoint.endswith("input_tokens") else payload)
+        broker = AGENT.ModelBroker("fake", request=request)
+        for _ in range(40):
+            self.assertEqual(broker.forward({"model": AGENT.MODEL}, {}), (200, payload))
+        self.assertEqual((broker.input_tokens, broker.output_tokens), (4_000_000, 160_000))
+        self.assertAlmostEqual(broker.cost_usd, 2)
+
+    def test_long_context_prices_the_entire_request_at_the_surcharge(self):
+        for count, expected in ((272_000, .199), (272_001, .393004)):
+            with self.subTest(input_tokens=count):
+                self.assertAlmostEqual(AGENT.request_cost(count, 1000, cached=200_000, written=50_000), expected)
+
+    def test_compaction_request_uses_the_budgeted_broker(self):
+        calls = []
+        def request(endpoint, body, _headers):
+            calls.append(endpoint)
+            if endpoint.endswith("input_tokens"):
+                return 200, json.dumps({"input_tokens": 100_000}).encode()
+            self.assertEqual(body["max_output_tokens"], 128_000)
+            response = {"type": "response.completed", "response": {"model": AGENT.MODEL,
+                "status": "completed", "usage": {"input_tokens": 100_000, "output_tokens": 200,
+                    "input_tokens_details": {"cached_tokens": 90_000, "cache_write_tokens": 10_000}}}}
+            return 200, b"data: " + json.dumps(response).encode() + b"\n\n"
+        broker = AGENT.ModelBroker("fake", request=request)
+        with tempfile.TemporaryDirectory() as directory, broker.serve() as endpoint:
+            root = Path(directory)
+            (root / "agent-state").mkdir()
+            AGENT.configure_codex(endpoint, root)
+            config = tomllib.loads((root / "agent-state/config.toml").read_text())
+            self.assertEqual(config["model_context_window"], 1_050_000)
+            self.assertEqual(config["model_providers"]["gate"]["stream_idle_timeout_ms"], 18_000_000)
+            body = {"model": AGENT.MODEL, "stream": True,
+                    "input": [{"role": "user", "content": [{"type": "input_text",
+                        "text": "Summarize the conversation so it can continue."}]}]}
+            def compact():
+                return urlopen(Request(endpoint + "/v1/responses", json.dumps(body).encode(),
+                                       {"Content-Type": "application/json"}), timeout=5)
+            with compact() as response:
+                self.assertEqual(response.status, 200)
+            self.assertEqual(broker.input_tokens, 100_000)
+            self.assertAlmostEqual(broker.cost_usd, .036)
+            broker.cost_usd = AGENT.MAX_SPEND_USD
+            with self.assertRaises(HTTPError) as error:
+                compact()
+            self.assertEqual(error.exception.code, 429)
+            self.assertEqual(broker.failure, "classifier spend cap")
+        self.assertEqual(calls.count("/v1/responses"), 1)
+
+    def test_budget_preflight_blocks_payment_and_incomplete_usage_is_retained(self):
+        for count, cost, model, error in (
+            (AGENT.MAX_INPUT_TOKENS + 1, 0, AGENT.MODEL, "per-request input cap"),
+            (AGENT.MAX_INPUT_TOKENS, AGENT.MAX_SPEND_USD, AGENT.MODEL, "spend cap"),
+            (300_000, 47, AGENT.MODEL, "spend cap"),
+            (272_000, 48.04, AGENT.MODEL, "spend cap"),
+            (None, 0, AGENT.MODEL, "input token count"),
+            (100, 0, "other-model", "unexpected requested model"),
+        ):
+            with self.subTest(count=count, cost=cost, model=model):
+                calls = []
+                def request(endpoint, _body, _headers):
+                    calls.append(endpoint)
+                    return 200, json.dumps({"input_tokens": count}).encode()
+                broker = AGENT.ModelBroker("fake", request=request)
+                broker.cost_usd = cost
+                with self.assertRaisesRegex(AGENT.AgentFailure, error):
+                    broker.forward({"model": model}, {})
+                self.assertNotIn("/v1/responses", calls)
+        def incomplete(endpoint, _body, _headers):
+            response = {"type": "response.incomplete", "response": {"model": AGENT.MODEL,
+                "status": "incomplete", "usage": {"input_tokens": 100, "output_tokens": 20_000}}}
+            return 200, (json.dumps({"input_tokens": 100}).encode() if endpoint.endswith("input_tokens")
+                         else b"data: " + json.dumps(response).encode() + b"\n\n")
+        broker = AGENT.ModelBroker("fake", request=incomplete)
+        with self.assertRaisesRegex(AGENT.AgentFailure, "output cap"):
+            broker.forward({"model": AGENT.MODEL, "stream": True}, {})
+        self.assertEqual((broker.input_tokens, broker.output_tokens), (100, 20_000))
+        self.assertAlmostEqual(broker.cost_usd, .2002)
+
+    def test_wall_cap_kills_and_reaps_only_the_owned_agent(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "workspace").mkdir()
+            (root / "instructions.md").write_text("Read only.")
+            (root / "plan.json").write_text(json.dumps({"paths": ["docs/a.md"]}))
+            executable = root / "fake-codex"
+            executable.write_text("#!/bin/sh\nexec sleep 2\n")
+            executable.chmod(0o755)
+            owned = []
+            real_popen = subprocess.Popen
+            def start(*args, **kwargs):
+                process = real_popen(*args, **kwargs)
+                owned.append(process)
+                return process
+            with mock.patch.object(AGENT.shutil, "which", return_value=str(executable)), \
+                    mock.patch.object(AGENT, "WALL_SECONDS", .05), \
+                    mock.patch.object(AGENT.subprocess, "Popen", side_effect=start):
+                answer, receipt = AGENT.run_agent(root, "fake-key")
+            self.assertIsNone(answer)
+            self.assertEqual(receipt["failure"], "classifier wall-time cap")
+            self.assertEqual(owned[0].returncode, -signal.SIGKILL)
+            self.assertEqual(owned[0].wait(), -signal.SIGKILL)
+            self.assertIsNone(json.loads((root / "result.json").read_text()))
+
+    def test_artifact_binds_to_head_and_reserves_only_one_attempt(self):
+        apis = FakeApis()
+        github = GATE.GitHub(apis, "token", REPO)
+        source = GATE.Source(github, BASE, HEAD)
+        with tempfile.TemporaryDirectory() as directory:
+            runner = GATE.Gate(github, GATE.Classifier(Path(directory), prepare=True), "main", MAINTAINERS, RUN_ID)
+            runner.source = source
+            with self.assertRaises(GATE.Prepared):
+                runner.classify(github.get(f"/repos/{REPO}/pulls/7"))
+            answer = {"reasoning": "Prover only.", "risks": [
+                {"path": path, "level": 2, "reasoning": "Prover only."} for path in sorted(source.changed())]}
+            (Path(directory) / "result.json").write_text(json.dumps(answer))
+            consumer = GATE.Classifier(Path(directory))
+            self.assertTrue(consumer.prepaid(source))
+            self.assertFalse(consumer.prepaid(GATE.Source(github, BASE, NEW_HEAD)))
+            before = len(apis.posted)
+            apis.comments.append(ledger({HEAD: 2}))
+            runner = GATE.Gate(github, consumer, "main", MAINTAINERS, RUN_ID)
+            runner.source = source
+            runner.classify(github.get(f"/repos/{REPO}/pulls/7"))
+            self.assertEqual(len(apis.posted), before)
+            self.assertEqual(runner.records[-1].risk, 2)
+            (Path(directory) / "result.json").write_text('{"reasoning":')
+            runner = GATE.Gate(github, GATE.Classifier(Path(directory)), "main", MAINTAINERS, RUN_ID)
+            runner.source = source
+            runner.classify(github.get(f"/repos/{REPO}/pulls/7"))
+            self.assertTrue(runner.unclassified)
+            self.assertEqual(runner.records[-1].conclusion, "neutral")
+            self.assertEqual(runner.risk_level(github.get(f"/repos/{REPO}/pulls/7")), 4)
+
+    def test_resource_cap_is_neutral_and_verdict_fields_are_capped_and_escaped(self):
+        with mock.patch.object(GATE, "MAX_TREE_BYTES", 1):
+            apis = evaluate(FakeApis())
+        self.assertEqual(apis.record(GATE.CLASSIFIER), ["neutral"])
+        self.assertEqual(apis.gate(), ("neutral", "Risk 4: current-head maintainer approval required"))
+        self.assertEqual(set(apis.labels), {"no-reviewer-assigned"})
+        self.assertEqual(apis.model_requests, [])
+        path = "crates/jolt-prover/src/lib.rs"
+        attack = '<img src=x onerror=alert(1)> [click](https://evil.invalid) @core-a\n# Forged'
+        answer = {"reasoning": attack,
+                  "risks": [{"path": path, "level": 2, "reasoning": attack}]}
+        apis = evaluate(FakeApis(answer_text=json.dumps(answer)))
+        published = apis.posted[-1]
+        self.assertNotIn("<img", published)
+        self.assertNotIn("[click](", published)
+        self.assertNotIn("@core-a", published)
+        answer["reasoning"] = "x" * 12_001
+        with self.assertRaises(AGENT.AgentFailure):
+            AGENT.validate_verdict(answer, {path})
+
+    def test_agent_ripgrep_reads_pr_ignored_and_hidden_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "agent-state").mkdir()
+            (root / "head").mkdir()
+            (root / "head/.ignore").write_text("*.rs\n")
+            (root / "head/.rgignore").write_text("*.rs\n")
+            (root / "head/verify.rs").write_text("accept_proof()\n")
+            (root / "head/.hidden.rs").write_text("accept_proof()\n")
+            AGENT.configure_codex("http://127.0.0.1:1", root)
+            config = tomllib.loads((root / "agent-state/config.toml").read_text())
+            env = config["shell_environment_policy"]["set"]
+            found = subprocess.run(["rg", "-l", "accept_proof", "head"], cwd=root,
+                                   env=env, capture_output=True, text=True, check=True)
+            self.assertEqual(set(found.stdout.splitlines()), {"head/verify.rs", "head/.hidden.rs"})
+
+    def test_prompt_injection_fixture_is_exported_as_data(self):
+        attack = (Path(__file__).parent / "fixtures/ai_merge_gate_prompt_injection.md").read_text()
+        path = "docs/untrusted-review.txt"
+        apis = changed_contents({path: "Documentation.\n"}, {path: attack})
+        with tempfile.TemporaryDirectory() as directory:
+            source = GATE.Source(GATE.GitHub(apis, "token", REPO), BASE, HEAD)
+            with self.assertRaises(GATE.Prepared):
+                GATE.Classifier(Path(directory), prepare=True).ask("Trusted instructions.", source, lambda: None, apis.counts)
+            self.assertEqual((Path(directory) / "workspace/head" / path).read_text(), attack)
+            self.assertNotIn(attack, (Path(directory) / "instructions.md").read_text())
 
 if __name__ == "__main__":
     unittest.main()

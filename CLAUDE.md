@@ -17,8 +17,8 @@ Jolt is a zkVM (zero-knowledge virtual machine) for RISC-V (RV64IMAC) that effic
 A pull request into `main` merges with an approving review from a person with write access, or with the AI merge gate's approval of its current head. [`.github/ai-merge-gate.md`](.github/ai-merge-gate.md) is the full policy. The gate approves a head only when all of these hold:
 
 - a maintainer (listed in the gate's maintainer variable and currently holding write access) wrote the pull request;
-- the pull request is ready for review, changes none of the gate's inputs, and has no standing change request from a maintainer or writer;
-- the gate's classifier rated the head `risk-1`, `risk-2` or `risk-3`;
+- the pull request is ready for review and has no standing change request from a maintainer or writer;
+- the highest per-path risk returned by the classifier is `risk-1`, `risk-2` or `risk-3`;
 - the Pika App bot or a maintainer posted a PR comment attesting a clean review of that head.
 
 The gate never approves `risk-4`; there the policy asks for a current-head approval from a maintainer other than the author.
@@ -29,9 +29,43 @@ A reviewer who finds no issues in the exact current head, posting as the Pika Ap
 This pull request #<number> has been reviewed at commit <full 40-char head SHA> using skill <skill name> and model <model name> with <effort> reasoning effort, and no issues were found.
 ```
 
-A push voids the line. After every push, review the new head and post a new line only once that review is clean; never copy or edit an earlier line.
+A push voids the line. After opening a pull request and after every push, review the current head and post a new line only once that review is clean; never copy or edit an earlier line.
 
 ## Essential Commands
+
+### Opt-in prover benchmarks
+
+When the Pika App dispatcher and forced-command target are configured and the
+`JOLT_E2E_ENABLED` repository variable is `true` (setup in
+`scripts/bench/README.md`), a maintainer or administrator can add the `benchmark` label to a same-repository PR. The label
+persists across pushes: each admitted run builds base and candidate locally with
+release/znver4, then runs the PR suite in `scripts/bench/suites.json`. Forks
+and labels applied by write-only contributors are not admitted. While the label
+remains, any later push to the branch, by anyone who can push to it, runs its code
+(including `build.rs`) on the benchmark machine's persistent account without new
+approval. Only `runner` on `jolt-bench` executes PR code; no Pika agent runs there.
+The App rechecks admission before dispatch and publishes an **End-to-end benchmark**
+check. Results are in the **End-to-end benchmark ingest** run's `jolt-e2e-*`
+artifact and the dashboard's **Pull requests** view at
+`https://a16z.github.io/jolt/dev/prover-history/`. Main commits and nightly runs
+need no label: their builds run on GitHub-hosted runners and only verified
+artifacts run on the benchmark machine. Main/nightly jobs attempt calibration
+before history unless a main-push tip is already superseded. PR ingest
+authenticates exact-base external references with 48-hour expiry. Before
+ordinary enablement, run main-only `tier=calibration` bootstrap and the README
+`publication.py verify-calibration` acceptance steps. Bootstrap alone is allowed
+while ordinary tiers are disabled.
+
+### Prover benchmark history
+
+The history publisher collects the Pika App's successful **End-to-end benchmark ingest**
+runs, not the planning workflow. Its canonical artifact is
+`jolt-e2e-INGEST_RUN_ID-ATTEMPT`; `ingest.json` binds it to the original plan and
+measured revisions. PR code runs only as `runner` on `jolt-bench`, never on the
+daemon host. Publication appends only
+under `dev/prover-history/` on the existing `gh-pages` source and leaves `dev/bench/`
+unchanged. See `book/src/usage/profiling/benchmark_history.md` and the producer's
+`scripts/bench/README.md` for setup and admission.
 
 ### Linting and Formatting
 

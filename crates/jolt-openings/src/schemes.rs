@@ -10,9 +10,9 @@
 
 use std::{fmt::Debug, marker::PhantomData};
 
-use jolt_algebra::{JoltField, Ring};
+use jolt_algebra::{JoltField, Ring, Zero};
 use jolt_crypto::{Commitment, HomomorphicCommitment};
-use jolt_poly::{MultilinearPoly, Point, RlcSource, HIGH_TO_LOW};
+use jolt_poly::{MultilinearPoly, Point, Polynomial, RlcSource, HIGH_TO_LOW};
 use jolt_transcript::{Encoding, FieldTranscript, ProverState, VerifierState};
 use serde::{de::DeserializeOwned, Serialize};
 use spongefish::DuplexSpongeInterface;
@@ -59,6 +59,11 @@ pub trait CommitmentScheme: Commitment {
     type Proof: Clone + Debug + Eq + Send + Sync + 'static + Serialize + DeserializeOwned;
     type ProverSetup: Clone + Send + Sync;
     type VerifierSetup: Clone + Send + Sync + Serialize + DeserializeOwned;
+
+    /// Per-verification state, separate from reusable keys and proof transport.
+    /// The default context must perform complete verification. Backends without
+    /// additional verification state use `()`.
+    type VerificationContext<'a>: Default;
 
     /// Auxiliary data from commit reused during opening (e.g. Dory row commitments).
     type OpeningHint: Clone + Send + Sync + Default;
@@ -136,13 +141,14 @@ pub trait GroupBatchOpening: CommitmentScheme {
 
     /// Verifies the batch at the groups' local points. The caller must stop on
     /// an error, and pass its transcript to [`Self::check_eof`] after its own
-    /// last message.
+    /// last message. `Ok` alone does not mean the batch was accepted.
     fn verify_batch(
         setup: &Self::VerifierSetup,
         groups: &[TaggedGroupOpeningClaim<Self::Field, Self::Output>],
         final_group: &GroupOpeningClaim<Self::Field, Self::Output>,
         proof: &Self::Proof,
         transcript: &mut VerifierState<'_, Self::Sponge>,
+        context: &mut Self::VerificationContext<'_>,
     ) -> Result<Self::PendingEof, OpeningsError>;
 
     /// Completes a verification: checks that the whole argument string was
@@ -165,6 +171,35 @@ pub trait TransparentObjectSetup: CommitmentScheme {
         num_vars: usize,
         layout_digest: [u8; 32],
     ) -> Result<(Self::ProverSetup, Self::VerifierSetup), OpeningsError>;
+
+    /// Commit under the default transparent object's coefficient contract for a
+    /// later native group-batch opening on `setup`. Backends may retain the
+    /// source on the eventual opening owner and consume its evaluation buffer.
+    /// `values` is a prefix of a `2^num_vars` table; omitted evaluations are zero.
+    /// Preprocessing must admit this object's arity and coefficient bound.
+    fn commit_bounded_object(
+        setup: &Self::ProverSetup,
+        num_vars: usize,
+        mut values: Vec<Self::Field>,
+        layout_digest: [u8; 32],
+    ) -> Result<(Self::Output, Self::OpeningHint), OpeningsError> {
+        let domain_len = u32::try_from(num_vars)
+            .ok()
+            .and_then(|shift| 1usize.checked_shl(shift))
+            .ok_or_else(|| OpeningsError::InvalidBatch("object domain overflows usize".into()))?;
+        if values.len() > domain_len {
+            return Err(OpeningsError::InvalidBatch(
+                "object prefix exceeds its domain".into(),
+            ));
+        }
+        let (object_setup, _) = Self::transparent_object_setup(
+            Self::transparent_setup_context(setup),
+            num_vars,
+            layout_digest,
+        )?;
+        values.resize(domain_len, Self::Field::zero());
+        Self::commit(&Polynomial::new(values), &object_setup)
+    }
 
     /// Commit an arbitrary field-valued object for a later native group-batch opening.
     /// Its source bound is independent of the default object setup's bound.

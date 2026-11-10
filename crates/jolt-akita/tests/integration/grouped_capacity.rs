@@ -9,8 +9,9 @@ use std::sync::Arc;
 
 use crate::support::{f, layout, polynomial};
 use jolt_akita::{
-    AkitaChunkProfile, AkitaScheduleArtifacts, AkitaScheme, AkitaSetupParams, AkitaVerifierSetup,
-    GroupedScheduleParams, TraceOneHotRows, AKITA_ONE_HOT_K16,
+    AkitaChunkProfile, AkitaScheduleArtifacts, AkitaScheme, AkitaSetupParams,
+    AkitaVerifierResources, AkitaVerifierSetup, GroupedScheduleParams, TraceOneHotRows,
+    TrustedBytes, AKITA_ONE_HOT_K16,
 };
 use jolt_openings::{
     CommitmentGroupRole, CommitmentScheme, GroupBatchOpening, GroupOpeningClaim,
@@ -128,11 +129,38 @@ fn grouped_opening_proves_advice_larger_than_the_trace_group() {
             &main,
             &proof,
             &mut verifier_state,
+            &mut Default::default(),
         )
         .expect("grouped opening should verify");
         assert_eq!(prover_tail, verifier_state.verifier_message::<[u8; 32]>());
         AkitaScheme::check_eof(pending, verifier_state).expect("the argument is read whole");
     }
+
+    let body = AkitaVerifierResources::prepare([Ok(transported.clone())])
+        .expect("producer should prepare the grouped setup")
+        .prepared_setup_bytes()
+        .expect("producer should export its matrix and prefixes");
+    // SAFETY: these are our trusted producer's canonical, immutable bytes,
+    // retained for the entire test process.
+    let body = unsafe { TrustedBytes::new(Box::leak(body.into_boxed_slice())) };
+    let _imported =
+        AkitaVerifierResources::prepare_with_trusted_setup([Ok(transported.clone())], body)
+            .expect("general verifier should import the grouped setup");
+    let fresh: AkitaVerifierSetup =
+        serde_json::from_str(&serde_json::to_string(&transported).expect("setup should serialize"))
+            .expect("setup should deserialize with an empty backend cache");
+    let mut verifier_state = verifier_transcript::<Keccak>(&SESSION, b"", &narg);
+    let pending = AkitaScheme::verify_batch(
+        &fresh,
+        std::slice::from_ref(&advice_claim),
+        &main,
+        &proof,
+        &mut verifier_state,
+        &mut Default::default(),
+    )
+    .expect("borrowed general setup should verify advice larger than the trace");
+    assert_eq!(prover_tail, verifier_state.verifier_message::<[u8; 32]>());
+    AkitaScheme::check_eof(pending, verifier_state).expect("the argument is read whole");
 
     let mut other_context = verifier_transcript::<Keccak>(&SESSION, b"", &narg);
     other_context.append_bytes(b"different preceding Jolt messages");
@@ -142,6 +170,7 @@ fn grouped_opening_proves_advice_larger_than_the_trace_group() {
         &main,
         &proof,
         &mut other_context,
+        &mut Default::default(),
     )
     .is_err());
 }

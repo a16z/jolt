@@ -71,6 +71,8 @@ pub use verifier::absorb_transcript_commitments;
 pub use verifier::pad_layout;
 #[cfg(not(all(feature = "akita", feature = "zk")))]
 pub use verifier::verify;
+#[cfg(all(feature = "akita", not(feature = "zk")))]
+pub use verifier::verify_with_context;
 pub use verifier::{
     absorb_committed_program_commitments, validate_and_seed_transcript, validate_inputs_from_parts,
     CheckedInputs, JoltStatement, ProofTranscriptConfig, JOLT_SESSION,
