@@ -139,7 +139,12 @@ impl<F: JoltField> StreamedRounds<F> {
                 VISIT_ROWS.min(group),
                 |start, bundles| {
                     let mut sums = NativePairSums::<F, TERMS>::new();
-                    for (pair, &weight) in bundles.chunks_exact(2).zip(&e_in[start % group / 2..]) {
+                    for (pair, &weight) in bundles
+                        .as_chunks::<2>()
+                        .0
+                        .iter()
+                        .zip(&e_in[start % group / 2..])
+                    {
                         sums.add(&pair[0], &pair[1], weight);
                     }
                     let block = sums.finish(e_out[start / group], self.gamma);
