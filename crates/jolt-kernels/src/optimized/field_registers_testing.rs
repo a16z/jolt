@@ -67,6 +67,7 @@ impl FieldRegisterTraceFixture {
         imm: i128,
     ) -> JoltInstructionRow {
         let instruction = JoltInstructionRow {
+            source_can_end: false,
             instruction_kind: kind,
             address: ENTRY as usize + self.bytecode.len() * 4,
             operands: NormalizedOperands { rd, rs1, rs2, imm },

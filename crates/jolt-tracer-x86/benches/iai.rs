@@ -30,6 +30,7 @@ type Operands = (Option<u8>, Option<u8>, Option<u8>, i128);
 fn row(kind: JoltInstructionKind, operands: Operands) -> JoltInstructionRow {
     let (rs1, rs2, rd, imm) = operands;
     JoltInstructionRow {
+        source_can_end: false,
         instruction_kind: kind,
         address: TEST_ADDR as usize,
         operands: NormalizedOperands { rs1, rs2, rd, imm },

@@ -177,6 +177,7 @@ fn claim_mut_from_spartan_outer<F: JoltField>(
             CircuitFlags::IsCompressed => Some(&mut claims.is_compressed),
             CircuitFlags::IsFirstInSequence => Some(&mut claims.is_first_in_sequence),
             CircuitFlags::IsLastInSequence => Some(&mut claims.is_last_in_sequence),
+            CircuitFlags::CanEnd => Some(&mut claims.can_end),
             #[cfg(feature = "field-inline")]
             CircuitFlags::FieldAdd => Some(&mut claims.field_add),
             #[cfg(feature = "field-inline")]

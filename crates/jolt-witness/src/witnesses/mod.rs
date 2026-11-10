@@ -85,6 +85,8 @@ pub trait ExtractIndexed<I, R = TraceRow>: Sized {
 fn instruction_row(row: &TraceRow) -> JoltInstructionRow {
     let circuit_flags = row.circuit_flags();
     JoltInstructionRow {
+        source_can_end: circuit_flags[CircuitFlags::VirtualInstruction]
+            && circuit_flags[CircuitFlags::CanEnd],
         instruction_kind: row.instruction_kind().unwrap_or_default(),
         address: row.unexpanded_pc() as usize,
         operands: NormalizedOperands {

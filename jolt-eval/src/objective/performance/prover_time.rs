@@ -1,6 +1,7 @@
 use jolt_host::Program;
+use jolt_prover::ProverConfig;
 
-use crate::guests::{self, GuestConfig, GuestProgram, ProverPreprocessing};
+use crate::guests::{self, GuestConfig, GuestProgram, ProverPreprocessing, VerifierField};
 use crate::objective::Objective;
 
 pub struct ProverTimeSetup {
@@ -46,7 +47,8 @@ impl<G: GuestConfig + 'static> Objective for ProverTimeObjective<G> {
         host_program.build(&target_dir.to_string_lossy());
         let mut program = host_program;
         let (_lazy_trace, trace, _memory, _io) = program.trace(&input, &[], &[]);
-        let max_trace_length = (trace.len() + 1).next_power_of_two();
+        let max_trace_length = ProverConfig::padded_trace_length::<VerifierField>(trace.len())
+            .expect("padded trace domain");
         drop(trace);
 
         let prover_pp = guests::prover_preprocessing(&mut program, mc, max_trace_length);

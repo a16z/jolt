@@ -282,11 +282,11 @@ mod tests {
     #[test]
     fn grouped_rows_match_lagrange_products_with_bounded_fallback() {
         check::<Fr, DOMAIN, 1>();
-        check::<Fr, { DOMAIN - 1 }, 2>();
+        check::<Fr, SECOND_GROUP_LEN, 2>();
         #[cfg(feature = "akita")]
         {
             check::<Fp128<{ u128::MAX - 274 }>, DOMAIN, 1>();
-            check::<Fp128<{ u128::MAX - 274 }>, { DOMAIN - 1 }, 2>();
+            check::<Fp128<{ u128::MAX - 274 }>, SECOND_GROUP_LEN, 2>();
         }
     }
 

@@ -164,6 +164,7 @@ jolt_riscv::for_each_jolt_instruction_kind!(classify_kinds);
 
 fn default_row(kind: JoltInstructionKind) -> JoltInstructionRow {
     JoltInstructionRow {
+        source_can_end: false,
         instruction_kind: kind,
         address: TEST_ADDR as usize,
         operands: NormalizedOperands {

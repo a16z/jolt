@@ -4,6 +4,7 @@ use super::*;
 pub(super) fn noop_for(instruction: SourceInstructionRow) -> JoltInstructionRow {
     debug_assert_eq!(instruction.operands.rd, Some(0));
     JoltInstructionRow {
+        source_can_end: false,
         instruction_kind: JoltInstructionKind::ADDI,
         address: instruction.address,
         operands: NormalizedOperands {

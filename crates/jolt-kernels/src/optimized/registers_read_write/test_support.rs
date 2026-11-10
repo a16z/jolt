@@ -79,6 +79,7 @@ impl TraceFixture {
             }),
         };
         let instruction = JoltInstructionRow {
+            source_can_end: false,
             instruction_kind: JoltInstructionKind::ADDI,
             address: 0x8000_0000 + 4 * self.rows.len(),
             operands: NormalizedOperands {

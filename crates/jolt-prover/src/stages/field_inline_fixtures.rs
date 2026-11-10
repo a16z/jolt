@@ -49,9 +49,7 @@ use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
 use crate::{JoltProverPreprocessing, ProverConfig};
 
 pub(crate) const ENTRY: u64 = RAM_START_ADDRESS;
-// 3, not 2: the last physical cycle must be a noop (constraint 21's
-// ShouldJump convention), so the field-inline fixture's six real rows need padding
-// room behind them.
+// 3, not 2: the field-inline fixture's six real rows do not fit four cycles.
 pub(crate) const LOG_T: usize = 3;
 // Matches the witness backend's `JoltVmWitnessConfig` ram size (64).
 pub(crate) const RAM_LOG_K: usize = 6;
@@ -65,6 +63,7 @@ fn instruction(
     imm: i128,
 ) -> JoltInstructionRow {
     JoltInstructionRow {
+        source_can_end: false,
         instruction_kind,
         address: ENTRY as usize + offset * 4,
         operands: NormalizedOperands { rd, rs1, rs2, imm },
@@ -153,7 +152,7 @@ fn field_row(instruction: JoltInstructionRow) -> JoltTraceRow {
 
 /// A terminal JAL row: the only hand-craftable last real instruction — its
 /// `Jump` flag turns off the otherwise-unconditional PC-update row 16, and
-/// `ShouldJump` stays 0 because the successor is the noop padding — with the
+/// `ShouldJump` stays 0 because the successor is a no-op or absent — with the
 /// link write (`rd = address + 4`) row 13 demands.
 fn halt_jal_row(offset: usize, rd: u8) -> JoltTraceRow {
     let jal = instruction(JoltInstructionKind::JAL, offset, Some(rd), None, None, 0);

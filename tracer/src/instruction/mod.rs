@@ -717,6 +717,7 @@ macro_rules! define_rv64imac_enums {
                                 return Err(source_kind);
                             };
                             Ok(JoltInstructionRow {
+                                source_can_end: instr.source_can_end,
                                 instruction_kind,
                                 address: instr.address as usize,
                                 operands: instr.operands.into(),
@@ -860,6 +861,7 @@ macro_rules! define_rv64imac_enums {
                         operands: row.operands.into(),
                         virtual_sequence_remaining: None,
                         is_first_in_sequence: false,
+                        source_can_end: false,
                         is_compressed: row.is_compressed,
                     }
                     .into());
@@ -991,6 +993,7 @@ macro_rules! impl_final_jolt_row_data {
             impl From<$instr> for JoltInstructionRow {
                 fn from(instr: $instr) -> JoltInstructionRow {
                     JoltInstructionRow {
+                        source_can_end: instr.source_can_end,
                         instruction_kind: jolt_riscv::JoltInstruction::$marker(
                             jolt_riscv::instructions::$marker(())
                         ),
@@ -1015,6 +1018,7 @@ macro_rules! impl_final_jolt_row_data {
                     operands: row.operands.into(),
                     virtual_sequence_remaining: row.virtual_sequence_remaining,
                     is_first_in_sequence: row.is_first_in_sequence,
+                    source_can_end: row.source_can_end,
                     is_compressed: row.is_compressed,
                 }
             }
@@ -2252,6 +2256,7 @@ mod tests {
             },
             virtual_sequence_remaining: None,
             is_first_in_sequence: false,
+            source_can_end: false,
             is_compressed: false,
         };
         let mut trace = Vec::new();

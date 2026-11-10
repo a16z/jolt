@@ -426,6 +426,9 @@ macro_rules! jolt_instruction {
                 if instruction.is_first_in_sequence {
                     flags = flags.set($crate::CircuitFlags::IsFirstInSequence);
                 }
+                if $crate::jolt_instruction!(@can_end $name, instruction) {
+                    flags = flags.set($crate::CircuitFlags::CanEnd);
+                }
                 flags
             }
 
@@ -465,6 +468,9 @@ macro_rules! jolt_instruction {
                 if instruction.is_first_in_sequence {
                     flags = flags.set($crate::CircuitFlags::IsFirstInSequence);
                 }
+                if $crate::jolt_instruction!(@can_end $name, instruction) {
+                    flags = flags.set($crate::CircuitFlags::CanEnd);
+                }
                 flags
             }
 
@@ -475,6 +481,22 @@ macro_rules! jolt_instruction {
         }
 
         $crate::jolt_instruction!(@jolt_instruction_impl $name);
+    };
+
+    (@can_end Jal, $instruction:expr) => {{
+        let mut row = $instruction;
+        row.instruction_kind = $crate::JoltInstructionKind::JAL;
+        row.can_end()
+    }};
+
+    (@can_end Jalr, $instruction:expr) => {{
+        let mut row = $instruction;
+        row.instruction_kind = $crate::JoltInstructionKind::JALR;
+        row.can_end()
+    }};
+
+    (@can_end $name:ident, $instruction:expr) => {
+        false
     };
 
     (@struct $(#[$attr:meta])* $name:ident) => {

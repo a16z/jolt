@@ -46,6 +46,7 @@ fn stamp_sequence_metadata(
 
     let len = rows.len();
     for (index, row) in rows.iter_mut().enumerate() {
+        row.source_can_end = false;
         row.is_first_in_sequence = index == 0;
         row.virtual_sequence_remaining = Some((len - index - 1) as u16);
         row.is_compressed = index == len - 1 && is_compressed;
@@ -63,6 +64,7 @@ mod tests {
     #[test]
     fn rejects_profile_illegal_rows_before_stamping() {
         let rows = vec![JoltInstructionRow {
+            source_can_end: false,
             instruction_kind: JoltInstructionKind::MUL,
             address: 0x8000_0000,
             operands: NormalizedOperands {

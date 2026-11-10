@@ -3,11 +3,11 @@ use super::{DerivedWeights, SpartanOuterRow};
 use crate::KernelError;
 use jolt_claims::protocols::composed::r1cs::{
     rv64::{
-        V_FLAG_DO_NOT_UPDATE_UNEXPANDED_PC, V_FLAG_IS_COMPRESSED, V_IMM, V_LEFT_INSTRUCTION_INPUT,
-        V_LEFT_LOOKUP_OPERAND, V_LOOKUP_OUTPUT, V_NEXT_PC, V_NEXT_UNEXPANDED_PC, V_PC, V_PRODUCT,
-        V_RAM_ADDRESS, V_RAM_READ_VALUE, V_RAM_WRITE_VALUE, V_RD_WRITE_VALUE,
-        V_RIGHT_INSTRUCTION_INPUT, V_RIGHT_LOOKUP_OPERAND, V_RS1_VALUE, V_RS2_VALUE,
-        V_UNEXPANDED_PC,
+        V_FLAG_CAN_END, V_FLAG_DO_NOT_UPDATE_UNEXPANDED_PC, V_FLAG_IS_COMPRESSED, V_IMM,
+        V_LEFT_INSTRUCTION_INPUT, V_LEFT_LOOKUP_OPERAND, V_LOOKUP_OUTPUT, V_NEXT_PC,
+        V_NEXT_UNEXPANDED_PC, V_PC, V_PRODUCT, V_RAM_ADDRESS, V_RAM_READ_VALUE, V_RAM_WRITE_VALUE,
+        V_RD_WRITE_VALUE, V_RIGHT_INSTRUCTION_INPUT, V_RIGHT_LOOKUP_OPERAND, V_RS1_VALUE,
+        V_RS2_VALUE, V_UNEXPANDED_PC,
     },
     spartan_outer_opening_columns,
 };
@@ -53,7 +53,7 @@ pub(super) struct PreparedBFolds<F: JoltField> {
     second_wide: [F; 4],
     negative_wide: [F; 4],
     first_constant: [F; 2],
-    second_constant: [F; 4],
+    second_constant: [F; 8],
 }
 impl<F: JoltField> PreparedBFolds<F> {
     pub(super) fn new(derived: &DerivedWeights<F>) -> Result<Self, KernelError<F>> {
@@ -79,6 +79,7 @@ impl<F: JoltField> PreparedBFolds<F> {
                         SECOND_WORD_COLUMNS.contains(&column)
                             || SECOND_WIDE_COLUMNS.contains(&column)
                             || column == V_FLAG_IS_COMPRESSED
+                            || column == V_FLAG_CAN_END
                     };
                 if !supported && weight != F::zero() {
                     return Err(unsupported());
@@ -107,6 +108,7 @@ impl<F: JoltField> PreparedBFolds<F> {
         let first_d = weight(0, V_FLAG_DO_NOT_UPDATE_UNEXPANDED_PC)?;
         let second_d = weight(1, V_FLAG_DO_NOT_UPDATE_UNEXPANDED_PC)?;
         let second_c = weight(1, V_FLAG_IS_COMPRESSED)?;
+        let second_e = weight(1, V_FLAG_CAN_END)?;
         Ok(Self {
             first,
             second_word,
@@ -117,6 +119,7 @@ impl<F: JoltField> PreparedBFolds<F> {
                 derived.bz_constant[1]
                     + if index & 1 != 0 { second_d } else { F::zero() }
                     + if index & 2 != 0 { second_c } else { F::zero() }
+                    + if index & 4 != 0 { second_e } else { F::zero() }
             }),
         })
     }
@@ -124,6 +127,7 @@ impl<F: JoltField> PreparedBFolds<F> {
     pub(super) fn fold(&self, row: &SpartanOuterRow) -> [F; 2] {
         let d = usize::from(row.circuit_flags[CircuitFlags::DoNotUpdateUnexpandedPC]);
         let c = usize::from(row.circuit_flags[CircuitFlags::IsCompressed]);
+        let e = usize::from(row.circuit_flags[CircuitFlags::CanEnd]);
         let first_values = [
             row.ram_address.0,
             row.ram_read_value.0,
@@ -147,7 +151,8 @@ impl<F: JoltField> PreparedBFolds<F> {
             }
         }
         let mut second = <F as WithAccumulator>::SignedProductAccumulator::default();
-        second.add(self.second_constant[d + 2 * c]);
+        // Select precombined flag constants without another per-row field product.
+        second.add(self.second_constant[d + 2 * c + 4 * e]);
         let second_word_values = [
             row.ram_address.0,
             row.rs1_value.0,

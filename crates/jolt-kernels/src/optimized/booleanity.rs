@@ -888,6 +888,7 @@ pub(crate) mod testing {
     use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, JoltWitnessOracle, TraceBackend};
 
     const LOAD: JoltInstructionRow = JoltInstructionRow {
+        source_can_end: false,
         instruction_kind: JoltInstructionKind::LD,
         address: 0x8000_0000,
         operands: NormalizedOperands {

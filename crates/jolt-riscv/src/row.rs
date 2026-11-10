@@ -58,6 +58,7 @@ impl SourceInstructionRow {
             operands.imm = inline.packed() as i128;
         }
         JoltInstructionRow {
+            source_can_end: false,
             instruction_kind,
             address: self.address,
             operands,
@@ -80,16 +81,35 @@ pub struct JoltInstructionRow {
     pub virtual_sequence_remaining: Option<u16>,
     pub is_first_in_sequence: bool,
     pub is_compressed: bool,
+    /// Whether the source of an expanded row permits stopping at its terminal jump.
+    #[cfg_attr(feature = "serialization", serde(default))]
+    pub source_can_end: bool,
 }
 
 impl JoltInstructionRow {
+    /// Whether this row may end a trace after jumping to its own address.
+    #[inline]
+    pub fn can_end(&self) -> bool {
+        let repeatable_jump = matches!(
+            self.instruction_kind,
+            JoltInstructionKind::Jal(_) | JoltInstructionKind::Jalr(_)
+        ) && self.self_jump_repeats();
+        repeatable_jump
+            && match self.virtual_sequence_remaining {
+                None => true,
+                Some(0) => self.source_can_end,
+                Some(_) => false,
+            }
+    }
+
     /// The row fields its decoded flags depend on.
     ///
     /// [`jolt_instruction!`](crate::jolt_instruction) derives every
     /// instruction's circuit and instruction flags from its kind plus the
     /// virtual-sequence state, `is_compressed`, and `is_first_in_sequence`, and
     /// the kind alone fixes its instruction type. Rows with equal classes
-    /// therefore decode to the same flags, whatever their address and operands.
+    /// therefore decode to the same flags. `CanEnd` additionally depends on
+    /// the source classification and repeatability of the jump operands.
     ///
     /// WARNING: the verifier's folded read-RAF evaluation reads each class's
     /// flags from one row, so a flag that depended on an excluded field would
@@ -105,15 +125,17 @@ impl JoltInstructionRow {
             is_first_in_sequence,
             address: _,
             operands: _,
+            source_can_end: _,
         } = self;
         let sequence = match virtual_sequence_remaining {
             None => 0,
             Some(0) => 1,
             Some(_) => 2,
         };
-        (u32::from(instruction_kind.tag().0) << 4)
+        (u32::from(instruction_kind.tag().0) << 5)
             | (sequence << 2)
             | (u32::from(*is_compressed) << 1)
+            | (u32::from(self.can_end()) << 4)
             | u32::from(*is_first_in_sequence)
     }
 
@@ -160,5 +182,89 @@ impl JoltInstructionRow {
         let address = self.address as u64;
         let link = address.wrapping_add(if self.is_compressed { 2 } else { 4 });
         link.wrapping_add(imm as u64) & !1 == address
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        instructions::{Jal, Jalr},
+        CircuitFlags, Flags, JoltInstruction,
+    };
+
+    #[test]
+    fn can_end_requires_a_repeatable_source_jump() {
+        for (kind, rd, rs1, imm, compressed, expected) in [
+            (JoltInstructionKind::JAL, 0, 0, 0, false, true),
+            (JoltInstructionKind::JAL, 0, 0, 0, true, true),
+            (JoltInstructionKind::JALR, 5, 5, 0, false, false),
+            (JoltInstructionKind::JALR, 1, 1, 0, true, false),
+            (JoltInstructionKind::JALR, 0, 5, 0, false, true),
+            (JoltInstructionKind::JALR, 5, 5, -4, false, true),
+            (JoltInstructionKind::JALR, 5, 5, -3, false, true),
+            (JoltInstructionKind::JALR, 1, 1, -2, true, true),
+            (JoltInstructionKind::JALR, 1, 1, -4, true, false),
+            (JoltInstructionKind::BEQ, 0, 0, 0, false, false),
+        ] {
+            let row = JoltInstructionRow {
+                instruction_kind: kind,
+                address: 0x8000_0000,
+                operands: NormalizedOperands {
+                    rd: Some(rd),
+                    rs1: Some(rs1),
+                    imm,
+                    ..Default::default()
+                },
+                is_compressed: compressed,
+                ..Default::default()
+            };
+            assert_eq!(row.can_end(), expected, "{row:?}");
+            assert_eq!(
+                JoltInstruction::from(row).circuit_flags()[CircuitFlags::CanEnd],
+                expected,
+                "{row:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn typed_jump_flags_use_the_instruction_variant() {
+        let row = JoltInstructionRow {
+            instruction_kind: JoltInstructionKind::ADDI,
+            operands: NormalizedOperands {
+                rs1: Some(5),
+                rd: Some(5),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert!(Jal(row).circuit_flags()[CircuitFlags::CanEnd]);
+        assert!(!Jalr(row).circuit_flags()[CircuitFlags::CanEnd]);
+        let stable = JoltInstructionRow {
+            operands: NormalizedOperands {
+                imm: -4,
+                ..row.operands
+            },
+            ..row
+        };
+        assert!(Jalr(stable).circuit_flags()[CircuitFlags::CanEnd]);
+    }
+
+    #[test]
+    fn expanded_jump_needs_source_permission_and_terminal_position() {
+        let mut row = JoltInstructionRow {
+            instruction_kind: JoltInstructionKind::JAL,
+            virtual_sequence_remaining: Some(0),
+            ..Default::default()
+        };
+        assert!(!row.can_end());
+        row.source_can_end = true;
+        assert!(row.can_end());
+        row.virtual_sequence_remaining = Some(1);
+        assert!(!row.can_end());
+        row.virtual_sequence_remaining = Some(0);
+        row.instruction_kind = JoltInstructionKind::ADDI;
+        assert!(!row.can_end());
     }
 }

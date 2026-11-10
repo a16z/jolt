@@ -26,12 +26,11 @@ pub struct NextIsVirtual(pub bool);
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct NextIsFirstInSequence(pub bool);
 
-/// Jump instruction actually taken (jump flag set and the successor is a
-/// real instruction; unlike [`NextIsNoop`], a missing successor does NOT
-/// count as a no-op here). At `T - 1` constraint 21
-/// (`ShouldJump = Jump · (1 − NextIsNoop)`) forces `ShouldJump = 0`, which
-/// holds under either convention only because the padded trace ends in a
-/// NoOp row (`Jump = 0` there) — the padding every prover config guarantees.
+/// Jump instruction actually taken: the jump flag is set and the successor
+/// is not a no-op under the [`NextIsNoop`] convention. At `T - 1`, constraint
+/// 21 (`ShouldJump = Jump · (1 − NextIsNoop)`) and the shift boundary force
+/// `ShouldJump = 0`. That includes a final jump with no padding row after it,
+/// which happens when the trace exactly fills its power-of-two domain.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ShouldJump(pub bool);
 
@@ -80,6 +79,7 @@ bool_to_field!(
 );
 
 impl Extract for NextIsNoop {
+    #[inline]
     fn extract(
         _row: &TraceRow,
         next: Option<&TraceRow>,
@@ -114,14 +114,16 @@ impl Extract for NextIsFirstInSequence {
 }
 
 impl Extract for ShouldJump {
+    #[inline]
     fn extract(
         row: &TraceRow,
         next: Option<&TraceRow>,
-        _env: &WitnessEnv<'_>,
+        env: &WitnessEnv<'_>,
     ) -> Result<Self, WitnessError> {
-        let circuit_flags = row.circuit_flags();
-        let next_is_noop = next.is_some_and(TraceRow::is_noop);
-        Ok(Self(circuit_flags[CircuitFlags::Jump] && !next_is_noop))
+        let next_is_noop = NextIsNoop::extract(row, next, env)?.0;
+        Ok(Self(
+            row.circuit_flags()[CircuitFlags::Jump] && !next_is_noop,
+        ))
     }
 }
 
