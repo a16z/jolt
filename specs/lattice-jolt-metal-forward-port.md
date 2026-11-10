@@ -273,9 +273,9 @@ shares, not production GPU occupancy or throughput. Evidence is in
 `tensor-stage-overlap-timestamps/`. Further Tensor tuning is deferred until
 the donor commitment path has an inclusive comparison.
 
-The donor audit found that the current limb-NTT commitment substantially reuses
-the November 8 reference `cdf52d02`, but does not preserve the principal donor's
-direct radix26 panel algorithm. That panel algorithm fits the frozen workload's
+The current limb-NTT commitment substantially reuses the November 8 reference
+`cdf52d02`. The donor also has a direct radix26 K16 panel algorithm, which fits
+the current frozen workload's
 39 columns, 65,536 positions, rank one and single inner digit. Current source
 ownership and implicit padding require adapter changes, not replacement of its
 arithmetic. The isolated port retains 32-task key sharing and consumes current
@@ -283,7 +283,7 @@ retained selector windows directly. It uses a 10 KiB one-position tile so Metal
 validation fits the device limit; this changes barrier frequency relative to
 the donor's two-position tile and must be measured. The audit also identified
 omitted fused cooperative register rounds and a width-one Booleanity lookup
-table. These ports take priority over further new algorithms. Source crosswalks
+table. Source crosswalks
 and exact donor references are in `metal-pcs-donor-provenance-crosswalk.json`
 and `donor-sumcheck-crosswalk.json` in the task artifact directory.
 The first panel port (`ec4f1d62f` / Akita `18448889`) passed the independent
@@ -298,6 +298,35 @@ This modest improvement remains slower than the current NTT route, which stays
 selected. These observations establish the current comparison, not an
 optimization limit. Evidence is in `donor-panels-metal/` and
 `donor-panels-two-position-metal/`.
+A later configuration audit found that donor `7aa549cc9` selects 8-bit committed
+and 32-bit virtual chunks at T27, whereas current Akita uses 4/16 bits. The two
+K16 panel experiments therefore do not reproduce the donor large-workload path.
+That path uses a different raw-limb K256 panel kernel. The frozen original-port
+control is being built with its unchanged configuration and published Akita
+`79f09e2`; no original-port throughput has yet been measured here.
+
+The forward port will evaluate K256 through an explicit Metal selection before
+preprocessing, preserving CPU defaults. Frozen Fib requires exactly 20 native
+columns at arity 35. Generate this missing schedule through the current
+JoltOneHotK256 policy and validated catalog emitter, then inspect its actual
+geometry before admitting a GPU kernel. Do not import the donor capacity-32
+catalog or pad native columns to fit it. K256 device sources need byte selectors
+plus zero-selection masks, because 255 is a valid selector. Shared source
+ownership and implicit suffixes remain unchanged. Instruction RA, Booleanity
+and Bytecode already admit 8-bit selectors; ReadRAF cycle processing needs
+branch-local two-table products and a five-factor round specialization. Plans
+are in `k256-metal-config-forward-port-plan.json` and
+`k256-sumcheck-admission-audit.json` in the task artifact directory.
+
+The isolated Booleanity width-one LUT and ReadRAF width-one message ports
+(`ac6f4feda`) passed focused normal/Metal-validation oracles and small/T27
+proofs. One untraced Fib proof took 29.1053 s (4.6114 padded MHz); the separate
+profile slowed across several unchanged components as well. ReadRAF family
+time fell from 2.7090 to 2.3722 s, while Booleanity rose from 1.8448 to 2.3620 s.
+These saved-baseline observations do not establish a combined speedup or a
+causal whole-proof regression. Both changes remain isolated pending selection.
+Evidence is in `selector-messages-metal/`.
+
 The reported donor 5x speedup was against the older CPU implementation, and
 Markos believed roughly 10x was possible. Its measured throughput is therefore
 a reference, not the target or an optimization ceiling. After each port, use
