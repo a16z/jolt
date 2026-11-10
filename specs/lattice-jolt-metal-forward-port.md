@@ -827,7 +827,7 @@ equality endpoint, and the CPU handoff. Compilation, Metal validation and an
 inclusive full-proof timing must pass before accepting this candidate; no
 performance gain is inferred from its buffer sizes.
 
-### RAM value sparse carry candidate
+### RAM value sparse carry
 
 The paired RAM read/write and value factories capture nonzero increments during
 stage 2's existing canonical increment production. Each ordered 16,384-row chunk
@@ -852,7 +852,20 @@ The capture requests at most 512 MiB beyond the normal CPU state. Its GPU copy
 adds the same sparse payload plus four bytes per explicit address; at T27 this
 address upload is at most 512 MiB. Sources are dropped at handoff. Capture, upload,
 dispatch and handoff have separate spans, and any comparison must include the
-stage-2 capture cost. This candidate has source review only; correctness and
-inclusive performance measurements remain pending. The existing reference parity
+stage-2 capture cost. The existing reference parity
 case covers multiple producer chunks, global-budget failure, signed increments,
 zero-increment siblings, odd prefix, lazy messages and the CPU handoff.
+
+The measured RAM source (`f9410f635`, Akita `978d7060`) also reuses the existing
+prepared instruction increments during commitment. Normal and instrumented RAM
+reference checks, fourteen CPU parity checks, parallel/serial kernel Clippy and
+integrated prover Clippy passed. Small and frozen T27 proofs verified. Fib took
+20.006134458 s (6.708828649 padded MHz), with unchanged actual/padded counts and
+public output. The separate profile admitted 69 sparse records, dispatched widths
+1, 2, 4 and 8, then handed off to CPU at width 16. Full stage-2 RAM preparation
+plus stage-4 value proving fell from 0.6456 s in the saved RegistersVal profile
+to 0.3174 s, including capture and handoff. Peak RSS was 37.5925 GiB. These are
+unmatched development observations; the final four-workload comparison remains
+pending. The seven-line prepared-increment reuse has no separate measured win.
+Evidence and the frozen binary are in `ram-increment-metal/` and
+`ram-increment-jolt-prover`.
