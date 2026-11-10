@@ -8,7 +8,7 @@ use akita_metal::onehot::{DeviceK16Sources, OneHotCommitShape};
 use akita_metal::onehot_fold::{OneHotFoldChallenge, OneHotFoldShape, OneHotFoldWorkspace};
 use akita_metal::onehot_ntt::{DeviceOneHotNttKey, OneHotNttWorkspace};
 use akita_metal::onehot_packing::{OneHotPackingShape, OneHotPackingWorkspace};
-use akita_metal::AkitaMetal;
+use akita_metal::{AkitaMetal, AkitaMetalError};
 use akita_pcs::custom_source::CommitInnerPlan;
 use akita_types::{AkitaExpandedSetup, RingVec};
 use jolt_akita::{
@@ -16,18 +16,14 @@ use jolt_akita::{
     TraceOneHotRows,
 };
 use jolt_field::Zero;
-#[cfg(feature = "parallel")]
-use rayon::prelude::*;
 
 const D: usize = 512;
 const K: usize = 16;
-// Target host packing size; upload briefly overlaps another selector buffer.
+// Target logical window size. Source initialization uses bounded worker scratch.
 const STAGING_BYTES: usize = 1 << 28;
 // At most 1/16 of the device's recommended working set, capped at 8 GiB.
 // This limits proof-lived selectors separately from transient packing buffers.
 const MAX_RETAINED_SOURCE_BYTES: u64 = 8 << 30;
-#[cfg(feature = "parallel")]
-const PACK_ROWS: usize = 1 << 13;
 
 /// Trace arithmetic attached to an exact commitment setup owner. The Akita
 /// CPU backend retains the source and opening handles.
@@ -120,22 +116,19 @@ impl MetalTraceCompute {
             .nonzero_prefix_len()
             .saturating_sub(first_row)
             .min(window_rows);
-        let selectors_len = checked::product([stored_rows, columns])
-            .ok_or_else(|| AkitaError::InvalidInput("trace selector size overflows".into()))?;
-        let mut selected = vec![0; selectors_len];
-        let mut masks = vec![0; stored_rows];
-        #[cfg(feature = "parallel")]
-        selected
-            .par_chunks_mut(PACK_ROWS * columns)
-            .zip(masks.par_chunks_mut(PACK_ROWS))
-            .enumerate()
-            .for_each(|(chunk, (selected, masks))| {
-                rows.fill_rows_with_masks(first_row + chunk * PACK_ROWS, selected, masks);
-            });
-        #[cfg(not(feature = "parallel"))]
-        rows.fill_rows_with_masks(first_row, &mut selected, &mut masks);
-        DeviceK16Sources::from_row_major(&self.shared.metal, selected, &masks, columns, window_rows)
-            .map_err(compute_error)
+        DeviceK16Sources::from_row_major_producer(
+            &self.shared.metal,
+            columns,
+            stored_rows,
+            window_rows,
+            |offset, selected, masks| {
+                let row = checked::sum([first_row, offset])
+                    .ok_or_else(|| AkitaMetalError::Shape("trace row offset overflows".into()))?;
+                rows.fill_rows_with_masks(row, selected, masks);
+                Ok(())
+            },
+        )
+        .map_err(compute_error)
     }
 }
 
