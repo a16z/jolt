@@ -1,4 +1,4 @@
-use jolt_field::{Field, FpExt4, Fr, Prime128OffsetA7F7, Prime32Offset99, Ring};
+use jolt_field::{Field, FpExt4, Fr, JoltField, Prime128OffsetA7F7, Prime32Offset99, Ring};
 use num_traits::{One, Zero};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;

@@ -2,9 +2,12 @@
 
 use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion};
 use jolt_field::{
-    Field, FpExt4, Fr, JoltField, Prime128Offset275, Prime128OffsetA7F7, Prime32Offset99,
+    Field, FpExt4, Fr, JoltField, Prime128Offset275, Prime128OffsetA7F7, Prime32Offset99, Ring,
 };
-use jolt_poly::{EqBudget, EqPolynomial, PointRef, Polynomial, TensorEqTable, UnivariatePoly};
+use jolt_poly::{
+    BindingOrder, EqBudget, EqPolynomial, GruenSplitEqPolynomial, PointRef, Polynomial,
+    TensorEqTable, UnivariatePoly,
+};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
 
@@ -200,6 +203,64 @@ fn bench_eq_fallible_field<F: Field>(c: &mut Criterion, field: &str) {
     group.finish();
 }
 
+fn bench_gruen(c: &mut Criterion) {
+    let mut group = c.benchmark_group("gruen");
+    for n in [16, 20] {
+        let mut rng = ChaCha20Rng::seed_from_u64(0xe13 + n as u64);
+        let point: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
+        let challenges: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
+        for order in [BindingOrder::LowToHigh, BindingOrder::HighToLow] {
+            let split = GruenSplitEqPolynomial::new(&point, order);
+            let label = format!("{order:?}_{n}");
+            group.bench_function(BenchmarkId::new("construct", &label), |bench| {
+                bench.iter(|| GruenSplitEqPolynomial::new(std::hint::black_box(&point), order));
+            });
+            group.bench_function(BenchmarkId::new("bind", &label), |bench| {
+                bench.iter_batched(
+                    || split.clone(),
+                    |mut state| {
+                        for &challenge in &challenges {
+                            state.bind(std::hint::black_box(challenge));
+                        }
+                        state
+                    },
+                    BatchSize::SmallInput,
+                );
+            });
+            let q = UnivariatePoly::new(vec![Fr::from_u64(3), Fr::from_u64(7), Fr::from_u64(2)]);
+            let (l0, l1) = split.current_linear_evals();
+            let hint = l0 * q.evaluate(Fr::from_u64(0)) + l1 * q.evaluate(Fr::from_u64(1));
+            group.bench_function(BenchmarkId::new("degree_3", &label), |bench| {
+                bench.iter(|| {
+                    split.gruen_poly_deg_3(
+                        std::hint::black_box(Fr::from_u64(3)),
+                        Fr::from_u64(2),
+                        hint,
+                        || q.evaluate(Fr::from_u64(1)),
+                    )
+                });
+            });
+            group.bench_function(BenchmarkId::new("from_evals", &label), |bench| {
+                bench.iter(|| {
+                    split.gruen_poly_from_evals(
+                        std::hint::black_box(&[q.evaluate(Fr::from_u64(1)), Fr::from_u64(2)]),
+                        hint,
+                        || q.evaluate(Fr::from_u64(0)),
+                    )
+                });
+            });
+            group.bench_function(BenchmarkId::new("degree_2", &label), |bench| {
+                bench.iter(|| {
+                    split.gruen_poly_deg_2(std::hint::black_box(Fr::from_u64(7)), hint, || {
+                        Fr::from_u64(3)
+                    })
+                });
+            });
+        }
+    }
+    group.finish();
+}
+
 fn bench_univariate_interpolation(c: &mut Criterion) {
     let mut group = c.benchmark_group("UnivariatePoly::from_evals");
     for num_evals in [3, 4, 8, 16] {
@@ -226,5 +287,6 @@ criterion_group!(
     bench_eq_orders,
     bench_eq_fallible,
     bench_univariate_interpolation,
+    bench_gruen,
 );
 criterion_main!(benches);

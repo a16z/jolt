@@ -1,9 +1,10 @@
+use super::recovery::{mul_linear, PreparedLinearRecovery};
 use crate::eq::fallible::{cached_elements, domain_len, try_storage};
 use crate::{
     BindingOrder, EqBudget, EqPolynomial, EqTableError, PointLike, Polynomial, UnivariatePoly,
     HIGH_TO_LOW,
 };
-use jolt_field::{Field, JoltField};
+use jolt_field::Field;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
@@ -188,18 +189,95 @@ impl<F: Field> GruenSplitEqPolynomial<F> {
     }
 }
 
-impl<F: JoltField> GruenSplitEqPolynomial<F> {
+impl<F: Field> GruenSplitEqPolynomial<F> {
     pub fn current_scalar(&self) -> F {
         self.current_scalar
     }
 
+    /// Number of variables still awaiting a challenge; zero denotes a finished state.
+    pub fn remaining_rounds(&self) -> usize {
+        match self.binding_order {
+            BindingOrder::LowToHigh => self.current_index,
+            BindingOrder::HighToLow => self.point.len() - self.current_index,
+        }
+    }
+
+    fn coordinate_index(&self) -> usize {
+        match self.binding_order {
+            BindingOrder::LowToHigh => self.current_index.wrapping_sub(1),
+            BindingOrder::HighToLow => self.current_index,
+        }
+    }
+
+    /// The coordinate of the variable about to be bound.
+    ///
+    /// # Panics
+    /// Panics if no rounds remain.
+    pub fn current_coordinate(&self) -> F {
+        self.point[self.coordinate_index()]
+    }
+
+    /// Returns [`EqTableError::RoundsExhausted`] if no rounds remain.
+    pub fn try_current_coordinate(&self) -> Result<F, EqTableError> {
+        self.point
+            .get(self.coordinate_index())
+            .copied()
+            .ok_or(EqTableError::RoundsExhausted)
+    }
+
+    /// Evaluations `(l(0), l(1))` of the scaled current equality factor.
+    ///
+    /// # Panics
+    /// Panics if no rounds remain.
     pub fn current_linear_evals(&self) -> (F, F) {
-        let point = match self.binding_order {
-            BindingOrder::LowToHigh => self.point[self.current_index - 1],
-            BindingOrder::HighToLow => self.point[self.current_index],
-        };
+        self.linear_evals_at(self.current_coordinate())
+    }
+
+    fn linear_evals_at(&self, point: F) -> (F, F) {
         let at_one = self.current_scalar * point;
         (self.current_scalar - at_one, at_one)
+    }
+
+    /// Prepares one inversion for repeated recovery in this round.
+    /// Returns `None` exactly when `l(1) = 0`.
+    ///
+    /// # Panics
+    /// Panics if no rounds remain.
+    pub fn prepare_linear_q_recovery(&self) -> Option<PreparedLinearRecovery<'_, F>> {
+        let (at_zero, at_one) = self.current_linear_evals();
+        PreparedLinearRecovery::new(at_zero, at_one)
+    }
+
+    /// Returns `RoundsExhausted` on a finished state and `Ok(None)` when `l(1) = 0`.
+    pub fn try_prepare_linear_q_recovery(
+        &self,
+    ) -> Result<Option<PreparedLinearRecovery<'_, F>>, EqTableError> {
+        let (at_zero, at_one) = self.linear_evals_at(self.try_current_coordinate()?);
+        Ok(PreparedLinearRecovery::new(at_zero, at_one))
+    }
+
+    /// Tables `(inner, outer)` for the round after `binds` more challenges.
+    /// Returns `None` when `binds` reaches or exceeds the number of remaining rounds.
+    ///
+    /// # Panics
+    /// Panics if no rounds remain at entry.
+    pub fn remaining_tables_after(&self, binds: usize) -> Option<(&[F], &[F])> {
+        let _ = self.current_coordinate();
+        self.try_remaining_tables_after(binds).ok()
+    }
+
+    /// Returns `RoundsExhausted` when `binds >= remaining_rounds()`, without mutation.
+    pub fn try_remaining_tables_after(&self, binds: usize) -> Result<(&[F], &[F]), EqTableError> {
+        if binds >= self.remaining_rounds() {
+            return Err(EqTableError::RoundsExhausted);
+        }
+        let inner = self.e_in_vec.len() - 1;
+        let outer = self.e_out_vec.len() - 1;
+        let inner_binds = binds.min(inner);
+        Ok((
+            &self.e_in_vec[inner - inner_binds],
+            &self.e_out_vec[outer - (binds - inner_binds)],
+        ))
     }
 
     pub fn current_index(&self) -> usize {
@@ -264,14 +342,25 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
         EqPolynomial::<F>::evals(active_point, None)
     }
 
+    /// Binds the current variable and advances the cached tables.
+    ///
+    /// # Panics
+    /// Panics if no rounds remain.
     pub fn bind(&mut self, challenge: F) {
-        if self.point.is_empty() {
-            return;
-        }
+        let point = self.current_coordinate();
+        self.bind_coordinate(challenge, point);
+    }
 
+    /// Returns `RoundsExhausted` without mutation if no rounds remain.
+    pub fn try_bind(&mut self, challenge: F) -> Result<(), EqTableError> {
+        let point = self.try_current_coordinate()?;
+        self.bind_coordinate(challenge, point);
+        Ok(())
+    }
+
+    fn bind_coordinate(&mut self, challenge: F, point: F) {
         match self.binding_order {
             BindingOrder::LowToHigh => {
-                let point = self.point[self.current_index - 1];
                 let product = point * challenge;
                 self.current_scalar *= F::one() - point - challenge + product + product;
                 self.current_index -= 1;
@@ -282,7 +371,6 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
                 }
             }
             BindingOrder::HighToLow => {
-                let point = self.point[self.current_index];
                 let product = point * challenge;
                 self.current_scalar *= F::one() - point - challenge + product + product;
                 self.current_index += 1;
@@ -312,6 +400,9 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
     /// Computes the cubic `s = l*q` from `q(0)`, its leading coefficient,
     /// and the sumcheck hint. The missing endpoint is evaluated only when
     /// `l(1)` vanishes. An error carries the actual endpoint sum.
+    ///
+    /// # Panics
+    /// Panics if no rounds remain.
     pub fn gruen_poly_deg_3(
         &self,
         q_constant: F,
@@ -353,6 +444,9 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
     /// Toom samples are `q(1)..q(d-1), q`'s leading coefficient, with `d>=2`.
     /// `q_evals` must contain at least two entries.
     /// The missing `q(0)` is evaluated only when `l(0)` vanishes.
+    ///
+    /// # Panics
+    /// Panics if no rounds remain or `q_evals` has fewer than two entries.
     pub fn gruen_poly_from_evals(
         &self,
         q_evals: &[F],
@@ -360,6 +454,7 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
         q_at_zero: impl FnOnce() -> F,
     ) -> Result<UnivariatePoly<F>, F> {
         if self.current_scalar.is_zero() {
+            let _ = self.current_coordinate();
             return Self::zero_round(q_evals.len() + 2, s_0_plus_s_1);
         }
         let q_zero = self.recover_q_zero(q_evals[0], s_0_plus_s_1, q_at_zero)?;
@@ -367,10 +462,13 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
         full_q_evals.push(q_zero);
         full_q_evals.extend_from_slice(q_evals);
         let q_coeffs = UnivariatePoly::from_evals_toom(&full_q_evals).into_coefficients();
-        Ok(self.multiply_linear_factor(&q_coeffs))
+        Ok(self.gruen_mul(&q_coeffs))
     }
 
     /// Degree-two message for a linear inner factor, with lazy `q(0)` recovery.
+    ///
+    /// # Panics
+    /// Panics if no rounds remain.
     pub fn gruen_poly_deg_2(
         &self,
         q_one: F,
@@ -378,10 +476,11 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
         q_at_zero: impl FnOnce() -> F,
     ) -> Result<UnivariatePoly<F>, F> {
         if self.current_scalar.is_zero() {
+            let _ = self.current_coordinate();
             return Self::zero_round(3, s_0_plus_s_1);
         }
         let q_zero = self.recover_q_zero(q_one, s_0_plus_s_1, q_at_zero)?;
-        Ok(self.multiply_linear_factor(&[q_zero, q_one - q_zero]))
+        Ok(self.gruen_mul(&[q_zero, q_one - q_zero]))
     }
 
     fn recover_q_zero(&self, q_one: F, hint: F, q_at_zero: impl FnOnce() -> F) -> Result<F, F> {
@@ -399,15 +498,19 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
         }
     }
 
-    fn multiply_linear_factor(&self, q_coeffs: &[F]) -> UnivariatePoly<F> {
-        let (l_zero, l_one) = self.current_linear_evals();
-        let l_slope = l_one - l_zero;
-        let mut coefficients = vec![F::zero(); q_coeffs.len() + 1];
-        for (index, q_coeff) in q_coeffs.iter().copied().enumerate() {
-            coefficients[index] += q_coeff * l_zero;
-            coefficients[index + 1] += q_coeff * l_slope;
-        }
-        UnivariatePoly::new(coefficients)
+    /// Multiplies the coefficient-form inner polynomial by the current linear factor.
+    ///
+    /// # Panics
+    /// Panics if no rounds remain.
+    pub fn gruen_mul(&self, q_coeffs: &[F]) -> UnivariatePoly<F> {
+        let (at_zero, at_one) = self.current_linear_evals();
+        mul_linear(q_coeffs, at_zero, at_one - at_zero)
+    }
+
+    /// Returns `RoundsExhausted` if no rounds remain.
+    pub fn try_gruen_mul(&self, q_coeffs: &[F]) -> Result<UnivariatePoly<F>, EqTableError> {
+        let (at_zero, at_one) = self.linear_evals_at(self.try_current_coordinate()?);
+        Ok(mul_linear(q_coeffs, at_zero, at_one - at_zero))
     }
 
     fn zero_round(coefficients: usize, hint: F) -> Result<UnivariatePoly<F>, F> {
@@ -533,3 +636,11 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
 )]
 #[path = "tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[expect(
+    clippy::unwrap_used,
+    reason = "tests assert round identities and the finished-state panic contract"
+)]
+#[path = "recovery_tests.rs"]
+mod recovery_tests;
