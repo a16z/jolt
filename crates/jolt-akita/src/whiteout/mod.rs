@@ -13,10 +13,7 @@ use akita_config::proof_optimized::fp128::ResponseDigits;
 use akita_config::{policy_of, CommitmentConfig, TrustedScheduleCatalog};
 use akita_params::sis::sigma_binding::sigma_binding_min_rank;
 use akita_params::sis::CommittedSourceContract;
-use akita_params::zk::{
-    hiding_randomness_columns, AdmittedZkSchedule, DigitAlphabet, ImageShape, ZkOpeningSchedule,
-    ZK_CUT_LEVEL,
-};
+use akita_params::zk::{AdmittedZkSchedule, ZkOpeningSchedule, ZK_CUT_LEVEL};
 #[cfg(feature = "zk-prover")]
 use akita_params::PrecommittedGroupProfiles;
 use akita_params::{
@@ -42,7 +39,8 @@ use akita_types::{
     PolynomialGroupClaims,
 };
 use jolt_crypto::lattice::{
-    derive_public_matrix_prefix, PreparedMatrix, PublicMatrixSeed, CHALLENGE_RING_DIM,
+    derive_public_matrix_prefix, required_randomness_columns, PreparedMatrix, PublicMatrixSeed,
+    CHALLENGE_RING_DIM,
 };
 use jolt_openings::OpeningsError;
 use jolt_transcript::Transcript;
@@ -948,16 +946,18 @@ impl WhiteoutTail {
                 D,
                 LatticePadCommitment::<F, D>::width(placement, randomness_columns)?,
             )?;
-            let needed = hiding_randomness_columns(
-                ImageShape {
-                    rows: rank,
-                    ring_dim: D,
-                    modulus: WhiteoutOneHot::sis_modulus_profile(),
-                },
-                DigitAlphabet {
-                    log_basis: PAD_RANDOMNESS_LOG_BASIS,
-                },
-            )?;
+            let image_coeffs = rank.checked_mul(D).ok_or_else(|| {
+                AkitaError::InvalidSetup("hidden image size overflows usize".into())
+            })?;
+            // r_p must also hide L's R_64 output (Whiteout Σ §1.5).
+            let needed = required_randomness_columns::<F>(
+                image_coeffs,
+                CHALLENGE_RING_DIM,
+                D,
+                PAD_RANDOMNESS_LOG_BASIS,
+                8,
+            )
+            .map_err(|error| AkitaError::InvalidSetup(error.to_string()))?;
             if needed == randomness_columns {
                 return Ok((rank, randomness_columns));
             }
