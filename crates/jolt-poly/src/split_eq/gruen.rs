@@ -1,10 +1,14 @@
-use crate::{BindingOrder, EqPolynomial, PointLike, Polynomial, UnivariatePoly, HIGH_TO_LOW};
-use jolt_field::JoltField;
+use crate::eq::fallible::{cached_elements, domain_len, try_storage};
+use crate::{
+    BindingOrder, EqBudget, EqPolynomial, EqTableError, PointLike, Polynomial, UnivariatePoly,
+    HIGH_TO_LOW,
+};
+use jolt_field::{Field, JoltField};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct GruenSplitEqPolynomial<F: JoltField> {
+pub struct GruenSplitEqPolynomial<F: Field> {
     current_index: usize,
     current_scalar: F,
     point: Vec<F>,
@@ -13,7 +17,7 @@ pub struct GruenSplitEqPolynomial<F: JoltField> {
     binding_order: BindingOrder,
 }
 
-impl<F: JoltField> GruenSplitEqPolynomial<F> {
+impl<F: Field> GruenSplitEqPolynomial<F> {
     pub fn new(point: &[F], binding_order: BindingOrder) -> Self {
         Self::new_with_scaling(point, binding_order, None)
     }
@@ -52,11 +56,11 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
             };
         }
 
+        let (out_view, in_view) = Self::table_points(point, binding_order);
+        let out_point = out_view.coords();
+        let in_point = in_view.coords();
         match binding_order {
             BindingOrder::LowToHigh => {
-                let split = point.len() / 2;
-                let head = &point[..point.len() - 1];
-                let (out_point, in_point) = head.split_at(split.min(head.len()));
                 #[cfg(feature = "parallel")]
                 let (e_out_vec, e_in_vec) = rayon::join(
                     || EqPolynomial::<F>::evals_cached_msb(out_point, None),
@@ -77,9 +81,6 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
                 }
             }
             BindingOrder::HighToLow => {
-                let split = point.len() / 2;
-                let tail = &point[1..];
-                let (in_point, out_point) = tail.split_at(split.min(tail.len()));
                 #[cfg(feature = "parallel")]
                 let (e_in_vec, e_out_vec) = rayon::join(
                     || EqPolynomial::<F>::evals_cached_lsb(in_point, None),
@@ -102,6 +103,72 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
         }
     }
 
+    /// Fallible construction with one owned MSB-first point copy and two caches.
+    /// The cap covers the point and both caches' field elements, excluding Vec headers.
+    /// Empty points are accepted as a finished constant polynomial.
+    /// High-to-low binding keeps the more significant variables in the inner cache.
+    #[track_caller]
+    pub fn try_from_point<P: PointLike<Coord = F> + ?Sized>(
+        point: &P,
+        binding_order: BindingOrder,
+        scaling_factor: Option<F>,
+        budget: EqBudget,
+    ) -> Result<Self, EqTableError> {
+        let n = point.num_vars();
+        let _domain = domain_len(n)?;
+        let (out_point, in_point) = Self::table_points(point, binding_order);
+        let out_elements = cached_elements(out_point.num_vars())?;
+        let in_elements = cached_elements(in_point.num_vars())?;
+        let elements = n
+            .checked_add(out_elements)
+            .and_then(|elements| elements.checked_add(in_elements))
+            .ok_or(EqTableError::DimensionOverflow { num_vars: n })?;
+        budget.check::<F>(elements, n)?;
+        let mut canonical_point = try_storage(n, n)?;
+        for k in 0..n {
+            canonical_point.push(point.msb(k));
+        }
+        let (e_out_vec, e_in_vec) = match binding_order {
+            BindingOrder::LowToHigh => (
+                EqPolynomial::<F>::try_evals_cached_msb(&out_point, None, budget)?,
+                EqPolynomial::<F>::try_evals_cached_msb(&in_point, None, budget)?,
+            ),
+            BindingOrder::HighToLow => (
+                EqPolynomial::<F>::try_evals_cached_lsb(&out_point, None, budget)?,
+                EqPolynomial::<F>::try_evals_cached_lsb(&in_point, None, budget)?,
+            ),
+        };
+        Ok(Self {
+            current_index: match binding_order {
+                BindingOrder::LowToHigh => n,
+                BindingOrder::HighToLow => 0,
+            },
+            current_scalar: scaling_factor.unwrap_or(F::one()),
+            point: canonical_point,
+            e_in_vec,
+            e_out_vec,
+            binding_order,
+        })
+    }
+
+    #[inline]
+    fn table_points<P: PointLike<Coord = F> + ?Sized>(
+        point: &P,
+        binding_order: BindingOrder,
+    ) -> (P::View<'_>, P::View<'_>) {
+        let n = point.num_vars();
+        if n == 0 {
+            return (point.msb_range(0..0), point.msb_range(0..0));
+        }
+        let split = n / 2;
+        match binding_order {
+            BindingOrder::LowToHigh => (point.msb_range(0..split), point.msb_range(split..n - 1)),
+            BindingOrder::HighToLow => {
+                (point.msb_range(1 + split..n), point.msb_range(1..1 + split))
+            }
+        }
+    }
+
     /// Bytes [`Self::new`] requests for a nonempty `vars`-variable point bound
     /// [`BindingOrder::LowToHigh`], or `None` past `usize::MAX`: the copied
     /// point and the [`EqPolynomial::evals_cached_msb`] tables over the point
@@ -119,7 +186,9 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
             .checked_mul(size_of::<F>())?
             .checked_add(vars.checked_add(1)?.checked_mul(size_of::<Vec<F>>())?)
     }
+}
 
+impl<F: JoltField> GruenSplitEqPolynomial<F> {
     pub fn current_scalar(&self) -> F {
         self.current_scalar
     }

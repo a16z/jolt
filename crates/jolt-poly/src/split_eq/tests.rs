@@ -1,4 +1,4 @@
-use jolt_field::{Field, Fr, Prime128OffsetA7F7, Ring};
+use jolt_field::{Field, FpExt4, Fr, Prime128OffsetA7F7, Prime32Offset99, Ring};
 use num_traits::{One, Zero};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
@@ -31,7 +31,7 @@ fn gruen_prefix_and_suffix_cover_the_remaining_equality_domain() {
 }
 
 use super::*;
-use crate::TensorEqTable;
+use crate::{eq_index, Endianness, PointRef, TensorEqTable, LOW_TO_HIGH};
 
 fn random_point(len: usize, seed: u64) -> Vec<Fr> {
     let mut rng = ChaCha20Rng::seed_from_u64(seed);
@@ -626,4 +626,74 @@ fn gruen_current_linear_factor_matches_merged_sumcheck_pair() {
             split.bind(challenge);
         }
     }
+}
+
+fn fallible_gruen_identity<F: Field, const E: Endianness>() {
+    let mut rng = ChaCha20Rng::seed_from_u64(0xe12_6775);
+    for n in 0..=20 {
+        let coords: Vec<F> = (0..n).map(|_| F::random(&mut rng)).collect();
+        let point = PointRef::<E, _>::new(&coords);
+        for order in [BindingOrder::LowToHigh, BindingOrder::HighToLow] {
+            for scaling_factor in [None, Some(F::zero()), Some(F::from_u64(7))] {
+                let table = GruenSplitEqPolynomial::<F>::try_from_point(
+                    &point,
+                    order,
+                    scaling_factor,
+                    EqBudget {
+                        max_bytes: usize::MAX,
+                    },
+                )
+                .unwrap();
+                let scale = scaling_factor.unwrap_or(F::one());
+                assert_eq!(table.current_scalar, scale);
+                assert_eq!(
+                    table.current_index,
+                    match order {
+                        BindingOrder::LowToHigh => n,
+                        BindingOrder::HighToLow => 0,
+                    }
+                );
+                for (k, coord) in table.point.iter().enumerate() {
+                    assert_eq!(*coord, point.msb(k));
+                }
+                assert_eq!(table.e_out_vec[0], [F::one()]);
+                assert_eq!(table.e_in_vec[0], [F::one()]);
+                let remaining = if n == 0 {
+                    point.msb_range(0..0)
+                } else {
+                    match order {
+                        BindingOrder::LowToHigh => point.msb_range(0..n - 1),
+                        BindingOrder::HighToLow => point.msb_range(1..n),
+                    }
+                };
+                let outer = table.e_out_vec.last().unwrap();
+                let inner = table.e_in_vec.last().unwrap();
+                let len = 1 << remaining.num_vars();
+                assert_eq!(outer.len() * inner.len(), len);
+                for index in [0, len / 3, len - 1] {
+                    let factored = match order {
+                        BindingOrder::LowToHigh => {
+                            outer[index / inner.len()] * inner[index % inner.len()]
+                        }
+                        BindingOrder::HighToLow => {
+                            inner[index / outer.len()] * outer[index % outer.len()]
+                        }
+                    };
+                    assert_eq!(
+                        scale * factored,
+                        scale * eq_index(&remaining, index as u128),
+                        "n={n}, endianness={E}, order={order:?}, index={index}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn fallible_gruen_constructor_obeys_equality_in_both_orders() {
+    fallible_gruen_identity::<Fr, HIGH_TO_LOW>();
+    fallible_gruen_identity::<Fr, LOW_TO_HIGH>();
+    fallible_gruen_identity::<FpExt4<Prime32Offset99>, HIGH_TO_LOW>();
+    fallible_gruen_identity::<FpExt4<Prime32Offset99>, LOW_TO_HIGH>();
 }

@@ -10,7 +10,10 @@
 mod support;
 
 use jolt_field::{Field, Fr, Ring};
-use jolt_poly::{EqBudget, EqPolynomial, EqTableError, PointRef, TensorEqTable};
+use jolt_poly::{
+    BindingOrder, Endianness, EqBudget, EqPolynomial, EqTableError, GruenSplitEqPolynomial,
+    PointRef, TensorEqTable, HIGH_TO_LOW, LOW_TO_HIGH,
+};
 use jolt_utils::alloc::{try_zeroed_vec, ZeroAllocError};
 #[cfg(feature = "parallel")]
 use rayon::ThreadPoolBuilder;
@@ -201,6 +204,75 @@ fn builders<F: Field>() {
     }
 }
 
+fn gruen_builders<F: Field, const E: Endianness>() {
+    let coords = [F::from_u64(2); 6];
+    // Frozen buffer counts include the owned point, both cache headers and every leaf.
+    for (n, allocations, elements, headers) in [
+        (0, 4, 2, 2),
+        (1, 5, 3, 2),
+        (2, 6, 6, 3),
+        (5, 9, 19, 6),
+        (6, 10, 28, 7),
+    ] {
+        let point = PointRef::<E, _>::new(&coords[..n]);
+        let bytes = elements * size_of::<F>();
+        for order in [BindingOrder::LowToHigh, BindingOrder::HighToLow] {
+            sweep(allocations, bytes + headers * size_of::<Vec<F>>(), || {
+                GruenSplitEqPolynomial::<F>::try_from_point(
+                    &point,
+                    order,
+                    Some(F::from_u64(7)),
+                    EqBudget { max_bytes: bytes },
+                )
+            });
+            assert!(GruenSplitEqPolynomial::<F>::try_from_point(
+                &point,
+                order,
+                None,
+                EqBudget {
+                    max_bytes: bytes + 1
+                }
+            )
+            .is_ok());
+            sweep(0, 0, || {
+                let error = GruenSplitEqPolynomial::<F>::try_from_point(
+                    &point,
+                    order,
+                    None,
+                    EqBudget {
+                        max_bytes: bytes - 1,
+                    },
+                )
+                .unwrap_err();
+                assert!(matches!(
+                    error,
+                    EqTableError::OverBudget { bytes: actual, max_bytes, at }
+                        if actual == bytes && max_bytes == bytes - 1
+                            && at.file().ends_with("eq_allocations.rs")
+                ));
+                Ok(())
+            });
+        }
+    }
+    let long = [F::from_u64(2); usize::BITS as usize];
+    for order in [BindingOrder::LowToHigh, BindingOrder::HighToLow] {
+        sweep(0, 0, || {
+            assert!(matches!(
+                GruenSplitEqPolynomial::<F>::try_from_point(
+                    &long,
+                    order,
+                    None,
+                    EqBudget {
+                        max_bytes: usize::MAX
+                    }
+                ),
+                Err(EqTableError::DimensionOverflow { .. })
+            ));
+            Ok(())
+        });
+    }
+}
+
 #[test]
 fn every_builder_allocation_is_fallible_and_partial_failures_release_storage() {
     if let Some(mode) = std::env::var_os("JOLT_EQ_ALLOC_ABORT") {
@@ -225,6 +297,10 @@ fn every_builder_allocation_is_fallible_and_partial_failures_release_storage() {
     });
     builders::<Fr>();
     builders::<NonZeroRepr>();
+    gruen_builders::<Fr, HIGH_TO_LOW>();
+    gruen_builders::<Fr, LOW_TO_HIGH>();
+    gruen_builders::<NonZeroRepr, HIGH_TO_LOW>();
+    gruen_builders::<NonZeroRepr, LOW_TO_HIGH>();
     #[cfg(feature = "parallel")]
     {
         let pool = ThreadPoolBuilder::new().num_threads(4).build().unwrap();
