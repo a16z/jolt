@@ -8,7 +8,9 @@ use spongefish::{DuplexSpongeInit, Encoding, SessionId, VerifierState};
 
 use crate::codec::{protocol_tag, BytesMsg, TAG_BYTES};
 use crate::digest_hash::{DigestHash, DIGEST_HASH};
-use crate::shake128::{ProverState, Shake128};
+#[cfg(feature = "prover-entropy")]
+use crate::shake128::ProverState;
+use crate::shake128::Shake128;
 
 /// Crate-wide protocol tag, `a16z/jolt-transcript/v2/sha3` zero-padded to 32
 /// bytes (`a16z/jolt-transcript/v2/keccak` under `keccak256-digests`).
@@ -69,6 +71,7 @@ impl<S: Encoding + ?Sized> Encoding for Instance<'_, S> {
 }
 
 /// Build a prover transcript bound to `session` and `statement`.
+/// Requires `prover-entropy` to seed the private RNG from OS entropy.
 ///
 /// `session` is the caller's 32-byte protocol tag ([`protocol_tag`], e.g.
 /// `protocol_tag(b"jolt-rv64imac/v1")`).
@@ -96,6 +99,7 @@ impl<S: Encoding + ?Sized> Encoding for Instance<'_, S> {
 /// let _: BytesMsg = verifier.prover_message().unwrap();
 /// verifier.check_eof().unwrap();
 /// ```
+#[cfg(feature = "prover-entropy")]
 #[must_use]
 pub fn prover_transcript<H>(
     session: &[u8; TAG_BYTES],

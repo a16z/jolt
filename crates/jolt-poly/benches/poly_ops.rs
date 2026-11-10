@@ -2,7 +2,7 @@
 
 use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion};
 use jolt_field::{
-    Field, FpExt4, Fr, JoltField, Prime128Offset275, Prime128OffsetA7F7, Prime32Offset99, Ring,
+    Field, FpExt4, Fr, JoltField, Prime128Offset275, Prime128Offset6A23801F, Prime32Offset99, Ring,
 };
 use jolt_poly::{
     BindingOrder, EqBudget, EqPolynomial, GruenSplitEqPolynomial, PointRef, Polynomial,
@@ -38,7 +38,7 @@ fn bench_bind(c: &mut Criterion) {
 
 fn bench_bind_low_to_high_in_place(c: &mut Criterion) {
     bench_inplace_field::<Fr>(c, "Fr");
-    bench_inplace_field::<Prime128OffsetA7F7>(c, "Prime128OffsetA7F7");
+    bench_inplace_field::<Prime128Offset6A23801F>(c, "Prime128Offset6A23801F");
 }
 
 fn bench_inplace_field<F: JoltField>(c: &mut Criterion, field: &str) {
@@ -116,7 +116,7 @@ fn bench_eq_evals(c: &mut Criterion) {
 
 fn bench_eq_orders(c: &mut Criterion) {
     bench_eq_field::<Fr>(c, "Fr");
-    bench_eq_field::<Prime128OffsetA7F7>(c, "Prime128OffsetA7F7");
+    bench_eq_field::<Prime128Offset6A23801F>(c, "Prime128Offset6A23801F");
     bench_eq_field::<FpExt4<Prime32Offset99>>(c, "FpExt4");
 }
 
