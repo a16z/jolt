@@ -1,6 +1,7 @@
 use super::EqPolynomial;
 use crate::point::PointLike;
 use jolt_field::Field;
+use jolt_utils::Math;
 use std::ops::{Mul, SubAssign};
 impl<F: Field> EqPolynomial<F> {
     /// `result[j]` is the eq table over the `j` most-significant variables.
@@ -15,7 +16,7 @@ impl<F: Field> EqPolynomial<F> {
         let mut evals: Vec<Vec<F>> = (0..=r.num_vars())
             .map(|i| vec![scaling_factor.unwrap_or(F::one()); 1 << i])
             .collect();
-        Self::fill_cached(r, &mut evals, true);
+        Self::fill_cached::<_, true>(r, &mut evals);
         evals
     }
 
@@ -30,18 +31,35 @@ impl<F: Field> EqPolynomial<F> {
         let mut evals: Vec<Vec<F>> = (0..=r.num_vars())
             .map(|i| vec![scaling_factor.unwrap_or(F::one()); 1 << i])
             .collect();
-        Self::fill_cached(r, &mut evals, false);
+        Self::fill_cached::<_, false>(r, &mut evals);
         evals
     }
 
     #[inline]
-    pub(super) fn fill_cached<P>(r: &P, evals: &mut [Vec<F>], msb: bool)
+    pub(crate) fn fill_reserved_cached<P, const MSB: bool>(r: &P, tables: &mut [Vec<F>])
     where
         P: PointLike + ?Sized,
         P::Coord: Send + Sync + Into<F>,
         F: Mul<P::Coord, Output = F>,
     {
-        if msb {
+        let scale = tables[0][0];
+        for (level, table) in tables.iter_mut().enumerate() {
+            let len = level.pow2();
+            // try_cached_buffers reserves every leaf before a fill is scheduled.
+            debug_assert!(table.capacity() >= len);
+            table.resize(len, scale);
+        }
+        Self::fill_cached::<_, MSB>(r, tables);
+    }
+
+    #[inline]
+    pub(crate) fn fill_cached<P, const MSB: bool>(r: &P, evals: &mut [Vec<F>])
+    where
+        P: PointLike + ?Sized,
+        P::Coord: Send + Sync + Into<F>,
+        F: Mul<P::Coord, Output = F>,
+    {
+        if MSB {
             let mut size = 1;
             for j in 0..r.num_vars() {
                 let r_j = r.msb(j);
