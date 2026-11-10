@@ -2,8 +2,7 @@ use jolt_field::{Accumulator, Field, WithAccumulator};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use crate::eq::fallible::domain_len;
-use crate::{Endianness, EqBudget, EqPolynomial, EqTableError, PointLike, PointRef, HIGH_TO_LOW};
+use crate::{Endianness, EqPolynomial, PointLike, PointRef, HIGH_TO_LOW};
 
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -52,59 +51,6 @@ impl<F: Field> TensorEqTable<F> {
         }
     }
 
-    /// Fallible factorization; the cap covers both factor tables together.
-    /// Both buffers are reserved before filling. Rayon's runtime bookkeeping
-    /// allocations are outside the table-storage guarantee; see [`EqBudget`].
-    #[track_caller]
-    pub fn try_from_point<P: PointLike<Coord = F> + ?Sized>(
-        point: &P,
-        scale: F,
-        outer_vars: usize,
-        budget: EqBudget,
-    ) -> Result<Self, EqTableError> {
-        let n = point.num_vars();
-        if outer_vars > n {
-            return Err(EqTableError::LengthMismatch {
-                expected: n,
-                got: outer_vars,
-            });
-        }
-        let _len = domain_len(n)?;
-        let in_bits = n - outer_vars;
-        let elements = domain_len(outer_vars)?
-            .checked_add(domain_len(in_bits)?)
-            .ok_or(EqTableError::DimensionOverflow { num_vars: n })?;
-        budget.check::<F>(elements, n)?;
-        let mut e_out = EqPolynomial::<F>::try_evals_buffer(outer_vars, Some(scale))?;
-        let mut e_in = EqPolynomial::<F>::try_evals_buffer(in_bits, None)?;
-        let out_view = point.msb_range(0..outer_vars);
-        let in_view = point.msb_range(outer_vars..n);
-        let out_coords = out_view.coords();
-        let in_coords = in_view.coords();
-        let fill = |coords: &[F], values: &mut Vec<F>| {
-            if P::ENDIANNESS == HIGH_TO_LOW {
-                EqPolynomial::<F>::fill_evals(&PointRef::high_to_low(coords), values);
-            } else {
-                EqPolynomial::<F>::fill_evals(&PointRef::low_to_high(coords), values);
-            }
-        };
-        #[cfg(feature = "parallel")]
-        rayon::join(
-            || fill(out_coords, &mut e_out),
-            || fill(in_coords, &mut e_in),
-        );
-        #[cfg(not(feature = "parallel"))]
-        {
-            fill(out_coords, &mut e_out);
-            fill(in_coords, &mut e_in);
-        }
-        Ok(Self {
-            e_out,
-            e_in,
-            in_bits,
-        })
-    }
-
     fn from_parts<const E: Endianness>(
         out_point: PointRef<'_, E, F>,
         in_point: PointRef<'_, E, F>,
@@ -149,26 +95,13 @@ impl<F: Field> TensorEqTable<F> {
         (self.e_out[x_out], self.e_in[x_in])
     }
 
+    /// Evaluates the equality weight at a Boolean index.
+    ///
+    /// # Panics
+    /// Panics if `index` is outside the table's domain.
     pub fn evaluate_index(&self, index: usize) -> F {
         let (outer, inner) = self.factors_at_index(index);
         outer * inner
-    }
-
-    /// Evaluates a Boolean index without allocating, rejecting out-of-domain indices
-    /// and domains whose length overflows usize, including infallibly built tables.
-    pub fn try_evaluate_index(&self, index: usize) -> Result<F, EqTableError> {
-        let len = self
-            .e_out
-            .len()
-            .checked_mul(self.e_in.len())
-            .ok_or_else(|| EqTableError::DimensionOverflow {
-                num_vars: self.e_out.len().trailing_zeros() as usize
-                    + self.e_in.len().trailing_zeros() as usize,
-            })?;
-        if index >= len {
-            return Err(EqTableError::IndexOutOfRange { index, len });
-        }
-        Ok(self.evaluate_index(index))
     }
 
     /// Sum the tables at one Boolean index with a single accumulator reduction.
@@ -311,65 +244,5 @@ impl<F: Field> TensorEqTable<F> {
                 outer_step(0, F::zero(), inner_acc)
             })
         }
-    }
-}
-
-#[cfg(test)]
-#[path = "../../tests/support/mod.rs"]
-mod query_test_fields;
-
-#[cfg(test)]
-mod tests {
-    use super::query_test_fields::{NonZeroRepr, Zst};
-    use super::*;
-    use crate::eq_index;
-    use jolt_field::Fr;
-    #[cfg(target_pointer_width = "32")]
-    use jolt_field::Ring;
-
-    fn check_infallible_queries<F: Field>() {
-        let coords = [F::from_u64(2), F::from_u64(3), F::from_u64(5)];
-        for point in [coords, [coords[2], coords[1], coords[0]]] {
-            let table = TensorEqTable::<F>::from_point(&point, F::from_u64(7), 1);
-            for index in 0..8 {
-                assert_eq!(
-                    table.try_evaluate_index(index).ok(),
-                    Some(F::from_u64(7) * eq_index(&point, index as u128))
-                );
-            }
-            assert!(matches!(
-                table.try_evaluate_index(8),
-                Err(EqTableError::IndexOutOfRange { index: 8, len: 8 })
-            ));
-        }
-    }
-
-    #[test]
-    fn checked_queries_accept_infallibly_built_tensors() {
-        check_infallible_queries::<Fr>();
-        check_infallible_queries::<NonZeroRepr>();
-        #[cfg(target_pointer_width = "32")]
-        {
-            let table =
-                TensorEqTable::<Fr>::from_point(&[Fr::from_u64(2); 32], Fr::from_u64(1), 16);
-            assert!(matches!(
-                table.try_evaluate_index(0),
-                Err(EqTableError::DimensionOverflow { num_vars: 32 })
-            ));
-        }
-    }
-
-    #[test]
-    fn checked_queries_reject_domain_length_overflow() {
-        let factor_bits = usize::BITS / 2;
-        let factor_len = 1usize << factor_bits;
-        let table = TensorEqTable {
-            e_out: vec![Zst; factor_len],
-            e_in: vec![Zst; factor_len],
-            in_bits: factor_bits as usize,
-        };
-        assert!(
-            matches!(table.try_evaluate_index(0), Err(EqTableError::DimensionOverflow { num_vars }) if num_vars == usize::BITS as usize)
-        );
     }
 }

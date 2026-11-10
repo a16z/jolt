@@ -628,22 +628,14 @@ fn gruen_current_linear_factor_matches_merged_sumcheck_pair() {
     }
 }
 
-fn fallible_gruen_identity<F: Field, const E: Endianness>() {
+fn gruen_constructor_identity<F: Field, const E: Endianness>() {
     let mut rng = ChaCha20Rng::seed_from_u64(0xe12_6775);
     for n in 0..=20 {
         let coords: Vec<F> = (0..n).map(|_| F::random(&mut rng)).collect();
         let point = PointRef::<E, _>::new(&coords);
         for order in [BindingOrder::LowToHigh, BindingOrder::HighToLow] {
             for scaling_factor in [None, Some(F::zero()), Some(F::from_u64(7))] {
-                let table = GruenSplitEqPolynomial::<F>::try_from_point(
-                    &point,
-                    order,
-                    scaling_factor,
-                    EqBudget {
-                        max_bytes: usize::MAX,
-                    },
-                )
-                .unwrap();
+                let table = GruenSplitEqPolynomial::<F>::from_point(&point, order, scaling_factor);
                 let scale = scaling_factor.unwrap_or(F::one());
                 assert_eq!(table.current_scalar, scale);
                 assert_eq!(
@@ -691,9 +683,9 @@ fn fallible_gruen_identity<F: Field, const E: Endianness>() {
 }
 
 #[test]
-fn fallible_gruen_constructor_obeys_equality_in_both_orders() {
-    fallible_gruen_identity::<Fr, HIGH_TO_LOW>();
-    fallible_gruen_identity::<Fr, LOW_TO_HIGH>();
-    fallible_gruen_identity::<FpExt4<Prime32Offset99>, HIGH_TO_LOW>();
-    fallible_gruen_identity::<FpExt4<Prime32Offset99>, LOW_TO_HIGH>();
+fn gruen_constructor_obeys_equality_in_both_orders() {
+    gruen_constructor_identity::<Fr, HIGH_TO_LOW>();
+    gruen_constructor_identity::<Fr, LOW_TO_HIGH>();
+    gruen_constructor_identity::<FpExt4<Prime32Offset99>, HIGH_TO_LOW>();
+    gruen_constructor_identity::<FpExt4<Prime32Offset99>, LOW_TO_HIGH>();
 }

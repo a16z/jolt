@@ -1,9 +1,5 @@
 use super::recovery::{mul_linear, PreparedLinearRecovery};
-use crate::eq::fallible::{cached_elements, domain_len, try_storage};
-use crate::{
-    BindingOrder, EqBudget, EqPolynomial, EqTableError, PointLike, Polynomial, UnivariatePoly,
-    HIGH_TO_LOW,
-};
+use crate::{BindingOrder, EqPolynomial, EqTableError, PointLike, Polynomial, UnivariatePoly, HIGH_TO_LOW};
 use jolt_field::Field;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -97,94 +93,6 @@ impl<F: Field> GruenSplitEqPolynomial<F> {
                     e_in_vec,
                     e_out_vec,
                     binding_order,
-                }
-            }
-        }
-    }
-
-    /// Fallible construction with one owned MSB-first point copy and two caches.
-    /// The cap covers the point and both caches' field elements, excluding Vec headers.
-    /// Empty points are accepted as a finished constant polynomial.
-    /// High-to-low binding keeps the more significant variables in the inner cache.
-    /// All point/cache storage is reserved fallibly before parallel filling.
-    /// Rayon's pool and scheduler bookkeeping is outside this guarantee; see [`EqBudget`].
-    #[track_caller]
-    pub fn try_from_point<P: PointLike<Coord = F> + ?Sized>(
-        point: &P,
-        binding_order: BindingOrder,
-        scaling_factor: Option<F>,
-        budget: EqBudget,
-    ) -> Result<Self, EqTableError> {
-        let n = point.num_vars();
-        let _domain = domain_len(n)?;
-        let (out_shape, in_shape) = Self::table_points(point.coords(), binding_order);
-        let out_vars = out_shape.len();
-        let in_vars = in_shape.len();
-        let out_elements = cached_elements(out_vars)?;
-        let in_elements = cached_elements(in_vars)?;
-        let elements = n
-            .checked_add(out_elements)
-            .and_then(|elements| elements.checked_add(in_elements))
-            .ok_or(EqTableError::DimensionOverflow { num_vars: n })?;
-        budget.check::<F>(elements, n)?;
-        let mut canonical_point = try_storage(n, n)?;
-        let mut e_out_vec = EqPolynomial::<F>::try_cached_buffers(out_vars, None)?;
-        let mut e_in_vec = EqPolynomial::<F>::try_cached_buffers(in_vars, None)?;
-        if P::ENDIANNESS == HIGH_TO_LOW {
-            canonical_point.extend_from_slice(point.coords());
-        } else {
-            canonical_point.extend(point.coords().iter().rev().copied());
-        }
-        Self::fill_tables(
-            &canonical_point,
-            binding_order,
-            &mut e_out_vec,
-            &mut e_in_vec,
-        );
-        Ok(Self {
-            current_index: match binding_order {
-                BindingOrder::LowToHigh => n,
-                BindingOrder::HighToLow => 0,
-            },
-            current_scalar: scaling_factor.unwrap_or(F::one()),
-            point: canonical_point,
-            e_in_vec,
-            e_out_vec,
-            binding_order,
-        })
-    }
-
-    #[inline]
-    fn fill_tables(
-        point: &[F],
-        binding_order: BindingOrder,
-        e_out: &mut [Vec<F>],
-        e_in: &mut [Vec<F>],
-    ) {
-        let (out_point, in_point) = Self::table_points(point, binding_order);
-        match binding_order {
-            BindingOrder::LowToHigh => {
-                #[cfg(feature = "parallel")]
-                let _filled = rayon::join(
-                    || EqPolynomial::<F>::fill_reserved_cached::<_, true>(out_point, e_out),
-                    || EqPolynomial::<F>::fill_reserved_cached::<_, true>(in_point, e_in),
-                );
-                #[cfg(not(feature = "parallel"))]
-                {
-                    EqPolynomial::<F>::fill_reserved_cached::<_, true>(out_point, e_out);
-                    EqPolynomial::<F>::fill_reserved_cached::<_, true>(in_point, e_in);
-                }
-            }
-            BindingOrder::HighToLow => {
-                #[cfg(feature = "parallel")]
-                let _filled = rayon::join(
-                    || EqPolynomial::<F>::fill_reserved_cached::<_, false>(in_point, e_in),
-                    || EqPolynomial::<F>::fill_reserved_cached::<_, false>(out_point, e_out),
-                );
-                #[cfg(not(feature = "parallel"))]
-                {
-                    EqPolynomial::<F>::fill_reserved_cached::<_, false>(in_point, e_in);
-                    EqPolynomial::<F>::fill_reserved_cached::<_, false>(out_point, e_out);
                 }
             }
         }

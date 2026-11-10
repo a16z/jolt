@@ -5,7 +5,7 @@ use jolt_field::{
     Field, FpExt4, Fr, JoltField, Prime128Offset275, Prime128Offset6A23801F, Prime32Offset99, Ring,
 };
 use jolt_poly::{
-    BindingOrder, EqBudget, EqPolynomial, GruenSplitEqPolynomial, PointRef, Polynomial,
+    BindingOrder, EqPolynomial, GruenSplitEqPolynomial, PointRef, Polynomial,
     TensorEqTable, UnivariatePoly,
 };
 use rand_chacha::ChaCha20Rng;
@@ -151,17 +151,14 @@ fn bench_eq_field<F: Field>(c: &mut Criterion, field: &str) {
     group.finish();
 }
 
-fn bench_eq_fallible(c: &mut Criterion) {
-    bench_eq_fallible_field::<Fr>(c, "Fr");
-    bench_eq_fallible_field::<Prime128Offset275>(c, "Prime128Offset275");
-    bench_eq_fallible_field::<FpExt4<Prime32Offset99>>(c, "FpExt4");
+fn bench_eq_builders(c: &mut Criterion) {
+    bench_eq_builders_field::<Fr>(c, "Fr");
+    bench_eq_builders_field::<Prime128Offset275>(c, "Prime128Offset275");
+    bench_eq_builders_field::<FpExt4<Prime32Offset99>>(c, "FpExt4");
 }
 
-fn bench_eq_fallible_field<F: Field>(c: &mut Criterion, field: &str) {
+fn bench_eq_builders_field<F: Field>(c: &mut Criterion, field: &str) {
     let mut group = c.benchmark_group(format!("eq_builders/{field}"));
-    let budget = EqBudget {
-        max_bytes: usize::MAX,
-    };
     for n in 12..=18 {
         let mut rng = ChaCha20Rng::seed_from_u64(0xe12 + n as u64);
         let r: Vec<F> = (0..n).map(|_| F::random(&mut rng)).collect();
@@ -169,8 +166,15 @@ fn bench_eq_fallible_field<F: Field>(c: &mut Criterion, field: &str) {
         group.bench_function(BenchmarkId::new("evals", n), |bench| {
             bench.iter(|| EqPolynomial::<F>::evals(std::hint::black_box(&point), None));
         });
-        group.bench_function(BenchmarkId::new("try_evals", n), |bench| {
-            bench.iter(|| EqPolynomial::<F>::try_evals(std::hint::black_box(&point), None, budget));
+        let mut out = F::zeroed_vec(1 << n);
+        group.bench_function(BenchmarkId::new("evals_into", n), |bench| {
+            bench.iter(|| {
+                EqPolynomial::<F>::evals_into(
+                    std::hint::black_box(&point),
+                    None,
+                    std::hint::black_box(&mut out),
+                );
+            });
         });
         group.bench_function(BenchmarkId::new("mapped", n), |bench| {
             bench.iter(|| {
@@ -285,7 +289,7 @@ criterion_group!(
     bench_evaluate,
     bench_eq_evals,
     bench_eq_orders,
-    bench_eq_fallible,
+    bench_eq_builders,
     bench_univariate_interpolation,
     bench_gruen,
 );
