@@ -24,6 +24,7 @@ keywords = ["SNARK", "cryptography", "proofs"]
 
 [workspace]
 members = [
+  "crates/jolt-claim-expr",
   "crates/jolt-claims",
   "crates/jolt-claims-derive",
   "crates/jolt-akita",
@@ -452,6 +453,7 @@ common = { path = "./common", default-features = false }
 tracer = { path = "./tracer", default-features = false }
 jolt-akita = { path = "./crates/jolt-akita" }
 jolt-zk = { path = "./crates/jolt-zk" }
+jolt-claim-expr = { path = "./crates/jolt-claim-expr" }
 jolt-claims = { path = "./crates/jolt-claims" }
 jolt-claims-derive = { path = "./crates/jolt-claims-derive" }
 jolt-crypto = { path = "./crates/jolt-crypto", default-features = false }
