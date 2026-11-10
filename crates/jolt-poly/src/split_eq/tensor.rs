@@ -132,13 +132,19 @@ impl<F: Field> TensorEqTable<F> {
         outer * inner
     }
 
-    /// Evaluates a Boolean index without allocating, rejecting out-of-domain indices.
+    /// Evaluates a Boolean index without allocating, rejecting out-of-domain indices
+    /// and domains whose length overflows usize, including infallibly built tables.
     pub fn try_evaluate_index(&self, index: usize) -> Result<F, EqTableError> {
-        if index >= self.len() {
-            return Err(EqTableError::IndexOutOfRange {
-                index,
-                len: self.len(),
-            });
+        let len = self
+            .e_out
+            .len()
+            .checked_mul(self.e_in.len())
+            .ok_or_else(|| EqTableError::DimensionOverflow {
+                num_vars: self.e_out.len().trailing_zeros() as usize
+                    + self.e_in.len().trailing_zeros() as usize,
+            })?;
+        if index >= len {
+            return Err(EqTableError::IndexOutOfRange { index, len });
         }
         Ok(self.evaluate_index(index))
     }
@@ -283,5 +289,65 @@ impl<F: Field> TensorEqTable<F> {
                 outer_step(0, F::zero(), inner_acc)
             })
         }
+    }
+}
+
+#[cfg(test)]
+#[path = "../../tests/support/mod.rs"]
+mod query_test_fields;
+
+#[cfg(test)]
+mod tests {
+    use super::query_test_fields::{NonZeroRepr, Zst};
+    use super::*;
+    use crate::eq_index;
+    use jolt_field::Fr;
+    #[cfg(target_pointer_width = "32")]
+    use jolt_field::Ring;
+
+    fn check_infallible_queries<F: Field>() {
+        let coords = [F::from_u64(2), F::from_u64(3), F::from_u64(5)];
+        for point in [coords, [coords[2], coords[1], coords[0]]] {
+            let table = TensorEqTable::<F>::from_point(&point, F::from_u64(7), 1);
+            for index in 0..8 {
+                assert_eq!(
+                    table.try_evaluate_index(index).ok(),
+                    Some(F::from_u64(7) * eq_index(&point, index as u128))
+                );
+            }
+            assert!(matches!(
+                table.try_evaluate_index(8),
+                Err(EqTableError::IndexOutOfRange { index: 8, len: 8 })
+            ));
+        }
+    }
+
+    #[test]
+    fn checked_queries_accept_infallibly_built_tensors() {
+        check_infallible_queries::<Fr>();
+        check_infallible_queries::<NonZeroRepr>();
+        #[cfg(target_pointer_width = "32")]
+        {
+            let table =
+                TensorEqTable::<Fr>::from_point(&[Fr::from_u64(2); 32], Fr::from_u64(1), 16);
+            assert!(matches!(
+                table.try_evaluate_index(0),
+                Err(EqTableError::DimensionOverflow { num_vars: 32 })
+            ));
+        }
+    }
+
+    #[test]
+    fn checked_queries_reject_domain_length_overflow() {
+        let factor_bits = usize::BITS / 2;
+        let factor_len = 1usize << factor_bits;
+        let table = TensorEqTable {
+            e_out: vec![Zst; factor_len],
+            e_in: vec![Zst; factor_len],
+            in_bits: factor_bits as usize,
+        };
+        assert!(
+            matches!(table.try_evaluate_index(0), Err(EqTableError::DimensionOverflow { num_vars }) if num_vars == usize::BITS as usize)
+        );
     }
 }

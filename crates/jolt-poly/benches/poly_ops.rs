@@ -4,7 +4,10 @@ use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criteri
 use jolt_field::{
     Field, FpExt4, Fr, JoltField, Prime128Offset275, Prime128OffsetA7F7, Prime32Offset99,
 };
-use jolt_poly::{EqBudget, EqPolynomial, PointRef, Polynomial, TensorEqTable, UnivariatePoly};
+use jolt_poly::{
+    BindingOrder, EqBudget, EqPolynomial, GruenSplitEqPolynomial, PointRef, Polynomial,
+    TensorEqTable, UnivariatePoly,
+};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
 
@@ -200,6 +203,179 @@ fn bench_eq_fallible_field<F: Field>(c: &mut Criterion, field: &str) {
     group.finish();
 }
 
+fn bench_eq_construction(c: &mut Criterion) {
+    bench_eq_construction_field::<Fr>(c, "Fr");
+    bench_eq_construction_field::<Prime128Offset275>(c, "Prime128Offset275");
+    bench_eq_construction_field::<FpExt4<Prime32Offset99>>(c, "FpExt4");
+    bench_eq_gruen_construction_field::<Fr>(c, "Fr");
+    bench_eq_gruen_construction_field::<Prime128Offset275>(c, "Prime128Offset275");
+}
+
+fn bench_eq_construction_field<F: Field>(c: &mut Criterion, field: &str) {
+    let mut group = c.benchmark_group(format!("eq_construction/{field}"));
+    for n in [14, 16, 20] {
+        let mut rng = ChaCha20Rng::seed_from_u64(0xe12 + n as u64);
+        let coords: Vec<F> = (0..n).map(|_| F::random(&mut rng)).collect();
+        let point = PointRef::low_to_high(&coords);
+        if n != 14 {
+            group.bench_function(BenchmarkId::new("evals_be", n), |bench| {
+                bench.iter(|| EqPolynomial::<F>::evals(std::hint::black_box(&coords), None));
+            });
+            group.bench_function(BenchmarkId::new("evals_le", n), |bench| {
+                bench.iter(|| EqPolynomial::<F>::evals(std::hint::black_box(&point), None));
+            });
+        }
+        if n == 14 {
+            group.bench_function(BenchmarkId::new("cached_msb", n), |bench| {
+                bench.iter(|| {
+                    EqPolynomial::<F>::evals_cached_msb(std::hint::black_box(&point), None)
+                });
+            });
+            group.bench_function(BenchmarkId::new("cached_lsb", n), |bench| {
+                bench.iter(|| {
+                    EqPolynomial::<F>::evals_cached_lsb(std::hint::black_box(&point), None)
+                });
+            });
+        }
+        if n != 16 {
+            group.bench_function(BenchmarkId::new("tensor", n), |bench| {
+                bench.iter(|| {
+                    TensorEqTable::<F>::from_point(
+                        std::hint::black_box(&point),
+                        F::from_u64(3),
+                        n / 2,
+                    )
+                });
+            });
+        }
+    }
+    group.finish();
+}
+
+fn bench_eq_try_construction(c: &mut Criterion) {
+    bench_eq_try_construction_field::<Fr>(c, "Fr");
+    bench_eq_try_construction_field::<Prime128Offset275>(c, "Prime128Offset275");
+    bench_eq_try_construction_field::<FpExt4<Prime32Offset99>>(c, "FpExt4");
+    bench_eq_try_gruen_construction_field::<Fr>(c, "Fr");
+    bench_eq_try_gruen_construction_field::<Prime128Offset275>(c, "Prime128Offset275");
+}
+
+fn bench_eq_try_construction_field<F: Field>(c: &mut Criterion, field: &str) {
+    let mut group = c.benchmark_group(format!("eq_construction/{field}"));
+    let budget = EqBudget {
+        max_bytes: usize::MAX,
+    };
+    for n in [14, 16, 20] {
+        let mut rng = ChaCha20Rng::seed_from_u64(0xe12 + n as u64);
+        let coords: Vec<F> = (0..n).map(|_| F::random(&mut rng)).collect();
+        let point = PointRef::low_to_high(&coords);
+        if n != 14 {
+            group.bench_function(BenchmarkId::new("try_evals", n), |bench| {
+                bench.iter(|| {
+                    EqPolynomial::<F>::try_evals(std::hint::black_box(&point), None, budget)
+                });
+            });
+            group.bench_function(BenchmarkId::new("mapped", n), |bench| {
+                bench.iter(|| {
+                    EqPolynomial::<F>::evals_mapped(std::hint::black_box(&point), None, |x| x * x)
+                });
+            });
+            group.bench_function(BenchmarkId::new("try_mapped", n), |bench| {
+                bench.iter(|| {
+                    EqPolynomial::<F>::try_evals_mapped(
+                        std::hint::black_box(&point),
+                        None,
+                        |x| x * x,
+                        budget,
+                    )
+                });
+            });
+        }
+        if n == 14 {
+            group.bench_function(BenchmarkId::new("try_cached_msb", n), |bench| {
+                bench.iter(|| {
+                    EqPolynomial::<F>::try_evals_cached_msb(
+                        std::hint::black_box(&point),
+                        None,
+                        budget,
+                    )
+                });
+            });
+            group.bench_function(BenchmarkId::new("try_cached_lsb", n), |bench| {
+                bench.iter(|| {
+                    EqPolynomial::<F>::try_evals_cached_lsb(
+                        std::hint::black_box(&point),
+                        None,
+                        budget,
+                    )
+                });
+            });
+        }
+        if n != 16 {
+            group.bench_function(BenchmarkId::new("try_tensor", n), |bench| {
+                bench.iter(|| {
+                    TensorEqTable::<F>::try_from_point(
+                        std::hint::black_box(&point),
+                        F::from_u64(3),
+                        n / 2,
+                        budget,
+                    )
+                });
+            });
+        }
+    }
+    group.finish();
+}
+
+fn bench_eq_gruen_construction_field<F: JoltField>(c: &mut Criterion, field: &str) {
+    let mut group = c.benchmark_group(format!("eq_construction/{field}"));
+    for n in [16, 20] {
+        let mut rng = ChaCha20Rng::seed_from_u64(0xe12 + n as u64);
+        let coords: Vec<F> = (0..n).map(|_| F::random(&mut rng)).collect();
+        let point = PointRef::low_to_high(&coords);
+        for order in [BindingOrder::LowToHigh, BindingOrder::HighToLow] {
+            group.bench_function(BenchmarkId::new(format!("gruen_{order:?}"), n), |bench| {
+                bench.iter(|| {
+                    GruenSplitEqPolynomial::<F>::from_point(
+                        std::hint::black_box(&point),
+                        order,
+                        Some(F::from_u64(3)),
+                    )
+                });
+            });
+        }
+    }
+    group.finish();
+}
+
+fn bench_eq_try_gruen_construction_field<F: Field>(c: &mut Criterion, field: &str) {
+    let mut group = c.benchmark_group(format!("eq_construction/{field}"));
+    let budget = EqBudget {
+        max_bytes: usize::MAX,
+    };
+    for n in [16, 20] {
+        let mut rng = ChaCha20Rng::seed_from_u64(0xe12 + n as u64);
+        let coords: Vec<F> = (0..n).map(|_| F::random(&mut rng)).collect();
+        let point = PointRef::low_to_high(&coords);
+        for order in [BindingOrder::LowToHigh, BindingOrder::HighToLow] {
+            group.bench_function(
+                BenchmarkId::new(format!("try_gruen_{order:?}"), n),
+                |bench| {
+                    bench.iter(|| {
+                        GruenSplitEqPolynomial::<F>::try_from_point(
+                            std::hint::black_box(&point),
+                            order,
+                            Some(F::from_u64(3)),
+                            budget,
+                        )
+                    });
+                },
+            );
+        }
+    }
+    group.finish();
+}
+
 fn bench_univariate_interpolation(c: &mut Criterion) {
     let mut group = c.benchmark_group("UnivariatePoly::from_evals");
     for num_evals in [3, 4, 8, 16] {
@@ -225,6 +401,8 @@ criterion_group!(
     bench_eq_evals,
     bench_eq_orders,
     bench_eq_fallible,
+    bench_eq_construction,
+    bench_eq_try_construction,
     bench_univariate_interpolation,
 );
 criterion_main!(benches);
