@@ -933,5 +933,66 @@ benefit belongs to the combined pipeline. Peak RSS was 39.1921 GiB versus
 ICR continuation, and Input's shared first message/bind. Evidence and the frozen
 binary are in `product-input-metal/` and `product-input-jolt-prover`. These are
 unmatched development observations. The implementation is combined with RAM on
-the working branch; combined throughput and final four-workload acceptance are
-still pending.
+the working branch. The combined development result is recorded below; final
+four-workload acceptance remains pending.
+
+
+### Combined RAM, shared operands, first messages and shared-key commitments
+
+Source `d2665901d` pins published Akita `2eec879a` and combines the accepted RAM
+and Product/ICR/Input changes with two first-message changes and shared-key K16
+commitments. Booleanity uses its canonical constant table in the first GPU
+message. ReadRAF admits its existing width-one no-bind GPU message. Neither
+change alters the transcript, field arithmetic, constant suffix or CPU handoff.
+
+The commitment backend separates canonical source spectra from a dot kernel that
+shares each key tile across sixteen output rings. Rank-one, one-digit K16
+geometry, exact prefixes, limb reconstruction and output ordering are unchanged.
+Admission validates the common layout first. Valid unsupported geometry, reflected
+pipeline limits or workspace budget can decline to the fused backend; malformed
+inputs and allocation/compute errors propagate. Production contains no paired
+execution. The companion's shader arithmetic is identical to the measured
+`b2e0ac48` experiment.
+
+That experiment compared all coefficients in all 32 windows, alternating order.
+Inclusive commitment computation fell from 4.1481 s to 3.4760 s (16.2%); GPU time
+fell from 4.0779 s to 3.4264 s. These are paired component measurements from the CI
+profile, not prover throughput. The production API passed the existing oracle
+normally and with Metal validation, plus parallel/serial and integrated Clippy.
+The combined branch passed both existing first-message oracles in both modes and
+parallel/serial/integrated Clippy with published Git dependencies.
+
+Its standard release build verified the small BLAKE2b proof and frozen T27
+Fibonacci proof. Fibonacci took **18.447822125 s**, or **7.275532423 padded MHz**,
+with the same 134217720 actual cycles, 134217728 padded cycles and public output.
+The saved Product-only observation was 19.761391625 s. It lacked RAM, both new
+first messages and shared-key commitments, so this difference belongs to the
+combined candidate; it is not an isolated causal estimate.
+
+The separate production profile confirmed all 32 shared-key windows and the
+accepted RAM, Product/ICR/Input and first-message routes. Complete trace commitment
+including key preparation and packing was 4.2003 s versus 4.7712 s in the saved
+Product profile. RAM preparation plus stage-4 value proving was 0.3337 s versus
+0.6468 s, including capture and CPU handoff. Peak RSS was 38.6783 GiB and peak
+footprint 45.0189 GiB. These unmatched profile values overlap and are not additive
+savings. Evidence is in `combined-first-message-metal/`; the frozen executable is
+`combined-first-message-jolt-prover`.
+
+The same executable also verified the other three frozen workloads, with exact
+inputs, public outputs, and actual/padded cycle counts preserved:
+
+| Workload | Prove seconds | Padded MHz | Actual MHz |
+| --- | ---: | ---: | ---: |
+| Fibonacci | 18.447822125 | 7.275532423 | 7.275531989 |
+| SHA-2 chain | 21.728820500 | 6.176944947 | 6.176932614 |
+| BTreeMap | 23.445603541 | 5.724643760 | 5.723641056 |
+| BLAKE2b chain | 15.703615292 | 8.546931742 | 5.710948424 |
+| Arithmetic mean of rates | — | 6.931013218 | 6.221763521 |
+
+These are one untraced observation per workload; Fibonacci reuses the observation
+above. BLAKE2b uses the unchanged 80000-unit input with 89682537 actual cycles.
+All four domains pad to 2^27. Both parallel and single-threaded verifiers passed.
+The runner, frozen identities and logs are in `combined-first-message-metal/frozen-suite/`.
+The 20 MHz target remains unmet. The final matched, repeated four-workload
+comparison remains pending; neither this observation nor the component experiment
+establishes target acceptance.
