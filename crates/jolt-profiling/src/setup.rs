@@ -10,6 +10,9 @@ use std::sync::OnceLock;
 use tracing_chrome::ChromeLayerBuilder;
 use tracing_subscriber::{fmt::format::FmtSpan, prelude::*, EnvFilter};
 
+#[cfg(not(target_arch = "wasm32"))]
+use crate::span_boundary::SpanBoundaryLayer;
+
 /// Thread-safe storage for the pprof output prefix.
 ///
 /// Initialized once during [`setup_tracing`] and read by [`PprofGuard`](crate::PprofGuard)
@@ -113,9 +116,8 @@ pub fn setup_tracing_with_trace_path(
         tracing::info!("Chrome tracing enabled. Output: {}", trace_path.display());
     }
 
-    // Boundary RSS sampling for the prover-stage spans; inert for all others.
     #[cfg(not(target_arch = "wasm32"))]
-    layers.push(crate::stage_memory::StageMemoryLayer.boxed());
+    layers.push(SpanBoundaryLayer.boxed());
 
     tracing_subscriber::registry().with(layers).init();
 
@@ -132,6 +134,21 @@ pub fn setup_tracing_with_trace_path(
                 .unwrap_or(0.1),
         )
     }));
+
+    // On Linux, opening after the profiler threads excludes them from
+    // inherited counts. macOS always includes every process thread.
+    #[cfg(not(target_arch = "wasm32"))]
+    match crate::counters::open_process_counter() {
+        Ok(()) => {
+            let scope = crate::counters::counter_source().map(|source| source.metadata());
+            tracing::info!(?scope, "hardware counters enabled");
+        }
+        Err(e) => {
+            tracing::warn!(
+                "hardware counters unavailable ({e}); span hardware counts will be null"
+            );
+        }
+    }
 
     TracingGuards(guards)
 }

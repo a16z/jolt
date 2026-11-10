@@ -362,7 +362,7 @@ mod tests {
             None,
             None,
         );
-        assert!(aliases.is_empty());
+        assert_eq!(aliases, []);
         assert_eq!(output_ids.len(), clear_values.len());
 
         for (id, expected) in output_ids.iter().zip(clear_values) {
@@ -565,6 +565,15 @@ mod field_inline_tests {
                     } else {
                         fr(0)
                     }
+                }
+                VerifierPublicId::Jolt(JoltDerivedId::BytecodeReadRaf(
+                    BytecodeReadRafPublic::ChallengePow {
+                        challenge,
+                        exponent,
+                    },
+                )) => {
+                    assert_eq!(*challenge, BytecodeReadRafChallenge::Gamma);
+                    bytecode::challenge_pow(challenges.gamma, *exponent)
                 }
                 VerifierPublicId::Jolt(JoltDerivedId::BytecodeReadRaf(public)) => {
                     publics.value(*public).unwrap_or_else(|| fr(0))

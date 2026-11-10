@@ -6,7 +6,7 @@ on:
     branches: [main]
     paths:
       - ".github/workflows/fp64-formal-verification.yml"
-      - "crates/jolt-field/**"
+      - "crates/jolt-algebra/**"
       - "proofs/hol-light/fp64-certified-builds.json"
       - "proofs/hol-light/fp64_*"
       - "proofs/hol-light/check-fp64.sh"
@@ -25,7 +25,7 @@ on:
     branches: ["**", main]
     paths:
       - ".github/workflows/fp64-formal-verification.yml"
-      - "crates/jolt-field/**"
+      - "crates/jolt-algebra/**"
       - "proofs/hol-light/fp64-certified-builds.json"
       - "proofs/hol-light/fp64_*"
       - "proofs/hol-light/check-fp64.sh"
@@ -55,15 +55,15 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2
+      - uses: actions-rust-lang/setup-rust-toolchain@a188e68d0fd2bd36ad51dccb2b07ba6e75105f30 # v2
         with:
           toolchain: nightly
       - name: Install cargo-fuzz
-        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2
+        uses: taiki-e/install-action@682ce6c3c696a4cd5168a05f98e51aa02b877941 # v2
         with:
           tool: cargo-fuzz
       - name: Compare field operations with the integer oracle
-        working-directory: crates/jolt-field
+        working-directory: crates/jolt-algebra
         run: cargo +nightly fuzz run --target aarch64-unknown-linux-gnu fp64_scalar_differential -- -max_total_time=120
 
   fp64-fuzz-x86-64-bmi2:
@@ -72,17 +72,17 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2
+      - uses: actions-rust-lang/setup-rust-toolchain@a188e68d0fd2bd36ad51dccb2b07ba6e75105f30 # v2
         with:
           toolchain: nightly
       - name: Install cargo-fuzz
-        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2
+        uses: taiki-e/install-action@682ce6c3c696a4cd5168a05f98e51aa02b877941 # v2
         with:
           tool: cargo-fuzz
       - name: Require BMI2
         run: grep -Eq '(^|[[:space:]])bmi2([[:space:]]|$)' /proc/cpuinfo
       - name: Compare field operations with the integer oracle
-        working-directory: crates/jolt-field
+        working-directory: crates/jolt-algebra
         env:
           RUSTFLAGS: -C target-feature=+bmi2
         run: cargo +nightly fuzz run --target x86_64-unknown-linux-gnu fp64_scalar_differential -- -max_total_time=120
@@ -92,7 +92,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2
+      - uses: actions-rust-lang/setup-rust-toolchain@a188e68d0fd2bd36ad51dccb2b07ba6e75105f30 # v2
+        with:
+          # Must match proofs/hol-light/fp64-certified-builds.json.
+          toolchain: "1.99.1"
 
       - name: Validate the matrix and artifact checker
         run: |
@@ -119,7 +122,7 @@ jobs:
       - name: Confirm that proof linkage rejects profile drift
         run: |
           if cargo --config 'profile.release.lto="off"' check --locked \
-            -p jolt-field --release --target x86_64-unknown-linux-gnu \
+            -p jolt-algebra --release --target x86_64-unknown-linux-gnu \
             --no-default-features --features solinas,fp64-proof-linkage \
             --example fp64_production_witness; then
             echo "release profile override was accepted" >&2
@@ -132,7 +135,10 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2
+      - uses: actions-rust-lang/setup-rust-toolchain@a188e68d0fd2bd36ad51dccb2b07ba6e75105f30 # v2
+        with:
+          # Must match proofs/hol-light/fp64-certified-builds.json.
+          toolchain: "1.99.1"
 
       - name: Install proof dependencies
         run: |
@@ -178,7 +184,10 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2
+      - uses: actions-rust-lang/setup-rust-toolchain@a188e68d0fd2bd36ad51dccb2b07ba6e75105f30 # v2
+        with:
+          # Must match proofs/hol-light/fp64-certified-builds.json.
+          toolchain: "1.99.1"
 
       - name: Confirm the native target
         run: |
@@ -201,8 +210,12 @@ jobs:
       - name: Build HOL Light as an OCaml module
         working-directory: ${{ runner.temp }}/hol-light
         run: |
-          make switch-5
+          # Pin Camlp5 before ledit installation to avoid a dependency downgrade and rebuild.
+          opam update
+          opam switch create . ocaml-base-compiler.5.4.0 --no-install --yes
           eval "$(opam env --switch . --set-switch)"
+          opam pin --switch . add --yes --no-action camlp5 8.04.00
+          opam install --switch . --yes zarith ledit camlp5
           HOLLIGHT_USE_MODULE=1 make -j2
 
       - name: Check bytes and run HOL Light proofs
@@ -229,7 +242,10 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2
+      - uses: actions-rust-lang/setup-rust-toolchain@a188e68d0fd2bd36ad51dccb2b07ba6e75105f30 # v2
+        with:
+          # Must match proofs/hol-light/fp64-certified-builds.json.
+          toolchain: "1.99.1"
 
       - name: Install proof dependencies
         run: |

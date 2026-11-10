@@ -49,6 +49,26 @@ struct PreparedSparseClass {
 
 pub(super) struct PreparedSparseChallenge {
     classes: Vec<PreparedSparseClass>,
+    byte: Option<Box<PreparedByteChallenge>>,
+}
+
+struct PreparedByteChallenge {
+    doubled: [i8; 1024],
+    num_positions: usize,
+}
+
+#[inline(always)]
+fn add_scaled_byte_windows<const SCALE: i8>(
+    partial: &mut [i8; 512],
+    input: &[i8; 1024],
+    positions: &[u16],
+) {
+    for &position in positions {
+        let window = &input[512 - usize::from(position)..][..512];
+        for (dst, &value) in partial.iter_mut().zip(window) {
+            *dst += value * SCALE;
+        }
+    }
 }
 
 impl PreparedSparseChallenge {
@@ -93,7 +113,84 @@ impl PreparedSparseChallenge {
                 }
             })
             .collect();
-        Ok(Self { classes })
+        let byte = if D == 512
+            && challenge.positions.len() >= 16
+            && challenge
+                .coeffs
+                .iter()
+                .all(|&coefficient| matches!(coefficient, -2 | -1 | 1 | 2))
+            && challenge
+                .coeffs
+                .iter()
+                .map(|coefficient| usize::from(coefficient.unsigned_abs()))
+                .sum::<usize>()
+                <= 127
+        {
+            let mut byte = Box::new(PreparedByteChallenge {
+                doubled: [0; 1024],
+                num_positions: challenge.positions.len(),
+            });
+            for (&position, &coefficient) in challenge.positions.iter().zip(&challenge.coeffs) {
+                byte.doubled[position as usize] = -coefficient;
+                byte.doubled[D + position as usize] = coefficient;
+            }
+            Some(byte)
+        } else {
+            None
+        };
+        Ok(Self { classes, byte })
+    }
+
+    #[inline(always)]
+    fn try_add_byte_rows<const D: usize>(
+        &self,
+        dst: &mut [i32; D],
+        coefficients: &[usize],
+    ) -> bool {
+        if D != 512 || coefficients.len() < 4 {
+            return false;
+        }
+        let Some(byte) = &self.byte else {
+            return false;
+        };
+        // Choose the convolution direction with fewer rotations. The row
+        // visitor enforces `hot < K`, so input shifts are distinct, and
+        // `SparseChallenge::validate` makes challenge positions distinct. Each
+        // output is then a signed subset sum of challenge coefficients, so the
+        // challenge's L1 bound keeps every byte partial in [-127, 127]. The
+        // forward direction needs distinct shifts for this; the reverse
+        // direction is bounded by L1 alone.
+        let mut partial = [0i8; 512];
+        if coefficients.len() <= byte.num_positions {
+            for &coefficient in coefficients {
+                let window = &byte.doubled[D - coefficient..][..D];
+                for (dst, &value) in partial.iter_mut().zip(window) {
+                    *dst += value;
+                }
+            }
+        } else {
+            let mut input = [0i8; 1024];
+            for &coefficient in coefficients {
+                input[coefficient] = -1;
+                input[D + coefficient] = 1;
+            }
+            for class in &self.classes {
+                let positions = class.positions.as_slice();
+                match class.coefficient {
+                    2 => add_scaled_byte_windows::<2>(&mut partial, &input, positions),
+                    1 => add_scaled_byte_windows::<1>(&mut partial, &input, positions),
+                    -1 => add_scaled_byte_windows::<-1>(&mut partial, &input, positions),
+                    -2 => add_scaled_byte_windows::<-2>(&mut partial, &input, positions),
+                    _ => {
+                        unreachable!("byte challenges admit only coefficients in {{-2, -1, 1, 2}}")
+                    }
+                }
+            }
+        }
+        for (dst, value) in dst.iter_mut().zip(partial) {
+            *dst += i32::from(value);
+        }
+        true
     }
 }
 
@@ -434,8 +531,10 @@ fn add_rotated_rows<const D: usize>(
         }
         PreparedRotations::Sparse(challenges) => {
             let challenge = &challenges[prepared_block];
-            for &coefficient in coefficients {
-                add_rotated_sparse(dst, challenge, coefficient);
+            if !challenge.try_add_byte_rows(dst, coefficients) {
+                for &coefficient in coefficients {
+                    add_rotated_sparse(dst, challenge, coefficient);
+                }
             }
         }
     }
@@ -602,7 +701,7 @@ pub(super) fn decompose_fold_columns_with_mode<const D: usize>(
                     if source.one_hot_k < D {
                         let num_columns = source.rows.num_columns();
                         let rows_per_ring = D / source.one_hot_k;
-                        let mut coefficients = Vec::with_capacity(rows_per_ring);
+                        let mut coefficients = vec![0usize; rows_per_ring];
                         visit_segment_ring_row_range::<D>(
                             source,
                             ring_start,
@@ -641,7 +740,7 @@ pub(super) fn decompose_fold_columns_with_mode<const D: usize>(
                                     for column in 0..num_columns {
                                         let dst = &mut compressed
                                             [(position - position_start) * num_chunks + chunk];
-                                        coefficients.clear();
+                                        let mut count = 0;
                                         for (row_offset, (row_indices, &committed_zero_mask)) in
                                             selected_rows
                                                 .chunks_exact(num_columns)
@@ -649,19 +748,22 @@ pub(super) fn decompose_fold_columns_with_mode<const D: usize>(
                                                 .enumerate()
                                         {
                                             let hot = row_indices[column];
-                                            if row_is_committed(hot, committed_zero_mask, column) {
-                                                coefficients.push(
-                                                    row_offset * source.one_hot_k
-                                                        + usize::from(hot),
-                                                );
-                                            }
+                                            // At most row_offset entries precede this row,
+                                            // so the speculative store stays inside the buffer.
+                                            coefficients[count] =
+                                                row_offset * source.one_hot_k + usize::from(hot);
+                                            count += usize::from(row_is_committed(
+                                                hot,
+                                                committed_zero_mask,
+                                                column,
+                                            ));
                                         }
                                         let prepared_block = trace_block * num_columns + column;
                                         add_rotated_rows(
                                             dst,
                                             &rotations,
                                             prepared_block,
-                                            &coefficients,
+                                            &coefficients[..count],
                                         );
                                     }
                                 }
@@ -778,4 +880,85 @@ pub(super) fn decompose_fold_columns_with_mode<const D: usize>(
         .into_iter()
         .map(DecomposeFoldWitness::from_centered_rows::<D>)
         .collect())
+}
+
+#[cfg(test)]
+#[expect(clippy::unwrap_used, reason = "test module")]
+mod byte_convolution_tests {
+    use super::*;
+
+    #[test]
+    fn byte_rows_match_integer_negacyclic_convolution() {
+        const D: usize = 512;
+        for weight in [0, 1, 15, 16, 19, 41, 63, 64, 117, 118, 127, 128] {
+            for pattern in [0, 1, 2, 3, 4, 5] {
+                let challenge = SparseChallenge {
+                    positions: (0..weight).map(|i| ((i * 73 + 11) % D) as u32).collect(),
+                    coeffs: (0..weight)
+                        .map(|i| match pattern {
+                            0 => 1,
+                            1 => -1,
+                            2 => {
+                                if i % 2 == 0 {
+                                    1
+                                } else {
+                                    -1
+                                }
+                            }
+                            3 => {
+                                if i % 2 == 0 {
+                                    2
+                                } else {
+                                    -2
+                                }
+                            }
+                            4 => {
+                                if i < 10 {
+                                    2
+                                } else {
+                                    1
+                                }
+                            }
+                            _ => 3,
+                        })
+                        .collect(),
+                };
+                challenge.validate::<D>().unwrap();
+                let prepared =
+                    PreparedRotations::Sparse(vec![
+                        PreparedSparseChallenge::new::<D>(&challenge).unwrap()
+                    ]);
+                for count in [
+                    0, 1, 3, 4, 7, 8, 16, 19, 20, 32, weight, 63, 64, 117, 118, 127, D,
+                ] {
+                    let coefficients: Vec<_> = if count == weight {
+                        challenge
+                            .positions
+                            .iter()
+                            .map(|&position| D - 1 - position as usize)
+                            .collect()
+                    } else {
+                        (0..count).map(|i| (i * 31 + 7) % D).collect()
+                    };
+                    let mut expected = [17i32; D];
+                    for &x in &coefficients {
+                        for (&y, &value) in challenge.positions.iter().zip(&challenge.coeffs) {
+                            let degree = x + y as usize;
+                            expected[degree % D] += if degree < D {
+                                i32::from(value)
+                            } else {
+                                -i32::from(value)
+                            };
+                        }
+                    }
+                    let mut actual = [17i32; D];
+                    add_rotated_rows(&mut actual, &prepared, 0, &coefficients);
+                    assert_eq!(
+                        actual, expected,
+                        "weight={weight}, pattern={pattern}, count={count}"
+                    );
+                }
+            }
+        }
+    }
 }

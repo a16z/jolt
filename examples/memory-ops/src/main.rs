@@ -20,8 +20,5 @@ pub fn main() {
     info!("Prover runtime: {} s", now.elapsed().as_secs_f64());
     verify(output, program_io.panic, proof).expect("proof verification failed");
 
-    info!(
-        "outputs: {} {} {} {}",
-        output.0, output.1, output.2, output.3
-    );
+    info!("output: {output:?}");
 }

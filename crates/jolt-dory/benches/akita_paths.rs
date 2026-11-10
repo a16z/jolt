@@ -55,7 +55,7 @@ use jolt_openings::{
     VerifierOpeningClaim,
 };
 use jolt_poly::{MultilinearPoly, OneHotPolynomial, Polynomial};
-use jolt_transcript::{Blake2bTranscript, Transcript};
+use jolt_transcript::{prover_transcript, Blake2b512};
 
 const LAYOUT_DIGEST: [u8; 32] = [0xA5; 32];
 const NUM_POLYS: usize = 1;
@@ -494,7 +494,10 @@ fn native_batch_open(
     commitment: jolt_akita::AkitaCommitment,
     hint: AkitaProverHint,
 ) -> jolt_akita::AkitaBatchProof {
-    let mut transcript = Blake2bTranscript::new(b"jolt-akita/black-box-batch-bench");
+    let mut transcript = prover_transcript::<Blake2b512>(
+        &jolt_transcript::protocol_tag(b"jolt-akita/black-box-batch-bench"),
+        b"",
+    );
     <AkitaNativeBatching as BatchOpeningScheme>::prove_batch(
         &case.native_setup,
         native_batch_statement(case, commitment),
@@ -513,7 +516,10 @@ fn packed_batch_open(
     case: &AkitaBatchCase,
     hint: AkitaProverHint,
 ) -> <AkitaScheme as CommitmentScheme>::Proof {
-    let mut transcript = Blake2bTranscript::new(b"jolt-akita/packed-batch-bench");
+    let mut transcript = prover_transcript::<Blake2b512>(
+        &jolt_transcript::protocol_tag(b"jolt-akita/packed-batch-bench"),
+        b"",
+    );
     let physical = case
         .packing
         .reduce_claims(&case.packed_claims, &mut transcript)
@@ -554,7 +560,8 @@ fn wrapper_open(
     path: DataPath,
     hint: AkitaProverHint,
 ) -> jolt_akita::AkitaBatchProof {
-    let mut transcript = Blake2bTranscript::new(b"jolt-akita/bench");
+    let mut transcript =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"jolt-akita/bench"), b"");
     match path {
         DataPath::DenseData => AkitaScheme::open(
             &case.dense_poly,
@@ -699,7 +706,10 @@ fn dory_commit(case: &DoryCase, path: DataPath) -> (DoryCommitment, DoryHint) {
 }
 
 fn dory_open(case: &DoryCase, path: DataPath, hint: DoryHint) -> jolt_dory::DoryProof {
-    let mut transcript = Blake2bTranscript::new(b"jolt-akita/dory-baseline-bench");
+    let mut transcript = prover_transcript::<Blake2b512>(
+        &jolt_transcript::protocol_tag(b"jolt-akita/dory-baseline-bench"),
+        b"",
+    );
     match path {
         DataPath::DenseData => DoryScheme::open(
             &case.dense_poly,

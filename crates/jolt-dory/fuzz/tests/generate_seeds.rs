@@ -12,7 +12,7 @@ use jolt_dory::DoryScheme;
 use jolt_field::{Field, Fr};
 use jolt_openings::CommitmentScheme;
 use jolt_poly::Polynomial;
-use jolt_transcript::{Blake2bTranscript, Transcript};
+use jolt_transcript::{prover_transcript, Blake2b512, Transcript};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
 
@@ -30,7 +30,7 @@ fn generate_deser_commitment_seeds() {
     let point: Vec<Fr> = (0..num_vars).map(|_| Fr::random(&mut rng)).collect();
     let eval = poly.evaluate(&point);
     let (commitment, hint) = DoryScheme::commit(poly.evaluations(), &prover_setup).expect("commit");
-    let mut transcript = Blake2bTranscript::new(b"seed-gen");
+    let mut transcript = prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"seed-gen"), b"");
     let proof = DoryScheme::open(
         &poly,
         &point,

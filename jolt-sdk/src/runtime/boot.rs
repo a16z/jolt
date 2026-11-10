@@ -11,14 +11,35 @@ macro_rules! debug_writeln {
     };
 }
 
-#[cfg(target_os = "none")]
+#[cfg(any(target_os = "none", feature = "guest-size-class-alloc"))]
 use zeroos::foundation::ops::MemoryOps;
 
 extern "C" {
-    static __heap_start: u8;
-    static __heap_end: u8;
-    static __stack_top: u8;
-    static __stack_bottom: u8;
+    // src/linker.ld.template stores full-width addresses so reservations may exceed PC-relative reach.
+    static __jolt_memory_layout: [usize; 4];
+    fn __boot_trace_start();
+}
+
+/// # Safety
+/// Enter only at reset, before the stack or global pointer is initialized.
+#[unsafe(naked)]
+#[link_section = ".text.jolt_boot"]
+#[no_mangle]
+pub unsafe extern "C" fn __jolt_start() -> ! {
+    core::arch::naked_asm!(
+        ".option push",
+        ".option norelax",
+        "lla t0, {layout}",
+        "ld gp, 0(t0)",
+        ".option pop",
+        "ld sp, 8(t0)",
+        "andi sp, sp, -16",
+        "call {trace_start}",
+        "tail {bootstrap}",
+        layout = sym __jolt_memory_layout,
+        trace_start = sym __boot_trace_start,
+        bootstrap = sym zeroos::arch::riscv::__bootstrap,
+    )
 }
 
 /// Install the trap vector (mtvec = _trap_handler).
@@ -37,15 +58,17 @@ pub extern "C" fn __platform_bootstrap() {
 
     zeroos::initialize();
 
-    // no_std guests: register the O(1) size-class allocator BEFORE kinit (the
-    // registered ops receive the heap). This is the only registration —
-    // no_std builds enable just zeroos's `memory` feature, so `initialize()`
-    // above registers no allocator and `linked_list_allocator` stays out of
-    // the guest binary. Motivation and measurements in
-    // `jolt_platform::size_class_alloc`. std/musl guests keep ZeroOS's
-    // linked-list allocator (musl's malloc manages its own arenas over
-    // mmap/brk).
-    #[cfg(target_os = "none")]
+    // Register the O(1) size-class allocator as ZeroOS's kernel heap BEFORE
+    // kinit (the registered ops receive the heap). no_std builds enable just
+    // zeroos's `memory` feature, so `initialize()` above registers no
+    // allocator and `linked_list_allocator` stays out of the guest binary.
+    // std guests on `guest-size-class-alloc` replace the linked-list allocator
+    // `initialize()` registered: the kernel heap backs musl's mmap (malloc
+    // arenas, pthread stacks), and the Rust global allocator draws from the
+    // same arena, so neither side has a fixed share of the heap. Other std
+    // guests keep the linked-list allocator. Motivation and measurements in
+    // `jolt_platform::size_class_alloc`.
+    #[cfg(any(target_os = "none", feature = "guest-size-class-alloc"))]
     zeroos::foundation::register_memory(MemoryOps {
         init: jolt_platform::size_class_alloc::init,
         alloc: jolt_platform::size_class_alloc::alloc,
@@ -54,19 +77,11 @@ pub extern "C" fn __platform_bootstrap() {
     });
 
     {
-        let heap_start = core::ptr::addr_of!(__heap_start) as usize;
-        let heap_end = core::ptr::addr_of!(__heap_end) as usize;
+        // SAFETY: the Jolt linker script provides four aligned, read-only RV64 address cells.
+        let [_, _, heap_start, heap_end] = unsafe { __jolt_memory_layout };
         debug_writeln!("[BOOT] Heap start=0x{:x}, end=0x{:x}", heap_start, heap_end);
         let heap_size = heap_end - heap_start;
         zeroos::foundation::kfn::memory::kinit(heap_start, heap_size);
-
-        let _stack_top = core::ptr::addr_of!(__stack_top) as usize;
-        let _stack_bottom = core::ptr::addr_of!(__stack_bottom) as usize;
-        debug_writeln!(
-            "[BOOT] Stack top=0x{:x}, bottom=0x{:x}",
-            _stack_top,
-            _stack_bottom
-        );
     }
 
     #[cfg(not(target_os = "none"))]
@@ -121,6 +136,11 @@ pub extern "C" fn __platform_bootstrap() {
             }
         }
     }
+
+    // Before any field arithmetic, prove the field-inline unit computes in
+    // the field the guest selected; a no-op without a jolt-field selector.
+    #[cfg(feature = "guest-std")]
+    jolt_field::bind_field_inline_modulus();
 }
 
 #[cfg(feature = "zeroos-vfs-device-console")]

@@ -75,7 +75,9 @@ pub fn materialize_entry_test_fn<T, C, I>(
 ///
 /// ```text
 /// left_input  = LeftOperandIsRs1Value  · Rs1Value     + LeftOperandIsPC   · UnexpandedPC
-/// right_input = RightOperandIsRs2Value · Rs2Value     + RightOperandIsImm · Imm
+/// right_input = RightOperandIsRs2Value · Rs2Value
+///             + RightOperandIsImm · Imm
+///             + RightOperandIsRdWriteValue · RdWriteValue
 /// ```
 ///
 /// A mismatch means the trace witness polynomials `LeftInstructionInput` /
@@ -102,6 +104,7 @@ pub fn instruction_inputs_match_constraint_fn<C, T, I>(
         let flags = instr_wrapper(instr).instruction_flags();
         let rs1 = raw.rs1_val().unwrap_or(0);
         let rs2 = raw.rs2_val().unwrap_or(0);
+        let rd_write = raw.rd_vals().map_or(0, |(_, post)| post);
 
         let cycle: T = cycle_wrapper(raw);
 
@@ -112,13 +115,16 @@ pub fn instruction_inputs_match_constraint_fn<C, T, I>(
         } else {
             0
         };
-        let right_expected: i128 = if flags[InstructionFlags::RightOperandIsRs2Value] {
-            rs2 as i128
-        } else if flags[InstructionFlags::RightOperandIsImm] {
-            imm
-        } else {
-            0
-        };
+        let mut right_expected: i128 = 0;
+        if flags[InstructionFlags::RightOperandIsRs2Value] {
+            right_expected += rs2 as i128;
+        }
+        if flags[InstructionFlags::RightOperandIsImm] {
+            right_expected += imm;
+        }
+        if flags[InstructionFlags::RightOperandIsRdWriteValue] {
+            right_expected += rd_write as i128;
+        }
 
         let (left_actual, right_actual) = LookupQuery::<XLEN>::to_instruction_inputs(&cycle);
         assert_eq!(

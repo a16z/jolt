@@ -12,8 +12,9 @@ use crate::uninterleave_bits;
 /// `(x mod 2^(XLEN/4)) << ((XLEN/8)·(y mod 8 & !1))`.
 ///
 /// At XLEN = 64 this is `(rs2 & 0xFFFF) << (8·(ea mod 8 & 6))`. Bit 0 of the
-/// offset is ignored (zeroed by the halfword-alignment assert), which keeps
-/// the maximum output `0xFFFF << 48` in `u64` range on the full domain.
+/// offset is ignored (the sequence's `AddressOffsetH` floor-addressed rows
+/// enforce that it is zero), which keeps the maximum output `0xFFFF << 48` in
+/// `u64` range on the full domain.
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub struct ShiftDataHTable<const XLEN: usize>;
 

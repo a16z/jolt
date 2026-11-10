@@ -15,7 +15,7 @@ use jolt_sumcheck::{
     prove_batch, BatchMember, BatchPrelude, ClearSumcheckRecorder, CompressedSumcheckProof,
     ProveRounds, SequentialRounds, SumcheckRecorder,
 };
-use jolt_transcript::{AppendToTranscript, Transcript};
+use jolt_transcript::{Encoding, FieldTranscript, ProverTranscript};
 
 use rounds::{InnerRounds, OuterRounds};
 
@@ -32,11 +32,11 @@ pub fn prove<PCS: CommitmentScheme>(
     public_inputs: &[PCS::Field],
     witness: &[PCS::Field],
     pcs_setup: &PCS::ProverSetup,
-    transcript: &mut impl Transcript<Challenge = PCS::Field>,
+    transcript: &mut (impl FieldTranscript<PCS::Field> + ProverTranscript),
 ) -> Result<SpartanProof<PCS::Field, PCS::Output, PCS::Proof>, SpartanError<PCS::Field>>
 where
-    PCS::Field: AppendToTranscript,
-    PCS::Output: AppendToTranscript,
+    PCS::Field: Encoding,
+    PCS::Output: Encoding,
 {
     key.validate_public_inputs(public_inputs)?;
     if witness.len() != key.witness_len() {
@@ -96,11 +96,11 @@ where
     })
 }
 
-fn prove_rounds<F: JoltField + AppendToTranscript>(
+fn prove_rounds<F: JoltField + Encoding>(
     member: &mut dyn ProveRounds<F>,
     degree: usize,
     claim: F,
-    transcript: &mut impl Transcript<Challenge = F>,
+    transcript: &mut (impl FieldTranscript<F> + ProverTranscript),
 ) -> Result<(CompressedSumcheckProof<F>, Vec<F>, F), SpartanError<F>> {
     let prelude = BatchPrelude::try_new(
         vec![BatchMember {

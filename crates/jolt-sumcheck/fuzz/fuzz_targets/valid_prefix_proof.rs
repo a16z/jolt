@@ -22,10 +22,14 @@
 
 #![no_main]
 
-use jolt_field::{Fr, CanonicalEncoding};
+use jolt_field::{CanonicalEncoding, Fr};
 use jolt_poly::UnivariatePoly;
-use jolt_sumcheck::{BooleanHypercube, SumcheckClaim, SumcheckVerifier};
-use jolt_transcript::{AppendToTranscript, Blake2bTranscript, Transcript};
+use jolt_sumcheck::{
+    round_pow_bits, BooleanHypercube, RoundMessage, SumcheckClaim, SumcheckVerifier,
+};
+use jolt_transcript::{
+    prover_transcript, Blake2b512, FieldTranscript, ProverState, ProverTranscript,
+};
 use libfuzzer_sys::fuzz_target;
 
 const SCALAR_BYTES: usize = 32;
@@ -49,9 +53,15 @@ fuzz_target!(|data: &[u8]| {
     // `valid_rounds` rounds, so the proof is valid by construction up to
     // round `valid_rounds - 1` and the verifier's running sum after
     // ingesting those rounds matches what we compute below.
-    let mut prover_transcript = Blake2bTranscript::new(b"jolt-sumcheck-valid-fuzz");
+    let mut prover_state = prover_transcript::<Blake2b512>(
+        &jolt_transcript::protocol_tag(b"jolt-sumcheck-valid-fuzz"),
+        b"",
+    );
     let mut running_sum = claimed_sum;
     let mut round_proofs: Vec<UnivariatePoly<Fr>> = Vec::with_capacity(num_vars);
+    let bits =
+        round_pow_bits::<Fr, ProverState<Blake2b512>>(degree).expect("difficulty for degree <= 6");
+    let mut pow_nonces: Vec<u64> = Vec::with_capacity(num_vars);
 
     for round in 0..num_vars {
         if round < valid_rounds {
@@ -80,15 +90,20 @@ fuzz_target!(|data: &[u8]| {
             coeffs.extend_from_slice(&c_high);
             let poly = UnivariatePoly::new(coeffs);
 
-            // Mirror the verifier's transcript / challenge / evaluate sequence.
-            for c in poly.coefficients() {
-                c.append_to_transcript(&mut prover_transcript);
-            }
-            let r: Fr = prover_transcript.challenge();
+            // Mirror the verifier's transcript / proof-of-work / challenge /
+            // evaluate sequence.
+            poly.append_to_transcript(&mut prover_state);
+            pow_nonces.extend(
+                prover_state
+                    .public_grind(bits)
+                    .expect("proof-of-work search"),
+            );
+            let r: Fr = prover_state.challenge().unwrap();
             running_sum = poly.evaluate(r);
             round_proofs.push(poly);
         } else {
-            // Tail rounds: variable-length raw polynomial from fuzzer bytes.
+            // Tail rounds: variable-length raw polynomial from fuzzer bytes,
+            // with a placeholder proof-of-work nonce.
             // Most of these will fail the verifier's sum check; the contract
             // is that `verify` returns an `Err` (or `Ok` if the random bytes
             // happen to land on a valid value) without panicking.
@@ -108,13 +123,20 @@ fuzz_target!(|data: &[u8]| {
                 .collect();
             cursor += needed;
             round_proofs.push(UnivariatePoly::new(coeffs));
+            if bits > 0 {
+                pow_nonces.push(0);
+            }
         }
     }
 
-    let mut verifier_transcript = Blake2bTranscript::new(b"jolt-sumcheck-valid-fuzz");
+    let mut verifier_transcript = prover_transcript::<Blake2b512>(
+        &jolt_transcript::protocol_tag(b"jolt-sumcheck-valid-fuzz"),
+        b"",
+    );
     let result = SumcheckVerifier::verify::<Fr, _, UnivariatePoly<Fr>, _>(
         &claim,
         &round_proofs,
+        &pow_nonces,
         BooleanHypercube,
         &mut verifier_transcript,
     );

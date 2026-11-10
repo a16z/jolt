@@ -10,10 +10,10 @@ use crate::traits::LookupTable;
 /// Word window mask over a doubleword: `(2^(XLEN/2) − 1) << ((XLEN/2)·ea_2)`
 /// where `ea_2` is bit 2 of the (non-interleaved) effective address.
 ///
-/// On a word-aligned address (bits 0–1 zero, enforced separately by
-/// `AssertWordAlignment`), this is the byte mask of the word at offset
-/// `ea mod 8` within its containing doubleword. Only bit 2 is read, so the
-/// output is total and never overflows `u64`.
+/// On a word-aligned address (bits 0–1 zero, enforced by the sequence's
+/// `AddressOffsetW` floor-addressed rows), this is the byte mask of the word
+/// at offset `ea mod 8` within its containing doubleword. Only bit 2 is read,
+/// so the output is total and never overflows `u64`.
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub struct WindowMaskWTable<const XLEN: usize>;
 

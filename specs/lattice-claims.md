@@ -38,7 +38,7 @@ instead has two layers:
    group. Every column has `log_T + log_K` variables and one evaluation at
    the common `(cycle || address)` point; Stage 8 assembles these evaluations
    in canonical column order without a selector reduction.
-2. Independently committed dense objects—advice, field increments, direct
+2. Independently committed dense objects—advice, RV64 and field-register increments, direct
    whole bytecode, and the initial program image—join that trace in one
    native grouped Akita opening, according to the selected protocol.
 
@@ -51,13 +51,13 @@ stage schedule. The direct committed-program design is introduced in
 The Akita clear-mode protocol includes:
 
 - one native `OneHotTrace` commitment group containing the actual trace columns;
-- fused balanced-digit increment columns and their signed carry;
+- one bounded-dense fused RV64 increment polynomial;
 - the lattice bytecode read-RAF and digit-zero claim-reduction chain;
 - dense word commitments for trusted and untrusted advice;
 - one bounded-dense `ProgramBytecode` object for the whole bytecode;
 - one bounded-dense `ProgramImageInit` object;
 - one grouped opening ordered as
-  `[UntrustedAdvice?, TrustedAdvice?, ProgramBytecode, ProgramImageInit, OneHotTrace]`.
+  `[UntrustedAdvice?, TrustedAdvice?, ProgramBytecode, ProgramImageInit, FusedInc, OneHotTrace]`.
 
 Akita and `zk` remain mutually exclusive. The Dory protocol, including its
 clear and BlindFold modes, is unchanged.
@@ -79,13 +79,13 @@ derived from preprocessing and protocol configuration on both sides.
 
 ```text
 crates/jolt-claims/src/protocols/jolt/lattice/
-├── geometry.rs       balanced increment chunking and decode algebra
+├── geometry.rs       lattice stage dimensions
+├── increments.rs     dense RV64 increment layout and opening point
 ├── packing.rs        OneHotTrace, advice, and direct-program object plans
 ├── strategy.rs       OneHotTrace layout, point permutation, setup shape
 └── relations/
     ├── read_raf.rs   lattice bytecode read-RAF with fused-inc stages
-    ├── digit_zero.rs stage-7 digit-zero and increment decode reduction
-    └── booleanity.rs lattice-mode Booleanity
+    └── digit_zero.rs stage-7 RA digit-zero reduction
 ```
 
 The committed-program reconstruction relation files and their decomposed
@@ -97,8 +97,6 @@ word polynomials; it has no byte-decomposition relation.
 The Akita-specific committed families that survive are:
 
 ```rust
-BalancedIncDigit(usize)
-BalancedIncCarry
 TrustedAdvice
 UntrustedAdvice
 ProgramBytecode
@@ -107,7 +105,10 @@ ProgramImageInit
 
 `FusedInc` remains a virtual polynomial. `RdInc` and `RamInc` are not
 separately committed in Akita mode: the bytecode read-RAF stages consume their
-reduced claims and produce the fused value used by the balanced-digit chain.
+reduced claims and produce the fused evaluation opened directly against the
+mandatory dense increment object. The virtual opening ID names this reduced
+claim; `FusedIncLayout` and its group role bind its committed representation.
+The old balanced-digit/carry enum ordinals remain reserved and are not trace columns.
 
 Enum `Ord` is not protocol group order. Packing plans and
 `CommitmentGroupRole` explicitly define order, and layout/statement transcripts
@@ -121,14 +122,12 @@ bind it.
 
 ```text
 InstructionRa(0..I)
-BalancedIncDigit(0..N)
-BalancedIncCarry
 BytecodeRa(0..B)
 RamRa(0..R)
 ```
 
-Every semantic column has logical arity `log_K + log_T`. Instruction,
-bytecode, digit, and carry columns omit the digit-zero row.
+Every semantic column has logical arity `log_K + log_T`. Instruction
+and bytecode columns omit the digit-zero row.
 RAM retains digit zero only on cycles with a remappable RAM access. Stage 8
 requires exactly one final claim per canonical column and rejects missing
 claims, point disagreement, arity disagreement, or noncanonical commitment
@@ -184,30 +183,34 @@ Its cycle phases carry the `FusedInc` factor and produce the fused opening at
 the shared stage-6b cycle point. Store selection is substituted directly from
 the bytecode Store flag; there is no separately committed selector.
 
-### Balanced digits and carry
+### Direct dense increment
 
-For chunk width `b = log_K`, the fused RV64 increment is represented by
-`64 / b` balanced radix-`2^b` one-hot digit columns plus one signed carry
-column. The carry uses the same `K × T` domain and encodes `-1`, `0`, or
-`1` modulo the radix. This uniform shape is required by the shared
-OneHotTrace opening point.
+Commit `D(t) = FusedInc(t)` before drawing protocol challenges. On Store cycles
+it is the RAM delta; otherwise it is the destination-register delta. Each honest
+delta is the difference of two u64 values, hence `|D(t)| <= u64::MAX`, and padding
+coefficients are zero. This fits the existing signed 65-bit `JoltDenseBounded`
+source contract; no PCS security preset or source bound is weakened.
 
-Lattice Booleanity proves the digit/carry cells boolean. Stage 7's digit-zero
-claim reduction accounts for the omitted zero row and folds the balanced
-decode against `FusedInc`:
+Stage 8 opens the Stage-6b `FusedInc` claim directly against that commitment.
+`FusedIncLayout` binds the trace arity and pads only to the dense schedule floor;
+any added leading coordinates are opened at zero. The verifier requires the
+commitment even for an all-zero increment table and checks its dense backend,
+singleton count, arity, and layout digest. Its transcript label and final group
+role are `fused_inc`.
 
-```text
-Σ_j 2^(b·j) · balanced_digit_j + 2^64 · carry = FusedInc
-```
-
-RAM retains its own Hamming/booleanity coverage. There is no standalone
-increment reconstruction stage after Stage 7.
+There are no increment digit/carry columns, Booleanity terms, or decode
+sumcheck. The four original register/RAM increment claims still pass through
+the same bytecode ReadRAF identities. Booleanity and the Stage-7 digit-zero
+reduction now cover only RA columns. No arithmetic range-check obligation is
+removed: the former digit/carry decode did not enforce the honest u64-difference
+range, and the VM's register/memory constraints remain unchanged.
 
 ## Final Opening
 
 Stage 8 first resolves one final evaluation for every semantic column:
 
 - OneHotTrace columns come from the relation DAG's final outputs;
+- the dense fused increment is opened at the Stage-6b ReadRAF cycle point;
 - advice claims come directly from the Stage 4 `RamValCheck` advice
   contributions;
 - the whole-bytecode claim come from the bytecode claim reduction;
@@ -226,6 +229,7 @@ UntrustedAdvice?
 TrustedAdvice?
 ProgramBytecode
 ProgramImageInit
+FusedInc
 OneHotTrace
 ```
 
@@ -235,23 +239,24 @@ preamble separately absorbs the direct program commitments as
 `program_bytecode_commitment` followed by
 `program_image_init_commitment`.
 
-Full-program mode has no direct-program suffix. If it also has no advice, the
-ordinary single-group OneHotTrace opening remains valid.
+Full-program mode omits the program objects but still opens the mandatory
+`FusedInc` and `OneHotTrace` groups. Field-inline mode retains its separate
+full-field `FieldRdInc` group before `FusedInc`.
 
 ## Schedule Provisioning
 
 Grouped schedule rows are provisioned during preprocessing. Direct-program
-profiles are a mandatory suffix of every committed-program combination.
+profiles and the fused increment are mandatory in every committed-program combination.
 Advice presence contributes only the reachable optional opening groups and no
 longer participates in the shared precommitted claim-reduction scheduling
 reference for bytecode or program-image reductions. Direct objects are not
 power-set factors.
 
 For `A` advice kinds with nonzero capacity and `M` native trace columns,
-committed-program setup covers `3 + A` commitment groups and `2 + A + M`
-polynomials: one whole bytecode, one image, `A` singleton advice objects,
+committed-program setup covers `4 + A` commitment groups and `3 + A + M`
+polynomials: one whole bytecode, one image, one fused increment, `A` singleton advice objects,
 and one `M`-polynomial trace group. The bounds `A <= 2` and `M <= 64`
-allow at most 5 groups and 68 polynomials.
+allow at most 6 groups and 69 polynomials.
 One setup plans only its final arity and column count, so at most four rows
 cover the reachable advice-presence cases. The 128-row bound applies to one
 provisioning request, not to the process cache.

@@ -2,7 +2,7 @@
 
 Jolt proves the correctness of register updates using the [Twist](../twist-shout.md) memory checking algorithm, specifically utilizing the "local" prover algorithm.
 
-In this Twist instance, $K = 64$ because we have 32 RISC-V registers and 32 [virtual](./emulation.md#virtual-instructions-and-sequences) registers.
+In this Twist instance, $K = 128$ because we have 32 RISC-V registers and 96 [virtual](./emulation.md#virtual-instructions-and-sequences) registers.
 This is small enough that we can use $d = 1$.
 
 ### Virtual register layout

@@ -15,11 +15,8 @@
 //! - **Eval-at-{0,2,3} sampling** with the engine hint supplying s(1).
 //! - **Deferred-reduction accumulation** of the triple products.
 //!
-//! The increment column is the field-inline oracle's single committed polynomial
-//! (`FieldRdInc`), materialized dense at prepare — there is no slice-backed deferral
-//! like the integer sibling's because the field-inline oracle serves whole tables only,
-//! and the column is all-zero exactly when the trace has no field-inline activity (a
-//! cheap bind).
+//! The committed increment column is shared across the field-register kernels.
+//! Its zero suffix stays implicit when the sumcheck binds cycle variables.
 
 use crate::field_inline::{FieldIncrementColumn, IncrementRounds};
 use jolt_claims::protocols::field_inline::{
@@ -100,7 +97,17 @@ impl<F: JoltField> PrepareKernel<F, FieldRegistersValEvaluation<F>>
                     .filter_map(|(cycle, row)| row.rd.map(|write| (*cycle as u32, write.register)))
                     .collect()
             };
-        let mut rd: Vec<Option<u8>> = vec![None; cycles];
+        let prefix = writes
+            .iter()
+            .map(|(cycle, _)| *cycle as usize + 1)
+            .max()
+            .unwrap_or(0);
+        if prefix > cycles {
+            return Err(KernelError::InvariantViolation {
+                reason: "field-inline write slot outside the cycle domain",
+            });
+        }
+        let mut rd: Vec<Option<u8>> = vec![None; prefix];
         for (cycle, register) in writes {
             let slot = rd
                 .get_mut(cycle as usize)
@@ -118,10 +125,7 @@ impl<F: JoltField> PrepareKernel<F, FieldRegistersValEvaluation<F>>
         Ok(Box::new(FieldValEvaluationKernel {
             progress: RoundProgress::new(log_t),
             inc: IncrementRounds::new(inc_column),
-            wa: WaState::Indices {
-                rd,
-                eq_address: EqPolynomial::<F>::evals(r_address, None),
-            },
+            wa: WaState::new(rd, EqPolynomial::<F>::evals(r_address, None)),
             lt: SplitLt::new(r_cycle),
         }))
     }
@@ -162,7 +166,11 @@ impl<F: JoltField> ProveRounds<F> for FieldValEvaluationKernel<F> {
         if let Some(challenge) = bind {
             self.bind(challenge);
         }
-        let half = self.inc.len() / 2;
+        let half = self
+            .inc
+            .prefix_len()
+            .div_ceil(2)
+            .min(self.wa.prefix_len().div_ceil(2));
         let evals = triple_product_round_evals(
             half,
             |y| self.inc.pair(y),

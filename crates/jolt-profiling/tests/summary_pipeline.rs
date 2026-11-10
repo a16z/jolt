@@ -1,13 +1,13 @@
 #![cfg(all(not(target_arch = "wasm32"), feature = "summary"))]
 #![expect(clippy::unwrap_used)]
 
-use jolt_profiling::stage_memory::StageMemoryRow;
+use jolt_profiling::span_boundary::{BoundarySamples, SpanCounters, StageBoundaryRow};
 use jolt_profiling::summary::{
     build_summary, convert_counter_events, parse_folded, summary_path, ProfileSummary,
     SummaryContext, SUMMARY_SCHEMA_JSON,
 };
-use jolt_profiling::taxonomy;
-use jolt_profiling::PeakMemory;
+use jolt_profiling::taxonomy::{self, ROOT_SPAN};
+use jolt_profiling::{CoreCounters, CounterSource, CounterValues, PeakMemory};
 use serde_json::Value;
 
 const FIXTURE: &str = include_str!("fixtures/simple_trace.json");
@@ -25,12 +25,79 @@ fn fixture_context() -> SummaryContext {
     }
 }
 
-fn fixture_stage_rows() -> Vec<StageMemoryRow> {
-    vec![StageMemoryRow {
-        stage: "prove_stage0",
-        rss_open_bytes: GIB as u64,
-        rss_close_bytes: 2 * GIB as u64,
-    }]
+fn fixture_samples() -> BoundarySamples {
+    let sampled = |instances, counters| SpanCounters {
+        instances,
+        counters,
+    };
+    let root = CounterValues {
+        instructions: 20_000_000,
+        cycles: Some(10_000_000),
+        perflevel0: Some(CoreCounters {
+            instructions: 15_000_000,
+            cycles: 8_000_000,
+        }),
+    };
+    BoundarySamples {
+        counter_source: Some(CounterSource::MacosRusageV6),
+        stage_rows: vec![
+            StageBoundaryRow {
+                stage: "prove_stage0",
+                rss_open_bytes: GIB as u64,
+                rss_close_bytes: 2 * GIB as u64,
+                counters: Some(CounterValues {
+                    instructions: 7_000_000,
+                    cycles: Some(3_000_000),
+                    perflevel0: Some(CoreCounters {
+                        instructions: 6_000_000,
+                        cycles: 2_000_000,
+                    }),
+                }),
+            },
+            StageBoundaryRow {
+                stage: ROOT_SPAN,
+                rss_open_bytes: GIB as u64,
+                rss_close_bytes: 3 * GIB as u64,
+                counters: Some(root),
+            },
+        ],
+        // `EqPolynomial::evals` ran on a pool thread, so it was never
+        // sampled.
+        span_counters: [
+            (ROOT_SPAN, sampled(1, Some(root))),
+            (
+                "prove_batch",
+                sampled(
+                    1,
+                    Some(CounterValues {
+                        instructions: 500_000,
+                        cycles: Some(200_000),
+                        perflevel0: Some(CoreCounters {
+                            instructions: 0,
+                            cycles: 0,
+                        }),
+                    }),
+                ),
+            ),
+            (
+                "sumcheck_round",
+                sampled(
+                    1,
+                    Some(CounterValues {
+                        instructions: 200_000,
+                        cycles: Some(100_000),
+                        perflevel0: Some(CoreCounters {
+                            instructions: 100_000,
+                            cycles: 50_000,
+                        }),
+                    }),
+                ),
+            ),
+            ("commit_witness", sampled(1, None)),
+        ]
+        .into_iter()
+        .collect(),
+    }
 }
 
 fn fixture_peak() -> PeakMemory {
@@ -44,7 +111,7 @@ fn fixture_summary(events: &[Value]) -> ProfileSummary {
     build_summary(
         events,
         &fixture_context(),
-        &fixture_stage_rows(),
+        &fixture_samples(),
         fixture_peak(),
         1_700_000_000,
         Some("abc1234".to_string()),
@@ -119,11 +186,36 @@ fn aggregation_computes_totals_self_and_dark_time() {
     assert_eq!(span("EqPolynomial::evals").self_ns, 100_000);
 
     let root = summary.root.as_ref().unwrap();
-    assert_eq!(root.label, taxonomy::ROOT_SPAN);
+    assert_eq!(root.label, ROOT_SPAN);
     assert_eq!(root.wall_time_ns, 2_500_000);
     assert_eq!(root.dark_time_ns, 600_000);
     assert!((root.dark_time_fraction - 0.24).abs() < 1e-9);
     assert_eq!(root.peak_memory_gib, Some(3.0));
+    assert_eq!(root.instructions, Some(20_000_000));
+    assert_eq!(root.cycles, Some(10_000_000));
+    assert_eq!(
+        root.perflevel0,
+        Some(CoreCounters {
+            instructions: 15_000_000,
+            cycles: 8_000_000,
+        })
+    );
+    assert_eq!(
+        serde_json::to_value(summary.hardware_counters).unwrap(),
+        serde_json::json!({
+            "source": "macos_rusage_v6",
+            "privilege_scope": "user_and_kernel",
+            "thread_scope": "all_process_threads"
+        })
+    );
+    assert_eq!(
+        serde_json::to_value(CounterSource::MacosRusageV4.metadata()).unwrap(),
+        serde_json::json!({
+            "source": "macos_rusage_v4",
+            "privilege_scope": "user_and_kernel",
+            "thread_scope": "all_process_threads"
+        })
+    );
 }
 
 #[test]
@@ -138,6 +230,15 @@ fn stage_rollup_folds_boundary_rss_and_windowed_peaks() {
     assert_eq!(stage0.rss_close_gib, Some(2.0));
     assert_eq!(stage0.rss_delta_gib, Some(1.0));
     assert_eq!(stage0.peak_memory_gib, Some(1.0));
+    assert_eq!(stage0.instructions, Some(7_000_000));
+    assert_eq!(stage0.cycles, Some(3_000_000));
+    assert_eq!(
+        stage0.perflevel0,
+        Some(CoreCounters {
+            instructions: 6_000_000,
+            cycles: 2_000_000,
+        })
+    );
 
     let stage1 = &summary.stages[1];
     assert_eq!(stage1.label, "prove_stage1");
@@ -145,6 +246,9 @@ fn stage_rollup_folds_boundary_rss_and_windowed_peaks() {
     assert_eq!(stage1.rss_open_gib, None);
     assert_eq!(stage1.rss_delta_gib, None);
     assert_eq!(stage1.peak_memory_gib, Some(3.0));
+    assert_eq!(stage1.instructions, None);
+    assert_eq!(stage1.cycles, None);
+    assert_eq!(stage1.perflevel0, None);
 
     assert_eq!(summary.peak_rss_gib, Some(4.0));
     assert_eq!(summary.peak_footprint_gib, Some(6.0));
@@ -154,6 +258,33 @@ fn stage_rollup_folds_boundary_rss_and_windowed_peaks() {
     assert!((memory.mean - 2.0).abs() < 1e-9);
     let cpu = summary.counters.get("cpu_percent").unwrap();
     assert_eq!(cpu.samples, 1);
+}
+
+#[test]
+fn span_counters_require_every_instance_sampled() {
+    let summary = fixture_summary(&fixture_events());
+    let span = |label: &str| summary.spans.get(label).unwrap();
+    assert_eq!(span(ROOT_SPAN).instructions, Some(20_000_000));
+    assert_eq!(span(ROOT_SPAN).cycles, Some(10_000_000));
+    assert_eq!(span("prove_batch").instructions, Some(500_000));
+    assert_eq!(span("prove_batch").cycles, Some(200_000));
+    assert_eq!(
+        span("prove_batch").perflevel0,
+        Some(CoreCounters {
+            instructions: 0,
+            cycles: 0,
+        })
+    );
+    for (label, reason) in [
+        ("sumcheck_round", "1 of 2 instances sampled"),
+        ("commit_witness", "counter unavailable"),
+        ("EqPolynomial::evals", "pool thread"),
+        ("prove_stage1", "never sampled"),
+    ] {
+        assert_eq!(span(label).instructions, None, "{reason}");
+        assert_eq!(span(label).cycles, None, "{reason}");
+        assert_eq!(span(label).perflevel0, None, "{reason}");
+    }
 }
 
 #[test]
@@ -180,7 +311,7 @@ fn fixture_labels_conform_to_taxonomy() {
                 "unknown stage label {name}"
             );
         }
-        if name == taxonomy::ROOT_SPAN && event.get("ph").and_then(Value::as_str) == Some("B") {
+        if name == ROOT_SPAN && event.get("ph").and_then(Value::as_str) == Some("B") {
             assert!(
                 event
                     .get("args")
@@ -192,7 +323,7 @@ fn fixture_labels_conform_to_taxonomy() {
     }
     for mode in [taxonomy::ProverMode::Clear, taxonomy::ProverMode::Zk] {
         let always = taxonomy::always_present_spans(mode);
-        assert!(always.contains(&taxonomy::ROOT_SPAN));
+        assert!(always.contains(&ROOT_SPAN));
         assert!(always.contains(&"prove_batch"));
         assert!(!always
             .iter()
@@ -208,35 +339,48 @@ fn fixture_labels_conform_to_taxonomy() {
         .all(|l| zk.contains(l) && !clear.contains(l)));
 }
 
-/// Repeated stage labels pair with their rows by occurrence index (both are
-/// recorded in span-close order), never all with the first matching row.
+/// Repeated stage and root labels pair with their rows by occurrence index
+/// (both are recorded in span-exit order), never all with the first
+/// matching row; the summary's root is the longest instance.
 #[test]
-fn repeated_stage_labels_pair_rows_by_occurrence() {
+fn repeated_labels_pair_rows_by_occurrence() {
     let events: Vec<Value> = serde_json::from_str(
         r#"[
+        {"ph":"B","name":"jolt_prover::prove","ts":0.0,"pid":1,"tid":1},
         {"ph":"B","name":"prove_stage0","ts":100.0,"pid":1,"tid":1},
         {"ph":"E","name":"prove_stage0","ts":200.0,"pid":1,"tid":1},
+        {"ph":"E","name":"jolt_prover::prove","ts":250.0,"pid":1,"tid":1},
+        {"ph":"B","name":"jolt_prover::prove","ts":250.0,"pid":1,"tid":1},
         {"ph":"B","name":"prove_stage0","ts":300.0,"pid":1,"tid":1},
-        {"ph":"E","name":"prove_stage0","ts":700.0,"pid":1,"tid":1}
+        {"ph":"E","name":"prove_stage0","ts":700.0,"pid":1,"tid":1},
+        {"ph":"E","name":"jolt_prover::prove","ts":800.0,"pid":1,"tid":1}
     ]"#,
     )
     .unwrap();
-    let rows = vec![
-        StageMemoryRow {
-            stage: "prove_stage0",
-            rss_open_bytes: GIB as u64,
-            rss_close_bytes: 2 * GIB as u64,
-        },
-        StageMemoryRow {
-            stage: "prove_stage0",
-            rss_open_bytes: 3 * GIB as u64,
-            rss_close_bytes: 5 * GIB as u64,
-        },
-    ];
+    let row = |stage, rss_open_gib: u64, rss_close_gib: u64, instructions| StageBoundaryRow {
+        stage,
+        rss_open_bytes: rss_open_gib * GIB as u64,
+        rss_close_bytes: rss_close_gib * GIB as u64,
+        counters: Some(CounterValues {
+            instructions,
+            cycles: None,
+            perflevel0: None,
+        }),
+    };
+    let samples = BoundarySamples {
+        stage_rows: vec![
+            row("prove_stage0", 1, 2, 10),
+            row(ROOT_SPAN, 1, 2, 30),
+            row("prove_stage0", 3, 5, 40),
+            row(ROOT_SPAN, 2, 5, 60),
+        ],
+        span_counters: Default::default(),
+        counter_source: Some(CounterSource::LinuxPerfEvent),
+    };
     let summary = build_summary(
         &events,
         &fixture_context(),
-        &rows,
+        &samples,
         PeakMemory::default(),
         0,
         None,
@@ -247,9 +391,24 @@ fn repeated_stage_labels_pair_rows_by_occurrence() {
     assert_eq!(summary.stages[0].wall_time_ns, 100_000);
     assert_eq!(summary.stages[0].rss_open_gib, Some(1.0));
     assert_eq!(summary.stages[0].rss_close_gib, Some(2.0));
+    assert_eq!(summary.stages[0].instructions, Some(10));
     assert_eq!(summary.stages[1].wall_time_ns, 400_000);
     assert_eq!(summary.stages[1].rss_open_gib, Some(3.0));
     assert_eq!(summary.stages[1].rss_delta_gib, Some(2.0));
+    assert_eq!(summary.stages[1].instructions, Some(40));
+    let root = summary.root.unwrap();
+    assert_eq!(root.wall_time_ns, 550_000);
+    assert_eq!(root.instructions, Some(60));
+    assert_eq!(root.cycles, None);
+    assert_eq!(root.perflevel0, None);
+    assert_eq!(
+        serde_json::to_value(summary.hardware_counters).unwrap(),
+        serde_json::json!({
+            "source": "linux_perf_event",
+            "privilege_scope": "user",
+            "thread_scope": "opening_thread_and_descendants"
+        })
+    );
 }
 
 #[test]
@@ -298,8 +457,53 @@ fn summary_round_trips_through_strict_schema_structs() {
     let summary = fixture_summary(&fixture_events());
     let json = serde_json::to_string(&summary).unwrap();
     let reparsed: ProfileSummary = serde_json::from_str(&json).unwrap();
-    assert_eq!(reparsed.schema_version, summary.schema_version);
-    assert_eq!(reparsed.spans.len(), summary.spans.len());
+    assert_eq!(
+        serde_json::to_value(&reparsed).unwrap(),
+        serde_json::to_value(&summary).unwrap()
+    );
+}
+
+#[test]
+fn summary_deserializes_without_hardware_extensions() {
+    let summary: ProfileSummary = serde_json::from_str(
+        r#"{
+            "schema_version": 1,
+            "taxonomy_version": 1,
+            "run": {
+                "workload": "fibonacci", "scale_log2": 16, "backend": "reference",
+                "timestamp_unix_secs": 1700000000, "git_rev": null
+            },
+            "root": {
+                "label": "jolt_prover::prove", "wall_time_ns": 100,
+                "dark_time_ns": 0, "dark_time_fraction": 0.0,
+                "peak_memory_gib": null, "instructions": 12
+            },
+            "peak_rss_gib": null,
+            "spans": {
+                "prove_stage0": {
+                    "count": 1, "total_ns": 100, "self_ns": 100, "instructions": 12
+                }
+            },
+            "stages": [{
+                "label": "prove_stage0", "wall_time_ns": 100,
+                "rss_open_gib": null, "rss_close_gib": null, "rss_delta_gib": null,
+                "peak_memory_gib": null, "instructions": 12
+            }],
+            "counters": {}
+        }"#,
+    )
+    .unwrap();
+    assert!(summary.hardware_counters.is_none());
+    let root = summary.root.unwrap();
+    assert_eq!(root.instructions, Some(12));
+    assert_eq!(root.cycles, None);
+    assert_eq!(root.perflevel0, None);
+    assert_eq!(summary.spans["prove_stage0"].instructions, Some(12));
+    assert_eq!(summary.spans["prove_stage0"].cycles, None);
+    assert_eq!(summary.spans["prove_stage0"].perflevel0, None);
+    assert_eq!(summary.stages[0].instructions, Some(12));
+    assert_eq!(summary.stages[0].cycles, None);
+    assert_eq!(summary.stages[0].perflevel0, None);
 }
 
 #[test]

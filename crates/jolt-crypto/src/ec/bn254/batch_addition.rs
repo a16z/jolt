@@ -161,7 +161,10 @@ mod tests {
         let mut rng = ark_std::test_rng();
         let bases: Vec<G1Affine> = (0..4).map(|_| G1Affine::rand(&mut rng)).collect();
 
-        assert!(batch_g1_additions_multi_affine(&bases, &[]).is_empty());
+        assert_eq!(
+            batch_g1_additions_multi_affine(&bases, &[]),
+            [] as [G1Affine; 0]
+        );
 
         let results = batch_g1_additions_multi_affine(&bases, &[vec![], vec![2], vec![0, 3]]);
         assert_eq!(results[0], G1Affine::identity());

@@ -24,9 +24,8 @@ use std::collections::BTreeMap;
 
 use crate::ProverInputs;
 use jolt_claims::protocols::jolt::geometry::booleanity::BooleanityDimensions;
-use jolt_claims::protocols::jolt::{
-    BooleanityPublic, JoltCommittedPolynomial, JoltDerivedId, JoltPolynomialId, JoltRelationId,
-};
+use jolt_claims::protocols::jolt::geometry::claim_reductions::hamming_weight::gamma_pow;
+use jolt_claims::protocols::jolt::{BooleanityPublic, JoltDerivedId, JoltRelationId};
 use jolt_claims::{Source, SymbolicSumcheck};
 use jolt_field::JoltField;
 use jolt_poly::{try_eq_mle, BindingOrder, Polynomial, UnivariatePoly};
@@ -102,29 +101,7 @@ impl<F: JoltField> BooleanityAddressKernel<F> {
         // `derive_output_term` both follow that convention. Use them as-is.
         let eq_cycle = eq_table(reference_cycle);
 
-        // Per-chunk masses of each checked one-hot polynomial, folded over the
-        // cycle dimension by the reference-cycle eq weights. The address-phase
-        // relation is column-agnostic (its output is the bare intermediate),
-        // so the checked-column set comes from the shape: the base `Ra`
-        // families plus, on the packed (lattice) build, the fused-inc one-hot
-        // columns at the tail — `lattice_booleanity_output_openings`' order,
-        // continuing the same `γ^{2i}` weight sequence.
-        let mut openings: Vec<_> = dimensions
-            .layout
-            .openings(JoltRelationId::Booleanity)
-            .collect();
-        if super::lattice_shape() {
-            let lattice_dimensions =
-                jolt_claims::protocols::jolt::lattice::relations::booleanity::LatticeBooleanityDimensions::new(
-                    dimensions,
-                )
-                .map_err(|_| KernelError::InvariantViolation {
-                    reason: "the packed shape requires a lattice-compatible chunk width",
-                })?;
-            openings = jolt_claims::protocols::jolt::lattice::relations::booleanity::lattice_booleanity_output_openings(
-                lattice_dimensions,
-            );
-        }
+        let openings = dimensions.layout.openings(JoltRelationId::Booleanity);
         let mut linear = Vec::new();
         for opening in openings {
             let grid = dense_view(witness, opening)?;
@@ -293,27 +270,19 @@ impl<F: JoltField> PrepareKernel<F, Booleanity<F>> for ReferenceBackend {
                 Polynomial::new(address_fold(witness, opening, dimensions.log_t, r_address)?),
             );
         }
-        // The packed (lattice) shape extends the boolean fold over the
-        // fused-inc one-hot columns: serve them per the relation's own
-        // expression leaves (the base expression references none, so the
-        // loop no-ops there).
+        let mut derived_tables = BTreeMap::new();
         for term in &relation.symbolic().output_expression::<F>().terms {
             for factor in &term.factors {
-                let Source::Opening(id) = factor else {
-                    continue;
-                };
-                if matches!(
-                    id.polynomial_id(),
-                    JoltPolynomialId::Committed(
-                        JoltCommittedPolynomial::BalancedIncDigit(_)
-                            | JoltCommittedPolynomial::BalancedIncCarry,
-                    )
-                ) && !opening_tables.contains_key(id)
+                if let Source::Derived(
+                    id @ JoltDerivedId::Booleanity(BooleanityPublic::GammaPow { exponent }),
+                ) = factor
                 {
-                    let _ = opening_tables.insert(
-                        *id,
-                        Polynomial::new(address_fold(witness, *id, dimensions.log_t, r_address)?),
-                    );
+                    let _ = derived_tables.entry(*id).or_insert_with(|| {
+                        Polynomial::new(vec![
+                            gamma_pow(inputs.challenges.gamma, *exponent);
+                            1 << dimensions.log_t
+                        ])
+                    });
                 }
             }
         }
@@ -326,7 +295,7 @@ impl<F: JoltField> PrepareKernel<F, Booleanity<F>> for ReferenceBackend {
                 reason: "booleanity address point and reference length mismatch",
             }
         })?;
-        let derived_tables = BTreeMap::from([(
+        let _ = derived_tables.insert(
             JoltDerivedId::from(BooleanityPublic::EqAddressCycle),
             Polynomial::new(
                 eq_table(reference_cycle)
@@ -334,7 +303,7 @@ impl<F: JoltField> PrepareKernel<F, Booleanity<F>> for ReferenceBackend {
                     .map(|eq| address_scalar * eq)
                     .collect::<Vec<_>>(),
             ),
-        )]);
+        );
 
         Ok(Box::new(NaiveSumcheckProver::new(
             &inputs,

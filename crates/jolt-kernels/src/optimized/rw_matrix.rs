@@ -19,8 +19,11 @@
 use jolt_field::JoltField;
 use jolt_poly::{BindingOrder, Polynomial};
 #[cfg(feature = "parallel")]
+use jolt_utils::par_concat;
+#[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
+use super::prefix_product::PrefixColumn;
 use super::ram_trace::{RamAccessColumns, NO_ACCESS};
 
 /// One explicit matrix entry while cycle variables bind (row-major order).
@@ -257,16 +260,17 @@ impl<F: JoltField> CycleMajorMatrix<F> {
     /// Bind one cycle variable low-to-high: merge every adjacent row pair.
     pub fn bind(&mut self, r: F) {
         #[cfg(feature = "parallel")]
-        let bound: Vec<CycleMajorEntry<F>> = self
-            .entries
-            .par_chunk_by(|a, b| a.row / 2 == b.row / 2)
-            .flat_map_iter(|group| {
-                let (even, odd) = split_row_pair(group);
-                let mut out = Vec::with_capacity(group.len());
-                merge_bind_rows(even, odd, r, &mut out);
-                out
-            })
-            .collect();
+        let bound: Vec<CycleMajorEntry<F>> = par_concat(
+            &self
+                .entries
+                .par_chunk_by(|a, b| a.row / 2 == b.row / 2)
+                .fold(Vec::new, |mut out, group| {
+                    let (even, odd) = split_row_pair(group);
+                    merge_bind_rows(even, odd, r, &mut out);
+                    out
+                })
+                .collect::<Vec<_>>(),
+        );
         #[cfg(not(feature = "parallel"))]
         let bound: Vec<CycleMajorEntry<F>> = {
             let mut out = Vec::with_capacity(self.entries.len());
@@ -286,13 +290,13 @@ impl<F: JoltField> CycleMajorMatrix<F> {
     pub fn quadratic_coefficients(
         &self,
         eq_head: impl Fn(usize) -> F + Sync,
-        inc: &Polynomial<F>,
+        inc: &PrefixColumn<F>,
         gamma: F,
     ) -> [F; 2] {
         let per_group = |group: &[CycleMajorEntry<F>]| -> [F; 2] {
             let pair = (group[0].row / 2) as usize;
-            let inc_0 = inc.evals()[2 * pair];
-            let inc_evals = [inc_0, inc.evals()[2 * pair + 1] - inc_0];
+            let inc_0 = inc.value(2 * pair);
+            let inc_evals = [inc_0, inc.value(2 * pair + 1) - inc_0];
             let (even, odd) = split_row_pair(group);
             let inner = merge_quadratic_evals(even, odd, inc_evals, gamma);
             let head = eq_head(pair);
@@ -315,7 +319,7 @@ impl<F: JoltField> CycleMajorMatrix<F> {
         }
     }
 
-    pub fn q_at_one(&self, eq_head: impl Fn(usize) -> F, inc: &Polynomial<F>, gamma: F) -> F {
+    pub fn q_at_one(&self, eq_head: impl Fn(usize) -> F, inc: &PrefixColumn<F>, gamma: F) -> F {
         self.entries
             .iter()
             .filter(|entry| entry.row % 2 == 1)
@@ -324,7 +328,7 @@ impl<F: JoltField> CycleMajorMatrix<F> {
                 let constant = CycleMajorEntry::quadratic_evals(
                     Some(entry),
                     None,
-                    [inc.evals()[row], F::zero()],
+                    [inc.value(row), F::zero()],
                     gamma,
                 )[0];
                 sum + eq_head(row / 2) * constant
@@ -359,12 +363,12 @@ fn round0_entry<F: JoltField>(
 ) -> Option<CycleMajorEntry<F>> {
     let address = columns.addresses[cycle];
     (address != NO_ACCESS).then(|| {
-        let pre_value = columns.pre_values[cycle];
+        let pre_value = columns.pre_value(cycle);
         CycleMajorEntry {
             row: cycle as u32,
             col: address,
             prev_val: pre_value,
-            next_val: columns.post_values[cycle],
+            next_val: columns.post_value(cycle),
             val: F::from_u64(pre_value),
             ra: F::one(),
         }
@@ -374,10 +378,10 @@ fn round0_entry<F: JoltField>(
 pub(crate) fn round0_q_at_one<F: JoltField>(
     columns: &RamAccessColumns,
     eq_head: impl Fn(usize) -> F,
-    inc: &Polynomial<F>,
+    inc: &PrefixColumn<F>,
     gamma: F,
 ) -> F {
-    (1..columns.addresses.len())
+    (1..columns.addresses.prefix_len())
         .step_by(2)
         .fold(F::zero(), |sum, row| {
             let Some(entry) = round0_entry::<F>(columns, row) else {
@@ -386,7 +390,7 @@ pub(crate) fn round0_q_at_one<F: JoltField>(
             let constant = CycleMajorEntry::quadratic_evals(
                 Some(&entry),
                 None,
-                [inc.evals()[row], F::zero()],
+                [inc.value(row), F::zero()],
                 gamma,
             )[0];
             sum + eq_head(row / 2) * constant
@@ -396,18 +400,18 @@ pub(crate) fn round0_q_at_one<F: JoltField>(
 pub(crate) fn round0_quadratic_coefficients<F: JoltField>(
     columns: &RamAccessColumns,
     eq_head: impl Fn(usize) -> F + Sync,
-    inc: &Polynomial<F>,
+    inc: &PrefixColumn<F>,
     gamma: F,
 ) -> [F; 2] {
-    let pairs = columns.addresses.len() / 2;
+    let pairs = columns.addresses.prefix_len().div_ceil(2);
     let per_pair = |pair: usize| -> [F; 2] {
         let even = round0_entry::<F>(columns, 2 * pair);
         let odd = round0_entry::<F>(columns, 2 * pair + 1);
         if even.is_none() && odd.is_none() {
             return [F::zero(); 2];
         }
-        let inc_0 = inc.evals()[2 * pair];
-        let inc_evals = [inc_0, inc.evals()[2 * pair + 1] - inc_0];
+        let inc_0 = inc.value(2 * pair);
+        let inc_evals = [inc_0, inc.value(2 * pair + 1) - inc_0];
         let inner = match (&even, &odd) {
             (Some(even), Some(odd)) if even.col != odd.col => {
                 let lone_even =
@@ -439,7 +443,7 @@ pub(crate) fn round0_quadratic_coefficients<F: JoltField>(
 /// First bind, producing the first entry vector at half size.
 /// Entries remain ordered by cycle, then column.
 pub(crate) fn round0_bind<F: JoltField>(columns: &RamAccessColumns, r: F) -> CycleMajorMatrix<F> {
-    let pairs = columns.addresses.len() / 2;
+    let pairs = columns.addresses.prefix_len().div_ceil(2);
     let per_pair = |pair: usize| -> [Option<CycleMajorEntry<F>>; 2] {
         let even = round0_entry::<F>(columns, 2 * pair);
         let odd = round0_entry::<F>(columns, 2 * pair + 1);
@@ -462,15 +466,55 @@ pub(crate) fn round0_bind<F: JoltField>(columns: &RamAccessColumns, r: F) -> Cyc
     };
 
     #[cfg(feature = "parallel")]
-    let entries: Vec<CycleMajorEntry<F>> = (0..pairs)
-        .into_par_iter()
-        .flat_map_iter(|pair| per_pair(pair).into_iter().flatten())
-        .collect();
+    let entries: Vec<CycleMajorEntry<F>> = par_concat(
+        &(0..pairs)
+            .into_par_iter()
+            .fold(Vec::new, |mut out, pair| {
+                out.extend(per_pair(pair).into_iter().flatten());
+                out
+            })
+            .collect::<Vec<_>>(),
+    );
     #[cfg(not(feature = "parallel"))]
     let entries: Vec<CycleMajorEntry<F>> = (0..pairs)
         .flat_map(|pair| per_pair(pair).into_iter().flatten())
         .collect();
     CycleMajorMatrix { entries }
+}
+
+/// Bytes [`round0_bind`] requests at once at most over the `prefix_cycles`
+/// cycles before the trace's constant suffix and `2^log_k` addresses, its
+/// result included, or `None` past `usize::MAX`. A cycle pair emits one entry
+/// per accessing cycle when their columns differ and one entry otherwise, so
+/// at most `prefix_cycles` entries, or `⌈prefix_cycles / 2⌉` with one
+/// address, over at most one split per pair ([`fold_concat_bytes`]).
+pub(crate) fn round0_bind_bytes<F: JoltField>(prefix_cycles: usize, log_k: usize) -> Option<usize> {
+    let pairs = prefix_cycles.div_ceil(2);
+    let entries = if log_k == 0 { pairs } else { prefix_cycles };
+    fold_concat_bytes::<CycleMajorEntry<F>>(entries, pairs.max(1))
+}
+
+/// Bytes a parallel `fold(Vec::new, ..)` over at most `splits` Rayon splits
+/// that pushes at most `entries` `E` values in total, followed by `collect`
+/// and [`par_concat`], requests at once at most, or `None` past `usize::MAX`.
+/// A split's vector grows by doubling from four slots, and each reallocation
+/// holds the old buffer beside the new one, so a split with `n > 0` values
+/// holds at most `4n` slots at any time; the concatenated destination is
+/// reserved at exactly the total. Each split also costs one `collect` list
+/// node (a `Vec` header and two links) and its four-slot vector of headers,
+/// one header in the collected vector, which reserves at least four, and one
+/// `par_concat` slot reference. The serial builds stay within the same
+/// bytes. These are Rust 1.95 `Vec` growth and Rayon 1.12 unindexed
+/// `collect` facts, which the `tests` module measures with a counting
+/// allocator.
+fn fold_concat_bytes<E>(entries: usize, splits: usize) -> Option<usize> {
+    let header = size_of::<Vec<E>>();
+    let per_split = 6 * header + 4 * size_of::<usize>();
+    entries
+        .checked_mul(5)?
+        .checked_mul(size_of::<E>())?
+        .checked_add(splits.checked_mul(per_split)?)?
+        .checked_add(3 * header)
 }
 
 impl<F: JoltField> AddressMajorEntry<F> {
@@ -634,8 +678,8 @@ fn merge_address_round_evals<F: JoltField>(
     odd: &[AddressMajorEntry<F>],
     mut even_checkpoint: F,
     mut odd_checkpoint: F,
-    inc: &Polynomial<F>,
-    eq: &Polynomial<F>,
+    inc: &PrefixColumn<F>,
+    eq: &[F],
     gamma: F,
 ) -> [F; 2] {
     let mut acc = [F::zero(); 2];
@@ -653,8 +697,8 @@ fn merge_address_round_evals<F: JoltField>(
                     Some(&odd[j]),
                     even_checkpoint,
                     odd_checkpoint,
-                    inc.evals()[even[i].row as usize],
-                    eq.evals()[even[i].row as usize],
+                    inc.value(even[i].row as usize),
+                    eq[even[i].row as usize],
                     gamma,
                 ));
                 even_checkpoint = even[i].next_val;
@@ -668,8 +712,8 @@ fn merge_address_round_evals<F: JoltField>(
                     None,
                     even_checkpoint,
                     odd_checkpoint,
-                    inc.evals()[even[i].row as usize],
-                    eq.evals()[even[i].row as usize],
+                    inc.value(even[i].row as usize),
+                    eq[even[i].row as usize],
                     gamma,
                 ));
                 even_checkpoint = even[i].next_val;
@@ -681,8 +725,8 @@ fn merge_address_round_evals<F: JoltField>(
                     Some(&odd[j]),
                     even_checkpoint,
                     odd_checkpoint,
-                    inc.evals()[odd[j].row as usize],
-                    eq.evals()[odd[j].row as usize],
+                    inc.value(odd[j].row as usize),
+                    eq[odd[j].row as usize],
                     gamma,
                 ));
                 odd_checkpoint = odd[j].next_val;
@@ -696,8 +740,8 @@ fn merge_address_round_evals<F: JoltField>(
             None,
             even_checkpoint,
             odd_checkpoint,
-            inc.evals()[entry.row as usize],
-            eq.evals()[entry.row as usize],
+            inc.value(entry.row as usize),
+            eq[entry.row as usize],
             gamma,
         ));
         even_checkpoint = entry.next_val;
@@ -708,8 +752,8 @@ fn merge_address_round_evals<F: JoltField>(
             Some(entry),
             even_checkpoint,
             odd_checkpoint,
-            inc.evals()[entry.row as usize],
-            eq.evals()[entry.row as usize],
+            inc.value(entry.row as usize),
+            eq[entry.row as usize],
             gamma,
         ));
         odd_checkpoint = entry.next_val;
@@ -725,7 +769,7 @@ pub(crate) struct AddressMajorMatrix<F> {
 
 impl<F: JoltField> AddressMajorMatrix<F> {
     pub fn from_columns(columns: &RamAccessColumns) -> Self {
-        let mut entries: Vec<_> = (0..columns.addresses.len())
+        let mut entries: Vec<_> = (0..columns.addresses.prefix_len())
             .filter_map(|cycle| {
                 round0_entry(columns, cycle).map(CycleMajorEntry::into_address_major)
             })
@@ -737,11 +781,46 @@ impl<F: JoltField> AddressMajorMatrix<F> {
         Self { entries }
     }
 
-    /// After binding every address, fill the remaining cycle tables using
-    /// checkpoints for untouched cycles. This allocates O(T), never O(K*T).
-    pub fn into_cycle_tables(self, cycles: usize, initial: F) -> (Polynomial<F>, Polynomial<F>) {
-        let mut ra = vec![F::zero(); cycles];
-        let mut val = Vec::with_capacity(cycles);
+    /// Entry bytes [`Self::from_columns`] keeps over the `prefix_cycles`
+    /// cycles before the trace's constant suffix, or `None` past
+    /// `usize::MAX`: at most one entry per cycle, collected sequentially, so
+    /// the doubling growth leaves at most `max(4, 2 · prefix_cycles)` slots.
+    pub fn collected_bytes(prefix_cycles: usize) -> Option<usize> {
+        prefix_cycles
+            .max(2)
+            .checked_mul(2)?
+            .checked_mul(size_of::<AddressMajorEntry<F>>())
+    }
+
+    /// Bytes the first [`Self::bind`] of a matrix built by
+    /// [`Self::from_columns`] over the `prefix_cycles` cycles before the
+    /// trace's constant suffix requests at once at most while it collects, or
+    /// `None` past `usize::MAX`: the old entries at their collected capacity
+    /// ([`Self::collected_bytes`]) beside the bind's collect of at most one
+    /// entry per old entry, over at most one split per column pair
+    /// ([`fold_concat_bytes`]). Binding `val_init` afterwards is not counted.
+    pub fn first_bind_bytes(prefix_cycles: usize) -> Option<usize> {
+        Self::collected_bytes(prefix_cycles)?.checked_add(
+            fold_concat_bytes::<AddressMajorEntry<F>>(prefix_cycles, prefix_cycles.max(1))?,
+        )
+    }
+
+    /// Entry bytes of the bound entries the first [`Self::bind`] keeps after
+    /// dropping the old ones, or `None` past `usize::MAX`: at most one entry
+    /// per cycle, at exact capacity.
+    pub fn bound_bytes(prefix_cycles: usize) -> Option<usize> {
+        prefix_cycles.checked_mul(size_of::<AddressMajorEntry<F>>())
+    }
+
+    /// After binding every address, retain the explicit cycle prefix and
+    /// the final memory checkpoint as a constant value suffix.
+    pub fn into_cycle_tables(self, initial: F) -> (PrefixColumn<F>, PrefixColumn<F>) {
+        let prefix = self
+            .entries
+            .last()
+            .map_or(0, |entry| entry.row as usize + 1);
+        let mut ra = vec![F::zero(); prefix];
+        let mut val = Vec::with_capacity(prefix);
         let mut checkpoint = initial;
         for entry in self.entries {
             debug_assert_eq!(entry.col, 0);
@@ -751,32 +830,41 @@ impl<F: JoltField> AddressMajorMatrix<F> {
             ra[row] = entry.ra;
             checkpoint = entry.next_val;
         }
-        val.resize(cycles, checkpoint);
-        (Polynomial::new(ra), Polynomial::new(val))
+        (
+            PrefixColumn {
+                values: ra,
+                tail: [F::zero(); 2],
+            },
+            PrefixColumn {
+                values: val,
+                tail: [checkpoint; 2],
+            },
+        )
     }
 
     /// Bind one address variable low-to-high: merge every adjacent column
     /// pair against the `val_init` checkpoints, then bind `val_init` itself.
     pub fn bind(&mut self, r: F, val_init: &mut Polynomial<F>) {
         #[cfg(feature = "parallel")]
-        let bound: Vec<AddressMajorEntry<F>> = self
-            .entries
-            .par_chunk_by(|a, b| a.col / 2 == b.col / 2)
-            .flat_map_iter(|group| {
-                let (even, odd) = split_col_pair(group);
-                let even_col = 2 * (group[0].col / 2) as usize;
-                let mut out = Vec::with_capacity(group.len());
-                merge_bind_cols(
-                    even,
-                    odd,
-                    val_init.evals()[even_col],
-                    val_init.evals()[even_col + 1],
-                    r,
-                    &mut out,
-                );
-                out
-            })
-            .collect();
+        let bound: Vec<AddressMajorEntry<F>> = par_concat(
+            &self
+                .entries
+                .par_chunk_by(|a, b| a.col / 2 == b.col / 2)
+                .fold(Vec::new, |mut out, group| {
+                    let (even, odd) = split_col_pair(group);
+                    let even_col = 2 * (group[0].col / 2) as usize;
+                    merge_bind_cols(
+                        even,
+                        odd,
+                        val_init.evals()[even_col],
+                        val_init.evals()[even_col + 1],
+                        r,
+                        &mut out,
+                    );
+                    out
+                })
+                .collect::<Vec<_>>(),
+        );
         #[cfg(not(feature = "parallel"))]
         let bound: Vec<AddressMajorEntry<F>> = {
             let mut out = Vec::with_capacity(self.entries.len());
@@ -803,8 +891,8 @@ impl<F: JoltField> AddressMajorMatrix<F> {
     pub fn address_round_evals(
         &self,
         val_init: &Polynomial<F>,
-        inc: &Polynomial<F>,
-        eq: &Polynomial<F>,
+        inc: &PrefixColumn<F>,
+        eq: &[F],
         gamma: F,
     ) -> [F; 2] {
         let per_group = |group: &[AddressMajorEntry<F>]| -> [F; 2] {
@@ -846,5 +934,162 @@ impl<F: JoltField> AddressMajorMatrix<F> {
             Some(entry) => (entry.ra, entry.val),
             None => (F::zero(), val_init.evals()[0]),
         }
+    }
+}
+
+#[cfg(test)]
+#[expect(clippy::unwrap_used, reason = "test module")]
+mod tests {
+    use std::alloc::{GlobalAlloc, Layout, System};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    use jolt_field::{Fr, Ring};
+    use jolt_poly::Polynomial;
+
+    use super::super::ram_trace::{RamAccessColumns, RamAddresses};
+    use super::{round0_bind, round0_bind_bytes, AddressMajorEntry, AddressMajorMatrix};
+
+    /// Live and peak heap bytes across every thread of this test process,
+    /// with a reallocation counted as its new buffer beside the old one.
+    struct CountingAllocator;
+
+    static LIVE: AtomicUsize = AtomicUsize::new(0);
+    static PEAK: AtomicUsize = AtomicUsize::new(0);
+
+    impl CountingAllocator {
+        fn add(bytes: usize) {
+            let live = LIVE.fetch_add(bytes, Ordering::Relaxed) + bytes;
+            let _ = PEAK.fetch_max(live, Ordering::Relaxed);
+        }
+
+        fn sub(bytes: usize) {
+            let _ = LIVE.fetch_sub(bytes, Ordering::Relaxed);
+        }
+    }
+
+    // SAFETY: every method forwards its request unchanged to `System`, which
+    // upholds the `GlobalAlloc` contract; the counters only observe sizes.
+    unsafe impl GlobalAlloc for CountingAllocator {
+        unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+            Self::add(layout.size());
+            // SAFETY: the caller upholds `GlobalAlloc::alloc`'s contract.
+            unsafe { System.alloc(layout) }
+        }
+
+        unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
+            Self::add(layout.size());
+            // SAFETY: the caller upholds `GlobalAlloc::alloc_zeroed`'s contract.
+            unsafe { System.alloc_zeroed(layout) }
+        }
+
+        unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+            // SAFETY: the caller upholds `GlobalAlloc::dealloc`'s contract.
+            unsafe { System.dealloc(ptr, layout) };
+            Self::sub(layout.size());
+        }
+
+        unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+            Self::add(new_size);
+            // SAFETY: the caller upholds `GlobalAlloc::realloc`'s contract.
+            let moved = unsafe { System.realloc(ptr, layout, new_size) };
+            Self::sub(if moved.is_null() {
+                new_size
+            } else {
+                layout.size()
+            });
+            moved
+        }
+    }
+
+    #[global_allocator]
+    static ALLOCATOR: CountingAllocator = CountingAllocator;
+
+    /// `run`'s result and the most bytes it held at once beyond those live
+    /// when it started. The caller warms the Rayon pool first, so that only
+    /// `run`'s own requests move the counters.
+    fn peak_above_start<R>(run: impl FnOnce() -> R) -> (R, usize) {
+        let start = LIVE.load(Ordering::Relaxed);
+        PEAK.store(start, Ordering::Relaxed);
+        let result = run();
+        (result, PEAK.load(Ordering::Relaxed) - start)
+    }
+
+    const CYCLES: usize = 1 << 12;
+    const LOG_K: usize = 6;
+
+    /// Every cycle accesses `address(cycle)`, so each bind meets its largest
+    /// entry count when adjacent cycles differ.
+    fn columns(address: impl Fn(usize) -> u32) -> RamAccessColumns {
+        RamAccessColumns {
+            addresses: Arc::new(RamAddresses::from(
+                (0..CYCLES).map(address).collect::<Vec<_>>(),
+            )),
+            pre_values: (0..CYCLES as u64).collect(),
+            post_values: (1..=CYCLES as u64).collect(),
+        }
+    }
+
+    /// The round-0 collect stays within [`round0_bind_bytes`] at both entry
+    /// counts it prices: one entry per cycle when adjacent cycles access
+    /// different addresses, one per pair with a single address.
+    #[test]
+    fn round0_bind_stays_within_its_priced_bytes() {
+        let r = Fr::from_u64(7);
+        for (log_k, address, entries) in [
+            (
+                LOG_K,
+                (|cycle| (cycle % (1 << LOG_K)) as u32) as fn(usize) -> u32,
+                CYCLES,
+            ),
+            (0, |_| 0, CYCLES / 2),
+        ] {
+            let columns = columns(address);
+            let _warm = round0_bind::<Fr>(&columns, r);
+            let (matrix, peak) = peak_above_start(|| round0_bind::<Fr>(&columns, r));
+            assert_eq!(matrix.entries.len(), entries);
+            let priced = round0_bind_bytes::<Fr>(CYCLES, log_k).unwrap();
+            assert!(
+                peak <= priced,
+                "log_k = {log_k}: round 0 held {peak} bytes, above the {priced} priced"
+            );
+        }
+    }
+
+    /// The first address-major bind stays within
+    /// [`AddressMajorMatrix::first_bind_bytes`] while it collects, counting
+    /// the old entries it starts with, and within the bound entries beside
+    /// `val_init`'s half-length copy once it binds `val_init`, the window
+    /// the RAM read-write kernel prices; it keeps at most
+    /// [`AddressMajorMatrix::bound_bytes`].
+    #[test]
+    fn address_major_first_bind_stays_within_its_priced_bytes() {
+        let entry = size_of::<AddressMajorEntry<Fr>>();
+        let addresses = 1 << LOG_K;
+        let columns = columns(|cycle| (cycle % addresses) as u32);
+        let r = Fr::from_u64(7);
+        let val_init = || Polynomial::new(vec![Fr::from_u64(3); addresses]);
+        AddressMajorMatrix::<Fr>::from_columns(&columns).bind(r, &mut val_init());
+
+        let mut matrix = AddressMajorMatrix::<Fr>::from_columns(&columns);
+        let old = matrix.entries.capacity() * entry;
+        assert!(old <= AddressMajorMatrix::<Fr>::collected_bytes(CYCLES).unwrap());
+        let mut val_init = val_init();
+        let ((), peak) = peak_above_start(|| matrix.bind(r, &mut val_init));
+        let priced = AddressMajorMatrix::<Fr>::first_bind_bytes(CYCLES)
+            .unwrap()
+            .max(
+                AddressMajorMatrix::<Fr>::bound_bytes(CYCLES).unwrap()
+                    + addresses / 2 * size_of::<Fr>(),
+            );
+        assert!(
+            old + peak <= priced,
+            "first bind held {} bytes, above the {priced} priced",
+            old + peak
+        );
+        assert!(
+            matrix.entries.capacity() * entry
+                <= AddressMajorMatrix::<Fr>::bound_bytes(CYCLES).unwrap()
+        );
     }
 }

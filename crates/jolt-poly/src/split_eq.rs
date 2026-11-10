@@ -1,4 +1,4 @@
-use jolt_field::JoltField;
+use jolt_field::{Accumulator, JoltField};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
@@ -14,16 +14,25 @@ pub struct TensorEqTable<F: JoltField> {
 
 impl<F: JoltField> TensorEqTable<F> {
     pub fn new(point: &[F]) -> Self {
-        let split = point.len() / 2;
+        Self::new_with_scaling(point, F::one())
+    }
+
+    pub fn new_with_scaling(point: &[F], scale: F) -> Self {
+        Self::new_with_scaling_and_split(point, scale, point.len() / 2)
+    }
+
+    /// Factors `scale * eq(point, x)` with the first `split` coordinates in the
+    /// outer table. `split` must be at most `point.len()`.
+    pub fn new_with_scaling_and_split(point: &[F], scale: F, split: usize) -> Self {
         let (out_point, in_point) = point.split_at(split);
         #[cfg(feature = "parallel")]
         let (e_out, e_in) = rayon::join(
-            || EqPolynomial::<F>::evals(out_point, None),
+            || EqPolynomial::<F>::evals(out_point, Some(scale)),
             || EqPolynomial::<F>::evals(in_point, None),
         );
         #[cfg(not(feature = "parallel"))]
         let (e_out, e_in) = (
-            EqPolynomial::<F>::evals(out_point, None),
+            EqPolynomial::<F>::evals(out_point, Some(scale)),
             EqPolynomial::<F>::evals(in_point, None),
         );
         Self {
@@ -49,10 +58,25 @@ impl<F: JoltField> TensorEqTable<F> {
         &self.e_in
     }
 
-    pub fn evaluate_index(&self, index: usize) -> F {
+    fn factors_at_index(&self, index: usize) -> (F, F) {
         let x_out = index >> self.in_bits;
         let x_in = index & ((1usize << self.in_bits) - 1);
-        self.e_out[x_out] * self.e_in[x_in]
+        (self.e_out[x_out], self.e_in[x_in])
+    }
+
+    pub fn evaluate_index(&self, index: usize) -> F {
+        let (outer, inner) = self.factors_at_index(index);
+        outer * inner
+    }
+
+    /// Sum the tables at one Boolean index with a single accumulator reduction.
+    pub fn sum_at_index(tables: &[Self], index: usize) -> F {
+        let mut sum = F::Accumulator::default();
+        for table in tables {
+            let (outer, inner) = table.factors_at_index(index);
+            sum.fmadd(outer, inner);
+        }
+        sum.reduce()
     }
 
     pub fn evaluate_slices(&self, values: &[&[F]]) -> Vec<F> {
@@ -113,13 +137,39 @@ impl<F: JoltField> TensorEqTable<F> {
         outer_step: OuterStep,
         merge: Merge,
     ) -> OuterAcc {
+        self.par_fold_out_in_prefix(self.len(), make_inner, inner_step, outer_step, merge)
+    }
+
+    /// Fold the first `len` rows; callers account for any omitted suffix separately.
+    pub fn par_fold_out_in_prefix<
+        OuterAcc: Send,
+        InnerAcc: Send,
+        MakeInner: Fn() -> InnerAcc + Sync + Send,
+        InnerStep: Fn(&mut InnerAcc, usize, usize, F) + Sync + Send,
+        OuterStep: Fn(usize, F, InnerAcc) -> OuterAcc + Sync + Send,
+        Merge: Fn(OuterAcc, OuterAcc) -> OuterAcc + Sync + Send,
+    >(
+        &self,
+        len: usize,
+        make_inner: MakeInner,
+        inner_step: InnerStep,
+        outer_step: OuterStep,
+        merge: Merge,
+    ) -> OuterAcc {
+        assert!(len <= self.len());
+        let outer_len = len.div_ceil(self.e_in.len());
         #[cfg(feature = "parallel")]
         {
-            (0..self.e_out.len())
+            (0..outer_len)
                 .into_par_iter()
                 .map(|x_out| {
                     let mut inner_acc = make_inner();
-                    for (x_in, &e_in) in self.e_in.iter().enumerate() {
+                    for (x_in, &e_in) in self
+                        .e_in
+                        .iter()
+                        .take(len - x_out * self.e_in.len())
+                        .enumerate()
+                    {
                         let row = self.group_index(x_out, x_in);
                         inner_step(&mut inner_acc, row, x_in, e_in);
                     }
@@ -134,9 +184,14 @@ impl<F: JoltField> TensorEqTable<F> {
         #[cfg(not(feature = "parallel"))]
         {
             let mut acc = None;
-            for (x_out, &e_out) in self.e_out.iter().enumerate() {
+            for (x_out, &e_out) in self.e_out.iter().take(outer_len).enumerate() {
                 let mut inner_acc = make_inner();
-                for (x_in, &e_in) in self.e_in.iter().enumerate() {
+                for (x_in, &e_in) in self
+                    .e_in
+                    .iter()
+                    .take(len - x_out * self.e_in.len())
+                    .enumerate()
+                {
                     let row = self.group_index(x_out, x_in);
                     inner_step(&mut inner_acc, row, x_in, e_in);
                 }
@@ -237,6 +292,24 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
                 }
             }
         }
+    }
+
+    /// Bytes [`Self::new`] requests for a nonempty `vars`-variable point bound
+    /// [`BindingOrder::LowToHigh`], or `None` past `usize::MAX`: the copied
+    /// point and the [`EqPolynomial::evals_cached`] tables over the point
+    /// without its last variable, split at `vars / 2` into `2P - 1` out entries
+    /// for `P = 2^⌊vars/2⌋` and `H - 1` in entries for `H = 2^⌈vars/2⌉`, with
+    /// their `vars + 1` `Vec` headers. The empty point's layout differs.
+    /// Excludes allocator slack.
+    pub fn low_to_high_bytes(vars: usize) -> Option<usize> {
+        let pow2 = |bits: usize| 1usize.checked_shl(u32::try_from(bits).ok()?);
+        let out = pow2(vars / 2)?;
+        let inner = pow2(vars.div_ceil(2))?;
+        vars.checked_add(out.checked_mul(2)?)?
+            .checked_add(inner)?
+            .checked_sub(2)?
+            .checked_mul(size_of::<F>())?
+            .checked_add(vars.checked_add(1)?.checked_mul(size_of::<Vec<F>>())?)
     }
 
     pub fn current_scalar(&self) -> F {
@@ -474,6 +547,18 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
         (x_out << in_bits) | x_in
     }
 
+    /// Sum of the remaining-variable equality weights on `start..domain_len`.
+    /// The current variable's linear factor and bound scalar are applied by
+    /// the Gruen reconstruction, not included in this weight.
+    /// Only defined for low-to-high binding, where group and polynomial order agree.
+    pub fn suffix_weight(&self, start: usize) -> F {
+        assert!(
+            matches!(self.binding_order, BindingOrder::LowToHigh),
+            "split-eq suffix weights are only defined for low-to-high"
+        );
+        EqPolynomial::suffix_sum(&self.point[..self.current_index.saturating_sub(1)], start)
+    }
+
     #[inline]
     pub fn par_fold_out_in<
         OuterAcc: Send,
@@ -489,15 +574,45 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
         outer_step: OuterStep,
         merge: Merge,
     ) -> OuterAcc {
+        self.par_fold_out_in_prefix(
+            self.e_out_current_len() * self.e_in_current_len(),
+            make_inner,
+            inner_step,
+            outer_step,
+            merge,
+        )
+    }
+
+    /// Fold the first `len` remaining-variable rows in group order. `len` counts
+    /// polynomial rows only for [`BindingOrder::LowToHigh`]; in that order a caller
+    /// can add a constant suffix's contribution using [`Self::suffix_weight`].
+    pub fn par_fold_out_in_prefix<
+        OuterAcc: Send,
+        InnerAcc: Send,
+        MakeInner: Fn() -> InnerAcc + Sync + Send,
+        InnerStep: Fn(&mut InnerAcc, usize, usize, F) + Sync + Send,
+        OuterStep: Fn(usize, F, InnerAcc) -> OuterAcc + Sync + Send,
+        Merge: Fn(OuterAcc, OuterAcc) -> OuterAcc + Sync + Send,
+    >(
+        &self,
+        len: usize,
+        make_inner: MakeInner,
+        inner_step: InnerStep,
+        outer_step: OuterStep,
+        merge: Merge,
+    ) -> OuterAcc {
         let e_out = self.e_out_current();
         let e_in = self.e_in_current();
+        assert!(len <= e_out.len() * e_in.len());
+        let outer_len = len.div_ceil(e_in.len());
         #[cfg(feature = "parallel")]
         {
-            (0..e_out.len())
+            (0..outer_len)
                 .into_par_iter()
                 .map(|x_out| {
                     let mut inner_acc = make_inner();
-                    for (x_in, &e_in) in e_in.iter().enumerate() {
+                    let inner_len = (len - x_out * e_in.len()).min(e_in.len());
+                    for (x_in, &e_in) in e_in[..inner_len].iter().enumerate() {
                         let row = self.group_index(x_out, x_in);
                         inner_step(&mut inner_acc, row, x_in, e_in);
                     }
@@ -512,9 +627,10 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
         #[cfg(not(feature = "parallel"))]
         {
             let mut acc = None;
-            for (x_out, &e_out_val) in e_out.iter().enumerate() {
+            for (x_out, &e_out_val) in e_out[..outer_len].iter().enumerate() {
                 let mut inner_acc = make_inner();
-                for (x_in, &e_in_val) in e_in.iter().enumerate() {
+                let inner_len = (len - x_out * e_in.len()).min(e_in.len());
+                for (x_in, &e_in_val) in e_in[..inner_len].iter().enumerate() {
                     let row = self.group_index(x_out, x_in);
                     inner_step(&mut inner_acc, row, x_in, e_in_val);
                 }
@@ -545,6 +661,32 @@ mod tests {
     use rand_core::SeedableRng;
     use std::cell::Cell;
 
+    #[test]
+    fn gruen_prefix_and_suffix_cover_the_remaining_equality_domain() {
+        for bits in 1..9 {
+            let point = random_point(bits, 319 + bits as u64);
+            let mut split = GruenSplitEqPolynomial::<Fr>::new(&point, BindingOrder::LowToHigh);
+            for round in 0..bits {
+                let weights = EqPolynomial::<Fr>::evals(&point[..bits - round - 1], None);
+                for len in 0..=weights.len() {
+                    let prefix = split.par_fold_out_in_prefix(
+                        len,
+                        Fr::zero,
+                        |sum, _, _, weight| *sum += weight,
+                        |_, weight, sum| weight * sum,
+                        |a, b| a + b,
+                    );
+                    assert_eq!(prefix, weights[..len].iter().copied().sum::<Fr>());
+                    assert_eq!(
+                        split.suffix_weight(len),
+                        weights[len..].iter().copied().sum::<Fr>()
+                    );
+                }
+                split.bind(Fr::from_u64(5 + round as u64));
+            }
+        }
+    }
+
     use super::*;
 
     fn random_point(len: usize, seed: u64) -> Vec<Fr> {
@@ -553,16 +695,31 @@ mod tests {
     }
 
     #[test]
+    #[should_panic(expected = "split-eq suffix weights are only defined for low-to-high")]
+    fn suffix_weight_rejects_high_to_low_binding() {
+        let split =
+            GruenSplitEqPolynomial::<Fr>::new(&random_point(4, 581), BindingOrder::HighToLow);
+        let _ = split.suffix_weight(1);
+    }
+
+    #[test]
     fn tensor_eq_table_factors_full_eq_table() {
         for vars in 0..=10 {
             let point = random_point(vars, 100 + vars as u64);
-            let tensor = TensorEqTable::<Fr>::new(&point);
-            let full = EqPolynomial::<Fr>::evals(&point, None);
-            assert_eq!(tensor.len(), full.len());
-            for x_out in 0..tensor.e_out().len() {
-                for x_in in 0..tensor.e_in().len() {
-                    let row = tensor.group_index(x_out, x_in);
-                    assert_eq!(tensor.e_out()[x_out] * tensor.e_in()[x_in], full[row]);
+            for scale in [Fr::zero(), Fr::one(), Fr::from_u64(7)] {
+                let full = EqPolynomial::<Fr>::evals(&point, Some(scale));
+                let tensors = std::iter::once(TensorEqTable::new_with_scaling(&point, scale))
+                    .chain((0..=vars).map(|split| {
+                        TensorEqTable::new_with_scaling_and_split(&point, scale, split)
+                    }));
+                for tensor in tensors {
+                    assert_eq!(tensor.len(), full.len());
+                    for x_out in 0..tensor.e_out().len() {
+                        for x_in in 0..tensor.e_in().len() {
+                            let row = tensor.group_index(x_out, x_in);
+                            assert_eq!(tensor.e_out()[x_out] * tensor.e_in()[x_in], full[row]);
+                        }
+                    }
                 }
             }
         }
@@ -570,23 +727,32 @@ mod tests {
 
     #[test]
     fn tensor_eq_fold_matches_full_table_dot_product() {
-        let point = random_point(9, 211);
-        let values = random_point(1 << point.len(), 307);
-        let tensor = TensorEqTable::<Fr>::new(&point);
-        let folded = tensor.par_fold_out_in(
-            || Fr::from_u64(0),
-            |inner, row, _x_in, e_in| {
-                *inner += e_in * values[row];
-            },
-            |_x_out, e_out, inner| e_out * inner,
-            |left, right| left + right,
-        );
-        let full = EqPolynomial::<Fr>::evals(&point, None)
-            .into_iter()
-            .zip(values)
-            .map(|(eq, value)| eq * value)
-            .sum::<Fr>();
-        assert_eq!(folded, full);
+        for point in [
+            random_point(9, 211),
+            vec![Fr::zero(); 9],
+            vec![Fr::one(); 9],
+        ] {
+            let values = random_point(1 << point.len(), 307);
+            let tensor = TensorEqTable::<Fr>::new(&point);
+            let eq = EqPolynomial::<Fr>::evals(&point, None);
+            for prefix in 0..=values.len() {
+                let folded = tensor.par_fold_out_in_prefix(
+                    prefix,
+                    Fr::zero,
+                    |inner, row, _x_in, e_in| {
+                        *inner += e_in * values[row];
+                    },
+                    |_x_out, e_out, inner| e_out * inner,
+                    |left, right| left + right,
+                );
+                let full: Fr = eq[..prefix]
+                    .iter()
+                    .zip(&values)
+                    .map(|(eq, value)| *eq * *value)
+                    .sum();
+                assert_eq!(folded, full);
+            }
+        }
     }
 
     #[test]

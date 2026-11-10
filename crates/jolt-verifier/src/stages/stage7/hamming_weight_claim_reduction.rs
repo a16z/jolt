@@ -14,8 +14,7 @@
 //! - base — `claim_reductions::hamming_weight::ClaimReduction`: three gamma legs per RA
 //!   polynomial (hamming weight, booleanity, virtualization).
 //! - akita — `lattice::relations::digit_zero::LatticeDigitZeroClaimReduction`: two
-//!   digit-zero-recentered legs for instruction and bytecode, the base three for RAM,
-//!   plus one leg per balanced-increment column and the fused-increment decode leg. See
+//!   digit-zero-recentered legs for instruction and bytecode, the base three for RAM. See
 //!   `specs/digit-zero-virtualization.md`.
 //!
 //! The private `mode` module below is the only place that choice is made. Everything
@@ -23,8 +22,7 @@
 //! `HammingWeightClaimReduction*` names and reaches the live relation through the
 //! aliases re-exported from it, so no consumer needs a `cfg` of its own.
 
-#[cfg(feature = "akita")]
-use jolt_claims::protocols::jolt::lattice::geometry::balanced_inc_value;
+use jolt_claims::protocols::jolt::geometry::claim_reductions::hamming_weight::gamma_pow;
 pub use jolt_claims::protocols::jolt::relations::claim_reductions::hamming_weight::HammingWeightClaimReductionChallenges;
 use jolt_claims::protocols::jolt::{
     geometry::ra::JoltRaPolynomialLayout, HammingWeightClaimReductionPublic, JoltDerivedId,
@@ -49,13 +47,12 @@ mod mode {
     };
 }
 
-/// Akita mode: the slot is the digit-zero reduction, which also carries the
-/// balanced-increment booleanity legs and the fused-increment decode leg.
+/// Akita mode reconstructs the omitted instruction and bytecode digit-zero rows.
 #[cfg(feature = "akita")]
 mod mode {
+    pub use jolt_claims::protocols::jolt::geometry::claim_reductions::hamming_weight::HammingWeightClaimReductionDimensions as Dimensions;
     pub use jolt_claims::protocols::jolt::lattice::relations::digit_zero::{
         LatticeDigitZeroClaimReduction as Symbolic,
-        LatticeDigitZeroClaimReductionDimensions as Dimensions,
         LatticeDigitZeroClaimReductionInputClaims as InputClaims,
         LatticeDigitZeroClaimReductionOutputClaims as OutputClaims,
     };
@@ -69,24 +66,14 @@ pub use mode::OutputClaims as HammingWeightClaimReductionOutputClaims;
 
 type HammingWeightClaimReductionSymbolic = mode::Symbolic;
 
-/// Builds the active relation's shape. Base dimensions are infallible; akita
-/// additionally derives the balanced-increment chunking from `log_k_chunk`, which
-/// rejects widths that do not divide the fused increment.
 pub fn hamming_weight_claim_reduction_dimensions(
     layout: JoltRaPolynomialLayout,
     log_k_chunk: usize,
 ) -> Result<HammingWeightClaimReductionDimensions, VerifierError> {
-    #[cfg(not(feature = "akita"))]
-    {
-        Ok(HammingWeightClaimReductionDimensions::new(
-            layout,
-            log_k_chunk,
-        ))
-    }
-    #[cfg(feature = "akita")]
-    {
-        HammingWeightClaimReductionDimensions::new(layout, log_k_chunk).map_err(public_input_failed)
-    }
+    Ok(HammingWeightClaimReductionDimensions::new(
+        layout,
+        log_k_chunk,
+    ))
 }
 
 /// The hamming reduction's consumed opening *values*, wired from the stage-6b
@@ -106,12 +93,6 @@ pub fn hamming_weight_input_values_from_upstream<F: JoltField>(
             .clone(),
         bytecode_virtualization: cycle_phase.bytecode_read_raf.bytecode_ra.clone(),
         ram_virtualization: cycle_phase.ram_ra_virtualization.ram_ra.clone(),
-        #[cfg(feature = "akita")]
-        balanced_inc_digit_booleanity: cycle_phase.booleanity.balanced_inc_digits.clone(),
-        #[cfg(feature = "akita")]
-        balanced_inc_carry_booleanity: cycle_phase.booleanity.balanced_inc_carry,
-        #[cfg(feature = "akita")]
-        fused_inc: cycle_phase.bytecode_read_raf.fused_inc,
     }
 }
 
@@ -272,13 +253,6 @@ impl<F: JoltField> ConcreteSumcheck<F> for HammingWeightClaimReduction<F> {
             instruction_ra: vec![opening_point.clone(); layout.instruction()],
             bytecode_ra: vec![opening_point.clone(); layout.bytecode()],
             ram_ra: vec![opening_point.clone(); layout.ram()],
-            #[cfg(feature = "akita")]
-            balanced_inc_digits: vec![
-                opening_point.clone();
-                self.dimensions.chunking().chunk_count()
-            ],
-            #[cfg(feature = "akita")]
-            balanced_inc_carry: opening_point,
         })
     }
 
@@ -287,7 +261,7 @@ impl<F: JoltField> ConcreteSumcheck<F> for HammingWeightClaimReduction<F> {
         id: &JoltDerivedId,
         _input_points: &HammingWeightClaimReductionInputClaims<Vec<F>>,
         output_points: &HammingWeightClaimReductionOutputClaims<Vec<F>>,
-        _challenges: &HammingWeightClaimReductionChallenges<F>,
+        challenges: &HammingWeightClaimReductionChallenges<F>,
     ) -> Result<F, VerifierError> {
         let JoltDerivedId::HammingWeightClaimReduction(public_id) = id else {
             return Err(VerifierError::MissingStageClaimDerived { id: (*id).into() });
@@ -316,15 +290,11 @@ impl<F: JoltField> ConcreteSumcheck<F> for HammingWeightClaimReduction<F> {
                 })?;
                 Ok(eq_at_digit_zero(point))
             }
-            HammingWeightClaimReductionPublic::BalancedIncValueAtAddress => {
-                #[cfg(feature = "akita")]
-                {
-                    Ok(balanced_inc_value(rho_rev))
-                }
-                #[cfg(not(feature = "akita"))]
-                {
-                    Err(VerifierError::MissingStageClaimDerived { id: (*id).into() })
-                }
+            HammingWeightClaimReductionPublic::ReservedBalancedIncValueAtAddress => {
+                Err(VerifierError::MissingStageClaimDerived { id: (*id).into() })
+            }
+            HammingWeightClaimReductionPublic::GammaPow(exponent) => {
+                Ok(gamma_pow(challenges.gamma, *exponent))
             }
         }
     }
@@ -336,7 +306,7 @@ impl<F: JoltField> ConcreteSumcheck<F> for HammingWeightClaimReduction<F> {
     fn derive_input_term(
         &self,
         id: &JoltDerivedId,
-        _challenges: &HammingWeightClaimReductionChallenges<F>,
+        challenges: &HammingWeightClaimReductionChallenges<F>,
     ) -> Result<F, VerifierError> {
         let JoltDerivedId::HammingWeightClaimReduction(public_id) = id else {
             return Err(VerifierError::MissingStageClaimDerived { id: (*id).into() });
@@ -353,11 +323,14 @@ impl<F: JoltField> ConcreteSumcheck<F> for HammingWeightClaimReduction<F> {
                 })?;
                 Ok(eq_at_digit_zero(point))
             }
+            HammingWeightClaimReductionPublic::GammaPow(exponent) => {
+                Ok(gamma_pow(challenges.gamma, *exponent))
+            }
             // Output publics — resolved in `derive_output_term`, never in the
             // input expression.
             HammingWeightClaimReductionPublic::EqBooleanity
             | HammingWeightClaimReductionPublic::EqVirtualization(_)
-            | HammingWeightClaimReductionPublic::BalancedIncValueAtAddress => {
+            | HammingWeightClaimReductionPublic::ReservedBalancedIncValueAtAddress => {
                 Err(VerifierError::MissingStageClaimDerived { id: (*id).into() })
             }
         }

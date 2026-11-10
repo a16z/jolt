@@ -58,6 +58,40 @@ Workloads and default scales (`--scale <log2 trace length>` overrides):
 attribution is meaningful relatively — while `optimized` is the performance
 tier, slotting into the same instrumented seams.
 
+`--memory-budget` (optimized backend only) is an explicit budget in bytes,
+with an optional binary suffix (`KiB`, `MiB`, `GiB` or `TiB`, e.g. `32GiB`).
+The profile reserves bytes against it in this order and exits with an error
+at the first reservation that does not fit:
+
+1. After tracing, before PCS setup: the input, the trace output's buffers
+   other than the trace buffers that step 2 reserves, the program and program
+   preprocessing buffers, all at capacity, and the public-I/O clone's request
+   at the device buffers' lengths.
+2. Before PCS setup: the optimized prover's known eager reservation, which
+   is the trace buffer at its reserved capacity plus the largest stage-1–5
+   envelope over the trace's rows before its constant padding suffix.
+3. Under Akita, before the setup allocates its one-hot backend: the setup's
+   flat public matrix.
+
+Each envelope counts:
+
+- the Spartan, instruction-input and register (claim reduction, read/write
+  checking and value evaluation) tables, with every register read/write entry
+  generation at its worst case of three entries per cycle;
+- the instruction claim reduction's construction collect and its storage after
+  preparation;
+- the RAM read/write kernel's storage through its first bind, with the RAF
+  evaluation's folded and unmap tables;
+- the RAM value check's scalar tables at their largest, and the RAM access
+  columns that may still be held.
+
+A reservation past the address space fails every budget. Under Akita, every
+budget fails for the multi-chunk profiles and auxiliary (field-inline) setups
+that the matrix check does not price. The reservations omit most other
+allocations, so passing them does not mean the proof fits, and they are not a
+lower bound on the memory a proof needs. The budget does not cap process
+memory.
+
 Artifacts are grouped by run: each invocation writes into
 `benchmark-runs/{timestamp}_{trace_name}/` (with `{trace_name}` =
 `modular_{workload}_{scale}` for Dory or
@@ -161,6 +195,20 @@ jq '.stages | map({label, s: (.wall_time_ns/1e9)})' $S
 # Per-stage memory: boundary-RSS delta (retained growth) and windowed
 # sample-max (null when the stage closed between monitor samples)
 jq '.stages | map({label, rss_delta_gib, peak_memory_gib})' $S
+
+# Hardware instructions retired, whole prove and per stage, with counting scope
+# (null without a hardware counter; see Measurement semantics)
+jq '{hardware_counters, root: .root.instructions,
+     stages: (.stages | map({label, instructions}))}' $S
+
+# Apple CPU cycles and V6 perflevel0 diagnostics
+jq '{hardware_counters, root: (.root | {instructions, cycles, perflevel0}),
+     stages: (.stages | map({label, instructions, cycles, perflevel0}))}' $S
+
+# Top 10 span labels by instructions retired (orchestrating-thread spans only)
+jq '.spans | to_entries | map(select(.value.instructions != null))
+    | sort_by(-.value.instructions) | .[:10]
+    | map({label: .key, count: .value.count, instructions: .value.instructions})' $S
 ```
 
 Arbitrary ad-hoc queries go through Perfetto's `trace_processor` SQL against
@@ -202,6 +250,103 @@ for row in q:
   memory across runs. On Linux it equals `peak_rss_gib`. The monitor's
   `counters.footprint_gib` samples the same measure over time (macOS only);
   `memory_gib` and `root.peak_memory_gib` remain resident-set based.
+- **Hardware counts** (`root.instructions`, `stages[].instructions`,
+  `spans.<label>.instructions`, and the corresponding `cycles` and
+  `perflevel0` fields) are sampled at every enter and exit of a span
+  on the orchestrating thread — the thread that set up tracing. Counts
+  include parallel work during the interval and are inclusive, so nested
+  spans are not additive. Spans inside rayon closures overlap their siblings
+  and are not sampled; a label is `null` unless every instance ran on the
+  orchestrating thread with usable readings. Background work is charged to
+  whichever span is open when it executes, including idle workers spinning
+  before sleeping. An unavailable count is `null`; a measured zero remains 0.
+
+### Hardware counter scope
+
+The top-level `hardware_counters` object records `source`, `privilege_scope`,
+and `thread_scope`. Check it before comparing counts across runs:
+
+| Source | Privilege scope | Threads and processes counted | Available fields |
+|---|---|---|---|
+| `linux_perf_event` | `user` | Opening thread and subsequently spawned descendants, including child processes; excludes pre-existing threads such as the chrome writer and monitor | `instructions` |
+| `macos_rusage_v4` | `user_and_kernel` | All threads in this process, including pre-existing workers and profiler threads; excludes child processes | `instructions`, `cycles` |
+| `macos_rusage_v6` | `user_and_kernel` | Same as V4 | `instructions`, `cycles`, `perflevel0: {instructions, cycles}` |
+
+The corresponding `thread_scope` values are `opening_thread_and_descendants`
+and `all_process_threads`. Unsupported hosts have `hardware_counters: null`;
+setup logs a warning and all hardware counts remain `null`.
+
+Linux uses `perf_event_open` with inheritance and kernel/hypervisor work
+excluded. It requires an exposed PMU and suitable permissions (normally
+`perf_event_paranoid` ≤ 2). Intervals where the kernel multiplexed the event
+yield `null`, rather than an incomplete count. Initialize tracing before the
+Rayon pool so worker instructions are included.
+
+macOS reads `proc_pid_rusage(getpid(), RUSAGE_INFO_V6, ...)` on hosts with at
+least two performance levels (`hw.nperflevels`), falling back to V4 if the
+kernel rejects V6; single-level hosts, such as Intel Macs, read V4. The
+backend first requires `kern.monotonic.supported = 1`; a successful API call
+alone does not establish that counters are available. Both versions expose the
+same hardware-backed total instructions and cycles. V6 additionally reports,
+as `perflevel0`, the portion executed on XNU's `CLUSTER_TYPE_P` cores, which
+`hw.perflevel0` describes: the highest performance level. Its name varies by
+chip (`sysctl hw.perflevel0.name`): "Performance" on M1 through M4, but
+"Super" on an M5 Max, whose "Performance" cores are `hw.perflevel1` and
+excluded. XNU leaves this subset at zero on single-level hosts, which is why
+they use V4. These are fixed CPU counter values attributed by
+XNU's [Recount subsystem](https://github.com/apple-oss-distributions/xnu/blob/main/doc/observability/recount.md),
+not estimates from elapsed time or configured `kpc` events. See Apple's
+[CPU counter documentation](https://github.com/apple-oss-distributions/xnu/blob/main/doc/observability/cpu_counters.md).
+
+Apple's process snapshots are not simultaneous, instruction-exact boundaries
+across running workers. They include CPU work in the kernel and the profiler,
+and do not identify cache misses, branch misses, or stalls. Cycles sum CPU
+work across threads; they are not elapsed time. Core placement and frequency
+affect cycle comparisons, and a `perflevel0` cycle fraction is not a fraction
+of wall time. Compare repeated runs on the same machine with the same thread
+count and power settings. The profiler emits raw counts: a ratio of CPU
+cycles to guest instructions must use the actual live trace length, not the padded
+`2^scale` length.
+
+On Linux, fibonacci 2^16 (optimized backend) measurements spread ~0.1% at the
+root and up to a few percent on sub-second stages, against ~0.01% under
+`RAYON_NUM_THREADS=1`. One worker reduces scheduling noise for A/B comparisons;
+it does not remove kernel and profiler work from Apple's counts. Linux's
+counter save/restore cost measured under 1% of CPU time on fibonacci 2^20.
+Measure macOS sampling overhead with the baseline procedure below instead of
+assuming the Linux result applies.
+
+### Validating on Apple Silicon
+
+The hardware test below requires a physical Apple Silicon Mac with counters
+available. It checks that work on a thread created before opening the counter
+is included and fails if the counter cannot be used; it is ignored in ordinary
+test runs so unsupported CI hosts do not claim to validate the hardware path.
+
+```bash
+sw_vers
+sysctl -n machdep.cpu.brand_string kern.monotonic.supported hw.nperflevels \
+    hw.perflevel0.name
+cargo nextest run -p jolt-profiling --cargo-quiet
+cargo nextest run -p jolt-profiling --cargo-quiet --run-ignored only \
+    -E 'test(counters::macos::tests::counts_preexisting_workers)'
+
+# Reinstall after switching revisions before building a guest.
+cargo install --path . --locked
+RAYON_NUM_THREADS=1 cargo run --release -p jolt-prover --features profiling -- \
+    profile --name fibonacci --backend optimized --scale 16 --format chrome
+jq '{hardware_counters, root: (.root | {instructions, cycles, perflevel0}),
+     stages: (.stages | map({label, instructions, cycles, perflevel0}))}' \
+    benchmark-runs/latest_modular_fibonacci_16_optimized/summary.json
+```
+
+Expect `macos_rusage_v6` on Apple Silicon (`macos_rusage_v4` on a kernel
+without V6 or a single-level host) and positive root instruction and cycle
+counts. V4 leaves `perflevel0` null. Under V6, `perflevel0` stays within the
+totals and is zero only for intervals that ran entirely on lower performance
+levels. Repeat with the normal worker count to exercise
+parallel proving, then use the following procedure to check full-profiler
+overhead. Keep the worker count the same in each baseline/instrumented pair.
 
 ## Overhead and dark-time budgets
 
@@ -277,10 +422,12 @@ the per-stage RSS table there.)
 
 ## jolt-eval telemetry objectives
 
-Every summary metric is reachable as a string-keyed `jolt-eval` objective
+Time, memory, heap, and instruction metrics are reachable as string-keyed `jolt-eval` objectives
 (`telemetry:<workload>:<metric>`), so optimization agents can target any
-span without editing `jolt-eval`; deterministic instruction counts are
-available through the opt-in iai-callgrind lane
+span without editing `jolt-eval`. End-to-end instruction counts are
+`telemetry:<workload>:instructions` and
+`telemetry:<workload>:instructions:<span-label>`; deterministic
+microbenchmark counts are available through the opt-in iai-callgrind lane
 (`callgrind:<bench-name>:instructions`). See `jolt-eval/README.md`.
 
 ```bash

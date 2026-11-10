@@ -12,7 +12,7 @@ use akita_params::ChunkedWitnessCfg;
 
 use std::fmt::{Display, Formatter, Result as FormatResult};
 
-use crate::AKITA_ONE_HOT_K16;
+use crate::{AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256};
 
 macro_rules! delegate_preset {
     (
@@ -89,7 +89,9 @@ delegate_preset!(
     /// Direct-planning policy used to generate the below-cutover K=256 rows.
     JoltOneHotK256Direct,
     OneHot,
-    <OneHot as CommitmentConfig>::committed_source_class(),
+    CommittedSourceClass::UnitOneHot {
+        source_chunk_size: AKITA_ONE_HOT_K256,
+    },
     "jolt-fp128-onehot-k256-direct-planner"
 );
 
@@ -147,7 +149,7 @@ impl AkitaChunkProfile {
 }
 
 delegate_preset!(
-    /// Dense config for `u64`-bounded advice and committed-program objects.
+    /// Dense config for `u64`-bounded advice, RV64 increments, and committed-program objects.
     JoltDenseBounded,
     DenseBounded,
     <DenseBounded as CommitmentConfig>::committed_source_class(),
@@ -186,6 +188,34 @@ mod tests {
         assert_ne!(
             JoltOneHotK16::schedule_family_name(),
             JoltOneHotK256::schedule_family_name()
+        );
+    }
+
+    fn unit_one_hot_chunk_size(class: CommittedSourceClass) -> Option<usize> {
+        match class {
+            CommittedSourceClass::UnitOneHot { source_chunk_size } => Some(source_chunk_size),
+            CommittedSourceClass::BalancedSignedDigit => None,
+        }
+    }
+
+    #[test]
+    fn one_hot_presets_pin_their_chunk_size() {
+        // Independent of the base OneHot config's default chunk size.
+        assert_eq!(
+            unit_one_hot_chunk_size(JoltOneHotK16Direct::committed_source_class()),
+            Some(16)
+        );
+        assert_eq!(
+            unit_one_hot_chunk_size(JoltOneHotK256Direct::committed_source_class()),
+            Some(256)
+        );
+        assert_eq!(
+            unit_one_hot_chunk_size(JoltOneHotK16::committed_source_class()),
+            Some(16)
+        );
+        assert_eq!(
+            unit_one_hot_chunk_size(JoltOneHotK256::committed_source_class()),
+            Some(256)
         );
     }
 }

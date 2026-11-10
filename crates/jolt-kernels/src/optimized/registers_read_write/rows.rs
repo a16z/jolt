@@ -1,3 +1,5 @@
+use core::mem::MaybeUninit;
+
 use jolt_claims::protocols::jolt::geometry::dimensions::REGISTER_ADDRESS_BITS;
 use jolt_claims::protocols::jolt::JoltPolynomialId;
 use jolt_field::JoltField;
@@ -13,7 +15,8 @@ use jolt_witness::{
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use super::sparse::SeedEntry;
+use super::sparse::{SeedEntry, MAX_ENTRIES_PER_CYCLE};
+use crate::optimized::support::BundleAccess;
 use crate::KernelError;
 
 /// Operand indices and raw values for one cycle.
@@ -70,9 +73,28 @@ impl WitnessBundle for RegisterCycleRow {
 
 /// Per-cycle `rd` indices shared with stage 5.
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
-pub(crate) struct SharedRdIndices(pub Vec<Option<u8>>);
+pub(crate) struct SharedRdIndices {
+    pub(crate) indices: Vec<Option<u8>>,
+    pub(crate) cycles: usize,
+}
+
+impl SharedRdIndices {
+    pub(crate) fn new(mut indices: Vec<Option<u8>>, cycles: usize) -> Self {
+        assert!(indices.len() <= cycles);
+        let prefix = indices
+            .iter()
+            .rposition(Option::is_some)
+            .map_or(0, |i| i + 1);
+        indices.truncate(prefix);
+        indices.shrink_to_fit();
+        Self { indices, cycles }
+    }
+}
 
 const COLLECT_CHUNK: usize = 1 << 16;
+
+/// Cycles per chunk of the parallel collect.
+const COLLECT_PAR_CHUNK: usize = 1 << 14;
 
 /// Signed rd write delta, or zero without an rd operand.
 #[inline]
@@ -108,6 +130,15 @@ impl StreamConsumer for CollectRegisterEntries {
 }
 
 impl CollectRegisterEntries {
+    /// Bytes of the parallel collect's bookkeeping over `cycles` cycles, live
+    /// while the entries scatter, or `None` past `usize::MAX`: a count, an
+    /// offset and an output window per chunk.
+    pub(super) fn chunk_bytes(cycles: usize) -> Option<usize> {
+        cycles
+            .div_ceil(COLLECT_PAR_CHUNK)
+            .checked_mul(2 * size_of::<usize>() + size_of::<&mut [MaybeUninit<SeedEntry>]>())
+    }
+
     pub(super) fn collect<F: JoltField>(
         witness: &dyn JoltWitnessPlane<F>,
         cycles: usize,
@@ -117,14 +148,25 @@ impl CollectRegisterEntries {
                 reason: "cycle count exceeds the seed entries' packed u32 row domain",
             });
         }
-        #[cfg(feature = "parallel")]
+        let mut retained = cycles;
         if let Some(access) = witness.random_access() {
             if cycles <= access.cycles() {
-                return Self::collect_par(&access, cycles);
+                let prefix = BundleAccess::<RegisterCycleRow>::View(&access)
+                    .constant_suffix_start(cycles)?;
+                if prefix < cycles
+                    && access.window::<RegisterCycleRow>(prefix)? == RegisterCycleRow::default()
+                {
+                    retained = prefix;
+                }
+            }
+            #[cfg(feature = "parallel")]
+            if cycles <= access.cycles() {
+                return Self::collect_par(&access, retained);
             }
         }
+        let cycles = retained;
         let mut consumers = (CollectRegisterEntries {
-            entries: Vec::with_capacity(cycles * 3),
+            entries: Vec::with_capacity(cycles * MAX_ENTRIES_PER_CYCLE),
             rs1_indices: Vec::with_capacity(cycles),
             rs2_indices: Vec::with_capacity(cycles),
             rd_indices: Vec::with_capacity(cycles),
@@ -141,25 +183,23 @@ impl CollectRegisterEntries {
         access: &RandomAccessRows,
         cycles: usize,
     ) -> Result<Self, KernelError<F>> {
-        use core::mem::MaybeUninit;
-        const CHUNK: usize = 1 << 14;
         let mut rs1_indices: Vec<Option<u8>> = Vec::with_capacity(cycles);
         let mut rs2_indices: Vec<Option<u8>> = Vec::with_capacity(cycles);
         let mut rd_indices: Vec<Option<u8>> = Vec::with_capacity(cycles);
         let mut rd_inc: Vec<i128> = Vec::with_capacity(cycles);
         let error = FirstErrorLatch::new();
-        let chunk_count = cycles.div_ceil(CHUNK);
+        let chunk_count = cycles.div_ceil(COLLECT_PAR_CHUNK);
         let mut counts: Vec<usize> = Vec::new();
         (
-            rs1_indices.spare_capacity_mut()[..cycles].par_chunks_mut(CHUNK),
-            rs2_indices.spare_capacity_mut()[..cycles].par_chunks_mut(CHUNK),
-            rd_indices.spare_capacity_mut()[..cycles].par_chunks_mut(CHUNK),
-            rd_inc.spare_capacity_mut()[..cycles].par_chunks_mut(CHUNK),
+            rs1_indices.spare_capacity_mut()[..cycles].par_chunks_mut(COLLECT_PAR_CHUNK),
+            rs2_indices.spare_capacity_mut()[..cycles].par_chunks_mut(COLLECT_PAR_CHUNK),
+            rd_indices.spare_capacity_mut()[..cycles].par_chunks_mut(COLLECT_PAR_CHUNK),
+            rd_inc.spare_capacity_mut()[..cycles].par_chunks_mut(COLLECT_PAR_CHUNK),
         )
             .into_par_iter()
             .enumerate()
             .map(|(chunk_index, (rs1, rs2, rd, inc))| {
-                let base = chunk_index * CHUNK;
+                let base = chunk_index * COLLECT_PAR_CHUNK;
                 let mut count = 0usize;
                 for offset in 0..rs1.len() {
                     match access.window::<RegisterCycleRow>(base + offset) {
@@ -212,8 +252,8 @@ impl CollectRegisterEntries {
                 .into_par_iter()
                 .enumerate()
                 .for_each(|(chunk_index, window)| {
-                    let base = chunk_index * CHUNK;
-                    let top = ((chunk_index + 1) * CHUNK).min(cycles);
+                    let base = chunk_index * COLLECT_PAR_CHUNK;
+                    let top = ((chunk_index + 1) * COLLECT_PAR_CHUNK).min(cycles);
                     let mut written = 0usize;
                     for row in base..top {
                         match access.window::<RegisterCycleRow>(row) {

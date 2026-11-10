@@ -1,6 +1,6 @@
 use jolt_crypto::{Bn254, Bn254G1, JoltGroup, PairingGroup};
 use jolt_field::{Fr, One, Zero};
-use jolt_transcript::Transcript;
+use jolt_transcript::FieldTranscript;
 
 use crate::{HyperKZGError, HyperKZGProverSetup, HyperKZGVerifierSetup};
 
@@ -20,7 +20,7 @@ impl HyperKZGProverSetup {
         &self,
         polynomials: &[Vec<Fr>],
         points: [Fr; 3],
-        transcript: &mut impl Transcript<Challenge = Fr>,
+        transcript: &mut impl FieldTranscript<Fr>,
     ) -> Result<([Bn254G1; 3], [Vec<Fr>; 3]), HyperKZGError> {
         let evaluations = points.map(|point| {
             polynomials
@@ -28,7 +28,7 @@ impl HyperKZGProverSetup {
                 .map(|coefficients| evaluate(coefficients, point))
                 .collect::<Vec<_>>()
         });
-        let powers = absorb_evaluations(&evaluations, transcript);
+        let powers = absorb_evaluations(&evaluations, transcript)?;
         let first = polynomials.first().ok_or(HyperKZGError::PolynomialShape)?;
         let mut combined = vec![Fr::zero(); first.len()];
         for (polynomial, weight) in polynomials.iter().zip(powers) {
@@ -38,7 +38,7 @@ impl HyperKZGProverSetup {
         }
         let [a, b, c] = points.map(|point| self.commit_coefficients(&quotient(&combined, point)));
         let witnesses = [a?, b?, c?];
-        let _ = absorb_witnesses(&witnesses, transcript);
+        let _ = absorb_witnesses(&witnesses, transcript)?;
         Ok((witnesses, evaluations))
     }
 }
@@ -50,10 +50,10 @@ impl HyperKZGVerifierSetup {
         points: [Fr; 3],
         evaluations: &[Vec<Fr>; 3],
         witnesses: &[Bn254G1; 3],
-        transcript: &mut impl Transcript<Challenge = Fr>,
+        transcript: &mut impl FieldTranscript<Fr>,
     ) -> Result<(), HyperKZGError> {
-        let powers = absorb_evaluations(evaluations, transcript);
-        let d = absorb_witnesses(witnesses, transcript);
+        let powers = absorb_evaluations(evaluations, transcript)?;
+        let d = absorb_witnesses(witnesses, transcript)?;
         let weights = [Fr::one(), d, d * d];
         let scale = weights.iter().copied().sum::<Fr>();
         let mut lhs = Bn254G1::msm(commitments, &powers).scalar_mul(&scale);
@@ -81,28 +81,25 @@ impl HyperKZGVerifierSetup {
 
 fn absorb_evaluations(
     evaluations: &[Vec<Fr>; 3],
-    transcript: &mut impl Transcript<Challenge = Fr>,
-) -> Vec<Fr> {
+    transcript: &mut impl FieldTranscript<Fr>,
+) -> Result<Vec<Fr>, HyperKZGError> {
     for row in evaluations {
         for value in row {
             transcript.append(value);
         }
     }
-    let q = transcript.challenge();
     let [first, _, _] = evaluations;
-    std::iter::successors(Some(Fr::one()), |power| Some(*power * q))
-        .take(first.len())
-        .collect()
+    Ok(transcript.challenge_powers(first.len())?)
 }
 
 fn absorb_witnesses(
     witnesses: &[Bn254G1; 3],
-    transcript: &mut impl Transcript<Challenge = Fr>,
-) -> Fr {
+    transcript: &mut impl FieldTranscript<Fr>,
+) -> Result<Fr, HyperKZGError> {
     for witness in witnesses {
         transcript.append(witness);
     }
-    transcript.challenge()
+    Ok(transcript.challenge()?)
 }
 
 fn evaluate(coefficients: &[Fr], point: Fr) -> Fr {

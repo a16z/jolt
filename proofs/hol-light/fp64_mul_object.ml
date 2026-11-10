@@ -13,7 +13,7 @@ let jolt_fp64_mul_mc =
     0xcb09016b; 0x9b0a7d2c; 0xab080188; 0x9a090169;
     0x9bca7d2b; 0xcb09016b; 0x9b0a7d2a; 0xab080148;
     0x9a090169; 0x9100ed0a; 0xb100ed1f; 0xfa1f013f;
-    0x9a8a3100; 0xd65f03c0
+    0x9a8ab100; 0xd65f03c0
   ];;
 
 let JOLT_FP64_MUL_EXEC = ARM_MK_EXEC_RULE jolt_fp64_mul_mc;;

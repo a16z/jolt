@@ -1,16 +1,18 @@
-use crate::AkitaScheduleArtifacts;
-use akita_params::{PolynomialGroupLayout, PrecommittedGroupProfiles};
+use crate::{AkitaScheduleArtifacts, AkitaVerificationContext};
+use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
+use akita_params::PrecommittedGroupProfiles;
 use akita_pcs::custom_source::RootPolyMeta;
 use akita_pcs::{AkitaError, CommitOutput, CpuBackend, GroupContext, SourceHandle};
+use akita_transcript::TranscriptSponge;
+use akita_types::PendingEof;
 use jolt_crypto::Commitment;
-use jolt_field::CanonicalBytes;
 use jolt_openings::{
-    BatchOpeningScheme, CommitmentGroupRole, CommitmentScheme, EvaluationClaim, GroupOpeningClaim,
-    GroupOpeningWithHint, OpeningsError, TaggedGroupOpeningClaim, TransparentObjectSetup,
-    VerifierOpeningClaim, ZkBatchOpeningScheme, ZkOpeningScheme,
+    BatchOpeningScheme, CommitmentGroupRole, CommitmentScheme, EvaluationClaim, GroupBatchOpening,
+    GroupOpeningClaim, GroupOpeningWithHint, OpeningsError, TaggedGroupOpeningClaim,
+    TransparentObjectSetup, VerifierOpeningClaim,
 };
 use jolt_poly::{MultilinearPoly, OneHotPolynomial, Polynomial};
-use jolt_transcript::Transcript;
+use jolt_transcript::{FieldTranscript, ProverState, VerifierState};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{btree_map::Entry, BTreeMap},
@@ -20,20 +22,25 @@ use std::{
 use crate::adapters::{
     akita_error, akita_ordered_evaluations, commit_failed, dense_polynomials, invalid_batch,
     invalid_setup, one_hot_polynomial, owned_one_hot_polynomial, serialize_akita,
-    transparent_zk_error, validate_one_hot_k, with_backend_pool, AkitaBackend,
-    AkitaBackendCommitment, AkitaBackendDensePoly, AkitaBackendExtField, AkitaBackendFlavor,
-    AkitaBackendHint, AkitaBackendOneHotPoly, AkitaBatchProof, AkitaCommitment, AkitaField,
-    AkitaHidingCommitment, AkitaHintSource, AkitaLayoutDigest, AkitaProverHint, AkitaProverSetup,
-    AkitaSetupFlavor, AkitaSetupParams, AkitaVerifierScheduleArtifacts, AkitaVerifierSetup,
-    BackendVerifierCache, FullWidthBackendSetup, AKITA_SOURCE_RING_DIMENSION,
+    validate_one_hot_k, with_backend_pool, AkitaBackend, AkitaBackendCommitment,
+    AkitaBackendDensePoly, AkitaBackendExtField, AkitaBackendFlavor, AkitaBackendHint,
+    AkitaBackendOneHotPoly, AkitaBatchProof, AkitaCommitment, AkitaField, AkitaHintSource,
+    AkitaLayoutDigest, AkitaProverHint, AkitaProverSetup, AkitaSetupFlavor, AkitaSetupParams,
+    AkitaVerifierSetup, FullWidthBackendSetup, AKITA_SOURCE_RING_DIMENSION,
 };
 use crate::configs::AkitaChunkProfile;
+use crate::deferred::SetupMode;
 use crate::native_batching::{AkitaNativeBatchPolynomials, AkitaNativeBatching};
-use crate::one_hot_family::{with_one_hot_family, OneHotFamily};
+use crate::one_hot_family::with_one_hot_family;
 use crate::trace_onehot::{TraceOneHotColumn, TraceOneHotRows};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AkitaScheme;
+
+/// Jolt's prover transcript over the sponge Akita's opening runs in.
+pub type AkitaProverTranscript = ProverState<TranscriptSponge>;
+/// Jolt's verifier transcript over the sponge Akita's opening runs in.
+pub type AkitaVerifierTranscript<'a> = VerifierState<'a, TranscriptSponge>;
 
 fn split_commit_output(
     output: CommitOutput<AkitaField, AkitaBackendExtField>,
@@ -120,7 +127,13 @@ impl AkitaScheme {
         }
 
         let dense = dense_polynomials(polynomials)?;
-        Self::commit_dense_backend(setup, layout_digest, num_vars, dense)
+        Self::commit_dense_backend(
+            setup.dense_backend()?.1,
+            setup.verifier.dense_scheme()?.schedules(),
+            layout_digest,
+            num_vars,
+            dense,
+        )
     }
 
     /// Commits a group of row-major one-hot polynomials through the
@@ -306,7 +319,7 @@ impl AkitaScheme {
             let (auxiliary_group, _) = hint.backend.as_ref().ok_or_else(|| {
                 invalid_batch("Akita auxiliary group is missing backend opening data")
             })?;
-            profiles.push(auxiliary_group.profile);
+            profiles.push(*auxiliary_group.profile());
         }
         PrecommittedGroupProfiles::from_profiles(profiles).map_err(akita_error)
     }
@@ -363,22 +376,21 @@ impl AkitaScheme {
         ))
     }
 
-    fn commit_dense_backend(
-        setup: &AkitaProverSetup,
+    fn commit_dense_backend<Cfg>(
+        backend: &AkitaBackend,
+        schedules: &TrustedScheduleCatalog<Cfg>,
         layout_digest: AkitaLayoutDigest,
         num_vars: usize,
         dense: Vec<AkitaBackendDensePoly>,
-    ) -> Result<(AkitaCommitment, AkitaProverHint), OpeningsError> {
+    ) -> Result<(AkitaCommitment, AkitaProverHint), OpeningsError>
+    where
+        Cfg: CommitmentConfig<Field = AkitaField, ExtField = AkitaBackendExtField>,
+    {
         let poly_count = dense.len();
-        let (_, backend) = setup.dense_backend()?;
         let (backend_commitment, backend_hint) = with_backend_pool(|| {
             let source = backend.import_source(dense)?;
             backend.commit(
-                setup
-                    .verifier
-                    .dense_scheme()
-                    .map_err(|error| AkitaError::InvalidSetup(error.to_string()))?
-                    .schedules(),
+                schedules,
                 &source,
                 GroupContext::scheduler_without_precommitted_groups(),
             )
@@ -418,98 +430,45 @@ impl Commitment for AkitaScheme {
     type Output = AkitaCommitment;
 }
 
-impl CommitmentScheme for AkitaScheme {
-    type Field = AkitaField;
-    type Proof = AkitaBatchProof;
-    type ProverSetup = AkitaProverSetup;
-    type VerifierSetup = AkitaVerifierSetup;
-    type OpeningHint = AkitaProverHint;
-    type SetupParams = AkitaSetupParams;
-
-    fn setup(
-        params: Self::SetupParams,
-    ) -> Result<(Self::ProverSetup, Self::VerifierSetup), OpeningsError> {
-        if params.flavor == AkitaSetupFlavor::Dense
-            && params.akita_chunk_profile != AkitaChunkProfile::default()
-        {
-            return Err(OpeningsError::InvalidSetup(
-                "dense-only Akita setup cannot select one-hot witness chunking".to_owned(),
-            ));
-        }
-        if params.flavor != AkitaSetupFlavor::Dense {
-            OneHotFamily::from_parts(params.one_hot_k, params.akita_chunk_profile)
-                .and_then(|family| {
-                    family.validate_num_vars(
-                        params.max_num_vars,
-                        params.max_num_polys_per_commitment_group,
-                    )
-                })
-                .map_err(invalid_setup)?;
-        }
-        if params.grouped_schedule.as_ref().is_some_and(|request| {
-            request.final_group()
-                != PolynomialGroupLayout::new(
-                    params.max_num_vars,
-                    params.max_num_polys_per_commitment_group,
-                )
-        }) {
-            return Err(OpeningsError::InvalidSetup(
-                "the grouped schedule request final shape must equal setup shape".to_owned(),
-            ));
-        }
-        let artifacts = &params.schedule_artifacts;
-        let dense_catalog = artifacts.dense_catalog().map_err(invalid_setup)?;
-        let dense_schedule_artifact = || dense_catalog.to_artifact_bytes().map_err(invalid_setup);
-        let one_hot_schedule_artifact = || {
-            let base = artifacts
-                .one_hot_catalog_for_profile(params.one_hot_k, params.akita_chunk_profile)
-                .map_err(invalid_setup)?;
-            let catalog = params
+impl AkitaScheme {
+    /// [`CommitmentScheme::setup`] that rejects a request whose flat public
+    /// matrix needs more than `matrix_byte_limit` bytes with
+    /// [`OpeningsError::SetupExceedsBudget`], before allocating the one-hot
+    /// backend setup. Only the one-hot single-chunk setup is priced,
+    /// including grouped rows, which that matrix covers because it is sized
+    /// from the grouped catalog. Full-width dense groups build separate,
+    /// unpriced backend setups, so they and every other shape fail with
+    /// [`OpeningsError::InvalidSetup`] before any setup work.
+    ///
+    /// Passing prices only that matrix, not the complete setup: schedule
+    /// catalogs, backend caches, the setup-prefix export's buffers,
+    /// commitments and hints, and verifier preparation are not counted.
+    /// [`CommitmentScheme::setup`] checks no limit.
+    pub fn setup_with_matrix_byte_limit(
+        params: AkitaSetupParams,
+        matrix_byte_limit: usize,
+    ) -> Result<(AkitaProverSetup, AkitaVerifierSetup), OpeningsError> {
+        if params.flavor != AkitaSetupFlavor::OneHot
+            || params.akita_chunk_profile != AkitaChunkProfile::default()
+            || params
                 .grouped_schedule
                 .as_ref()
-                .map_or_else(
-                    || Ok(base.clone()),
-                    |grouped_schedule| {
-                        grouped_schedule.extend_catalog(
-                            &dense_catalog,
-                            &artifacts.full_dense_catalog()?,
-                            &base,
-                            params.one_hot_k,
-                            params.akita_chunk_profile,
-                        )
-                    },
-                )
-                .map_err(invalid_setup)?;
-            catalog.to_artifact_bytes().map_err(invalid_setup)
-        };
-        let profile = params.akita_chunk_profile;
-        let schedule_artifacts = match params.flavor {
-            AkitaSetupFlavor::Both => AkitaVerifierScheduleArtifacts::Both {
-                dense_profile: artifacts.dense_profile(),
-                profile,
-                dense: dense_schedule_artifact()?,
-                one_hot: one_hot_schedule_artifact()?,
-            },
-            AkitaSetupFlavor::OneHot => AkitaVerifierScheduleArtifacts::OneHot {
-                profile,
-                one_hot: one_hot_schedule_artifact()?,
-            },
-            AkitaSetupFlavor::Dense => AkitaVerifierScheduleArtifacts::Dense {
-                dense_profile: artifacts.dense_profile(),
-                dense: dense_schedule_artifact()?,
-            },
-        };
-        let one_hot_log_k = validate_one_hot_k(params.one_hot_k)
-            .map_err(|err| OpeningsError::InvalidSetup(err.to_string()))?;
-        let verifier = AkitaVerifierSetup {
-            max_num_vars: params.max_num_vars,
-            max_num_polys_per_commitment_group: params.max_num_polys_per_commitment_group,
-            max_total_batch_polys: params.max_total_batch_polys,
-            default_layout_digest: params.default_layout_digest,
-            one_hot_k: params.one_hot_k,
-            schedule_artifacts,
-            backend_cache: BackendVerifierCache::default(),
-        };
+                .is_some_and(|request| request.full_width_arities().next().is_some())
+        {
+            return Err(OpeningsError::InvalidSetup(
+                "a matrix byte limit prices only the one-hot single-chunk setup without full-width dense groups".into(),
+            ));
+        }
+        Self::build_setup(params, Some(matrix_byte_limit))
+    }
+
+    fn build_setup(
+        params: AkitaSetupParams,
+        matrix_byte_limit: Option<usize>,
+    ) -> Result<(AkitaProverSetup, AkitaVerifierSetup), OpeningsError> {
+        let verifier = Self::verifier_setup_from_params(&params)?;
+        let artifacts = &params.schedule_artifacts;
+        let one_hot_log_k = validate_one_hot_k(params.one_hot_k).map_err(invalid_setup)?;
         let (backend_prover_setup, cpu_backend, backend_verifier_setup) =
             if params.flavor == AkitaSetupFlavor::OneHot {
                 (None, None, None)
@@ -532,7 +491,8 @@ impl CommitmentScheme for AkitaScheme {
             };
         let (one_hot_backend_prover_setup, one_hot_cpu_backend, one_hot_backend_verifier_setup) =
             if params.max_num_vars >= one_hot_log_k && params.flavor != AkitaSetupFlavor::Dense {
-                let backend_prover_setup = crate::adapters::one_hot_setup_prover(&verifier)?;
+                let backend_prover_setup =
+                    crate::adapters::one_hot_setup_prover(&verifier, matrix_byte_limit)?;
                 let cpu_backend = CpuBackend::new(Arc::clone(&backend_prover_setup.expanded))
                     .map_err(invalid_setup)?;
                 let backend_verifier_setup =
@@ -552,10 +512,18 @@ impl CommitmentScheme for AkitaScheme {
                 let scheme = artifacts.full_dense_scheme().map_err(invalid_setup)?;
                 for num_vars in arities {
                     if let Entry::Vacant(entry) = full_width.entry(num_vars) {
-                        let setup = with_backend_pool(|| scheme.setup_prover(num_vars, 1))
-                            .map_err(invalid_setup)?;
-                        let backend =
-                            CpuBackend::new(Arc::clone(&setup.expanded)).map_err(invalid_setup)?;
+                        // The grouped catalog provisions each admitted precommitted
+                        // group's matrix, including full-width dense commitments.
+                        let backend = if let Some(backend) = &one_hot_cpu_backend {
+                            Arc::clone(backend)
+                        } else {
+                            let setup = with_backend_pool(|| scheme.setup_prover(num_vars, 1))
+                                .map_err(invalid_setup)?;
+                            Arc::new(
+                                CpuBackend::new(Arc::clone(&setup.expanded))
+                                    .map_err(invalid_setup)?,
+                            )
+                        };
                         let _ = entry.insert(Arc::new(FullWidthBackendSetup {
                             scheme: scheme.clone(),
                             backend,
@@ -566,6 +534,7 @@ impl CommitmentScheme for AkitaScheme {
         }
         verifier.prime_backend_cache(backend_verifier_setup, one_hot_backend_verifier_setup)?;
         let prover = AkitaProverSetup {
+            inherited_setup: None,
             full_width,
             backend_prover_setup,
             cpu_backend,
@@ -575,6 +544,22 @@ impl CommitmentScheme for AkitaScheme {
             verifier: verifier.clone(),
         };
         Ok((prover, verifier))
+    }
+}
+
+impl CommitmentScheme for AkitaScheme {
+    type Field = AkitaField;
+    type Proof = AkitaBatchProof;
+    type ProverSetup = AkitaProverSetup;
+    type VerifierSetup = AkitaVerifierSetup;
+    type VerificationContext<'a> = AkitaVerificationContext<'a>;
+    type OpeningHint = AkitaProverHint;
+    type SetupParams = AkitaSetupParams;
+
+    fn setup(
+        params: Self::SetupParams,
+    ) -> Result<(Self::ProverSetup, Self::VerifierSetup), OpeningsError> {
+        Self::build_setup(params, None)
     }
 
     fn verifier_setup(prover_setup: &Self::ProverSetup) -> Self::VerifierSetup {
@@ -612,7 +597,13 @@ impl CommitmentScheme for AkitaScheme {
         let evals = akita_ordered_evaluations(poly)?;
         let dense =
             vec![AkitaBackendDensePoly::from_field_evals(num_vars, evals).map_err(akita_error)?];
-        Self::commit_dense_backend(setup, setup.default_layout_digest(), num_vars, dense)
+        Self::commit_dense_backend(
+            setup.dense_backend()?.1,
+            setup.verifier.dense_scheme()?.schedules(),
+            setup.default_layout_digest(),
+            num_vars,
+            dense,
+        )
     }
 
     fn open<P: MultilinearPoly<Self::Field> + ?Sized>(
@@ -621,7 +612,7 @@ impl CommitmentScheme for AkitaScheme {
         eval: Self::Field,
         setup: &Self::ProverSetup,
         hint: Option<Self::OpeningHint>,
-        transcript: &mut impl Transcript<Challenge = Self::Field>,
+        transcript: &mut impl FieldTranscript<Self::Field>,
     ) -> Result<Self::Proof, OpeningsError> {
         let hint = match hint {
             Some(hint) => hint,
@@ -648,7 +639,7 @@ impl CommitmentScheme for AkitaScheme {
         eval: Self::Field,
         proof: &Self::Proof,
         setup: &Self::VerifierSetup,
-        transcript: &mut impl Transcript<Challenge = Self::Field>,
+        transcript: &mut impl FieldTranscript<Self::Field>,
     ) -> Result<(), OpeningsError> {
         let statement = vec![VerifierOpeningClaim {
             commitment: commitment.clone(),
@@ -706,13 +697,19 @@ impl CommitmentScheme for AkitaScheme {
             },
         )
     }
+}
+
+/// Jolt's trace batch, run inside Jolt's own sponge.
+impl GroupBatchOpening for AkitaScheme {
+    type Sponge = TranscriptSponge;
+    type PendingEof = PendingEof;
 
     fn prove_batch(
         setup: &Self::ProverSetup,
         auxiliary_groups: Vec<GroupOpeningWithHint<Self::Field, Self::Output, Self::OpeningHint>>,
         final_group: GroupOpeningClaim<Self::Field, Self::Output>,
         final_hint: Self::OpeningHint,
-        transcript: &mut impl Transcript<Challenge = Self::Field>,
+        transcript: &mut ProverState<Self::Sponge>,
     ) -> Result<Self::Proof, OpeningsError> {
         AkitaNativeBatching::prove_trace_batch(
             setup,
@@ -728,15 +725,39 @@ impl CommitmentScheme for AkitaScheme {
         auxiliary_groups: &[TaggedGroupOpeningClaim<Self::Field, Self::Output>],
         final_group: &GroupOpeningClaim<Self::Field, Self::Output>,
         proof: &Self::Proof,
-        transcript: &mut impl Transcript<Challenge = Self::Field>,
-    ) -> Result<(), OpeningsError> {
-        AkitaNativeBatching::verify_trace_batch(
+        transcript: &mut VerifierState<'_, Self::Sponge>,
+        context: &mut Self::VerificationContext<'_>,
+    ) -> Result<PendingEof, OpeningsError> {
+        if context.mode == SetupMode::Defer && context.accumulator.is_none() {
+            return Err(invalid_batch(
+                "deferred verification requires a setup accumulator",
+            ));
+        }
+        if let Some(marker) = context.cycle_marker {
+            jolt_platform::start_cycle_tracking(marker);
+        }
+        let result = AkitaNativeBatching::verify_trace_batch(
             setup,
             auxiliary_groups,
             final_group,
             proof,
             transcript,
-        )
+            context,
+        );
+        if let Some(marker) = context.cycle_marker {
+            jolt_platform::end_cycle_tracking(marker);
+        }
+        result
+    }
+
+    fn check_eof(
+        pending: PendingEof,
+        transcript: VerifierState<'_, Self::Sponge>,
+    ) -> Result<(), OpeningsError> {
+        pending
+            .check_eof(transcript)
+            .map(|_| ())
+            .map_err(|_| OpeningsError::VerificationFailed)
     }
 }
 
@@ -760,6 +781,26 @@ impl TransparentObjectSetup for AkitaScheme {
         ))
     }
 
+    fn commit_bounded_object(
+        setup: &Self::ProverSetup,
+        num_vars: usize,
+        values: Vec<Self::Field>,
+        layout_digest: [u8; 32],
+    ) -> Result<(AkitaCommitment, AkitaProverHint), OpeningsError> {
+        let backend = setup
+            .one_hot_cpu_backend
+            .as_deref()
+            .or(setup.cpu_backend.as_deref())
+            .ok_or_else(|| invalid_setup("bounded object has no prepared backend owner"))?;
+        let scheme = setup
+            .schedule_artifacts
+            .bounded_dense_scheme()
+            .map_err(invalid_setup)?;
+        let dense =
+            vec![AkitaBackendDensePoly::from_field_prefix(num_vars, values).map_err(akita_error)?];
+        Self::commit_dense_backend(backend, scheme.schedules(), layout_digest, num_vars, dense)
+    }
+
     fn commit_full_width_object<P: MultilinearPoly<Self::Field> + ?Sized>(
         setup: &Self::ProverSetup,
         poly: &P,
@@ -769,27 +810,19 @@ impl TransparentObjectSetup for AkitaScheme {
         let cached = setup.full_width.get(&num_vars).ok_or_else(|| {
             invalid_setup("full-width object arity was not admitted during preprocessing")
         })?;
-        let dense = vec![AkitaBackendDensePoly::from_field_evals(
-            num_vars,
-            akita_ordered_evaluations(poly)?,
-        )
+        let dense = vec![match poly.dense_evaluation_prefix() {
+            Some(prefix) => AkitaBackendDensePoly::from_field_prefix(num_vars, prefix.to_vec()),
+            None => {
+                AkitaBackendDensePoly::from_field_evals(num_vars, akita_ordered_evaluations(poly)?)
+            }
+        }
         .map_err(akita_error)?];
-        let (backend_commitment, backend_hint) = with_backend_pool(|| {
-            let source = cached.backend.import_source(dense)?;
-            cached.backend.commit(
-                cached.scheme.schedules(),
-                &source,
-                GroupContext::scheduler_without_precommitted_groups(),
-            )
-        })
-        .map(split_commit_output)
-        .map_err(commit_failed)?;
-        Self::package_commitment(
+        Self::commit_dense_backend(
+            &cached.backend,
+            cached.scheme.schedules(),
             layout_digest,
             num_vars,
-            backend_commitment,
-            backend_hint,
-            AkitaHintSource::Dense { poly_count: 1 },
+            dense,
         )
     }
 
@@ -814,79 +847,6 @@ impl TransparentObjectSetup for AkitaScheme {
     }
 }
 
-impl ZkOpeningScheme for AkitaScheme {
-    type HidingCommitment = AkitaHidingCommitment;
-    type Blind = ();
-
-    fn commit_zk<P: MultilinearPoly<Self::Field> + ?Sized>(
-        poly: &P,
-        setup: &Self::ProverSetup,
-    ) -> Result<(Self::Output, Self::OpeningHint), OpeningsError> {
-        Self::commit(poly, setup)
-    }
-
-    fn open_zk<P: MultilinearPoly<Self::Field> + ?Sized>(
-        poly: &P,
-        point: &[Self::Field],
-        eval: Self::Field,
-        setup: &Self::ProverSetup,
-        hint: Self::OpeningHint,
-        transcript: &mut impl Transcript<Challenge = Self::Field>,
-    ) -> Result<(Self::Proof, Self::HidingCommitment, Self::Blind), OpeningsError> {
-        let proof = Self::open(poly, point, eval, setup, Some(hint), transcript)?;
-        Ok((
-            proof,
-            AkitaHidingCommitment::new(eval.to_bytes_le_vec()),
-            (),
-        ))
-    }
-
-    fn verify_zk(
-        _commitment: &Self::Output,
-        _point: &[Self::Field],
-        _proof: &Self::Proof,
-        _setup: &Self::VerifierSetup,
-        _transcript: &mut impl Transcript<Challenge = Self::Field>,
-    ) -> Result<Self::HidingCommitment, OpeningsError> {
-        Err(transparent_zk_error())
-    }
-}
-
-impl ZkBatchOpeningScheme for AkitaNativeBatching {
-    type Commitment = AkitaCommitment;
-    type HidingCommitment = AkitaHidingCommitment;
-    type Blind = ();
-
-    fn prove_batch_zk<'a, T>(
-        _setup: &Self::ProverSetup,
-        _point: jolt_poly::Point<{ jolt_poly::HIGH_TO_LOW }, Self::Field>,
-        _commitments: Vec<Self::Commitment>,
-        _polynomials: Self::Polynomials<'a>,
-        _hints: Self::Hints,
-        _evaluations: Vec<Self::Field>,
-        _transcript: &mut T,
-    ) -> Result<jolt_openings::ZkBatchOpening<Self>, OpeningsError>
-    where
-        Self: 'a,
-        T: Transcript<Challenge = Self::Field>,
-    {
-        Err(transparent_zk_error())
-    }
-
-    fn verify_batch_zk<T>(
-        _setup: &Self::VerifierSetup,
-        _point: jolt_poly::Point<{ jolt_poly::HIGH_TO_LOW }, Self::Field>,
-        _commitments: Vec<Self::Commitment>,
-        _proof: &Self::Proof,
-        _transcript: &mut T,
-    ) -> Result<Self::HidingCommitment, OpeningsError>
-    where
-        T: Transcript<Challenge = Self::Field>,
-    {
-        Err(transparent_zk_error())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     #![expect(clippy::unwrap_used, reason = "tests unwrap successful PCS operations")]
@@ -895,15 +855,15 @@ mod tests {
     #![expect(clippy::panic, reason = "tests reject impossible fixture variants")]
 
     use super::*;
-    use crate::adapters::{
-        append_verifier_setup, AkitaBackendFlavor, AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256,
-    };
+    use crate::adapters::{AkitaVerifierScheduleArtifacts, AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256};
     use crate::configs::JoltDenseBounded;
+    use crate::one_hot_family::OneHotFamily;
     use crate::AkitaOneHotScheduleArtifact;
     use akita_config::CommitmentConfig;
+    use akita_params::PolynomialGroupLayout;
     use akita_schedules::ValidatedScheduleCatalog;
-    use jolt_field::Ring;
-    use jolt_transcript::Blake2bTranscript;
+    use jolt_field::{Ring, Zero};
+    use jolt_transcript::{prover_transcript, Blake2b512};
 
     #[test]
     fn full_width_objects_do_not_widen_bounded_dense_commitments() {
@@ -920,79 +880,27 @@ mod tests {
         let (bounded, _) = AkitaScheme::setup(params).unwrap();
         let polynomial = Polynomial::new(vec![AkitaField::pow2(80); 1 << 14]);
         assert!(AkitaScheme::commit(&polynomial, &bounded).is_err());
+        assert!(AkitaScheme::commit_bounded_object(
+            &bounded,
+            14,
+            vec![AkitaField::pow2(80)],
+            [7; 32],
+        )
+        .is_err());
         let (commitment, hint) =
             AkitaScheme::commit_full_width_object(&bounded, &polynomial, [7; 32]).unwrap();
         assert_eq!(commitment, hint.commitment);
         assert_eq!(commitment.num_vars, polynomial.num_vars());
-    }
 
-    #[test]
-    fn setup_key_transcript_binds_backend_shape() {
-        let artifacts =
-            AkitaScheduleArtifacts::shared_from_default_directory(AkitaChunkProfile::new(8, 2));
-        let setup = AkitaVerifierSetup {
-            max_num_vars: 4,
-            max_num_polys_per_commitment_group: 1,
-            max_total_batch_polys: 1,
-            default_layout_digest: [7; 32],
-            one_hot_k: AKITA_ONE_HOT_K256,
-            schedule_artifacts: AkitaVerifierScheduleArtifacts::Both {
-                dense_profile: artifacts.dense_profile(),
-                profile: AkitaChunkProfile::default(),
-                dense: artifacts
-                    .dense_catalog()
-                    .unwrap()
-                    .to_artifact_bytes()
-                    .unwrap(),
-                one_hot: artifacts
-                    .one_hot_catalog(AKITA_ONE_HOT_K256)
-                    .unwrap()
-                    .to_artifact_bytes()
-                    .unwrap(),
-            },
-            backend_cache: Default::default(),
-        };
-        let mut baseline = Blake2bTranscript::<AkitaField>::new(b"akita-setup-key-test");
-        let initial_state = baseline.state();
-
-        append_verifier_setup(&mut baseline, &setup, AkitaBackendFlavor::Dense).unwrap();
-        assert_ne!(baseline.state(), initial_state);
-
-        let mut same = Blake2bTranscript::<AkitaField>::new(b"akita-setup-key-test");
-        append_verifier_setup(&mut same, &setup, AkitaBackendFlavor::Dense).unwrap();
-        assert_eq!(baseline.state(), same.state());
-
-        let mut flavor_transcript = Blake2bTranscript::<AkitaField>::new(b"akita-setup-key-test");
-        append_verifier_setup(&mut flavor_transcript, &setup, AkitaBackendFlavor::OneHot).unwrap();
-        assert_ne!(baseline.state(), flavor_transcript.state());
-
-        let mut changed_shape = setup.clone();
-        changed_shape.max_num_vars = 5;
-        let mut shape_transcript = Blake2bTranscript::<AkitaField>::new(b"akita-setup-key-test");
-        append_verifier_setup(
-            &mut shape_transcript,
-            &changed_shape,
-            AkitaBackendFlavor::Dense,
-        )
-        .unwrap();
-        assert_ne!(baseline.state(), shape_transcript.state());
-
-        let mut changed_digest = setup;
-        changed_digest.default_layout_digest = [8; 32];
-        let mut digest_transcript = Blake2bTranscript::<AkitaField>::new(b"akita-setup-key-test");
-        append_verifier_setup(
-            &mut digest_transcript,
-            &changed_digest,
-            AkitaBackendFlavor::Dense,
-        )
-        .unwrap();
-        assert_ne!(baseline.state(), digest_transcript.state());
-
-        let mut changed_k = changed_digest;
-        changed_k.one_hot_k = AKITA_ONE_HOT_K16;
-        let mut k_transcript = Blake2bTranscript::<AkitaField>::new(b"akita-setup-key-test");
-        append_verifier_setup(&mut k_transcript, &changed_k, AkitaBackendFlavor::Dense).unwrap();
-        assert_ne!(digest_transcript.state(), k_transcript.state());
+        for live in [0, 1, 4097, 1 << 14] {
+            let prefix = vec![AkitaField::from_u64(3); live];
+            let (compact, _) =
+                AkitaScheme::commit_bounded_object(&bounded, 14, prefix.clone(), [7; 32]).unwrap();
+            let mut full = prefix;
+            full.resize(1 << 14, AkitaField::zero());
+            let (expected, _) = AkitaScheme::commit(&Polynomial::new(full), &bounded).unwrap();
+            assert_eq!(compact, expected);
+        }
     }
 
     #[test]
@@ -1058,7 +966,10 @@ mod tests {
                 evaluation: EvaluationClaim::new(point.clone(), polynomial.evaluate(&point)),
             })
             .collect::<Vec<_>>();
-        let mut prover_transcript = Blake2bTranscript::<AkitaField>::new(b"akita-one-hot-k");
+        let mut prover_state = prover_transcript::<Blake2b512>(
+            &jolt_transcript::protocol_tag(b"akita-one-hot-k"),
+            b"",
+        );
         let proof = <AkitaNativeBatching as BatchOpeningScheme>::prove_batch(
             &prover_setup,
             statement.clone(),
@@ -1067,10 +978,13 @@ mod tests {
                 .map(|poly| poly as &dyn MultilinearPoly<AkitaField>)
                 .collect(),
             hint,
-            &mut prover_transcript,
+            &mut prover_state,
         )
         .unwrap();
-        let mut verifier_transcript = Blake2bTranscript::<AkitaField>::new(b"akita-one-hot-k");
+        let mut verifier_transcript = prover_transcript::<Blake2b512>(
+            &jolt_transcript::protocol_tag(b"akita-one-hot-k"),
+            b"",
+        );
         <AkitaNativeBatching as BatchOpeningScheme>::verify_batch(
             &verifier_setup,
             &statement,
@@ -1078,10 +992,13 @@ mod tests {
             &mut verifier_transcript,
         )
         .unwrap();
-        assert_eq!(prover_transcript.state(), verifier_transcript.state());
+        assert_eq!(
+            prover_state.verifier_message::<[u8; 32]>(),
+            verifier_transcript.verifier_message::<[u8; 32]>()
+        );
 
         if num_vars == 16 && num_polys == 1 {
-            let one_hot = match &verifier_setup.schedule_artifacts {
+            let one_hot = match verifier_setup.schedule_artifacts.as_ref() {
                 AkitaVerifierScheduleArtifacts::OneHot { one_hot, .. } => one_hot.clone(),
                 AkitaVerifierScheduleArtifacts::Dense { .. }
                 | AkitaVerifierScheduleArtifacts::Both { .. } => {
@@ -1103,15 +1020,18 @@ mod tests {
                     one_hot,
                 },
             ] {
-                if schedule_artifacts == verifier_setup.schedule_artifacts {
+                if &schedule_artifacts == verifier_setup.schedule_artifacts.as_ref() {
                     continue;
                 }
                 let mut tampered = verifier_setup.clone();
-                tampered.schedule_artifacts = schedule_artifacts;
+                tampered.schedule_artifacts = schedule_artifacts.into();
                 // Transport drops the honest setup's primed backend caches.
                 let bytes = serde_json::to_vec(&tampered).unwrap();
                 let transported: AkitaVerifierSetup = serde_json::from_slice(&bytes).unwrap();
-                let mut transcript = Blake2bTranscript::<AkitaField>::new(b"akita-one-hot-k");
+                let mut transcript = prover_transcript::<Blake2b512>(
+                    &jolt_transcript::protocol_tag(b"akita-one-hot-k"),
+                    b"",
+                );
                 let error = <AkitaNativeBatching as BatchOpeningScheme>::verify_batch(
                     &transported,
                     &statement,
@@ -1129,7 +1049,10 @@ mod tests {
         } else {
             AKITA_ONE_HOT_K16
         };
-        let mut verifier_transcript = Blake2bTranscript::<AkitaField>::new(b"akita-one-hot-k");
+        let mut verifier_transcript = prover_transcript::<Blake2b512>(
+            &jolt_transcript::protocol_tag(b"akita-one-hot-k"),
+            b"",
+        );
         let _ = <AkitaNativeBatching as BatchOpeningScheme>::verify_batch(
             &verifier_setup,
             &wrong_k_statement,
@@ -1164,7 +1087,8 @@ mod tests {
     }
 
     /// A serde roundtrip drops the primed key cache; the transported setup
-    /// must re-derive the same backend key from its shape.
+    /// re-derives a verifier-sized backend key from its shape. Proofs verified
+    /// through such keys are covered in `verifier_resources::tests`.
     #[test]
     fn serde_transported_setup_rederives_the_backend_key() {
         let artifacts =
@@ -1181,16 +1105,9 @@ mod tests {
                 .expect("verifier setup must decode with Jolt's binary transport");
         assert_eq!(consumed, binary.len());
         assert_eq!(binary_transport, verifier_setup);
-        let rederived = transported
-            .dense_verifier()
-            .expect("shape-only setup re-derives its backend key");
-        let primed = verifier_setup
-            .dense_verifier()
-            .expect("primed cache returns the built key");
-        assert_eq!(
-            serialize_akita(rederived.setup()).unwrap(),
-            serialize_akita(primed.setup()).unwrap(),
-            "re-derived backend key must match the primed one"
+        assert!(
+            transported.dense_verifier().is_ok(),
+            "shape-only setup re-derives its backend key"
         );
     }
 
@@ -1199,8 +1116,8 @@ mod tests {
         use crate::schedule_registry::{GroupedScheduleParams, FIXTURE_TRUSTED_ADVICE_GROUP};
         use crate::schedules::emit::{K16_COLUMN_VARIABLES, RECURSIVE_TRACE_LOG_T_CUTOVER};
 
-        // The narrowest production trace at the cutover; one-column scalar
-        // rows at this arity stay direct.
+        // This admitted width exercises setup offloading; narrower groups at
+        // the same arity may remain direct under the planner's cost objective.
         let final_group =
             PolynomialGroupLayout::new(RECURSIVE_TRACE_LOG_T_CUTOVER + K16_COLUMN_VARIABLES, 51);
         let grouped_schedule = GroupedScheduleParams::new(
@@ -1236,7 +1153,7 @@ mod tests {
                 .resolve_selection(selection)
                 .expect("transported grouped setup must carry its schedule row")
         });
-        assert!(!resolved.profiles().precommitteds.is_empty());
+        assert_ne!(resolved.profiles().precommitteds, []);
         assert!(resolved
             .schedule()
             .recursive_folds
@@ -1292,13 +1209,14 @@ mod tests {
             commitment,
             evaluation: EvaluationClaim::new(point, value),
         }];
-        let mut prover_transcript = Blake2bTranscript::<AkitaField>::new(b"catalog-replay");
+        let mut prover_state =
+            prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"catalog-replay"), b"");
         let proof = <AkitaNativeBatching as BatchOpeningScheme>::prove_batch(
             &prover_setup,
             statement.clone(),
             vec![&polynomial],
             hint,
-            &mut prover_transcript,
+            &mut prover_state,
         )
         .unwrap();
 
@@ -1355,7 +1273,8 @@ mod tests {
             alternate_artifacts,
         ))
         .unwrap();
-        let mut verifier_transcript = Blake2bTranscript::<AkitaField>::new(b"catalog-replay");
+        let mut verifier_transcript =
+            prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"catalog-replay"), b"");
         let _ = <AkitaNativeBatching as BatchOpeningScheme>::verify_batch(
             &alternate_verifier_setup,
             &statement,
@@ -1364,7 +1283,8 @@ mod tests {
         )
         .expect_err("a proof must not replay across catalogs with different digests");
 
-        let mut original_transcript = Blake2bTranscript::<AkitaField>::new(b"catalog-replay");
+        let mut original_transcript =
+            prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"catalog-replay"), b"");
         <AkitaNativeBatching as BatchOpeningScheme>::verify_batch(
             &verifier_setup,
             &statement,
@@ -1372,6 +1292,85 @@ mod tests {
             &mut original_transcript,
         )
         .unwrap();
+    }
+
+    #[test]
+    fn prepared_verifier_verifies_the_selected_row_after_transport() {
+        let artifacts =
+            AkitaScheduleArtifacts::shared_from_default_directory(AkitaChunkProfile::new(8, 2));
+        let (prover_setup, verifier_setup) = AkitaScheme::setup(AkitaSetupParams::dense_only(
+            14,
+            1,
+            [7; 32],
+            Arc::clone(&artifacts),
+        ))
+        .unwrap();
+        let polynomial = Polynomial::new(
+            (0..(1u64 << 14))
+                .map(|i| AkitaField::from_u64(3 + 7 * i))
+                .collect(),
+        );
+        let (commitment, hint) = AkitaScheme::commit(&polynomial, &prover_setup).unwrap();
+        let point = (5..19).map(AkitaField::from_u64).collect::<Vec<_>>();
+        let value = polynomial.evaluate(&point);
+        let statement = vec![VerifierOpeningClaim {
+            commitment,
+            evaluation: EvaluationClaim::new(point, value),
+        }];
+        let mut prover_transcript = jolt_transcript::prover_transcript::<Blake2b512>(
+            &jolt_transcript::protocol_tag(b"prepared"),
+            b"",
+        );
+        let proof = <AkitaNativeBatching as BatchOpeningScheme>::prove_batch(
+            &prover_setup,
+            statement.clone(),
+            vec![&polynomial],
+            hint,
+            &mut prover_transcript,
+        )
+        .unwrap();
+
+        let mut prepared = verifier_setup.clone();
+        assert!(prepared.prepare_verifier([0; 32]).is_err());
+        prepared
+            .prepare_verifier(proof.schedule_row_digest())
+            .unwrap();
+        let full_digest = verifier_setup
+            .dense_scheme()
+            .unwrap()
+            .schedules()
+            .catalog_digest();
+        let encoded =
+            bincode::serde::encode_to_vec(&prepared, bincode::config::standard()).unwrap();
+        let (mut transported, _): (AkitaVerifierSetup, _) =
+            bincode::serde::decode_from_slice(&encoded, bincode::config::standard()).unwrap();
+        let verify = |setup: &AkitaVerifierSetup| {
+            let mut transcript = jolt_transcript::prover_transcript::<Blake2b512>(
+                &jolt_transcript::protocol_tag(b"prepared"),
+                b"",
+            );
+            <AkitaNativeBatching as BatchOpeningScheme>::verify_batch(
+                setup,
+                &statement,
+                &proof,
+                &mut transcript,
+            )
+        };
+        // The view keeps the complete catalog's transcript identity.
+        for setup in [&prepared, &transported] {
+            assert_eq!(
+                setup.dense_scheme().unwrap().schedules().catalog_digest(),
+                full_digest
+            );
+        }
+        verify(&prepared).unwrap();
+        // A decoded record's inline key is never used unchecked.
+        assert!(verify(&transported).is_err());
+
+        // Detached bodies serve again only once attached in place
+        // (`tests/prepared_transport.rs`).
+        let _ = transported.detach_prepared_payloads().unwrap();
+        assert!(verify(&transported).is_err());
     }
 
     #[test]
@@ -1401,17 +1400,23 @@ mod tests {
             evaluation: EvaluationClaim::new(point.clone(), claim),
         }];
 
-        let mut prover_transcript = Blake2bTranscript::<AkitaField>::new(b"akita-direct-layout");
+        let mut prover_state = prover_transcript::<Blake2b512>(
+            &jolt_transcript::protocol_tag(b"akita-direct-layout"),
+            b"",
+        );
         let proof = <AkitaNativeBatching as BatchOpeningScheme>::prove_batch(
             &prover_setup,
             statement.clone(),
             vec![&polynomial],
             hint,
-            &mut prover_transcript,
+            &mut prover_state,
         )
         .expect("direct proof should prove");
 
-        let mut verifier_transcript = Blake2bTranscript::<AkitaField>::new(b"akita-direct-layout");
+        let mut verifier_transcript = prover_transcript::<Blake2b512>(
+            &jolt_transcript::protocol_tag(b"akita-direct-layout"),
+            b"",
+        );
         <AkitaNativeBatching as BatchOpeningScheme>::verify_batch(
             &verifier_setup,
             &statement,
@@ -1419,11 +1424,17 @@ mod tests {
             &mut verifier_transcript,
         )
         .expect("direct proof should verify");
-        assert_eq!(prover_transcript.state(), verifier_transcript.state());
+        assert_eq!(
+            prover_state.verifier_message::<[u8; 32]>(),
+            verifier_transcript.verifier_message::<[u8; 32]>()
+        );
 
         let mut changed_commitment_statement = statement.clone();
         changed_commitment_statement[0].commitment.layout_digest = [15; 32];
-        let mut verifier_transcript = Blake2bTranscript::<AkitaField>::new(b"akita-direct-layout");
+        let mut verifier_transcript = prover_transcript::<Blake2b512>(
+            &jolt_transcript::protocol_tag(b"akita-direct-layout"),
+            b"",
+        );
         let _error = <AkitaNativeBatching as BatchOpeningScheme>::verify_batch(
             &verifier_setup,
             &changed_commitment_statement,
@@ -1434,7 +1445,10 @@ mod tests {
 
         let mut changed_setup = verifier_setup;
         changed_setup.default_layout_digest = commitment_digest;
-        let mut verifier_transcript = Blake2bTranscript::<AkitaField>::new(b"akita-direct-layout");
+        let mut verifier_transcript = prover_transcript::<Blake2b512>(
+            &jolt_transcript::protocol_tag(b"akita-direct-layout"),
+            b"",
+        );
         let _error = <AkitaNativeBatching as BatchOpeningScheme>::verify_batch(
             &changed_setup,
             &statement,
@@ -1442,5 +1456,95 @@ mod tests {
             &mut verifier_transcript,
         )
         .expect_err("direct commitment layout must not be accepted through setup default");
+    }
+
+    /// The flat public matrix an unbudgeted setup generates bounds the
+    /// matrix byte limit exactly: one byte less is rejected, and the
+    /// admitted setup equals the unbudgeted one. The shape is the narrowest
+    /// K=16 trace at the recursive cutover, whose Single row offloads setup
+    /// contributions, so the admitted setup also exports prefix slots.
+    #[test]
+    fn matrix_byte_limit_admits_exactly_the_generated_matrix() {
+        use crate::schedules::emit::{K16_COLUMN_VARIABLES, RECURSIVE_TRACE_LOG_T_CUTOVER};
+
+        let params = || {
+            AkitaSetupParams::one_hot_only(
+                RECURSIVE_TRACE_LOG_T_CUTOVER + K16_COLUMN_VARIABLES,
+                51,
+                [5; 32],
+                AKITA_ONE_HOT_K16,
+                AkitaScheduleArtifacts::shared_from_default_directory(AkitaChunkProfile::new(8, 2)),
+            )
+        };
+        let (unbudgeted, unbudgeted_verifier) = AkitaScheme::setup(params()).unwrap();
+        let generated = unbudgeted.one_hot_backend_prover_setup.unwrap();
+        assert!(
+            !generated.prefix_slots.is_empty(),
+            "the fixture must export prefix slots"
+        );
+        let required =
+            generated.expanded.shared_matrix().num_field_elements() * size_of::<AkitaField>();
+
+        assert_eq!(
+            AkitaScheme::setup_with_matrix_byte_limit(params(), required - 1).err(),
+            Some(OpeningsError::SetupExceedsBudget {
+                required,
+                limit: required - 1
+            })
+        );
+        let (budgeted, budgeted_verifier) =
+            AkitaScheme::setup_with_matrix_byte_limit(params(), required).unwrap();
+        assert_eq!(budgeted_verifier, unbudgeted_verifier);
+        assert_eq!(
+            budgeted.one_hot_backend_prover_setup.unwrap().prefix_slots,
+            generated.prefix_slots
+        );
+    }
+
+    /// Shapes whose setup allocates beyond the priced one-hot backend are
+    /// rejected under any limit, though each builds unbudgeted.
+    #[test]
+    fn matrix_byte_limit_rejects_shapes_it_does_not_price() {
+        use crate::schedule_registry::{DenseGroupLayout, GroupedScheduleParams};
+
+        let artifacts =
+            AkitaScheduleArtifacts::shared_from_default_directory(AkitaChunkProfile::new(8, 2));
+        let chunked_vars =
+            OneHotFamily::from_parts(AKITA_ONE_HOT_K16, AkitaChunkProfile::new(8, 2))
+                .unwrap()
+                .num_vars_range(1)
+                .0;
+        for params in [
+            AkitaSetupParams::new(14, 1, [5; 32], Arc::clone(&artifacts)),
+            AkitaSetupParams::dense_only(14, 1, [5; 32], Arc::clone(&artifacts)),
+            AkitaSetupParams::one_hot_only(
+                chunked_vars,
+                1,
+                [5; 32],
+                AKITA_ONE_HOT_K16,
+                Arc::clone(&artifacts),
+            )
+            .with_akita_chunk_profile(AkitaChunkProfile::new(8, 2)),
+            AkitaSetupParams::one_hot_only_grouped(
+                16,
+                2,
+                2,
+                [5; 32],
+                AKITA_ONE_HOT_K16,
+                Some(GroupedScheduleParams::new(
+                    None,
+                    None,
+                    vec![DenseGroupLayout::FullWidth { num_vars: 14 }],
+                    PolynomialGroupLayout::new(16, 2),
+                )),
+                Arc::clone(&artifacts),
+            ),
+        ] {
+            assert!(matches!(
+                AkitaScheme::setup_with_matrix_byte_limit(params.clone(), usize::MAX),
+                Err(OpeningsError::InvalidSetup(_))
+            ));
+            let _unbudgeted = AkitaScheme::setup(params).unwrap();
+        }
     }
 }

@@ -1,4 +1,5 @@
 use jolt_field::Field;
+use jolt_transcript::VerificationError;
 
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
@@ -221,7 +222,46 @@ pub enum SumcheckError<F: Field> {
         total: usize,
     },
 
+    /// The proof carries the wrong number of proof-of-work nonces: one per
+    /// round when the round difficulty is positive, none otherwise.
+    #[error("expected {expected} proof-of-work nonces, proof contains {got}")]
+    WrongNumberOfPowNonces {
+        /// Expected number of nonces.
+        expected: usize,
+        /// Actual number of nonces in the proof.
+        got: usize,
+    },
+
+    /// A round's proof-of-work nonce is missing, out of range, or misses the
+    /// difficulty target.
+    #[error("round {round}: proof of work rejected")]
+    ProofOfWorkRejected {
+        /// Zero-indexed round number.
+        round: usize,
+    },
+
+    /// No supported proof-of-work difficulty reaches the Fiat-Shamir target
+    /// for rounds of this degree.
+    #[error("no proof-of-work difficulty reaches the target for round degree {degree}")]
+    PowDifficulty { degree: usize },
+
+    /// A committed (zero-knowledge) sumcheck ran over a challenge set that
+    /// needs proof of work; committed proofs carry no nonces.
+    #[error("committed sumcheck challenges need proof of work, which committed proofs omit")]
+    NeedsProofOfWork,
+
     /// Consecutive integer domain points have colliding images in the field.
     #[error("integer sumcheck domain of size {domain_size} is not distinct in the field")]
     IntegerDomainNotDistinct { domain_size: usize },
+
+    /// The transcript refused a challenge draw: the challenge codec does not
+    /// support the request, or its rejection pool ran out.
+    #[error("transcript rejected a challenge draw")]
+    TranscriptRejected,
+}
+
+impl<F: Field> From<VerificationError> for SumcheckError<F> {
+    fn from(_: VerificationError) -> Self {
+        Self::TranscriptRejected
+    }
 }

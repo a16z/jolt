@@ -17,12 +17,15 @@ use akita_pcs::custom_source::{
 };
 use akita_pcs::AkitaError;
 use akita_pcs::{AkitaProverSetup, CpuBackend, OneHotPoly};
-use akita_types::PreparedSubringCoefficientPackingPoint;
+use akita_types::{PreparedSubringCoefficientPackingPoint, SubringCoefficientPackingTables};
 use jolt_field::{Fp128x8i32, One, Ring};
+use rayon::ThreadPoolBuilder;
 
 use super::commit::commit_columns;
 use super::digit_windows::{flush_digit_accumulators, DigitWindows};
+use super::ntt_commit::{PreparedNttCommit, MAX_NTT_POSITIONS};
 use super::source::TraceOneHotColumnBatchView;
+use super::traversal::trace_block_task_schedule;
 use crate::{AkitaChunkProfile, AkitaField, AkitaScheduleArtifacts, AkitaScheme, AkitaSetupParams};
 use jolt_openings::CommitmentScheme;
 use jolt_poly::OneHotPolynomial;
@@ -79,16 +82,16 @@ fn test_backend() -> TestBackend {
     CpuBackend::new(setup.expanded).unwrap()
 }
 
-fn packing_point<const D: usize>(
+fn packing_tables<const D: usize>(
     source_num_vars: usize,
     num_live_positions: usize,
     num_positions_per_block: usize,
-) -> PreparedSubringCoefficientPackingPoint<AkitaField> {
+) -> SubringCoefficientPackingTables<AkitaField> {
     let geometry = SubringCoefficientPackingGeometry::try_new(1, D, 64).unwrap();
     let point = (0..source_num_vars)
         .map(|index| AkitaField::from_u64((index + 2) as u64))
         .collect::<Vec<_>>();
-    PreparedSubringCoefficientPackingPoint::new(
+    let prepared = PreparedSubringCoefficientPackingPoint::new(
         geometry,
         BasisMode::Lagrange,
         num_live_positions,
@@ -96,7 +99,8 @@ fn packing_point<const D: usize>(
         source_num_vars,
         &point,
     )
-    .unwrap()
+    .unwrap();
+    SubringCoefficientPackingTables::new(prepared).unwrap()
 }
 
 fn assert_ring_mapping<const D: usize>(
@@ -200,7 +204,9 @@ fn assert_digit_windows_match_shift_accumulation<const D: usize>() {
     for (column, actual) in actual.iter_mut().enumerate() {
         let mut shifts = Vec::new();
         for (row, (row_indices, &mask)) in selected_rows
-            .chunks_exact(COLUMNS)
+            .as_chunks::<COLUMNS>()
+            .0
+            .iter()
             .zip(&committed_zero_masks)
             .enumerate()
         {
@@ -234,6 +240,51 @@ fn digit_windows_match_shift_accumulation() {
     assert_digit_windows_match_shift_accumulation::<128>();
     assert_digit_windows_match_shift_accumulation::<256>();
     assert_digit_windows_match_shift_accumulation::<512>();
+}
+
+#[test]
+fn digit_windows_multi_slot_batches_match_signed_convolution() {
+    const D: usize = 64;
+    let sources: Vec<_> = (0..6)
+        .map(|slot| {
+            CyclotomicRing::<AkitaField, D>::from_coefficients(std::array::from_fn(|j| {
+                let value = AkitaField::from_u128(u128::MAX / ((j + slot + 2) as u128));
+                if (j + slot) % 2 == 0 {
+                    value
+                } else {
+                    -value
+                }
+            }))
+        })
+        .collect();
+    let windows: Vec<_> = sources
+        .iter()
+        .map(|source| {
+            let mut window = DigitWindows::new();
+            window.load(source);
+            window
+        })
+        .collect();
+    for count in [0, 1, 63, 64, 65, 191] {
+        let mut shifts = vec![Vec::new(); sources.len()];
+        for i in 0..count {
+            shifts[[0, 2, 5][i % 3]].push((i * 17) % D);
+        }
+        let mut actual = [std::array::from_fn(|j| {
+            Fp128x8i32::from(sources[0].coeffs[j])
+        })];
+        let mut expected: AkitaWideRing<D> = AkitaWideRing::from_ring(&sources[0]);
+        for (source, shifts) in sources.iter().zip(&shifts) {
+            let wide: AkitaWideRing<D> = AkitaWideRing::from_ring(source);
+            for &shift in shifts {
+                wide.shift_accumulate_into(&mut expected, shift);
+            }
+        }
+        DigitWindows::accumulate_slots(&windows, &mut actual[0], &shifts);
+        let mut reduced = [CyclotomicRing::zero()];
+        flush_digit_accumulators(&mut actual, &mut reduced);
+        assert_eq!(reduced[0], expected.reduce::<AkitaField>());
+    }
 }
 
 #[test]
@@ -327,15 +378,62 @@ fn assert_production_kernels_match_materialized<const D: usize>(
     committed_zero_column: Option<usize>,
     num_digits: usize,
 ) {
+    assert_prefix_kernels_match_materialized::<D>(
+        k,
+        rows,
+        num_positions,
+        committed_zero_column,
+        num_digits,
+        rows,
+    );
+}
+
+#[derive(Debug)]
+struct PrefixTestRows {
+    inner: TestRows,
+    prefix: usize,
+}
+
+impl TraceOneHotRows for PrefixTestRows {
+    fn num_rows(&self) -> usize {
+        self.inner.rows
+    }
+    fn num_columns(&self) -> usize {
+        self.inner.columns
+    }
+    fn nonzero_prefix_len(&self) -> usize {
+        self.prefix
+    }
+    fn fill_row(&self, row: usize, selected: &mut [u8]) {
+        assert!(row < self.prefix, "the zero padding must not be read");
+        self.inner.fill_row(row, selected);
+    }
+    fn committed_digit_zero_mask(&self, row: usize) -> u64 {
+        assert!(row < self.prefix);
+        self.inner.committed_digit_zero_mask(row)
+    }
+}
+
+fn assert_prefix_kernels_match_materialized<const D: usize>(
+    k: usize,
+    rows: usize,
+    num_positions: usize,
+    committed_zero_column: Option<usize>,
+    num_digits: usize,
+    prefix: usize,
+) {
     const COLUMNS: usize = 3;
     let columns = TraceOneHotColumn::new(
         k,
         64,
-        Arc::new(TestRows {
-            rows,
-            columns: COLUMNS,
-            k,
-            committed_zero_column,
+        Arc::new(PrefixTestRows {
+            inner: TestRows {
+                rows,
+                columns: COLUMNS,
+                k,
+                committed_zero_column,
+            },
+            prefix,
         }),
     )
     .unwrap();
@@ -345,7 +443,8 @@ fn assert_production_kernels_match_materialized<const D: usize>(
             let indices = (0..rows)
                 .map(|row| {
                     let hot = ((row * (2 * column + 1) + column) % k) as u8;
-                    (hot != 0 || committed_zero_column == Some(column)).then_some(hot)
+                    (row < prefix && (hot != 0 || committed_zero_column == Some(column)))
+                        .then_some(hot)
                 })
                 .collect();
             OneHotPoly::<AkitaField, u8>::new(k, indices).unwrap()
@@ -436,12 +535,12 @@ fn assert_production_kernels_match_materialized<const D: usize>(
             );
         }
     }
-    let prepared = packing_point::<D>(
+    let prepared = packing_tables::<D>(
         source.num_vars,
         RootPolyShape::<AkitaField, D>::num_ring_elems(source),
         num_positions,
     );
-    let plan = SubringCoefficientPackingPlan { point: &prepared };
+    let plan = SubringCoefficientPackingPlan { tables: &prepared };
     let streamed = <TestBackend as SubringCoefficientPackingBatchKernel<
         TraceOneHotColumnBatchView<'_, D>,
         AkitaField,
@@ -471,6 +570,15 @@ fn assert_production_kernels_match_materialized<const D: usize>(
     )
     .unwrap();
     assert_eq!(streamed, materialized);
+}
+
+#[test]
+fn zero_suffix_kernels_match_materialized_onehot() {
+    for prefix in [0, 1, 3, 4, 5, 17, 31, 32] {
+        assert_prefix_kernels_match_materialized::<64>(16, 32, 4, Some(1), 2, prefix);
+        assert_prefix_kernels_match_materialized::<512>(16, 32, 1, Some(1), 2, prefix);
+        assert_prefix_kernels_match_materialized::<64>(256, 32, 16, Some(1), 2, prefix);
+    }
 }
 
 #[test]
@@ -724,7 +832,7 @@ fn small_k256_blocks_commit_like_materialized_onehot() {
     for (streamed, materialized_source) in streamed.iter().zip(&materialized_columns) {
         let coefficients = materialized_source.source_coefficients().unwrap();
         let mut expected = vec![AkitaWideRing::<D>::zero(); plan.num_live_blocks];
-        for (ring, ring_coefficients) in coefficients.chunks_exact(D).enumerate() {
+        for (ring, ring_coefficients) in coefficients.as_chunks::<D>().0.iter().enumerate() {
             for (index, coefficient) in ring_coefficients.iter().enumerate() {
                 if *coefficient == AkitaField::one() {
                     a_wide[ring % POSITIONS_PER_BLOCK]
@@ -787,10 +895,10 @@ fn coefficient_packing_rejects_invalid_selector() {
     let columns = TraceOneHotColumn::new(16, D, Arc::new(InvalidSelectorRows)).unwrap();
     let source = &columns[0];
     let num_live_positions = RootPolyShape::<AkitaField, D>::num_ring_elems(&source);
-    let prepared = packing_point::<D>(source.num_vars, num_live_positions, 4);
+    let prepared = packing_tables::<D>(source.num_vars, num_live_positions, 4);
     let error = coefficient_packing_partials_columns::<AkitaField, D>(
         source,
-        SubringCoefficientPackingPlan { point: &prepared },
+        SubringCoefficientPackingPlan { tables: &prepared },
     )
     .expect_err("selector outside K must reject");
     assert!(error.to_string().contains("outside K=16"));
@@ -798,3 +906,206 @@ fn coefficient_packing_rejects_invalid_selector() {
 
 #[path = "tests/trace_reads.rs"]
 mod trace_reads;
+
+#[test]
+fn ntt_trace_commit_matches_materialized_convolution() {
+    const D: usize = 512;
+    const K: usize = 16;
+    const COLUMNS: usize = 3;
+    for positions in [64, 256] {
+        let rows = 2 * positions * (D / K);
+        let setup = AkitaProverSetup::<AkitaField>::generate_with_capacity(
+            1,
+            1,
+            SetupMatrixCapacity {
+                num_field_elements: D * positions,
+            },
+        )
+        .unwrap();
+        let matrix = setup
+            .expanded
+            .shared_matrix()
+            .ring_view::<D>(1, positions)
+            .unwrap();
+        let a_wide = matrix
+            .rows()
+            .next()
+            .unwrap()
+            .iter()
+            .map(AkitaWideRing::<D>::from_ring)
+            .collect::<Vec<_>>();
+        let pool = ThreadPoolBuilder::new().num_threads(1).build().unwrap();
+        for prefix in [0, 1, 31, 32, 33, rows - 5, rows] {
+            let columns = TraceOneHotColumn::new(
+                K,
+                D,
+                Arc::new(PrefixTestRows {
+                    inner: TestRows {
+                        rows,
+                        columns: COLUMNS,
+                        k: K,
+                        committed_zero_column: Some(0),
+                    },
+                    prefix,
+                }),
+            )
+            .unwrap();
+            let plan = CommitInnerPlan {
+                ring_dimension: D,
+                num_live_blocks: rows / (D / K) / positions,
+                n_a: 1,
+                num_positions_per_block: positions,
+                num_digits_inner: 1,
+                log_basis_inner: 1,
+            };
+            let actual = pool
+                .install(|| commit_columns::<D>(&setup.expanded, &columns[0], plan))
+                .unwrap();
+            for (column, actual) in actual.iter().enumerate() {
+                let polynomial = OneHotPoly::<AkitaField, u8>::new(
+                    K,
+                    (0..rows)
+                        .map(|row| {
+                            let hot = ((row * (2 * column + 1) + column) % K) as u8;
+                            (row < prefix && (hot != 0 || column == 0)).then_some(hot)
+                        })
+                        .collect(),
+                )
+                .unwrap();
+                let coefficients = polynomial.source_coefficients().unwrap();
+                let mut expected = vec![AkitaWideRing::<D>::zero(); plan.num_live_blocks];
+                for (ring, coefficients) in coefficients.as_chunks::<D>().0.iter().enumerate() {
+                    for (shift, coefficient) in coefficients.iter().enumerate() {
+                        if *coefficient == AkitaField::one() {
+                            a_wide[ring % positions]
+                                .shift_accumulate_into(&mut expected[ring / positions], shift);
+                        } else {
+                            assert_eq!(*coefficient, AkitaField::from_u64(0));
+                        }
+                    }
+                }
+                let expected = expected
+                    .into_iter()
+                    .map(|value| value.reduce::<AkitaField>())
+                    .collect::<Vec<_>>();
+                assert_eq!(
+                    actual.as_ring_slice::<D>().unwrap(),
+                    expected.as_slice(),
+                    "positions={positions}, prefix={prefix}, column={column}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn ntt_task_ranges_cover_every_ring_once() {
+    for positions in [1, 31, 32, 251, 252, 253, 1008, 4096, 65536] {
+        for live_blocks in [1, 8, 64] {
+            for tasks_per_worker in [1, 16, 512] {
+                let schedule =
+                    trace_block_task_schedule::<512>(16, positions, live_blocks, tasks_per_worker);
+                let original_parts = schedule.parts;
+                let schedule = schedule.with_ring_alignment(MAX_NTT_POSITIONS);
+                assert!(schedule.parts <= original_parts);
+                let mut covered = 0;
+                for part in 0..schedule.parts {
+                    let (start, end) = schedule.part_range(part);
+                    assert_eq!(start, covered);
+                    assert_eq!(start % MAX_NTT_POSITIONS, 0);
+                    assert!(end <= positions && end - start >= MAX_NTT_POSITIONS.min(positions));
+                    covered = end;
+                }
+                assert_eq!(covered, positions);
+            }
+        }
+    }
+}
+
+#[test]
+fn limb_ntt_commit_preserves_signed_convolution_across_flushes() {
+    const D: usize = 512;
+    const K: usize = 16;
+    const POSITIONS: usize = 4096;
+    struct DenseAndSparseRows;
+    impl TraceOneHotRows for DenseAndSparseRows {
+        fn num_rows(&self) -> usize {
+            POSITIONS * (D / K)
+        }
+        fn num_columns(&self) -> usize {
+            7
+        }
+        fn fill_row(&self, row: usize, selected: &mut [u8]) {
+            selected[0] = 15;
+            selected[1] = u8::from(row.is_multiple_of(D / K));
+            selected[2] = if (row / (D / K) / 12).is_multiple_of(2) {
+                selected[0]
+            } else {
+                selected[1]
+            };
+            selected[3] = 0;
+            selected[4] = selected[0];
+            selected[5] = 7;
+            selected[6] = selected[2];
+        }
+        fn committed_digit_zero_mask(&self, _row: usize) -> u64 {
+            0
+        }
+    }
+    let columns = TraceOneHotColumn::new(K, D, Arc::new(DenseAndSparseRows)).unwrap();
+    let plan = CommitInnerPlan {
+        ring_dimension: D,
+        num_live_blocks: 1,
+        n_a: 1,
+        num_positions_per_block: POSITIONS,
+        num_digits_inner: 1,
+        log_basis_inner: 1,
+    };
+    let a = CyclotomicRing::from_coefficients(std::array::from_fn(|index| {
+        AkitaField::from_u128(u128::MAX - (index as u128).wrapping_mul(0x0001_0001_0001_0001_0001))
+    }));
+    let matrix = vec![a; POSITIONS];
+    let Some(prepared) = PreparedNttCommit::new(&columns[0], plan, &matrix) else {
+        return;
+    };
+    let wide = AkitaWideRing::<D>::from_ring(&a);
+    let mut dense = AkitaWideRing::<D>::zero();
+    for row in 0..D / K {
+        wide.shift_accumulate_into(&mut dense, row * K + 15);
+    }
+    let mut sparse = AkitaWideRing::<D>::zero();
+    wide.shift_accumulate_into(&mut sparse, 1);
+    let per_position = [dense.reduce::<AkitaField>(), sparse.reduce::<AkitaField>()];
+    let mut other_dense = AkitaWideRing::<D>::zero();
+    for row in 0..D / K {
+        wide.shift_accumulate_into(&mut other_dense, row * K + 7);
+    }
+    let other_dense = other_dense.reduce::<AkitaField>();
+    for positions in [251, 252, 253, 1007, 1008, 1009, 2021] {
+        let actual = prepared
+            .commit_part(&columns[0], 0, 100..100 + positions)
+            .unwrap();
+        let dense_positions = (100..100 + positions)
+            .filter(|ring| (ring / 12).is_multiple_of(2))
+            .count();
+        let expected_mixed = std::array::from_fn(|j| {
+            per_position[0].coeffs[j] * AkitaField::from_u64(dense_positions as u64)
+                + per_position[1].coeffs[j]
+                    * AkitaField::from_u64((positions - dense_positions) as u64)
+        });
+        assert_eq!(actual[2].coeffs, expected_mixed);
+        assert_eq!(actual[3], CyclotomicRing::zero());
+        assert_eq!(actual[4], actual[0]);
+        assert_eq!(actual[6], actual[2]);
+        assert_eq!(
+            actual[5].coeffs,
+            other_dense
+                .coeffs
+                .map(|value| value * AkitaField::from_u64(positions as u64))
+        );
+        for (actual, expected) in actual.iter().zip(per_position) {
+            let scale = AkitaField::from_u64(positions as u64);
+            assert_eq!(actual.coeffs, expected.coeffs.map(|value| value * scale));
+        }
+    }
+}

@@ -159,6 +159,27 @@ let JOLT_FP64_MUL_AARCH64_LINUX_CORRECT = time prove
     val(sum_s14:int64) < 2 EXP 64 /\ val(sum_s15:int64) < 2 EXP 64 /\
     val(sum_s16:int64) < 2 EXP 64`
   STRIP_ASSUME_TAC THENL [BOUNDER_TAC[]; ALL_TAC] THEN
+  SUBGOAL_THEN `val(sum_s13:int64) <= 1` ASSUME_TAC THENL
+   [USE_THEN "reduced_bound" MP_TAC THEN EXPAND_TAC "t" THEN
+    REWRITE_TAC[jolt_fp64_p] THEN CONV_TAC NUM_REDUCE_CONV THEN ARITH_TAC;
+    ALL_TAC] THEN
+  SUBGOAL_THEN
+   `(val(sum_s13:int64) < bitval(~carry_s14)) <=> carry_s16`
+  ASSUME_TAC THENL
+   [REMOVE_THEN "tail16" MP_TAC THEN
+    UNDISCH_TAC `val(sum_s16:int64) < 2 EXP 64` THEN
+    ASM_CASES_TAC `carry_s14:bool` THEN ASM_CASES_TAC `carry_s16:bool` THEN
+    ASM_REWRITE_TAC[BITVAL_CLAUSES] THEN CONV_TAC NUM_REDUCE_CONV THEN
+    ARITH_TAC;
+    ALL_TAC] THEN
+  MP_TAC(MATCH_MP
+    (SPECL [`sum_s13:int64`; `~carry_s14`] JOLT_FP64_SMALL_SIGNED_SUB)
+    (ASSUME `val(sum_s13:int64) <= 1`)) THEN
+  DISCH_THEN(fun th ->
+    REWRITE_TAC[CONJUNCT1 th; CONJUNCT2 th;
+      ASSUME `(val(sum_s13:int64) < bitval(~carry_s14)) <=> carry_s16`;
+      ADD_CLAUSES; INT_ADD_LID;
+      INT_ARITH `x - y:int < &0 <=> x < y`; INT_OF_NUM_LT]) THEN
   EXPAND_TAC "t" THEN
   GEN_REWRITE_TAC LAND_CONV [COND_RAND] THEN
   MATCH_MP_TAC(SPECL

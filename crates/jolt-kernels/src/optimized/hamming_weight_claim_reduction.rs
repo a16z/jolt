@@ -7,7 +7,7 @@
 //!   `G_i(k) = Σ_j eq(r_cycle, j) · ra_i(k, j)` collapses, for a one-hot
 //!   `ra_i`, to `G_i[chunk_i(j)] += eq_cycle[j]` — one `O(T)` bundle walk
 //!   accumulates ALL `N = instruction_d + bytecode_d + ram_d` pushforwards
-//!   against ONE shared `eq(r_cycle)` table (every stage-6b claim family
+//!   against ONE tensor-factored `eq(r_cycle)` (every stage-6b claim family
 //!   lives at the same cycle point), replacing the reference tier's `N`
 //!   independent `O(K_chunk·T)` folds over materialized one-hot grids.
 //! - **One-hot weight fusion**: the base protocol's three per-polynomial claim
@@ -20,142 +20,26 @@
 
 #[cfg(feature = "akita")]
 use jolt_claims::protocols::jolt::geometry::ra::JoltRaPolynomial;
-#[cfg(feature = "akita")]
-use jolt_claims::protocols::jolt::lattice::geometry::balanced_inc_value;
-#[cfg(feature = "akita")]
-use jolt_claims::protocols::jolt::lattice::relations::digit_zero::{
-    reduced_balanced_inc_carry_opening, reduced_balanced_inc_digit_opening,
-};
 use jolt_claims::protocols::jolt::{JoltOpeningId, JoltRelationId};
 use jolt_claims::OutputClaims;
 use jolt_field::JoltField;
-#[cfg(feature = "akita")]
-use jolt_poly::boolean_point_msb;
 use jolt_poly::{Polynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
     ConcreteSumcheck, SumcheckInputClaims, SumcheckOutputClaims,
 };
 use jolt_verifier::stages::stage7::hamming_weight_claim_reduction::HammingWeightClaimReduction;
-#[cfg(feature = "akita")]
-use jolt_witness::witnesses::BalancedIncColumn;
-use jolt_witness::witnesses::RaChunkSelector;
 use jolt_witness::JoltWitnessPlane;
-#[cfg(feature = "parallel")]
-use rayon::prelude::*;
 
 use super::instruction_read_raf::InstructionCycleRow;
+use super::one_hot_histograms::{pushforward_access, pushforwards, FamilySelectors, HistogramRow};
 use super::support::{
     bind_all, eq_table, gamma_powers, pair, par_sum_pair_groups, round_poly_from_skipped_evals,
-    RoundProgress,
+    BundleAccess, RoundProgress,
 };
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
-
-/// Per-family chunk selectors in canonical layout order.
-struct FamilySelectors {
-    instruction: Vec<RaChunkSelector>,
-    bytecode: Vec<RaChunkSelector>,
-    ram: Vec<RaChunkSelector>,
-    #[cfg(feature = "akita")]
-    balanced_inc: Vec<BalancedIncColumn>,
-}
-
-impl FamilySelectors {
-    fn new<F: JoltField>(
-        counts: (usize, usize, usize),
-        chunk_bits: usize,
-    ) -> Result<Self, KernelError<F>> {
-        let family = |count: usize| -> Result<Vec<RaChunkSelector>, KernelError<F>> {
-            (0..count)
-                .map(|index| {
-                    RaChunkSelector::new(index, count, chunk_bits).map_err(KernelError::from)
-                })
-                .collect()
-        };
-        Ok(Self {
-            instruction: family(counts.0)?,
-            bytecode: family(counts.1)?,
-            ram: family(counts.2)?,
-            #[cfg(feature = "akita")]
-            balanced_inc: Vec::new(),
-        })
-    }
-}
-
-/// All `N` pushforwards from one bundle walk against the shared cycle-eq
-/// table, in canonical (instruction, bytecode, RAM) order.
-fn pushforwards<F: JoltField>(
-    rows: &[InstructionCycleRow],
-    eq_cycle: &[F],
-    selectors: &FamilySelectors,
-    k_chunk: usize,
-) -> Vec<Vec<F>> {
-    let total = selectors.instruction.len() + selectors.bytecode.len() + selectors.ram.len() + {
-        #[cfg(feature = "akita")]
-        {
-            selectors.balanced_inc.len()
-        }
-        #[cfg(not(feature = "akita"))]
-        {
-            0
-        }
-    };
-    let accumulate = |range: std::ops::Range<usize>| -> Vec<Vec<F>> {
-        let mut partial: Vec<Vec<F>> = (0..total).map(|_| vec![F::zero(); k_chunk]).collect();
-        for j in range {
-            let row = &rows[j];
-            let eq = eq_cycle[j];
-            let mut slot = 0;
-            for selector in &selectors.instruction {
-                partial[slot][selector.chunk_u128(row.lookup_index())] += eq;
-                slot += 1;
-            }
-            for selector in &selectors.bytecode {
-                partial[slot][selector.chunk_usize(row.bytecode_pc())] += eq;
-                slot += 1;
-            }
-            for selector in &selectors.ram {
-                if let Some(address) = row.remapped_ram_address() {
-                    partial[slot][selector.chunk_usize(address as usize)] += eq;
-                }
-                slot += 1;
-            }
-            #[cfg(feature = "akita")]
-            for column in &selectors.balanced_inc {
-                partial[slot][row.fused_inc_row(*column)] += eq;
-                slot += 1;
-            }
-        }
-        partial
-    };
-
-    #[cfg(feature = "parallel")]
-    {
-        let num_threads = rayon::current_num_threads();
-        let chunk = rows.len().div_ceil(num_threads).max(1);
-        (0..rows.len())
-            .into_par_iter()
-            .step_by(chunk)
-            .map(|start| accumulate(start..(start + chunk).min(rows.len())))
-            .reduce(
-                || (0..total).map(|_| vec![F::zero(); k_chunk]).collect(),
-                |mut left, right| {
-                    for (left, right) in left.iter_mut().zip(right) {
-                        for (left, right) in left.iter_mut().zip(right) {
-                            *left += right;
-                        }
-                    }
-                    left
-                },
-            )
-    }
-    #[cfg(not(feature = "parallel"))]
-    {
-        accumulate(0..rows.len())
-    }
-}
 
 /// Stage-7 Hamming-weight claim reduction: `PrepareKernel` front of the
 /// optimized kernel.
@@ -187,42 +71,29 @@ impl<F: JoltField> PrepareKernel<F, HammingWeightClaimReduction<F>>
         let k_chunk = 1usize << dimensions.log_k_chunk;
         let cycles = 1usize << r_cycle.len();
 
-        let rows = InstructionCycleRow::shared(session, witness, cycles)?;
-        let eq_cycle = eq_table(r_cycle);
         let selectors = FamilySelectors::new(
             (layout.instruction(), layout.bytecode(), layout.ram()),
             dimensions.log_k_chunk,
         )?;
-        #[cfg(feature = "akita")]
-        let mut selectors = selectors;
-        #[cfg(feature = "akita")]
-        {
-            selectors
-                .balanced_inc
-                .extend((0..dimensions.chunking().chunk_count()).map(|index| {
-                    BalancedIncColumn::Digit {
-                        width: dimensions.log_k_chunk,
-                        index,
-                    }
-                }));
-            selectors.balanced_inc.push(BalancedIncColumn::Carry {
-                width: dimensions.log_k_chunk,
-            });
-        }
-        let g_evals = pushforwards(&rows, &eq_cycle, &selectors, k_chunk);
-        #[cfg(feature = "akita")]
-        let mut g_evals = g_evals;
-        #[cfg(feature = "akita")]
-        {
-            let (ra_evals, increment_evals) = g_evals.split_at_mut(layout.total());
-            for table in ra_evals
-                .iter_mut()
-                .take(layout.instruction() + layout.bytecode())
-                .chain(increment_evals)
-            {
-                table[0] = F::zero();
-            }
-        }
+        let cached = InstructionCycleRow::cached(session, witness, cycles);
+        let direct = witness
+            .random_access()
+            .filter(|access| cycles <= access.cycles() && cached.is_none());
+        let g_evals = if let Some(view) = direct {
+            let access = BundleAccess::<HistogramRow>::View(&view);
+            let prefix = access.constant_suffix_start(cycles)?.min(cycles - 1);
+            pushforward_access(
+                |index| access.row(index),
+                prefix,
+                r_cycle,
+                &selectors,
+                k_chunk,
+                cfg!(feature = "akita"),
+            )?
+        } else {
+            let rows = InstructionCycleRow::shared(session, witness, cycles)?;
+            pushforwards(&rows, r_cycle, &selectors, k_chunk, cfg!(feature = "akita"))?
+        };
         let g_tables = g_evals.into_iter().map(Polynomial::new).collect();
 
         #[cfg(not(feature = "akita"))]
@@ -252,11 +123,9 @@ impl<F: JoltField> PrepareKernel<F, HammingWeightClaimReduction<F>>
             .collect::<Result<_, _>>()?;
 
         // Instruction and bytecode use the paper's digit-zero recentering;
-        // RAM keeps the base three-leg reduction. Increment columns are
-        // recentered and followed by the fused decode power.
+        // RAM keeps the base three-leg reduction.
         #[cfg(feature = "akita")]
         let weight_tables: Vec<Polynomial<F>> = {
-            let chunk_count = dimensions.chunking().chunk_count();
             let ra_terms = layout
                 .polynomials()
                 .map(|polynomial| match polynomial {
@@ -264,15 +133,14 @@ impl<F: JoltField> PrepareKernel<F, HammingWeightClaimReduction<F>>
                     JoltRaPolynomial::Ram(_) => 3,
                 })
                 .sum::<usize>();
-            let decode_power = ra_terms + chunk_count + 1;
-            let gamma_powers = gamma_powers(inputs.challenges.gamma, decode_power + 1);
+            let gamma_powers = gamma_powers(inputs.challenges.gamma, ra_terms);
             let at_digit_zero = |point: &[F]| {
                 point
                     .iter()
                     .fold(F::one(), |acc, coordinate| acc * (F::one() - *coordinate))
             };
             let eq_bool_digit_zero = at_digit_zero(r_address);
-            let mut weights = Vec::with_capacity(layout.total() + chunk_count + 1);
+            let mut weights = Vec::with_capacity(layout.total());
             let mut power = 0;
             for (i, polynomial) in layout.polynomials().enumerate() {
                 let point = &virtualization_points[i];
@@ -311,48 +179,12 @@ impl<F: JoltField> PrepareKernel<F, HammingWeightClaimReduction<F>>
                 }
             }
             debug_assert_eq!(power, ra_terms);
-            let balanced_values = (0..k_chunk)
-                .map(|row| balanced_inc_value(&boolean_point_msb::<F>(dimensions.log_k_chunk, row)))
-                .collect::<Vec<_>>();
-            for index in 0..chunk_count {
-                let offset = ra_terms + index;
-                let decode_scale =
-                    gamma_powers[decode_power] * dimensions.chunking().place_value::<F>(index);
-                weights.push(Polynomial::new(
-                    (0..k_chunk)
-                        .map(|k| {
-                            gamma_powers[offset] * (eq_bool[k] - eq_bool_digit_zero)
-                                + decode_scale * balanced_values[k]
-                        })
-                        .collect(),
-                ));
-            }
-            let carry_offset = ra_terms + chunk_count;
-            let decode_scale = gamma_powers[decode_power] * F::pow2(64);
-            weights.push(Polynomial::new(
-                (0..k_chunk)
-                    .map(|k| {
-                        gamma_powers[carry_offset] * (eq_bool[k] - eq_bool_digit_zero)
-                            + decode_scale * balanced_values[k]
-                    })
-                    .collect(),
-            ));
             weights
         };
 
         let output_openings: Vec<JoltOpeningId> = layout
             .openings(JoltRelationId::HammingWeightClaimReduction)
             .collect();
-        #[cfg(feature = "akita")]
-        let mut output_openings = output_openings;
-        #[cfg(feature = "akita")]
-        {
-            output_openings.extend(
-                (0..dimensions.chunking().chunk_count()).map(reduced_balanced_inc_digit_opening),
-            );
-            output_openings.push(reduced_balanced_inc_carry_opening());
-        }
-
         Ok(Box::new(HammingWeightKernel {
             progress: RoundProgress::new(relation.rounds()),
             g_tables,
@@ -549,24 +381,28 @@ mod tests {
 #[cfg(all(test, feature = "akita"))]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod akita_tests {
-    use jolt_claims::protocols::jolt::lattice::relations::digit_zero::LatticeDigitZeroClaimReductionDimensions;
+    use crate::optimized::constant_suffix::ConstantSuffix;
+    use crate::optimized::instruction_read_raf::{
+        SharedInstructionRows, SharedInstructionRowsWeak,
+    };
+    use jolt_claims::protocols::jolt::geometry::claim_reductions::hamming_weight::HammingWeightClaimReductionDimensions;
     use jolt_field::{Fr, Ring};
     use jolt_verifier::stages::stage7::hamming_weight_claim_reduction::{
         HammingWeightClaimReductionChallenges, HammingWeightClaimReductionInputClaims,
     };
+    use std::sync::Arc;
 
     use super::*;
     use crate::optimized::booleanity::testing::with_booleanity_backend;
     use crate::optimized::parity::{probe_input_claim, run_lockstep, synthetic_point};
     use crate::{ProofSession, ReferenceBackend};
 
-    fn hamming_weight_parity(log_t: usize, log_k_chunk: u8) {
+    fn hamming_weight_parity(log_t: usize, log_k_chunk: u8, cached: bool) {
         with_booleanity_backend(log_t, log_k_chunk, |backend, base_dimensions| {
-            let dimensions = LatticeDigitZeroClaimReductionDimensions::new(
+            let dimensions = HammingWeightClaimReductionDimensions::new(
                 base_dimensions.layout,
                 base_dimensions.log_k_chunk,
-            )
-            .unwrap();
+            );
             let relation = HammingWeightClaimReduction::new(
                 dimensions,
                 synthetic_point(log_t, 3),
@@ -582,6 +418,12 @@ mod akita_tests {
             let input_points = HammingWeightClaimReductionInputClaims::<Vec<Fr>>::default();
 
             let mut session = ProofSession::default();
+            let cached_rows = cached.then(|| {
+                Arc::new(InstructionCycleRow::collect::<Fr>(backend, 1 << log_t).unwrap())
+            });
+            if let Some(rows) = &cached_rows {
+                session.park(SharedInstructionRows(Arc::clone(rows)));
+            }
             let mut reference = ReferenceBackend
                 .prepare(
                     &mut session,
@@ -607,6 +449,17 @@ mod akita_tests {
                 )
                 .unwrap();
 
+            if let Some(rows) = cached_rows {
+                let retained = session
+                    .state::<SharedInstructionRowsWeak>()
+                    .unwrap()
+                    .0
+                    .upgrade()
+                    .unwrap();
+                assert!(Arc::ptr_eq(&rows, &retained));
+                assert!(session.state::<SharedInstructionRows>().is_none());
+            }
+
             let claim = probe_input_claim(reference.as_mut());
             run_lockstep(
                 reference.as_mut(),
@@ -622,12 +475,31 @@ mod akita_tests {
     }
 
     #[test]
+    fn stale_instruction_carry_is_released_before_cache_lookup() {
+        with_booleanity_backend(2, 4, |backend, _| {
+            let rows = Arc::new(InstructionCycleRow::collect::<Fr>(backend, 4).unwrap());
+            let mut session = ProofSession::default();
+            let stale = Arc::new(ConstantSuffix::new(vec![rows[0]], 8));
+            let stale_weak = Arc::downgrade(&stale);
+            session.park(SharedInstructionRows(stale));
+            session.park(SharedInstructionRowsWeak(Arc::downgrade(&rows)));
+            let cached = InstructionCycleRow::cached::<Fr>(&mut session, backend, 4).unwrap();
+            assert!(Arc::ptr_eq(&rows, &cached));
+            assert!(stale_weak.upgrade().is_none());
+        });
+    }
+
+    #[test]
     fn hamming_weight_reduction_matches_reference_k16() {
-        hamming_weight_parity(2, 4);
+        for cached in [false, true] {
+            hamming_weight_parity(2, 4, cached);
+        }
     }
 
     #[test]
     fn hamming_weight_reduction_matches_reference_k256() {
-        hamming_weight_parity(3, 8);
+        for cached in [false, true] {
+            hamming_weight_parity(3, 8, cached);
+        }
     }
 }

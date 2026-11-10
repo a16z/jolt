@@ -53,7 +53,7 @@ jolt-poly = { workspace = true, default-features = false }
 jolt-program.workspace = true
 jolt-riscv.workspace = true
 jolt-r1cs.workspace = true
-jolt-sumcheck.workspace = true
+jolt-sumcheck = { workspace = true, features = ["prover"] }
 jolt-utils.workspace = true
 jolt-verifier.workspace = true
 jolt-witness.workspace = true

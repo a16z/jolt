@@ -67,7 +67,7 @@ ready.
 | `jolt-crypto` | Vector commitments, Pedersen, homomorphic ops, setup derivation |
 | `jolt-openings` | Opening plans, evaluation claims, RLC, PCS traits |
 | `jolt-dory` / PCS crates | Concrete PCS implementations and optimized commit/open/eval kernels |
-| `jolt-blindfold` | Generic BlindFold protocol from committed proofs |
+| `jolt-zk` | Generic BlindFold protocol from committed proofs |
 | `jolt-wrapper-verifier` | Selected-verifier R1CS and wrapper verification |
 
 ## Prover Flow
@@ -227,7 +227,7 @@ jolt_sumcheck::CommittedOutputClaims<VC::Output>
 jolt_crypto::VectorCommitment
 jolt_crypto::HomomorphicCommitment
 jolt_crypto::DeriveSetup
-jolt_blindfold::BlindFoldProtocol::from_committed_proofs
+jolt_zk::BlindFoldProtocol::from_committed_proofs
 ```
 
 The prover privately builds `CommittedRoundWitness<F>`, commits with `VC`, puts
@@ -740,7 +740,7 @@ Dory assist should not recover this by parsing opaque proof bytes.
 proofs:
 
 ```rust
-jolt_blindfold::BlindFoldProtocol::from_committed_proofs(...)
+jolt_zk::BlindFoldProtocol::from_committed_proofs(...)
 ```
 
 Inputs come from `jolt-claims`, committed stage proofs, private

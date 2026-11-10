@@ -183,17 +183,15 @@ struct ActiveMarker {
 
 /// Host-side I/O mode. `Replay` suppresses effects that must happen exactly
 /// once per program run — stdout prints, cycle-marker bookkeeping,
-/// advice-tape appends, call-stack tracking — so a parallel-trace worker
-/// re-executing a chunk does not repeat what pass-1 already did.
-/// Guest-visible effects (JoltDevice loads/stores, advice reads) stay live
-/// in both modes: trace rows depend on them.
-///
-/// Load-bearing assumption: a guest never appends to the advice tape and
-/// reads those bytes back within the same run. The SDK's two-pass advice
-/// design guarantees this (writes happen in `compute_advice` execute passes,
-/// reads in trace passes); a same-chunk append-then-read would replay
-/// wrongly under suppression, and the chunk-boundary paranoia compare flags
-/// the tape divergence.
+/// call-stack tracking — so a parallel-trace worker re-executing a chunk
+/// does not repeat what pass-1 already did.
+/// Guest-visible effects (JoltDevice loads/stores, advice-tape reads and
+/// appends) stay live in both modes: trace rows and the chunk-boundary state
+/// compare depend on them. Replayed appends never reach the run's advice
+/// tape: a worker's tape is private and replaced at every chunk install
+/// (`Cpu::install_chunk_state`), and both replay pipelines
+/// (`parallel::run_two_pass`, `TracerBackend`'s chunked execution) return
+/// pass-1's tape.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HostIo {
     Live,
@@ -222,7 +220,7 @@ pub(crate) struct ChunkCpuState {
     trace_len: usize,
     executed_instrs: u64,
     /// Unread advice-tape suffix; the replay tape is exactly this suffix
-    /// with read position 0. Appends are suppressed in replay ([`HostIo`]).
+    /// with read position 0.
     advice_suffix: Vec<u8>,
     #[cfg(feature = "field-inline")]
     field_registers: FieldRegisterFile,
@@ -1099,6 +1097,10 @@ impl Cpu {
                     let total = self.trace_len - mark.start_trace_len;
                     let virtual_instrs = total - real as usize;
                     info!(
+                        marker = label.as_str(),
+                        real_cycles = real,
+                        virtual_instructions = virtual_instrs as u64,
+                        total_cycles = total as u64,
                         "\"{label}\": {real} RV64IMAC cycles + {virtual_instrs} virtual instructions = {total} total cycles"
                     );
                 } else {
@@ -1128,11 +1130,6 @@ impl Cpu {
     }
 
     pub fn handle_advice_write(&mut self, ptr: u64, len: u64) -> Result<(), Trap> {
-        // Pass-1 already appended these bytes; a replay append would corrupt
-        // the worker's suffix-relative read offsets.
-        if self.host_io == HostIo::Replay {
-            return Ok(());
-        }
         let mut bytes = Vec::with_capacity(len as usize);
         for i in 0..len {
             let (b, _) = self.mmu.load(ptr + i)?;

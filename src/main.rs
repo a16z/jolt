@@ -211,12 +211,28 @@ fn build_command(args: JoltBuildArgs) -> Result<()> {
         &opt_flag,
         // Disable MachineOutliner: generates broken call patterns on RISC-V (infinite loops).
         "-Cllvm-args=-enable-machine-outliner=never",
+        // Inline constant-size copies and fills up to 32 stores. LLVM's RISC-V
+        // defaults call libc instead, whose routines move data in sub-word
+        // accesses that each cost a multi-row sequence in the trace.
+        "-Cllvm-args=-max-store-memcpy=32",
+        "-Cllvm-args=-max-store-memset=32",
         "--cfg=getrandom_backend=\"custom\"",
     ];
 
     if args.base.mode == StdMode::Std {
         // Rust 1.95 gates generated target specs behind this flag; zeroos-build sets RUSTC_BOOTSTRAP.
         jolt_rustflags.push("-Zunstable-options");
+        // The ELF decoder requires instruction-only text; LLVM's large model puts pools there.
+        jolt_rustflags.push("-Ccode-model=medium");
+    }
+
+    if args
+        .base
+        .target
+        .as_deref()
+        .is_none_or(|target| target.starts_with("riscv64"))
+    {
+        jolt_rustflags.extend(["-Clink-arg=--wrap=memcpy", "-Clink-arg=--wrap=memmove"]);
     }
 
     // Also set medany for C code (cc crate reads CFLAGS_{target}).
@@ -497,10 +513,6 @@ fn display_greeting() {
 }
 
 fn display_sysinfo() {
-    let mut sys = System::new();
-    sys.refresh_memory();
-    sys.refresh_cpu_all();
-
     println!(
         "OS:             {}",
         System::name().unwrap_or("UNKNOWN".to_string())
@@ -513,11 +525,18 @@ fn display_sysinfo() {
         "Host:           {}",
         System::host_name().unwrap_or("UNKNOWN".to_string())
     );
-    println!("CPUs:           {}", sys.cpus().len());
-    println!(
-        "RAM:            {:.2} GB",
-        sys.total_memory() as f64 / 1_000_000_000.0
-    );
+    if let Ok(mut sys) = System::new() {
+        sys.refresh_memory();
+        sys.refresh_cpu_all();
+        println!("CPUs:           {}", sys.cpus().len());
+        println!(
+            "RAM:            {:.2} GB",
+            sys.total_memory() as f64 / 1_000_000_000.0
+        );
+    } else {
+        println!("CPUs:           UNKNOWN");
+        println!("RAM:            UNKNOWN");
+    }
 }
 
 const RUST_TOOLCHAIN: &str = include_str!("../rust-toolchain.toml");

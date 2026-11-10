@@ -44,8 +44,15 @@ impl MetricsMonitor {
             .name("metrics-monitor".to_string())
             .spawn(move || {
                 let interval = Duration::from_millis(((interval_secs * 1000.0) as u64).max(50));
-                let mut system = System::new();
+                let mut system = match System::new() {
+                    Ok(system) => system,
+                    Err(error) => {
+                        tracing::warn!(%error, "failed to initialize metrics monitor");
+                        return;
+                    }
+                };
 
+                system.refresh_cpu_all();
                 thread::sleep(sysinfo::MINIMUM_CPU_UPDATE_INTERVAL);
 
                 while !stop.load(Ordering::Acquire) {
@@ -57,11 +64,7 @@ impl MetricsMonitor {
                         current_footprint_bytes().map(|bytes| bytes as f64 / BYTES_PER_GIB);
                     let cpu_percent = system.global_cpu_usage();
                     let cores_active_avg = cpu_percent / 100.0 * (system.cpus().len() as f32);
-                    let active_cores = system
-                        .cpus()
-                        .iter()
-                        .filter(|cpu| cpu.cpu_usage() > 0.1)
-                        .count();
+                    let active_cores = system.cpus().iter().filter(|cpu| cpu.usage() > 0.1).count();
 
                     #[cfg(target_os = "linux")]
                     let active_threads =

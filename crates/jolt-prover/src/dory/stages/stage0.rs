@@ -20,13 +20,13 @@ use jolt_kernels::reference::bytecode_read_raf::BytecodeReadRafWitness;
 use jolt_kernels::reference::instruction_read_raf::InstructionReadRafWitness;
 use jolt_kernels::{CommitmentGrid, JoltBackend, KernelContext, WitnessCommitment};
 use jolt_openings::CommitmentScheme;
-use jolt_transcript::{AppendToTranscript, Transcript};
+use jolt_transcript::{Encoding, FieldTranscript, ProverInit};
 use jolt_verifier::proof::JoltCommitments;
 #[cfg(feature = "field-inline")]
 use jolt_verifier::proof::{FieldInlineCommitments, FieldRegistersCommitments};
 use jolt_verifier::{
     absorb_committed_program_commitments, absorb_transcript_commitments,
-    absorb_transcript_preamble, validate_inputs_from_parts, CheckedInputs, ProofTranscriptConfig,
+    validate_inputs_from_parts, CheckedInputs, JoltStatement, ProofTranscriptConfig, JOLT_SESSION,
 };
 use jolt_witness::WitnessBundle;
 
@@ -78,9 +78,9 @@ pub fn prove_stage0<F, PCS, VC, T>(
 where
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
-    PCS::Output: AppendToTranscript,
+    PCS::Output: Encoding,
     VC: VectorCommitment<Field = F>,
-    T: Transcript<Challenge = F>,
+    T: FieldTranscript<F> + ProverInit,
 {
     // Committed-program mode needs the prover-retained full program + hints;
     // require presence to agree with the verifier preprocessing's mode.
@@ -156,15 +156,16 @@ where
         }
     }
 
-    let mut transcript = T::new(b"Jolt");
-    absorb_transcript_preamble(
-        &checked,
-        ProofTranscriptConfig {
-            rw_config: config.rw_config,
-            one_hot_config: config.one_hot_config,
-            trace_polynomial_order: config.trace_polynomial_order,
+    let mut transcript = T::init(
+        &JOLT_SESSION,
+        &JoltStatement {
+            checked: &checked,
+            config: ProofTranscriptConfig {
+                rw_config: config.rw_config,
+                one_hot_config: config.one_hot_config,
+                trace_polynomial_order: config.trace_polynomial_order,
+            },
         },
-        &mut transcript,
     );
 
     let dimensions = crate::stages::formula_dimensions(
@@ -407,7 +408,7 @@ mod field_inline_tests {
     use jolt_kernels::finish_streamed;
     use jolt_kernels::KernelError;
     use jolt_openings::{CommitmentScheme, StreamingCommitment};
-    use jolt_transcript::LegacyBlake2bTranscript;
+    use jolt_transcript::{prover_transcript, FieldTranscript, Keccak, ProverState};
 
     fn grid() -> CommitmentGrid {
         CommitmentGrid {
@@ -483,27 +484,30 @@ mod field_inline_tests {
             direct_dense_commitment(&column, &setup)
         );
 
-        let mut prover_transcript = LegacyBlake2bTranscript::<Fr>::new(b"Jolt");
-        absorb_transcript_commitments(&commitments, None, None, &mut prover_transcript);
-        let mut verifier_transcript = LegacyBlake2bTranscript::<Fr>::new(b"Jolt");
+        let mut prover_state =
+            prover_transcript::<Keccak>(&jolt_transcript::protocol_tag(b"Jolt"), b"");
+        absorb_transcript_commitments(&commitments, None, None, &mut prover_state);
+        let mut verifier_transcript =
+            prover_transcript::<Keccak>(&jolt_transcript::protocol_tag(b"Jolt"), b"");
         jolt_verifier::absorb_transcript_commitments(
             &commitments,
             None,
             None,
             &mut verifier_transcript,
         );
-        assert_eq!(
-            prover_transcript.challenge(),
-            verifier_transcript.challenge()
-        );
+        let first =
+            |transcript: &mut ProverState<Keccak>| -> Fr { transcript.challenge().unwrap() };
+        let expected = first(&mut prover_state);
+        assert_eq!(expected, first(&mut verifier_transcript));
 
         let mut stripped = commitments.clone();
         stripped.field_inline = None;
-        let mut stripped_transcript = LegacyBlake2bTranscript::<Fr>::new(b"Jolt");
+        let mut stripped_transcript =
+            prover_transcript::<Keccak>(&jolt_transcript::protocol_tag(b"Jolt"), b"");
         absorb_transcript_commitments(&stripped, None, None, &mut stripped_transcript);
         assert_ne!(
-            prover_transcript.challenge(),
-            stripped_transcript.challenge(),
+            expected,
+            first(&mut stripped_transcript),
             "the field-inline payload must be Fiat-Shamir-bound"
         );
     }

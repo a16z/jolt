@@ -119,8 +119,6 @@ straight_benches! {
     iai_bne_taken_next => (K::BNE, Some(5), Some(6), None, 4);
     iai_ld => (K::LD, Some(8), None, Some(9), 0);
     iai_sd => (K::SD, Some(8), Some(5), None, 0);
-    iai_assert_halfword_alignment => (K::VirtualAssertHalfwordAlignment, Some(8), None, None, 0);
-    iai_assert_word_alignment => (K::VirtualAssertWordAlignment, Some(8), None, None, 0);
     iai_assert_lte => (K::VirtualAssertLTE, Some(5), Some(6), None, 0);
     iai_fence => (K::FENCE, None, None, None, 0);
     iai_host_io_unknown => (kind_by_name("VirtualHostIO"), None, None, None, 0);

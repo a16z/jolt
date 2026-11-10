@@ -99,7 +99,10 @@ fn main() {
     let result = (|| -> Result<(), String> {
         let outputs = render_schedule_artifact_outputs_with_validation(
             &specs,
-            MaterializationDiagnostics { row_progress: true },
+            MaterializationDiagnostics {
+                row_progress: true,
+                ..Default::default()
+            },
             |_, _| Ok(()),
         )?;
         let mut stale = Vec::new();

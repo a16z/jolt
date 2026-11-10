@@ -11,9 +11,10 @@ use jolt_akita::{
 };
 use jolt_host::Program;
 use jolt_prover::akita;
-use jolt_prover::akita::preprocessing::{self, AkitaProverPreprocessing, AkitaTranscript, AkitaVc};
+use jolt_prover::akita::preprocessing::{self, AkitaProverPreprocessing, AkitaVc};
 use jolt_prover::JoltBackend;
 use jolt_prover::ProverConfig;
+use jolt_transcript::{Keccak, ProverState, VerifierState};
 use jolt_verifier::proof::JoltProof;
 use jolt_verifier::{verify, JoltVerifierPreprocessing, VerifierError};
 
@@ -36,7 +37,7 @@ impl AkitaFixtureCase {
     }
 
     pub fn verify_proof(&self, proof: &AkitaJoltProof) -> Result<(), VerifierError> {
-        verify::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript>(
+        verify::<AkitaField, AkitaScheme, AkitaVc, VerifierState<'_, Keccak>>(
             &self.preprocessing,
             &self.public_io,
             proof,
@@ -45,14 +46,14 @@ impl AkitaFixtureCase {
     }
 }
 
-/// The muldiv case: one `OneHotTrace` commitment object and no precommitted objects.
+/// The muldiv case: `OneHotTrace` and dense `FusedInc`, with no advice objects.
 pub fn akita_muldiv_case() -> &'static AkitaFixtureCase {
     static CASE: OnceLock<AkitaFixtureCase> = OnceLock::new();
     CASE.get_or_init(generate_muldiv)
 }
 
-/// The advice case: both advice kinds, three commitment objects
-/// (`OneHotTrace`, `UntrustedAdvice`, `TrustedAdvice`) in one grouped opening.
+/// The advice case: both advice kinds alongside `OneHotTrace` and `FusedInc`
+/// in one grouped opening.
 pub fn akita_advice_case() -> &'static AkitaFixtureCase {
     static CASE: OnceLock<AkitaFixtureCase> = OnceLock::new();
     CASE.get_or_init(generate_advice)
@@ -146,7 +147,7 @@ fn prove_prepared(
         preprocessing::commit_trusted_advice(&preprocessing, trusted_advice)
             .expect("trusted advice commitment")
     });
-    let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript>(
+    let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, ProverState<Keccak>>(
         JoltBackend::optimized().with_witness(&witness),
         &preprocessing,
         &config,
@@ -183,9 +184,10 @@ mod field_inline {
     use jolt_host::{JoltProgramSource, Program};
     use jolt_program::execution::{ExecutionBackend, JoltProgram, TraceInputs, TraceOutput};
     use jolt_program::preprocess::JoltProgramPreprocessing;
-    use jolt_prover::akita::preprocessing::{AkitaTranscript, AkitaVc};
+    use jolt_prover::akita::preprocessing::AkitaVc;
     use jolt_prover::JoltBackend;
     use jolt_prover::{akita, ProverConfig};
+    use jolt_transcript::{Keccak, ProverState};
     use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
     use tracer::execution_backend::TracerBackend;
 
@@ -285,7 +287,7 @@ mod field_inline {
         .expect("trace witness")
         .with_field_inline()
         .expect("field-inline witness view");
-        let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript>(
+        let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, ProverState<Keccak>>(
             JoltBackend::optimized().with_witness(&witness),
             &prover_preprocessing,
             &config,

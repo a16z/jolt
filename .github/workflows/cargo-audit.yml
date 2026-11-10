@@ -1,9 +1,7 @@
-# Nightly `cargo audit` of every tracked Cargo.lock — the workspace lockfile
-# plus the two cargo-fuzz workspaces that commit one (jolt-eval/fuzz and
-# crates/jolt-field/fuzz) — against the RustSec advisory database. The other
-# fuzz workspaces commit no lockfile and resolve fresh on every fuzz-crates.yml
-# run, so they are not covered here. Dependabot security alerts cover the root
-# workspace's crates.io dependencies too, but they only reach whoever has
+# Nightly `cargo audit` of every tracked Cargo.lock — the workspace lockfile,
+# each cargo-fuzz workspace's, and the jolt-sumcheck external-consumer test's —
+# against the RustSec advisory database. Dependabot security alerts cover the
+# root workspace's crates.io dependencies too, but they only reach whoever has
 # alerts enabled; this run fails loudly and files an issue.
 #
 # POLICY — vulnerabilities always fail. `--deny unsound --deny yanked` also
@@ -53,11 +51,11 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2
+      - uses: actions-rust-lang/setup-rust-toolchain@a188e68d0fd2bd36ad51dccb2b07ba6e75105f30 # v2
         with:
           cache: false
       - name: Install cargo-audit
-        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2
+        uses: taiki-e/install-action@682ce6c3c696a4cd5168a05f98e51aa02b877941 # v2
         with:
           tool: cargo-audit
       - name: Audit every tracked Cargo.lock

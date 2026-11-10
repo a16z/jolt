@@ -26,7 +26,7 @@ wrapper policy, proof files, and theorem names. The expected instruction bytes
 remain independent constants in the artifact checker and the HOL Light
 imports. This prevents a matrix edit from approving changed code by itself.
 
-The assembly kernels are opt-in through the `jolt-field/asm` feature. Builds
+The assembly kernels are opt-in through the `jolt-algebra/asm` feature. Builds
 that enable `solinas` without `asm` use the portable Rust implementation on
 every architecture. The inspection-only `fp128-proof-linkage` feature implies
 `asm`, so the byte checker always inspects the assembly path it is intended to
@@ -49,7 +49,7 @@ functions. The baseline x86-64 bodies copy their internal results to the
 System V return registers `rax:rdx`. The BMI2 and ADX multiplication body
 creates its result directly in those registers. These corollaries prove the
 literal load, result moves where present, `ret` behavior, and an ABI-safe
-frame. A separate certificate proves that the A7F7 modulus is prime.
+frame. Separate certificates prove that the A7F7 and 6A23801F moduli are prime.
 
 The [scalar Fp64 guide](../../book/src/how/formal-verification/field-kernels-fp64.md)
 states the precise Fp64 claim, explains the `2^64 - 59` reduction, and lists
@@ -115,7 +115,7 @@ compares the assembly square and fused multiply-add kernels. CI fuzzes the
 target natively on AArch64, on baseline x86-64 through the general fuzz
 workflow, and on x86-64 with BMI2 and ADX enabled through this proof workflow.
 
-Run it locally from `crates/jolt-field` on a supported architecture.
+Run it locally from `crates/jolt-algebra` on a supported architecture.
 
 ```sh
 cargo +nightly-2026-08-24 fuzz run fp128-asm-differential -- -max_total_time=120
@@ -169,6 +169,9 @@ outside the present Fp128 machine-proof scope. They retain differential or
 ordinary test coverage as described in the Book chapter.
 
 ## Scalar Fp64 checks
+
+The runners select the Rust toolchain recorded in `fp64-certified-builds.json`.
+An explicit `RUSTUP_TOOLCHAIN` override must match that matrix's compiler identity.
 
 Run the fast Fp64 byte check with
 
