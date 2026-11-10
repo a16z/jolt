@@ -3413,6 +3413,7 @@ dependencies = [
  "cc",
  "criterion",
  "jolt-riscv",
+ "jolt-utils",
  "num-bigint",
  "num-traits",
  "rand 0.8.7",

@@ -29,6 +29,7 @@ use crate::solinas::pseudo_mersenne_modulus;
 use crate::{AlgebraError, CanonicalBytes, Ext2Config, ExtField, Field, PseudoMersenne, Ring};
 #[cfg(feature = "bytemuck")]
 use bytemuck::{CheckedBitPattern, NoUninit, Pod, Zeroable};
+use jolt_utils::alloc::ZeroBytesValid;
 use num_traits::Zero;
 use rand_core::RngCore;
 use std::marker::PhantomData;
@@ -876,3 +877,13 @@ mod bytemuck_tests {
         );
     }
 }
+
+// SAFETY: all coefficients are zero-byte-valid; the extension zero has all
+// zero coefficients. The quadratic config marker occupies no storage.
+unsafe impl<F: PseudoMersenne + ZeroBytesValid, C: Ext2Config<F>> ZeroBytesValid for FpExt2<F, C> {}
+
+// SAFETY: the transparent coefficient array is zero-byte-valid whenever F is.
+unsafe impl<F: PseudoMersenne + ZeroBytesValid> ZeroBytesValid for FpExt4<F> {}
+
+// SAFETY: the transparent coefficient array is zero-byte-valid whenever F is.
+unsafe impl<F: PseudoMersenne + ZeroBytesValid> ZeroBytesValid for FpExt8<F> {}

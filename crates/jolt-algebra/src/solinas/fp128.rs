@@ -17,6 +17,8 @@
 //! the portable throughput on Apple M4. Without `asm`, all Fp128 operations
 //! use portable Rust.
 
+use jolt_utils::alloc::ZeroBytesValid;
+
 use super::word::mul64_wide;
 use super::FIELD_INLINE_FP128_MODULUS;
 use crate::PseudoMersenne;
@@ -1072,7 +1074,11 @@ impl<const P: u128> Ring for Fp128<P> {
     }
 }
 
+// SAFETY: Fp128 stores zero as two zero u64 limbs.
+unsafe impl<const P: u128> ZeroBytesValid for Fp128<P> {}
+
 impl<const P: u128> Field for Fp128<P> {
+    zeroed_field_vec!();
     #[inline]
     fn dot_product(a: &[Self], b: &[Self]) -> Self {
         <Self as MulBaseUnreduced<Self>>::dot_base(a, b)
