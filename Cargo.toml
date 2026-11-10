@@ -214,6 +214,7 @@ ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "de
 # `ntt-inline`, jolt-inlines-ntt from this Git source. Redirect them to the workspace members so Cargo resolves one shared
 # identity for each: Akita then runs on Jolt's own transcript states.
 [patch."https://github.com/a16z/jolt"]
+jolt-sumcheck = { path = "crates/jolt-sumcheck" }
 jolt-field = { path = "crates/jolt-field" }
 jolt-poly = { path = "crates/jolt-poly" }
 jolt-transcript = { path = "crates/jolt-transcript" }

@@ -9,8 +9,9 @@ use jolt_field::{
 };
 use jolt_poly::{OmittedConstantPoly, Point, UnivariatePoly};
 use jolt_sumcheck::{
-    prove_single, verify_single, EqFactoredRound, ProveRounds, SingleFormat, SingleInstance,
-    SingleReduction, SingleSumcheckProof, SumcheckDomain, SumcheckError,
+    prove_single, verify_single, EqFactoredRound, ProveRounds, ProveSingleRounds, ProverRound,
+    ProverRoundChannel, SingleFormat, SingleInstance, SingleReduction, SingleSumcheckProof,
+    SumcheckDomain, SumcheckError,
 };
 use jolt_transcript::{
     prover_transcript, verifier_transcript, Blake2b512, ChallengeCodec, Encoding, ProverState,
@@ -297,7 +298,7 @@ fn tampered_coefficient_or_claim_fails_the_oracle_check() {
         let mut transcript = prover_transcript::<Blake2b512>(&session(), b"");
         assert!(matches!(
             prove_single(&mut kernel, &wrong, &mut transcript),
-            Err(SumcheckError::RoundCheckFailed { round: 0, .. })
+            Err(SumcheckError::InvalidInput { .. })
         ));
     }
 }
@@ -418,4 +419,460 @@ fn prover_rejects_a_round_above_the_degree() {
         prove_single(&mut kernel, &instance, &mut transcript),
         Err(SumcheckError::DegreeBoundExceeded { got: 2, max: 1 })
     ));
+}
+
+mod allocation {
+    use std::alloc::{GlobalAlloc, Layout, System};
+    use std::cell::Cell;
+
+    pub struct Counting;
+    thread_local! {
+        static COUNTS: Cell<Option<(usize, usize)>> = const { Cell::new(None) };
+    }
+    // SAFETY: every allocation operation forwards the original layout and pointer
+    // to System; the thread-local counters neither allocate nor affect ownership.
+    unsafe impl GlobalAlloc for Counting {
+        unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+            COUNTS.with(|counts| {
+                if let Some((n, bytes)) = counts.get() {
+                    counts.set(Some((n + 1, bytes + layout.size())));
+                }
+            });
+            // SAFETY: the caller supplies the unchanged GlobalAlloc contract arguments.
+            unsafe { System.alloc(layout) }
+        }
+        unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+            // SAFETY: the caller supplies the unchanged GlobalAlloc contract arguments.
+            unsafe { System.dealloc(ptr, layout) }
+        }
+        unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, size: usize) -> *mut u8 {
+            COUNTS.with(|counts| {
+                if let Some((n, bytes)) = counts.get() {
+                    counts.set(Some((n + 1, bytes + size)));
+                }
+            });
+            // SAFETY: the caller supplies the unchanged GlobalAlloc contract arguments.
+            unsafe { System.realloc(ptr, layout, size) }
+        }
+    }
+    pub fn measure<R>(f: impl FnOnce() -> R) -> (R, (usize, usize)) {
+        COUNTS.with(|counts| counts.set(Some((0, 0))));
+        let result = f();
+        let counts = COUNTS.with(|counts| counts.replace(None).unwrap());
+        (result, counts)
+    }
+}
+
+use allocation::Counting;
+
+#[global_allocator]
+static ALLOCATOR: Counting = Counting;
+
+#[test]
+fn verifier_allocation_and_transcript_baseline() {
+    for factored in [false, true] {
+        let mut kernel = ProductKernel::<Fr>::sampled(4, 71, factored, Fr::from_u64);
+        let instance = instance(&kernel);
+        let (proof, proved, state) = prove(&mut kernel, &instance);
+        let mut transcript = verifier_transcript::<Blake2b512>(&session(), b"", &[]);
+        let (replayed, counts) =
+            allocation::measure(|| verify_single(&instance, &proof, &mut transcript).unwrap());
+        assert_eq!(replayed, proved);
+        // Captured at ec0f33b73 with the same fixture and counting allocator.
+        assert!(counts.0 <= 22 && counts.1 <= 1152, "{counts:?}");
+        let expected = if factored {
+            [
+                97, 113, 63, 193, 220, 197, 166, 119, 64, 24, 22, 35, 5, 37, 249, 171, 2, 17, 145,
+                252, 109, 231, 81, 118, 225, 66, 118, 123, 230, 55, 65, 74,
+            ]
+        } else {
+            [
+                252, 152, 71, 241, 238, 192, 1, 107, 99, 35, 137, 148, 145, 207, 215, 31, 179, 114,
+                155, 134, 130, 217, 32, 196, 102, 94, 5, 41, 22, 123, 137, 32,
+            ]
+        };
+        assert_eq!(state, expected);
+        assert_eq!(transcript.verifier_message::<[u8; 32]>(), expected);
+    }
+}
+
+#[test]
+fn checked_shape_boundaries() {
+    use jolt_sumcheck::{SumcheckShape, SumcheckShapeError};
+    assert_eq!(
+        SumcheckShape::new(1, 0),
+        Err(SumcheckShapeError::ZeroDegree)
+    );
+    assert!(matches!(
+        SumcheckShape::new(0, usize::MAX),
+        Err(SumcheckShapeError::DegreeOverflow { .. })
+    ));
+    assert!(matches!(
+        SumcheckShape::new(2, usize::MAX),
+        Err(SumcheckShapeError::Overflow { .. })
+    ));
+    assert_eq!(
+        SumcheckShape::new(u32::MAX as usize, 1)
+            .unwrap()
+            .num_rounds(),
+        u32::MAX as usize
+    );
+    assert!(matches!(
+        SumcheckShape::new(u32::MAX as usize + 1, 1),
+        Err(SumcheckShapeError::RoundCountOutOfRange { .. })
+    ));
+    assert_eq!(SumcheckShape::new(0, 1).unwrap().degree_bound(), 1);
+}
+
+#[test]
+fn borrowed_and_owned_rounds_match_polynomial_oracle_without_allocating() {
+    use jolt_poly::{eval_round_wire, CompressedPoly, WireFormat};
+    let point = Fr::from_u64(13);
+    let tau = Fr::from_u64(7);
+    for coefficients in [
+        vec![],
+        vec![Fr::from_u64(9)],
+        vec![Fr::from_u64(9), Fr::from_u64(3)],
+        vec![
+            Fr::from_u64(9),
+            Fr::from_u64(3),
+            Fr::from_u64(5),
+            Fr::from_u64(11),
+        ],
+    ] {
+        // Direct power sum, independent of both evaluation implementations.
+        let oracle = |x: Fr| {
+            coefficients
+                .iter()
+                .enumerate()
+                .map(|(i, &c)| c * (0..i).fold(Fr::one(), |a, _| a * x))
+                .sum::<Fr>()
+        };
+        let eq_claim = (Fr::one() - tau) * oracle(Fr::zero()) + tau * oracle(Fr::one());
+        let omitted = OmittedConstantPoly::from_q_coefficients(coefficients.clone());
+        let (borrowed, counts) = allocation::measure(|| {
+            eval_round_wire(
+                WireFormat::EqFactored { tau },
+                omitted.coefficients(),
+                eq_claim,
+                point,
+            )
+        });
+        assert_eq!(counts, (0, 0));
+        assert_eq!(borrowed, oracle(point));
+        assert_eq!(
+            omitted.evaluate_from_claim(eq_claim, tau, point),
+            oracle(point)
+        );
+        if !coefficients.is_empty() {
+            let wire = std::iter::once(coefficients[0])
+                .chain(coefficients.iter().skip(2).copied())
+                .collect();
+            let compressed = CompressedPoly::new(wire);
+            let claim = oracle(Fr::zero()) + oracle(Fr::one());
+            let (borrowed, counts) = allocation::measure(|| {
+                eval_round_wire(
+                    WireFormat::Compressed,
+                    compressed.coeffs_except_linear_term(),
+                    claim,
+                    point,
+                )
+            });
+            assert_eq!(counts, (0, 0));
+            assert_eq!(borrowed, oracle(point));
+            assert_eq!(compressed.eval_from_hint(&claim, &point), oracle(point));
+        }
+    }
+}
+
+#[test]
+fn clear_channels_preserve_wrapper_proof_and_transcript() {
+    use jolt_sumcheck::{
+        prove_single_with, verify_single_with, ClearProverRounds, ClearVerifierRounds, FullRounds,
+    };
+    for factored in [false, true] {
+        let mut kernel = ProductKernel::<P>::sampled(3, 81, factored, sample::<P, P>);
+        let instance = instance(&kernel);
+        let (expected_proof, expected_reduction, expected_state) = prove(&mut kernel, &instance);
+        let mut kernel = ProductKernel::<P>::sampled(3, 81, factored, sample::<P, P>);
+        let mut transcript = prover_transcript::<Blake2b512>(&session(), b"");
+        let mut channel = ClearProverRounds::new(instance.shape().unwrap(), &mut transcript);
+        let reduction =
+            prove_single_with(&mut FullRounds::new(&mut kernel), &instance, &mut channel).unwrap();
+        let proof = channel.into_proof();
+        assert_eq!(proof, expected_proof);
+        assert_eq!(reduction, expected_reduction);
+        assert_eq!(transcript.verifier_message::<[u8; 32]>(), expected_state);
+        let mut transcript = verifier_transcript::<Blake2b512>(&session(), b"", &[]);
+        let mut channel =
+            ClearVerifierRounds::new(instance.shape().unwrap(), &proof, &mut transcript).unwrap();
+        assert_eq!(
+            verify_single_with(&instance, &mut channel).unwrap(),
+            expected_reduction
+        );
+        assert_eq!(transcript.verifier_message::<[u8; 32]>(), expected_state);
+    }
+}
+
+#[derive(Debug, PartialEq)]
+enum ChannelError {
+    InvalidInput,
+    Transport,
+}
+
+struct NativeRound(Option<ProverRound<Fr>>);
+impl ProveSingleRounds<Fr, ChannelError> for NativeRound {
+    fn num_rounds(&self) -> usize {
+        1
+    }
+    fn prove_round(
+        &mut self,
+        bind: Option<Fr>,
+        round: usize,
+        _claim: Fr,
+    ) -> Result<ProverRound<Fr>, ChannelError> {
+        assert_eq!(round, 0);
+        assert!(bind.is_none());
+        self.0.take().ok_or(ChannelError::InvalidInput)
+    }
+    fn finish_rounds(&mut self, _bind: Fr) -> Result<(), ChannelError> {
+        Ok(())
+    }
+}
+
+#[derive(Default)]
+struct Transport {
+    sends: usize,
+    draws: usize,
+    pointer: Option<usize>,
+    fail: bool,
+}
+impl ProverRoundChannel<Fr> for Transport {
+    type Error = ChannelError;
+    fn map_sumcheck_error(&self, _error: SumcheckError<Fr>) -> ChannelError {
+        ChannelError::InvalidInput
+    }
+    fn bind_input_claim(&mut self, _claim: &Fr) -> Result<(), ChannelError> {
+        Ok(())
+    }
+    fn send_round(&mut self, _round: usize, wire: &mut [Fr]) -> Result<(), ChannelError> {
+        self.sends += 1;
+        if let Some(pointer) = self.pointer {
+            assert_eq!(pointer, wire.as_ptr() as usize);
+        }
+        if self.fail {
+            Err(ChannelError::Transport)
+        } else {
+            Ok(())
+        }
+    }
+    fn round_challenge(&mut self, _round: usize, _degree: usize) -> Result<Fr, ChannelError> {
+        self.draws += 1;
+        Ok(Fr::from_u64(3))
+    }
+}
+
+#[test]
+fn native_round_validation_precedes_send_and_preserves_owned_buffer() {
+    use jolt_sumcheck::{prove_single_with, ProverRound};
+    let tau = Fr::from_u64(7);
+    let mut instance = SingleInstance {
+        rounds: 1,
+        degree: 2,
+        input_claim: Fr::from_u64(5),
+        format: SingleFormat::EqFactored {
+            equality_point: Point::low_to_high(vec![tau]),
+        },
+    };
+    for wire in [vec![Fr::one(), -Fr::one()], vec![Fr::one()]] {
+        let mut kernel = NativeRound(Some(ProverRound::EqFactored {
+            wire,
+            tau: tau + Fr::one(),
+        }));
+        let mut channel = Transport::default();
+        assert_eq!(
+            prove_single_with(&mut kernel, &instance, &mut channel),
+            Err(ChannelError::InvalidInput)
+        );
+        assert_eq!((channel.sends, channel.draws), (0, 0));
+    }
+    let mut wire = Vec::with_capacity(2);
+    wire.push(Fr::one());
+    let pointer = wire.as_ptr() as usize;
+    let mut kernel = NativeRound(Some(ProverRound::EqFactored { wire, tau }));
+    let mut channel = Transport {
+        pointer: Some(pointer),
+        ..Transport::default()
+    };
+    let reduction = prove_single_with(&mut kernel, &instance, &mut channel).unwrap();
+    assert_eq!(reduction.output_claim, Fr::one()); // q0 = 5 - 7, q(3) = 1
+    assert_eq!((channel.sends, channel.draws), (1, 1));
+    for output in [
+        ProverRound::EqFactored {
+            wire: vec![Fr::zero(); 3],
+            tau,
+        },
+        ProverRound::Full(UnivariatePoly::new(vec![Fr::from_u64(5), Fr::one()])),
+    ] {
+        let mut channel = Transport::default();
+        assert_eq!(
+            prove_single_with(&mut NativeRound(Some(output)), &instance, &mut channel),
+            Err(ChannelError::InvalidInput)
+        );
+        assert_eq!((channel.sends, channel.draws), (0, 0));
+    }
+    instance.format = SingleFormat::Compressed;
+    for output in [
+        ProverRound::EqFactored {
+            wire: vec![Fr::zero(); 2],
+            tau,
+        },
+        ProverRound::Full(UnivariatePoly::new(vec![Fr::one(), Fr::one(), Fr::one()])),
+    ] {
+        let mut channel = Transport::default();
+        assert_eq!(
+            prove_single_with(&mut NativeRound(Some(output)), &instance, &mut channel),
+            Err(ChannelError::InvalidInput)
+        );
+        assert_eq!((channel.sends, channel.draws), (0, 0));
+    }
+    let mut channel = Transport::default();
+    let padded = ProverRound::Full(UnivariatePoly::new(vec![
+        Fr::one(),
+        Fr::from_u64(2),
+        Fr::one(),
+        Fr::zero(),
+        Fr::zero(),
+    ]));
+    let reduction =
+        prove_single_with(&mut NativeRound(Some(padded)), &instance, &mut channel).unwrap();
+    assert_eq!(reduction.output_claim, Fr::from_u64(16));
+    let excess = ProverRound::Full(UnivariatePoly::new(vec![
+        Fr::one(),
+        Fr::from_u64(2),
+        Fr::one(),
+        Fr::zero(),
+        Fr::one(),
+    ]));
+    let mut channel = Transport::default();
+    assert_eq!(
+        prove_single_with(&mut NativeRound(Some(excess)), &instance, &mut channel),
+        Err(ChannelError::InvalidInput)
+    );
+    assert_eq!((channel.sends, channel.draws), (0, 0));
+    let mut channel = Transport {
+        fail: true,
+        ..Transport::default()
+    };
+    let valid = ProverRound::Full(UnivariatePoly::new(vec![
+        Fr::one(),
+        Fr::from_u64(2),
+        Fr::one(),
+    ]));
+    assert_eq!(
+        prove_single_with(&mut NativeRound(Some(valid)), &instance, &mut channel),
+        Err(ChannelError::Transport)
+    );
+    assert_eq!((channel.sends, channel.draws), (1, 0));
+}
+
+#[test]
+fn streaming_visitor_borrows_wires_and_stops_on_failure() {
+    use jolt_sumcheck::{visit_single_rounds, SumcheckShape, VerifierRoundChannel};
+    use std::borrow::Cow;
+    struct Borrowed {
+        wire: [Fr; 2],
+        calls: usize,
+    }
+    impl VerifierRoundChannel<Fr> for Borrowed {
+        type Error = ChannelError;
+        type Slots = usize;
+        fn map_sumcheck_error(&self, _error: SumcheckError<Fr>) -> ChannelError {
+            ChannelError::InvalidInput
+        }
+        fn verify_round<R>(
+            &mut self,
+            round: usize,
+            _degree: usize,
+            visit: impl FnOnce(Cow<'_, [Fr]>, usize, Fr) -> Result<R, ChannelError>,
+        ) -> Result<R, ChannelError> {
+            self.calls += 1;
+            visit(Cow::Borrowed(&self.wire), round, Fr::one())
+        }
+    }
+    let mut channel = Borrowed {
+        wire: [Fr::one(); 2],
+        calls: 0,
+    };
+    let pointer = channel.wire.as_ptr();
+    let mut visits = 0;
+    let result = visit_single_rounds(
+        SumcheckShape::new(4, 2).unwrap(),
+        &mut channel,
+        |round, wire, slot, challenge| {
+            assert!(matches!(wire, Cow::Borrowed(_)));
+            assert_eq!(wire.as_ptr(), pointer);
+            assert_eq!(slot, round);
+            assert_eq!(challenge, Fr::one());
+            visits += 1;
+            Err(ChannelError::Transport)
+        },
+    );
+    assert_eq!(result, Err(ChannelError::Transport));
+    assert_eq!((channel.calls, visits), (1, 1));
+    channel.calls = 0;
+    let result = visit_single_rounds(
+        SumcheckShape::new(4, 1).unwrap(),
+        &mut channel,
+        |_, _, _, _| {
+            visits += 1;
+            Ok(())
+        },
+    );
+    assert_eq!(result, Err(ChannelError::InvalidInput));
+    assert_eq!((channel.calls, visits), (1, 1));
+}
+
+#[test]
+fn full_adapter_rejects_invalid_sequences_without_touching_kernel() {
+    use jolt_sumcheck::FullRounds;
+    let mut kernel = ProductKernel::<Fr>::sampled(2, 91, false, Fr::from_u64);
+    let claim = kernel.claim();
+    let mut adapter = FullRounds::new(&mut kernel);
+    assert!(matches!(
+        adapter.prove_round(None, 1, claim),
+        Err(SumcheckError::InvalidInput { .. })
+    ));
+    assert!(matches!(
+        adapter.prove_round(Some(Fr::one()), 0, claim),
+        Err(SumcheckError::InvalidInput { .. })
+    ));
+    assert!(matches!(
+        adapter.finish_rounds(Fr::one()),
+        Err(SumcheckError::InvalidInput { .. })
+    ));
+    let _ = adapter.prove_round(None, 0, claim).unwrap();
+    assert!(matches!(
+        adapter.prove_round(None, 0, claim),
+        Err(SumcheckError::InvalidInput { .. })
+    ));
+    assert!(matches!(
+        adapter.prove_round(None, 1, claim),
+        Err(SumcheckError::InvalidInput { .. })
+    ));
+    let _ = adapter.prove_round(Some(Fr::one()), 1, claim).unwrap();
+    assert!(matches!(
+        adapter.prove_round(Some(Fr::one()), 2, claim),
+        Err(SumcheckError::InvalidInput { .. })
+    ));
+    adapter.finish_rounds(Fr::one()).unwrap();
+    assert!(matches!(
+        adapter.finish_rounds(Fr::one()),
+        Err(SumcheckError::InvalidInput { .. })
+    ));
+    assert!(matches!(
+        adapter.prove_round(None, 0, claim),
+        Err(SumcheckError::InvalidInput { .. })
+    ));
+    assert_eq!(kernel.seen_claims.len(), 2);
 }

@@ -162,8 +162,13 @@ pub use recorder::CommittedSumcheckRecorder;
 pub use recorder::{ClearSumcheckRecorder, RecordedSumcheck, SumcheckRecorder};
 pub use round_proof::{append_compressed_round, ClearRound, RoundMessage};
 #[cfg(feature = "prover")]
-pub use single::prove_single;
 pub use single::{
-    verify_single, SingleFormat, SingleInstance, SingleReduction, SingleSumcheckProof,
+    prove_single, prove_single_with, ClearProverRounds, FullRounds, ProveSingleRounds, ProverRound,
+    ProverRoundChannel,
+};
+pub use single::{
+    verify_single, verify_single_with, visit_single_rounds, BindScalarClaim, ClearVerifierRounds,
+    SingleFormat, SingleInstance, SingleReduction, SingleSumcheckProof, SumcheckShape,
+    SumcheckShapeError, VerifierRoundChannel,
 };
 pub use verifier::SumcheckVerifier;
