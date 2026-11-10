@@ -17,6 +17,8 @@ macro_rules! declare_riscv_instr {
             pub operands: $format,
             pub virtual_sequence_remaining: Option<u16>,
             pub is_first_in_sequence: bool,
+            #[serde(default)]
+            pub source_can_end: bool,
             pub is_compressed: bool,
         }
 
@@ -58,6 +60,7 @@ macro_rules! declare_riscv_instr {
                     ),
                     virtual_sequence_remaining: None,
                     is_first_in_sequence: false,
+                    source_can_end: false,
                     is_compressed: compressed,
                 }
             }
@@ -71,6 +74,7 @@ macro_rules! declare_riscv_instr {
                     ),
                     virtual_sequence_remaining: None,
                     is_first_in_sequence: false,
+                    source_can_end: false,
                     is_compressed: false,
                 }
             }
@@ -89,6 +93,7 @@ macro_rules! declare_riscv_instr {
                     operands: row.operands.into(),
                     virtual_sequence_remaining: None,
                     is_first_in_sequence: false,
+                    source_can_end: false,
                     is_compressed: row.is_compressed,
                 }
             }

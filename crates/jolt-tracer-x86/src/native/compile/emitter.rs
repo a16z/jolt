@@ -123,6 +123,7 @@ mod tests {
 
     fn add_row() -> JoltInstructionRow {
         JoltInstructionRow {
+            source_can_end: false,
             instruction_kind: JoltInstructionKind::ADD,
             address: TEST_ADDR as usize,
             operands: NormalizedOperands {

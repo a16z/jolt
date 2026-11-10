@@ -427,6 +427,7 @@ mod tests {
     ) -> R {
         let instructions: Vec<JoltInstructionRow> = (0..3u64)
             .map(|index| JoltInstructionRow {
+                source_can_end: false,
                 instruction_kind: JoltInstructionKind::ADDI,
                 address: (0x8000_0000u64 + 4 * index) as usize,
                 operands: NormalizedOperands {

@@ -531,6 +531,7 @@ mod tests {
     fn test_bytecode() -> Vec<JoltInstructionRow> {
         vec![
             JoltInstructionRow {
+                source_can_end: false,
                 instruction_kind: JoltInstructionKind::ADD,
                 address: 9,
                 operands: NormalizedOperands {

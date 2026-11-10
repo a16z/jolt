@@ -48,6 +48,7 @@ pub const SPARTAN_OUTER_R1CS_INPUTS: [JoltVirtualPolynomial; 21 + NUM_CIRCUIT_FL
     JoltVirtualPolynomial::OpFlags(CircuitFlags::IsCompressed),
     JoltVirtualPolynomial::OpFlags(CircuitFlags::IsFirstInSequence),
     JoltVirtualPolynomial::OpFlags(CircuitFlags::IsLastInSequence),
+    JoltVirtualPolynomial::OpFlags(CircuitFlags::CanEnd),
     #[cfg(feature = "field-inline")]
     JoltVirtualPolynomial::OpFlags(CircuitFlags::FieldAdd),
     #[cfg(feature = "field-inline")]

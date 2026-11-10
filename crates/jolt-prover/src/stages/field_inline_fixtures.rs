@@ -65,6 +65,7 @@ fn instruction(
     imm: i128,
 ) -> JoltInstructionRow {
     JoltInstructionRow {
+        source_can_end: false,
         instruction_kind,
         address: ENTRY as usize + offset * 4,
         operands: NormalizedOperands { rd, rs1, rs2, imm },
@@ -147,10 +148,7 @@ fn field_row(instruction: JoltInstructionRow) -> JoltTraceRow {
     trace_row(instruction, RegisterState::default(), RamAccess::NoOp).unwrap()
 }
 
-/// A terminal JAL row: the only hand-craftable last real instruction — its
-/// `Jump` flag turns off the otherwise-unconditional PC-update row 16, and
-/// `ShouldJump` stays 0 because the successor is the noop padding — with the
-/// link write (`rd = address + 4`) row 13 demands.
+/// A self-targeting terminal JAL, with the link write required by the jump row.
 fn halt_jal_row(offset: usize, rd: u8) -> JoltTraceRow {
     let jal = instruction(JoltInstructionKind::JAL, offset, Some(rd), None, None, 0);
     trace_row(

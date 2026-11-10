@@ -5,6 +5,8 @@ pub mod analyze;
 pub mod field_inline;
 mod program;
 
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use std::io::Error as IoError;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -14,10 +16,15 @@ use jolt_program::{JoltProgram, ProgramError};
 use jolt_riscv::{JoltInstructionProfile, JoltInstructionRow, RV64IMAC_JOLT_ALL_INLINES};
 use tracer::TracerInlineExpansionProvider;
 
-/// Guest build cache used when no target dir is given: `jolt-guest-targets`
-/// under the system temp dir (`TMPDIR`, else `/tmp`).
+/// Guest build cache under the system temp directory, scoped to this checkout.
 pub fn default_target_dir() -> PathBuf {
-    std::env::temp_dir().join("jolt-guest-targets")
+    // Cargo guest artifacts from sibling worktrees can contain different SDK
+    // macros even when the guest name matches. Keep their build caches separate.
+    let mut checkout = DefaultHasher::new();
+    env!("CARGO_MANIFEST_DIR").hash(&mut checkout);
+    std::env::temp_dir()
+        .join("jolt-guest-targets")
+        .join(format!("{:016x}", checkout.finish()))
 }
 
 #[derive(Clone)]

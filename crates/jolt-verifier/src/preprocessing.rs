@@ -143,18 +143,18 @@ impl<PCS: CommitmentScheme> ProgramPreprocessing<PCS> {
 /// deployed verifier sees.
 #[cfg(all(not(feature = "akita"), not(feature = "field-inline")))]
 const PROGRAM_PREPROCESSING_DIGEST_DOMAIN: &[u8] =
-    b"jolt/program-preprocessing/dory-whole-bytecode/v2";
+    b"jolt/program-preprocessing/dory-whole-bytecode/v3";
 // Field flags use the common circuit columns; preprocessing has no side table.
 #[cfg(all(not(feature = "akita"), feature = "field-inline"))]
 const PROGRAM_PREPROCESSING_DIGEST_DOMAIN: &[u8] =
-    b"jolt/program-preprocessing/dory-whole-bytecode/field-inline/v2";
+    b"jolt/program-preprocessing/dory-whole-bytecode/field-inline/v3";
 
 #[cfg(all(feature = "akita", not(feature = "field-inline")))]
 const PROGRAM_PREPROCESSING_DIGEST_DOMAIN: &[u8] =
-    b"jolt/program-preprocessing/akita-whole-bytecode/v1";
+    b"jolt/program-preprocessing/akita-whole-bytecode/v2";
 #[cfg(all(feature = "akita", feature = "field-inline"))]
 const PROGRAM_PREPROCESSING_DIGEST_DOMAIN: &[u8] =
-    b"jolt/program-preprocessing/akita-whole-bytecode/field-inline/v1";
+    b"jolt/program-preprocessing/akita-whole-bytecode/field-inline/v2";
 
 impl<PCS: CommitmentScheme> ProgramPreprocessing<PCS> {
     /// The 32-byte program binding absorbed first into the Fiat-Shamir

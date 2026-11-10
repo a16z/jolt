@@ -1550,6 +1550,7 @@ fn expand_manifest_path(target: TamperTarget) -> Vec<&'static str> {
             "claims.stage1.outer.outer_remainder.is_compressed",
             "claims.stage1.outer.outer_remainder.is_first_in_sequence",
             "claims.stage1.outer.outer_remainder.is_last_in_sequence",
+            "claims.stage1.outer.outer_remainder.can_end",
             #[cfg(feature = "field-inline")]
             "claims.stage1.outer.outer_remainder.field_add",
             #[cfg(feature = "field-inline")]
@@ -1728,6 +1729,7 @@ pub fn clear_claims<F: JoltField>(fill_optionals: bool) -> ClearProofClaims<F> {
                 pc: zero,
                 is_virtual: zero,
                 is_first_in_sequence: zero,
+                source_can_end: false,
                 is_noop: zero,
             },
             instruction_input: stage3::outputs::InstructionInputOutputClaims {

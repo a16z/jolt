@@ -1,7 +1,7 @@
 //! Optimized stage-1 Spartan outer kernels with the reference kernels' exact
 //! wire behavior:
 //!
-//! - **Typed small-scalar row evaluation**: the 19 eq-conditional constraint
+//! - **Typed small-scalar row evaluation**: the 20 eq-conditional constraint
 //!   rows are evaluated per cycle as integers (`i64` guards, `i128` B values,
 //!   the second-group values split as `hi·2^64 + lo`) straight off a
 //!   typed witness bundle — the ordinary R1CS input tables are never
@@ -125,6 +125,10 @@ const DOMAIN: usize = SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE;
 const SECOND_GROUP_LEN: usize = SPARTAN_OUTER_SECOND_GROUP_ROW_COUNT;
 const EXTENDED_SIZE: usize = 2 * DOMAIN - 1;
 const EXTENDED_NODE_COUNT: usize = DOMAIN - 1;
+#[cfg(not(feature = "field-inline"))]
+const _: () = assert!(EXTENDED_NODE_COUNT == 9);
+#[cfg(feature = "field-inline")]
+const _: () = assert!(EXTENDED_NODE_COUNT == 14);
 const DOMAIN_START: i64 = -((DOMAIN as i64 - 1) / 2);
 const EXTENDED_START: i64 = -((EXTENDED_SIZE as i64 - 1) / 2);
 /// The rv64 prefixes of the composed stream groups
@@ -426,7 +430,7 @@ impl SpartanOuterRow {
                 - flag(self.circuit_flags[CircuitFlags::IsLastInSequence]),
             flag(self.next_is_virtual.0) - flag(self.next_is_first_in_sequence.0),
         ];
-        // Rows 0, 7, 8, 9, 10, 12, 13, 15, 16.
+        // Rows 0, 7, 8, 9, 10, 12, 13, 15, 16, 19.
         let rv64_a_second = [
             load + store,
             add,
@@ -437,6 +441,7 @@ impl SpartanOuterRow {
             jump,
             should_branch,
             1 - should_branch - jump,
+            jump - flag(self.should_jump.0),
         ];
 
         let mut first = [0; DOMAIN];
@@ -500,6 +505,8 @@ impl SpartanOuterRow {
         let left_input = word(self.left_instruction_input.0);
         let compressed = 2 * i128::from(self.circuit_flags[CircuitFlags::IsCompressed]);
         let pc_step = diff(self.next_unexpanded_pc.0, self.unexpanded_pc.0);
+        // The stopping row adds one low/high pair in this existing pass;
+        // its high limb is Boolean, preserving the second-group limb bound.
         let rv64_b_second_lo = [
             diff(self.ram_address.0, self.rs1_value.0) - imm_lo + word(self.lookup_output.0),
             right_lookup_lo - left_input - right_input_lo,
@@ -512,6 +519,7 @@ impl SpartanOuterRow {
             pc_step - 4
                 + 4 * i128::from(self.circuit_flags[CircuitFlags::DoNotUpdateUnexpandedPC])
                 + compressed,
+            diff(self.lookup_output.0, self.unexpanded_pc.0),
         ];
         let rv64_b_second_hi = [
             -imm_hi,
@@ -523,6 +531,7 @@ impl SpartanOuterRow {
             0,
             -imm_hi,
             0,
+            i128::from(!self.circuit_flags[CircuitFlags::CanEnd]),
         ];
 
         let mut values = RowGroupValues {
@@ -1239,7 +1248,7 @@ impl<F: JoltField> OuterRemainderKernel<F> {
 
     /// Az/Bz column weights at both stream values over the composed opening-column
     /// selection, from the same `jolt-claims` sources the verifier's coefficient build
-    /// uses (35 rv64 columns without field-inline; the non-contiguous 45 + 5 selection
+    /// uses (36 rv64 columns without field-inline; the non-contiguous 46 + 5 selection
     /// under `field-inline`).
     fn derived_weights(uniskip_challenge: F) -> Result<DerivedWeights<F>, KernelError<F>> {
         let matrices = spartan_outer_constraints::<F>();
@@ -1394,24 +1403,25 @@ impl<F: JoltField> ClaimAccumulator<F> {
         flag(32, row.circuit_flags[CircuitFlags::IsCompressed]);
         flag(33, row.circuit_flags[CircuitFlags::IsFirstInSequence]);
         flag(34, row.circuit_flags[CircuitFlags::IsLastInSequence]);
+        flag(35, row.circuit_flags[CircuitFlags::CanEnd]);
         #[cfg(feature = "field-inline")]
         {
-            flag(35, row.circuit_flags[CircuitFlags::FieldAdd]);
-            flag(36, row.circuit_flags[CircuitFlags::FieldSub]);
-            flag(37, row.circuit_flags[CircuitFlags::FieldMul]);
-            flag(38, row.circuit_flags[CircuitFlags::FieldInv]);
-            flag(39, row.circuit_flags[CircuitFlags::FieldAssertEq]);
+            flag(36, row.circuit_flags[CircuitFlags::FieldAdd]);
+            flag(37, row.circuit_flags[CircuitFlags::FieldSub]);
+            flag(38, row.circuit_flags[CircuitFlags::FieldMul]);
+            flag(39, row.circuit_flags[CircuitFlags::FieldInv]);
+            flag(40, row.circuit_flags[CircuitFlags::FieldAssertEq]);
             flag(
-                40,
+                41,
                 row.circuit_flags[CircuitFlags::FieldLoadAccumulateFromRegister],
             );
-            flag(41, row.circuit_flags[CircuitFlags::FieldAssertZero]);
-            flag(42, row.circuit_flags[CircuitFlags::FieldLoadImm]);
+            flag(42, row.circuit_flags[CircuitFlags::FieldAssertZero]);
+            flag(43, row.circuit_flags[CircuitFlags::FieldLoadImm]);
             flag(
-                43,
+                44,
                 row.circuit_flags[CircuitFlags::FieldLoadAccumulateFromMemory],
             );
-            flag(44, row.circuit_flags[CircuitFlags::FieldAdviceLimb]);
+            flag(45, row.circuit_flags[CircuitFlags::FieldAdviceLimb]);
         }
 
         let mut word = |index: usize, magnitude: u128, is_positive: bool| {
@@ -1654,52 +1664,9 @@ mod tests {
             18 => row.next_is_first_in_sequence.to_field(),
             19 => row.lookup_output.to_field(),
             20 => row.should_jump.to_field(),
-            21 => F::from_u64(u64::from(row.circuit_flags[CircuitFlags::AddOperands])),
-            22 => F::from_u64(u64::from(row.circuit_flags[CircuitFlags::SubtractOperands])),
-            23 => F::from_u64(u64::from(row.circuit_flags[CircuitFlags::MultiplyOperands])),
-            24 => F::from_u64(u64::from(row.circuit_flags[CircuitFlags::Load])),
-            25 => F::from_u64(u64::from(row.circuit_flags[CircuitFlags::Store])),
-            26 => F::from_u64(u64::from(row.circuit_flags[CircuitFlags::Jump])),
-            27 => F::from_u64(u64::from(
-                row.circuit_flags[CircuitFlags::WriteLookupOutputToRD],
-            )),
-            28 => F::from_u64(u64::from(
-                row.circuit_flags[CircuitFlags::VirtualInstruction],
-            )),
-            29 => F::from_u64(u64::from(row.circuit_flags[CircuitFlags::Assert])),
-            30 => F::from_u64(u64::from(
-                row.circuit_flags[CircuitFlags::DoNotUpdateUnexpandedPC],
-            )),
-            31 => F::from_u64(u64::from(row.circuit_flags[CircuitFlags::Advice])),
-            32 => F::from_u64(u64::from(row.circuit_flags[CircuitFlags::IsCompressed])),
-            33 => F::from_u64(u64::from(
-                row.circuit_flags[CircuitFlags::IsFirstInSequence],
-            )),
-            34 => F::from_u64(u64::from(row.circuit_flags[CircuitFlags::IsLastInSequence])),
-            #[cfg(feature = "field-inline")]
-            35 => F::from_u64(u64::from(row.circuit_flags[CircuitFlags::FieldAdd])),
-            #[cfg(feature = "field-inline")]
-            36 => F::from_u64(u64::from(row.circuit_flags[CircuitFlags::FieldSub])),
-            #[cfg(feature = "field-inline")]
-            37 => F::from_u64(u64::from(row.circuit_flags[CircuitFlags::FieldMul])),
-            #[cfg(feature = "field-inline")]
-            38 => F::from_u64(u64::from(row.circuit_flags[CircuitFlags::FieldInv])),
-            #[cfg(feature = "field-inline")]
-            39 => F::from_u64(u64::from(row.circuit_flags[CircuitFlags::FieldAssertEq])),
-            #[cfg(feature = "field-inline")]
-            40 => F::from_u64(u64::from(
-                row.circuit_flags[CircuitFlags::FieldLoadAccumulateFromRegister],
-            )),
-            #[cfg(feature = "field-inline")]
-            41 => F::from_u64(u64::from(row.circuit_flags[CircuitFlags::FieldAssertZero])),
-            #[cfg(feature = "field-inline")]
-            42 => F::from_u64(u64::from(row.circuit_flags[CircuitFlags::FieldLoadImm])),
-            #[cfg(feature = "field-inline")]
-            43 => F::from_u64(u64::from(
-                row.circuit_flags[CircuitFlags::FieldLoadAccumulateFromMemory],
-            )),
-            #[cfg(feature = "field-inline")]
-            44 => F::from_u64(u64::from(row.circuit_flags[CircuitFlags::FieldAdviceLimb])),
+            index if index >= 21 && index < SPARTAN_OUTER_R1CS_INPUTS.len() => {
+                F::from_bool(row.circuit_flags[CIRCUIT_FLAGS[index - 21]])
+            }
             _ => unreachable!("canonical R1CS inputs"),
         }
     }
@@ -1875,7 +1842,7 @@ mod tests {
                     )
             }
             #[cfg(not(feature = "field-inline"))]
-            unreachable!("the rv64 selection has exactly 35 columns")
+            unreachable!("the rv64 selection has exactly 36 columns")
         };
         let mut total = Fr::from_u64(0);
         for (s, stream) in [Fr::from_u64(0), Fr::from_u64(1)].into_iter().enumerate() {
@@ -2391,6 +2358,28 @@ mod tests {
                 .iter()
                 .chain(&values.b_second_hi)
                 .all(|b| b.unsigned_abs() < 1 << 65));
+        }
+    }
+
+    #[test]
+    fn stopping_row_uses_existing_limb_bounds() {
+        for (target, pc) in [(0, u64::MAX), (u64::MAX, 0), (0, 0)] {
+            for can_end in [false, true] {
+                let mut row = synthetic_rows(0, 0xE0_D0)[0];
+                row.lookup_output.0 = target;
+                row.unexpanded_pc.0 = pc;
+                row.should_jump.0 = false;
+                row.circuit_flags = CircuitFlagSet::default().set(CircuitFlags::Jump);
+                if can_end {
+                    row.circuit_flags = row.circuit_flags.set(CircuitFlags::CanEnd);
+                }
+                let values = row.group_values();
+                assert_eq!(values.a_second[9], 1);
+                assert_eq!(values.b_second_lo[9], i128::from(target) - i128::from(pc));
+                assert_eq!(values.b_second_hi[9], i128::from(!can_end));
+                assert!(values.b_second_lo[9].unsigned_abs() < 1 << 65);
+                assert!(values.b_second_hi[9].unsigned_abs() < 1 << 65);
+            }
         }
     }
 

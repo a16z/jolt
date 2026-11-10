@@ -566,10 +566,11 @@ impl Cpu {
             self.handle_interrupt(self.pc);
         }
         self.stalled = self.pc == instruction_address
-            && executed.is_none_or(|instr| {
-                instr
-                    .try_jolt_instruction_row()
-                    .map_or(true, |row| row.self_jump_repeats())
+            && executed.is_some_and(|instr| {
+                matches!(instr, Instruction::EBREAK(_))
+                    || instr
+                        .try_jolt_instruction_row()
+                        .is_ok_and(|row| row.can_end())
             });
         self.clock = self.clock.wrapping_add(1);
     }
@@ -1608,19 +1609,19 @@ mod test_cpu {
 
     #[test]
     fn jalr_overwriting_its_base_runs_again() {
-        // jalr x5, 0(x5); beq x0, x0, 0. The second run targets the link.
+        // jalr x5, 0(x5); jal x0, 0. The second run targets the link.
         let mut cpu = create_cpu();
         cpu.x[5] = DRAM_BASE as i64;
-        let rows = run_until_stalled(&mut cpu, &[0xe7, 0x82, 0x02, 0x00, 0x63, 0, 0, 0]);
+        let rows = run_until_stalled(&mut cpu, &[0xe7, 0x82, 0x02, 0x00, 0x6f, 0, 0, 0]);
         assert_eq!(
             (rows, cpu.read_pc(), cpu.x[5] as u64),
             (3, DRAM_BASE + 4, DRAM_BASE + 4)
         );
 
-        // c.jalr ra; beq x0, x0, 0
+        // c.jalr ra; jal x0, 0
         let mut cpu = create_cpu();
         cpu.x[1] = DRAM_BASE as i64;
-        let rows = run_until_stalled(&mut cpu, &[0x82, 0x90, 0x63, 0, 0, 0]);
+        let rows = run_until_stalled(&mut cpu, &[0x82, 0x90, 0x6f, 0, 0, 0]);
         assert_eq!(
             (rows, cpu.read_pc(), cpu.x[1] as u64),
             (3, DRAM_BASE + 2, DRAM_BASE + 2)
@@ -1629,11 +1630,11 @@ mod test_cpu {
 
     #[test]
     fn jalr_at_its_fixed_point_stops_after_one_run() {
-        // jalr x5, -4(x5); beq x0, x0, 0. The link it writes leads back to
+        // jalr x5, -4(x5); jal x0, 0. The link it writes leads back to
         // DRAM_BASE.
         let mut cpu = create_cpu();
         cpu.x[5] = (DRAM_BASE + 4) as i64;
-        let rows = run_until_stalled(&mut cpu, &[0xe7, 0x82, 0xc2, 0xff, 0x63, 0, 0, 0]);
+        let rows = run_until_stalled(&mut cpu, &[0xe7, 0x82, 0xc2, 0xff, 0x6f, 0, 0, 0]);
         assert_eq!(
             (rows, cpu.read_pc(), cpu.x[5] as u64),
             (1, DRAM_BASE, DRAM_BASE + 4)

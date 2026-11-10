@@ -319,7 +319,7 @@ mod tests {
     fn symbolic_claims_include_every_extension_opening() {
         let outer = OuterRemainder::new(SpartanOuterDimensions::rv64(3));
         let outer_ids = outer.expected_output_openings::<Fr>();
-        assert_eq!(outer_ids.len(), 50);
+        assert_eq!(outer_ids.len(), 51);
         assert_eq!(
             outer_ids,
             referenced_openings([outer.output_expression::<Fr>()])

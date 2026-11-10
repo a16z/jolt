@@ -170,3 +170,21 @@ fn pretty_print_lc(inputs_struct: &str, row: &SparseRow<Fr>) -> String {
         _ => format!("({})", terms.join(" + ")),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::constants::RV64IParameterSet;
+
+    #[test]
+    fn extracted_constraints_include_authenticated_stopping_row() {
+        let constraints = ZkLeanR1CSConstraints::<RV64IParameterSet>::extract();
+        let mut output = Vec::new();
+        constraints.zklean_pretty_print(&mut output, 0).unwrap();
+        let output = String::from_utf8(output).unwrap();
+        assert!(output.contains("OpFlags_CanEnd : ZKExpr f"));
+        assert!(output.contains("FinalJumpIsRepeatableSelfJump"));
+        assert!(output.contains("18446744073709551616"));
+        assert_eq!(output.matches("ZKBuilder.constrainR1CS").count(), RV64_CONSTRAINT_NAMES.len());
+    }
+}

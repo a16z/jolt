@@ -32,16 +32,16 @@ pub fn memory_config() -> MemoryConfig {
     }
 }
 
-/// An always-taken self-branch: `Beq x0, x0, 0`. Terminates via PC-stall
-/// with no register or memory effects.
+/// A repeatable self-jump: `Jal x0, 0`, with no register or memory effects.
 pub fn terminal_row(address: u64) -> JoltInstructionRow {
     JoltInstructionRow {
-        instruction_kind: JoltInstructionKind::BEQ,
+        source_can_end: false,
+        instruction_kind: JoltInstructionKind::JAL,
         address: address as usize,
         operands: NormalizedOperands {
-            rs1: Some(0),
-            rs2: Some(0),
-            rd: None,
+            rs1: None,
+            rs2: None,
+            rd: Some(0),
             imm: 0,
         },
         virtual_sequence_remaining: None,

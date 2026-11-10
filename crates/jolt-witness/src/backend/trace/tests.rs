@@ -96,6 +96,7 @@ fn trace_output_with_device_and_final_memory(
 
 fn instruction(address: usize) -> JoltInstructionRow {
     JoltInstructionRow {
+        source_can_end: false,
         instruction_kind: JoltInstructionKind::ADDI,
         address,
         operands: NormalizedOperands {

@@ -88,7 +88,7 @@ pub const SPARTAN_OUTER_FIRST_GROUP_ROWS: [usize; SPARTAN_OUTER_UNISKIP_DOMAIN_S
 
 #[cfg(not(feature = "field-inline"))]
 pub const SPARTAN_OUTER_SECOND_GROUP_ROWS: [usize; SPARTAN_OUTER_SECOND_GROUP_ROW_COUNT] =
-    [0, 7, 8, 9, 10, 12, 13, 15, 16];
+    [0, 7, 8, 9, 10, 12, 13, 15, 16, 19];
 
 #[cfg(feature = "field-inline")]
 pub const SPARTAN_OUTER_SECOND_GROUP_ROWS: [usize; SPARTAN_OUTER_SECOND_GROUP_ROW_COUNT] = [
@@ -101,6 +101,7 @@ pub const SPARTAN_OUTER_SECOND_GROUP_ROWS: [usize; SPARTAN_OUTER_SECOND_GROUP_RO
     13,
     15,
     16,
+    19,
     RV64_NUM_EQ_CONSTRAINTS + ROW_ASSERT_EQ,
     RV64_NUM_EQ_CONSTRAINTS + ROW_LOAD_ACCUMULATE_FROM_REGISTER,
     RV64_NUM_EQ_CONSTRAINTS + ROW_ASSERT_ZERO,
@@ -379,6 +380,19 @@ mod tests {
     use jolt_riscv::CircuitFlags;
     #[cfg(feature = "field-inline")]
     use num_traits::Zero;
+
+    #[test]
+    fn outer_groups_cover_each_row_without_increasing_degree() {
+        let mut rows = SPARTAN_OUTER_FIRST_GROUP_ROWS.to_vec();
+        rows.extend(SPARTAN_OUTER_SECOND_GROUP_ROWS);
+        rows.sort_unstable();
+        assert_eq!(rows, (0..SPARTAN_OUTER_ROW_COUNT).collect::<Vec<_>>());
+        assert_eq!(SPARTAN_OUTER_SECOND_GROUP_ROW_COUNT, SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE);
+        #[cfg(not(feature = "field-inline"))]
+        assert_eq!((SPARTAN_OUTER_ROW_COUNT, SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE, SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE), (20, 10, 27));
+        #[cfg(feature = "field-inline")]
+        assert_eq!((SPARTAN_OUTER_ROW_COUNT, SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE, SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE), (30, 15, 42));
+    }
 
     #[cfg(not(feature = "field-inline"))]
     #[test]

@@ -24,6 +24,7 @@ fn row(
     imm: i128,
 ) -> JoltInstructionRow {
     JoltInstructionRow {
+        source_can_end: false,
         instruction_kind: kind,
         address: TEST_ADDR as usize,
         operands: NormalizedOperands {

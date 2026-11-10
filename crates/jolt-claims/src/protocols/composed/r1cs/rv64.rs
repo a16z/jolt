@@ -15,8 +15,8 @@
 //!
 //! # Constraint forms
 //!
-//! - **Eq-conditional** (rows 0–18): `guard · (left − right) = 0`
-//! - **Product** (rows 19–21): `left · right = output`
+//! - **Eq-conditional** (rows 0–19): `guard · (left − right) = 0`
+//! - **Product** (rows 20–22): `left · right = output`
 
 use jolt_riscv::{CircuitFlags, NUM_CIRCUIT_FLAGS};
 
@@ -59,6 +59,7 @@ pub const V_FLAG_ADVICE: usize = 32;
 pub const V_FLAG_IS_COMPRESSED: usize = 33;
 pub const V_FLAG_IS_FIRST_IN_SEQUENCE: usize = 34;
 pub const V_FLAG_IS_LAST_IN_SEQUENCE: usize = 35;
+pub const V_FLAG_CAN_END: usize = flag_column(CircuitFlags::CanEnd);
 
 pub const V_BRANCH: usize = 1 + NUM_R1CS_INPUTS;
 pub const V_NEXT_IS_NOOP: usize = V_BRANCH + 1;
@@ -66,7 +67,7 @@ pub const V_NEXT_IS_NOOP: usize = V_BRANCH + 1;
 pub const NUM_R1CS_INPUTS: usize = 21 + NUM_CIRCUIT_FLAGS;
 pub const NUM_PRODUCT_FACTORS: usize = 2;
 pub const NUM_VARS_PER_CYCLE: usize = 1 + NUM_R1CS_INPUTS + NUM_PRODUCT_FACTORS;
-pub const NUM_EQ_CONSTRAINTS: usize = 19;
+pub const NUM_EQ_CONSTRAINTS: usize = 20;
 pub const NUM_PRODUCT_CONSTRAINTS: usize = 3;
 pub const NUM_CONSTRAINTS_PER_CYCLE: usize = NUM_EQ_CONSTRAINTS + NUM_PRODUCT_CONSTRAINTS;
 
@@ -112,6 +113,7 @@ pub const RV64_VARIABLE_NAMES: [&str; NUM_VARS_PER_CYCLE] = {
     names[V_FLAG_IS_COMPRESSED] = "OpFlags_IsCompressed";
     names[V_FLAG_IS_FIRST_IN_SEQUENCE] = "OpFlags_IsFirstInSequence";
     names[V_FLAG_IS_LAST_IN_SEQUENCE] = "OpFlags_IsLastInSequence";
+    names[V_FLAG_CAN_END] = "OpFlags_CanEnd";
     #[cfg(feature = "field-inline")]
     #[expect(
         clippy::indexing_slicing,
@@ -156,6 +158,7 @@ pub const RV64_CONSTRAINT_NAMES: [&str; NUM_CONSTRAINTS_PER_CYCLE] = [
     "NextUnexpPCUpdateOtherwise",
     "NextPCEqPCPlusOneIfInline",
     "MustStartSequenceFromBeginning",
+    "FinalJumpIsRepeatableSelfJump",
     "Product",
     "ShouldBranch",
     "ShouldJump",
@@ -175,7 +178,7 @@ pub const fn input_column(input_index: usize) -> Option<usize> {
 
 const TWOS_COMPLEMENT_BIAS: i128 = 0x1_0000_0000_0000_0000;
 
-use jolt_field::Field;
+use jolt_field::{CanonicalEncoding, Field};
 use jolt_r1cs::{ConstraintMatrices, SparseRow};
 
 type ConstraintRows<F> = (Vec<SparseRow<F>>, Vec<SparseRow<F>>, Vec<SparseRow<F>>);
@@ -203,7 +206,11 @@ fn row_wide<F: Field>(entries: &[(usize, i128)]) -> SparseRow<F> {
         .collect()
 }
 
-fn rv64_eq_constraint_rows<F: Field>() -> ConstraintRows<F> {
+fn rv64_eq_constraint_rows<F: Field + CanonicalEncoding>() -> ConstraintRows<F> {
+    assert!(
+        F::MODULUS_BITS > 65,
+        "the packed stopping constraint requires field characteristic greater than 2^65"
+    );
     let mut a_rows: Vec<SparseRow<F>> = Vec::with_capacity(NUM_EQ_CONSTRAINTS);
     let mut b_rows: Vec<SparseRow<F>> = Vec::with_capacity(NUM_EQ_CONSTRAINTS);
     let mut c_rows: Vec<SparseRow<F>> = Vec::with_capacity(NUM_EQ_CONSTRAINTS);
@@ -409,6 +416,17 @@ fn rv64_eq_constraint_rows<F: Field>() -> ConstraintRows<F> {
     ]));
     c_rows.push(empty());
 
+    // Bytecode checking authenticates CanEnd. The field bound above prevents
+    // its high limb cancelling the difference of two range-bound u64 words.
+    a_rows.push(row::<F>(&[(V_FLAG_JUMP, 1), (V_SHOULD_JUMP, -1)]));
+    b_rows.push(row_wide::<F>(&[
+        (V_LOOKUP_OUTPUT, 1),
+        (V_UNEXPANDED_PC, -1),
+        (V_CONST, TWOS_COMPLEMENT_BIAS),
+        (V_FLAG_CAN_END, -TWOS_COMPLEMENT_BIAS),
+    ]));
+    c_rows.push(empty());
+
     (a_rows, b_rows, c_rows)
 }
 
@@ -432,11 +450,11 @@ fn append_product_constraints<F: Field>(
 
 /// Build only the Jolt RV64 equality-conditional constraints.
 ///
-/// Returns the 19 rows with form `guard · (left - right) = 0`, over the
-/// standard 38-variable per-cycle witness layout. Product constraints are
+/// Returns the 20 rows with form `guard · (left - right) = 0`, over the
+/// standard 39-variable per-cycle witness layout. Product constraints are
 /// intentionally excluded for consumers that handle multiplication checks in
 /// a separate protocol step.
-pub fn rv64_spartan_outer_constraints<F: Field>() -> ConstraintMatrices<F> {
+pub fn rv64_spartan_outer_constraints<F: Field + CanonicalEncoding>() -> ConstraintMatrices<F> {
     let (a_rows, b_rows, c_rows) = rv64_eq_constraint_rows();
     ConstraintMatrices::new(
         NUM_EQ_CONSTRAINTS,
@@ -449,13 +467,13 @@ pub fn rv64_spartan_outer_constraints<F: Field>() -> ConstraintMatrices<F> {
 
 /// Build the full Jolt RV64 R1CS constraint matrices.
 ///
-/// Returns 22 constraints over 38 variables per cycle:
-/// - 19 equality-conditional: `guard · (left − right) = 0` → A=guard, B=left−right, C=0
+/// Returns 23 constraints over 39 variables per cycle:
+/// - 20 equality-conditional: `guard · (left − right) = 0` → A=guard, B=left−right, C=0
 /// - 3 product: `left · right = output` → A=left, B=right, C=output
 ///
 /// Variable layout matches the constants in this module: the constant, all R1CS
 /// inputs, then the two product factors.
-pub fn rv64_trace_constraints<F: Field>() -> ConstraintMatrices<F> {
+pub fn rv64_trace_constraints<F: Field + CanonicalEncoding>() -> ConstraintMatrices<F> {
     let (mut a_rows, mut b_rows, mut c_rows) = rv64_eq_constraint_rows();
     a_rows.reserve(NUM_PRODUCT_CONSTRAINTS);
     b_rows.reserve(NUM_PRODUCT_CONSTRAINTS);
@@ -590,9 +608,10 @@ mod execution_witness_tests {
     const NEXT_UNEXP_PC_UPDATE_OTHERWISE: usize = 16;
     const NEXT_PC_EQ_PC_PLUS_ONE_IF_INLINE: usize = 17;
     const MUST_START_SEQUENCE_FROM_BEGINNING: usize = 18;
-    const PRODUCT_EQ_LEFT_TIMES_RIGHT: usize = 19;
-    const SHOULD_BRANCH_EQ_LOOKUP_TIMES_BRANCH: usize = 20;
-    const SHOULD_JUMP_EQ_JUMP_TIMES_NOT_NEXT_NOOP: usize = 21;
+    const FINAL_JUMP_IS_REPEATABLE_SELF_JUMP: usize = 19;
+    const PRODUCT_EQ_LEFT_TIMES_RIGHT: usize = 20;
+    const SHOULD_BRANCH_EQ_LOOKUP_TIMES_BRANCH: usize = 21;
+    const SHOULD_JUMP_EQ_JUMP_TIMES_NOT_NEXT_NOOP: usize = 22;
 
     fn check(witness: &[Fr]) -> Result<(), usize> {
         rv64_trace_constraints::<Fr>().check_witness(witness)
@@ -626,7 +645,7 @@ mod execution_witness_tests {
         let mut w = cycle_witness();
         w[V_LEFT_INSTRUCTION_INPUT] = Fr::from_u64(RS1);
         w[V_RIGHT_INSTRUCTION_INPUT] = Fr::from_u64(RS2);
-        // (2^64 − 2)·5 = 5·2^64 − 10, committed unconditionally (row 19).
+        // (2^64 − 2)·5 = 5·2^64 − 10, committed unconditionally (row 20).
         w[V_PRODUCT] = Fr::from_u128(5 * ((1u128 << 64) - 2));
         w[V_PC] = Fr::from_u64(7);
         w[V_NEXT_PC] = Fr::from_u64(8);
@@ -838,6 +857,7 @@ mod execution_witness_tests {
         w[V_SHOULD_JUMP] = Fr::from_u64(1);
         w[V_FLAG_ADD_OPERANDS] = Fr::from_u64(1);
         w[V_FLAG_JUMP] = Fr::from_u64(1);
+        w[V_FLAG_CAN_END] = Fr::from_u64(1);
         w
     }
 
@@ -1078,6 +1098,41 @@ mod execution_witness_tests {
     }
 
     #[test]
+    fn final_jump_requires_repeatability_and_its_own_target() {
+        let mut w = jal_witness();
+        w[V_SHOULD_JUMP] = Fr::zero();
+        w[V_NEXT_IS_NOOP] = Fr::from_u64(1);
+        w[V_NEXT_UNEXPANDED_PC] = Fr::zero();
+        w[V_FLAG_CAN_END] = Fr::from_u64(1);
+        assert_eq!(check(&w), Err(FINAL_JUMP_IS_REPEATABLE_SELF_JUMP));
+
+        w[V_IMM] = Fr::zero();
+        w[V_RIGHT_INSTRUCTION_INPUT] = Fr::zero();
+        w[V_PRODUCT] = Fr::zero();
+        w[V_RIGHT_LOOKUP_OPERAND] = w[V_UNEXPANDED_PC];
+        w[V_LOOKUP_OUTPUT] = w[V_UNEXPANDED_PC];
+        assert_eq!(check(&w), Ok(()));
+
+        w[V_FLAG_CAN_END] = Fr::zero();
+        assert_eq!(check(&w), Err(FINAL_JUMP_IS_REPEATABLE_SELF_JUMP));
+    }
+
+    #[test]
+    fn packed_stopping_row_cannot_cancel_at_word_extremes() {
+        let matrices = rv64_spartan_outer_constraints::<Fr>();
+        for (target, pc) in [(0, u64::MAX), (u64::MAX, 0)] {
+            let mut w = cycle_witness();
+            w[V_FLAG_JUMP] = Fr::from_u64(1);
+            w[V_LOOKUP_OUTPUT] = Fr::from_u64(target);
+            w[V_UNEXPANDED_PC] = Fr::from_u64(pc);
+            let eval = |row: &SparseRow<Fr>| {
+                row.iter().map(|&(column, coefficient)| coefficient * w[column]).sum::<Fr>()
+            };
+            assert_ne!(eval(&matrices.a[19]) * eval(&matrices.b[19]), Fr::zero());
+        }
+    }
+
+    #[test]
     fn jal_rejects_wrong_link_value() {
         let w = with_cell(&jal_witness(), V_RD_WRITE_VALUE, Fr::from_u64(0x8000_0100));
         assert_eq!(check(&w), Err(RD_WRITE_EQ_PC_PLUS_CONST_IF_JUMP));
@@ -1095,7 +1150,14 @@ mod execution_witness_tests {
 
     #[test]
     fn jal_rejects_denied_should_jump() {
-        let w = with_cell(&jal_witness(), V_SHOULD_JUMP, Fr::from_u64(0));
+        let mut w = jal_witness();
+        w[V_IMM] = Fr::zero();
+        w[V_RIGHT_INSTRUCTION_INPUT] = Fr::zero();
+        w[V_PRODUCT] = Fr::zero();
+        w[V_RIGHT_LOOKUP_OPERAND] = w[V_UNEXPANDED_PC];
+        w[V_LOOKUP_OUTPUT] = w[V_UNEXPANDED_PC];
+        w[V_NEXT_UNEXPANDED_PC] = w[V_UNEXPANDED_PC];
+        w[V_SHOULD_JUMP] = Fr::zero();
         assert_eq!(check(&w), Err(SHOULD_JUMP_EQ_JUMP_TIMES_NOT_NEXT_NOOP));
     }
 

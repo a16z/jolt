@@ -44,6 +44,7 @@ mod tests {
             },
             virtual_sequence_remaining: None,
             is_first_in_sequence: true,
+            source_can_end: false,
             is_compressed: false,
         };
         let mut cpu = Cpu::new(Box::new(DummyTerminal::default()));

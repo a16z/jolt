@@ -741,6 +741,7 @@ mod tests {
         imm: i128,
     ) -> JoltInstructionRow {
         JoltInstructionRow {
+            source_can_end: false,
             instruction_kind,
             address: ENTRY as usize + offset * 4,
             operands: NormalizedOperands { rd, rs1, rs2, imm },

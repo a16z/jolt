@@ -11,10 +11,8 @@
 //! - `Jalr` targets are `(x[rs1] + imm) & !1`;
 //! - the virtual right shifts take their shift amount from
 //!   `imm.trailing_zeros()` (the immediate is a bitmask, not a shift);
-//! - guest termination is the PC-stall convention: a jump/taken branch whose
-//!   target equals its own source address executes once, then execution
-//!   stops, unless re-running it would leave
-//!   (`JoltInstructionRow::self_jump_repeats`).
+//! - guest termination requires a repeatable source jump to its own address,
+//!   authenticated by `JoltInstructionRow::can_end`.
 
 use common::constants::STACK_CANARY_SIZE;
 use dynasmrt::{dynasm, x64::Rq, AssemblyOffset, DynasmApi, DynasmLabelApi};
@@ -301,33 +299,17 @@ enum Cc {
 
 impl DynasmEmitter {
     fn emit_branch(e: &mut Emitter, row: &JoltInstructionRow, cc: Cc) {
-        let address = row.address as u64;
         let target = (row.address as i64).wrapping_add(row.operands.imm as i64) as u64;
         e.load_reg(RAX, row.operands.rs1);
         e.cmp_reg_operand(RAX, row.operands.rs2);
-        if target == address {
-            // Taken branch to itself terminates (PC-stall). Invert: skip the
-            // terminal sequence when not taken.
-            match cc {
-                Cc::Eq => dynasm!(e.ops ; .arch x64 ; jne >fall),
-                Cc::Ne => dynasm!(e.ops ; .arch x64 ; je >fall),
-                Cc::LtSigned => dynasm!(e.ops ; .arch x64 ; jge >fall),
-                Cc::GeSigned => dynasm!(e.ops ; .arch x64 ; jl >fall),
-                Cc::LtUnsigned => dynasm!(e.ops ; .arch x64 ; jae >fall),
-                Cc::GeUnsigned => dynasm!(e.ops ; .arch x64 ; jb >fall),
-            }
-            e.terminal(address);
-            dynasm!(e.ops ; .arch x64 ; fall:);
-        } else {
-            let label = e.label_for(target);
-            match cc {
-                Cc::Eq => dynasm!(e.ops ; .arch x64 ; je =>label),
-                Cc::Ne => dynasm!(e.ops ; .arch x64 ; jne =>label),
-                Cc::LtSigned => dynasm!(e.ops ; .arch x64 ; jl =>label),
-                Cc::GeSigned => dynasm!(e.ops ; .arch x64 ; jge =>label),
-                Cc::LtUnsigned => dynasm!(e.ops ; .arch x64 ; jb =>label),
-                Cc::GeUnsigned => dynasm!(e.ops ; .arch x64 ; jae =>label),
-            }
+        let label = e.label_for(target);
+        match cc {
+            Cc::Eq => dynasm!(e.ops ; .arch x64 ; je =>label),
+            Cc::Ne => dynasm!(e.ops ; .arch x64 ; jne =>label),
+            Cc::LtSigned => dynasm!(e.ops ; .arch x64 ; jl =>label),
+            Cc::GeSigned => dynasm!(e.ops ; .arch x64 ; jge =>label),
+            Cc::LtUnsigned => dynasm!(e.ops ; .arch x64 ; jb =>label),
+            Cc::GeUnsigned => dynasm!(e.ops ; .arch x64 ; jae =>label),
         }
     }
 }
@@ -964,7 +946,7 @@ impl DynasmEmitter {
                 e.load_imm(RAX, link_value(row));
                 e.store_rd(RAX, row.operands.rd);
                 let target = (row.address as i64).wrapping_add(row.operands.imm as i64) as u64;
-                if target == row.address as u64 {
+                if target == row.address as u64 && row.can_end() {
                     e.terminal(target);
                 } else {
                     let label = e.label_for(target);
@@ -979,7 +961,7 @@ impl DynasmEmitter {
                 dynasm!(e.ops ; .arch x64 ; add rax, rcx ; and rax, -2);
                 e.load_imm(RCX, link_value(row));
                 e.store_rd(RCX, row.operands.rd);
-                if row.self_jump_repeats() {
+                if row.can_end() {
                     dynasm!(e.ops ; .arch x64 ; mov rcx, QWORD row.address as i64 ; cmp rax, rcx ; jne >go);
                     e.terminal(row.address as u64);
                     dynasm!(e.ops ; .arch x64 ; go:);

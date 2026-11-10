@@ -304,6 +304,7 @@ fn sub_word_accesses_touch_only_the_containing_doubleword() {
                 operands: $operands,
                 virtual_sequence_remaining: None,
                 is_first_in_sequence: false,
+                source_can_end: false,
                 is_compressed: false,
             })
         };

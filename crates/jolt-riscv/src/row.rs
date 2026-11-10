@@ -58,6 +58,7 @@ impl SourceInstructionRow {
             operands.imm = inline.packed() as i128;
         }
         JoltInstructionRow {
+            source_can_end: false,
             instruction_kind,
             address: self.address,
             operands,
@@ -80,16 +81,35 @@ pub struct JoltInstructionRow {
     pub virtual_sequence_remaining: Option<u16>,
     pub is_first_in_sequence: bool,
     pub is_compressed: bool,
+    /// Whether the source of an expanded row permits stopping at its terminal jump.
+    #[cfg_attr(feature = "serialization", serde(default))]
+    pub source_can_end: bool,
 }
 
 impl JoltInstructionRow {
+    /// Whether this row may end a trace after jumping to its own address.
+    #[inline]
+    pub fn can_end(&self) -> bool {
+        let repeatable_jump = matches!(
+            self.instruction_kind,
+            JoltInstructionKind::Jal(_) | JoltInstructionKind::Jalr(_)
+        ) && self.self_jump_repeats();
+        repeatable_jump
+            && match self.virtual_sequence_remaining {
+                None => true,
+                Some(0) => self.source_can_end,
+                Some(_) => false,
+            }
+    }
+
     /// The row fields its decoded flags depend on.
     ///
     /// [`jolt_instruction!`](crate::jolt_instruction) derives every
     /// instruction's circuit and instruction flags from its kind plus the
     /// virtual-sequence state, `is_compressed`, and `is_first_in_sequence`, and
     /// the kind alone fixes its instruction type. Rows with equal classes
-    /// therefore decode to the same flags, whatever their address and operands.
+    /// therefore decode to the same flags. `CanEnd` additionally depends on
+    /// the source classification and repeatability of the jump operands.
     ///
     /// WARNING: the verifier's folded read-RAF evaluation reads each class's
     /// flags from one row, so a flag that depended on an excluded field would
@@ -105,15 +125,17 @@ impl JoltInstructionRow {
             is_first_in_sequence,
             address: _,
             operands: _,
+            source_can_end: _,
         } = self;
         let sequence = match virtual_sequence_remaining {
             None => 0,
             Some(0) => 1,
             Some(_) => 2,
         };
-        (u32::from(instruction_kind.tag().0) << 4)
+        (u32::from(instruction_kind.tag().0) << 5)
             | (sequence << 2)
             | (u32::from(*is_compressed) << 1)
+            | (u32::from(self.can_end()) << 4)
             | u32::from(*is_first_in_sequence)
     }
 

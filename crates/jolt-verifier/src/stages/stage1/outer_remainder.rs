@@ -152,7 +152,7 @@ impl<F: JoltField> OuterRemainder<F> {
         // Sized from the selected R1CS composition (jolt-claims r1cs), not from the rv64-only
         // symbolic dimensions: under `field-inline` the composed coefficient table carries the
         // appended field-inline columns, and the weight vectors must match it. with
-        // field-inline disabled, the two sources agree (35 columns).
+        // field-inline disabled, the two sources agree (36 columns).
         let variable_count =
             jolt_claims::protocols::composed::r1cs::spartan_outer_opening_columns().len();
         debug_assert!(variable_count >= dimensions.variables().len());
@@ -274,7 +274,9 @@ impl<F: JoltField> ConcreteSumcheck<F> for OuterRemainder<F> {
             advice: opening_point.clone(),
             is_compressed: opening_point.clone(),
             is_first_in_sequence: opening_point.clone(),
+            source_can_end: false,
             is_last_in_sequence: opening_point.clone(),
+            can_end: opening_point.clone(),
             #[cfg(feature = "field-inline")]
             field_add: opening_point.clone(),
             #[cfg(feature = "field-inline")]
@@ -424,7 +426,9 @@ mod tests {
             advice: next(),
             is_compressed: next(),
             is_first_in_sequence: next(),
+            source_can_end: false,
             is_last_in_sequence: next(),
+            can_end: next(),
         }
     }
 
@@ -512,7 +516,7 @@ mod tests {
         let log_t = 3usize;
         let dimensions = SpartanOuterDimensions::rv64(log_t);
         let variable_count = dimensions.variables().len();
-        assert_eq!(variable_count, 35);
+        assert_eq!(variable_count, 36);
 
         let tau_len = log_t + 2;
         let remainder_len = 1 + log_t;

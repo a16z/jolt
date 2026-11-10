@@ -28,10 +28,10 @@
 >   `TraceRowError` (a `thiserror` enum) on memory-row contract violations.
 >   `from_components` is the producer contract and depends only on `jolt-riscv`
 >   (no `jolt-prover-legacy`, no `tracer`, no lookup tables). `CircuitFlagSet`
->   uses a `u32`: field-inline appends ten flags to the fourteen base flags.
+>   uses a `u32`: field-inline appends ten flags to the fifteen base flags.
 >   The row's packed metadata reserves 16 circuit-flag bits in base builds
->   and 24 with field-inline, followed by six instruction bits and the
->   immediate sign. Both builds keep the 64-byte layout.
+>   and 25 with field-inline, followed by seven instruction bits. The
+>   immediate sign uses control bit 7. Both builds keep the 64-byte layout.
 > - `crates/jolt-lookup-tables/src/traits.rs`: `InstructionLookupTable for
 >   JoltTraceRow`, delegating through the row's cached `instruction_kind()` (this
 >   crate owns `LookupTableKind`, so the accessor cannot live in `jolt-riscv`).
@@ -52,6 +52,21 @@
 > the ≤2% end-to-end prover-time benchmark gate. The layout choice is documented
 > as the conservative default; it must be confirmed against that gate before the
 > hot-path cutover relies on it.
+
+### Stopping metadata and the last index
+
+`CanEnd` is a static circuit flag authenticated through the bytecode relation.
+It records source-instruction repeatability and completion of an expansion,
+not merely the generated row's opcode. Direct JALR classification uses the
+source length (two bytes for compressed instructions). The source metadata
+must survive expansion, interpreter conversion and compact trace-row
+reconstruction; a generated internal jump cannot become a valid stopping row.
+
+The missing successor of domain index `T-1` has `NextIsNoop = 1`, zero next
+PCs and zero next virtual-sequence flags. `ShouldJump` is zero at this
+boundary, just as it is before explicit no-op padding. The configured trace
+domain rounds up the executed row count without reserving an extra no-op.
+The packed stopping R1CS row enforces a repeatable self-jump in either case.
 
 ## Summary
 

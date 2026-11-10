@@ -129,6 +129,7 @@ mod tests {
                 pc: fr(2),
                 is_virtual: fr(3),
                 is_first_in_sequence: fr(4),
+                source_can_end: false,
                 is_noop: fr(5),
             },
             instruction_input: InstructionInputOutputClaims {

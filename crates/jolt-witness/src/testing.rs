@@ -17,6 +17,7 @@ use crate::{BundleSource, JoltWitnessOracle, WitnessBundle};
 #[expect(clippy::unwrap_used, reason = "test fixture construction")]
 pub fn with_sample_backend<R>(f: impl FnOnce(&TraceBackend) -> R) -> R {
     let instruction = JoltInstructionRow {
+        source_can_end: false,
         instruction_kind: JoltInstructionKind::ADDI,
         address: 0x8000_0000,
         operands: NormalizedOperands {

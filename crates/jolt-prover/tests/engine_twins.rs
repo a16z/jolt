@@ -3,8 +3,8 @@
 //! GENERATED `verify_clear` / `verify_zk` drivers and the shared uni-skip
 //! `verify_clear` core, asserting byte-identical transcript states. This pins
 //! the prove-side engine to the verifier independently of any real stage.
-//! Protocol-agnostic: the locks exercise the shared engine/driver seam and
-//! run under both the Dory and Akita builds.
+//! The toy locks run under both Dory and Akita. Clear RV64 stage-1 twins
+//! also check repeatable exits and rejected prefixes on trace-backed witnesses.
 
 #![expect(clippy::unwrap_used, reason = "test crate")]
 
@@ -338,4 +338,300 @@ fn uniskip_prover_twin_matches_uniskip_verify_clear() {
         prover_state.verifier_message::<[u8; 32]>(),
         verifier_transcript.verifier_message::<[u8; 32]>()
     );
+}
+
+#[cfg(not(any(feature = "zk", feature = "akita", feature = "field-inline")))]
+mod stopping {
+    use std::sync::Arc;
+
+    use super::*;
+    use jolt_claims::protocols::jolt::geometry::spartan::SpartanOuterDimensions;
+    use jolt_claims::protocols::jolt::JoltOneHotConfig;
+    use jolt_dory::DoryScheme;
+    use jolt_program::execution::{JoltProgram, TraceData, TraceOutput};
+    use jolt_program::preprocess::{
+        BytecodePreprocessing, JoltProgramPreprocessing, RAMPreprocessing,
+    };
+    use jolt_prover::stages::stage1::{prove_stage1, Stage1ProverOutput};
+    use jolt_prover::{JoltBackend, ProofMode, ProverConfig, ProverError};
+    use jolt_riscv::{
+        JoltInstructionKind as Kind, JoltInstructionRow, JoltTraceRow, NormalizedOperands,
+        RamAccess, RegisterRead, RegisterState, RegisterWrite, RV64IMAC_JOLT,
+    };
+    use jolt_transcript::ProverState;
+    use jolt_verifier::config::MIN_PADDED_TRACE_LENGTH;
+    use jolt_verifier::stages::stage1::outer_remainder::{
+        outer_remainder_input_values_from_uniskip_output, OuterRemainder,
+    };
+    use jolt_verifier::stages::stage1::outputs::{Stage1BatchInputClaims, Stage1BatchSumchecks};
+    use jolt_verifier::stages::uniskip::draw_spartan_outer_tau;
+    use jolt_verifier::VerifierError;
+    use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
+
+    const ENTRY: u64 = 0x8000_0000;
+    type Output = Stage1ProverOutput<Fr, Bn254G1>;
+
+    #[derive(Clone, Copy, Debug)]
+    enum End {
+        Jal,
+        Jalr,
+        StableOverwritingJalr,
+        CompressedJump,
+        Ebreak,
+        ArbitraryJump,
+        UnstableJalr,
+        CompressedJalr,
+        ExpansionMidpoint,
+    }
+
+    // These rows bypass execution deliberately: the rejected cases are prefixes
+    // a malicious prover can supply even though the tracer would continue.
+    fn witness(real_rows: usize, end: End) -> TraceBackend {
+        let mut bytecode = Vec::new();
+        let mut observations = Vec::new();
+        for offset in 0..real_rows - 1 {
+            bytecode.push(JoltInstructionRow {
+                instruction_kind: Kind::ADDI,
+                address: ENTRY as usize + 4 * offset,
+                operands: NormalizedOperands {
+                    rd: Some(0),
+                    rs1: Some(0),
+                    ..Default::default()
+                },
+                ..Default::default()
+            });
+            observations.push(RegisterState::default());
+        }
+        let pc = ENTRY + 4 * (real_rows as u64 - 1);
+        let indirect = matches!(
+            end,
+            End::Jalr | End::StableOverwritingJalr | End::UnstableJalr | End::CompressedJalr
+        );
+        let compressed = matches!(end, End::CompressedJump | End::CompressedJalr);
+        let rd = if matches!(end, End::CompressedJalr) {
+            1
+        } else if matches!(end, End::CompressedJump) {
+            0
+        } else {
+            5
+        };
+        let rs1 = if matches!(end, End::Jalr) { 6 } else { rd };
+        let generated = matches!(end, End::Ebreak | End::ExpansionMidpoint);
+        let last = JoltInstructionRow {
+            instruction_kind: if indirect { Kind::JALR } else { Kind::JAL },
+            address: pc as usize,
+            operands: NormalizedOperands {
+                rd: Some(rd),
+                rs1: indirect.then_some(rs1),
+                imm: if matches!(end, End::ArbitraryJump) {
+                    4
+                } else if matches!(end, End::StableOverwritingJalr) {
+                    -4
+                } else {
+                    0
+                },
+                ..Default::default()
+            },
+            is_compressed: compressed,
+            virtual_sequence_remaining: generated.then_some(
+                if matches!(end, End::ExpansionMidpoint) {
+                    1
+                } else {
+                    0
+                },
+            ),
+            is_first_in_sequence: generated,
+            source_can_end: matches!(end, End::Ebreak),
+        };
+        bytecode.push(last);
+        observations.push(RegisterState {
+            rs1: indirect.then_some(RegisterRead {
+                register: rs1,
+                value: pc
+                    + if matches!(end, End::StableOverwritingJalr) {
+                        4
+                    } else {
+                        0
+                    },
+            }),
+            rd: Some(RegisterWrite {
+                register: rd,
+                pre_value: 0,
+                post_value: pc + if compressed { 2 } else { 4 },
+            }),
+            ..Default::default()
+        });
+        if matches!(end, End::ExpansionMidpoint) {
+            bytecode.push(JoltInstructionRow {
+                virtual_sequence_remaining: Some(0),
+                is_first_in_sequence: false,
+                source_can_end: false,
+                ..last
+            });
+        }
+        let preprocessing = Arc::new(JoltProgramPreprocessing {
+            bytecode: BytecodePreprocessing::preprocess(bytecode.clone(), ENTRY, RV64IMAC_JOLT)
+                .unwrap(),
+            ram: RAMPreprocessing::default(),
+            memory_layout: Default::default(),
+            max_padded_trace_length: MIN_PADDED_TRACE_LENGTH,
+        });
+        let rows = bytecode
+            .iter()
+            .zip(observations)
+            .map(|(&instruction, registers)| {
+                JoltTraceRow::new(
+                    instruction,
+                    registers,
+                    RamAccess::NoOp,
+                    u32::try_from(preprocessing.bytecode.get_pc(&instruction).unwrap()).unwrap(),
+                )
+                .unwrap()
+            })
+            .collect();
+        let program = Arc::new(JoltProgram::from_parts(
+            Vec::new(),
+            bytecode,
+            Vec::new(),
+            pc + 4,
+            ENTRY,
+        ));
+        let domain = ProverConfig::padded_trace_length::<Fr>(real_rows).unwrap();
+        assert_eq!(domain, preprocessing.max_padded_trace_length);
+        TraceBackend::new(
+            JoltVmWitnessConfig::new(
+                domain.ilog2() as usize,
+                64,
+                JoltOneHotConfig {
+                    log_k_chunk: 4,
+                    lookups_ra_virtual_log_k_chunk: 16,
+                },
+            ),
+            JoltVmWitnessInputs::new(
+                &program,
+                &preprocessing,
+                TraceOutput::new(TraceData::new(rows), Default::default(), None, None),
+            ),
+        )
+    }
+
+    fn prove(
+        witness: &TraceBackend,
+        optimized: bool,
+    ) -> Result<(Output, [u8; 32]), ProverError<Fr>> {
+        let backend = if optimized {
+            JoltBackend::optimized()
+        } else {
+            JoltBackend::reference()
+        };
+        let mut context = backend.with_witness(witness);
+        let mode = ProofMode::<Pedersen<Bn254G1>>::new(None).unwrap();
+        let mut transcript =
+            prover_transcript::<Keccak>(&jolt_transcript::protocol_tag(b"stopping-twin"), b"");
+        let output = prove_stage1::<Fr, DoryScheme, Pedersen<Bn254G1>, ProverState<Keccak>>(
+            &mut context,
+            &mode,
+            MIN_PADDED_TRACE_LENGTH.ilog2() as usize,
+            &mut transcript,
+        )?;
+        Ok((output, transcript.verifier_message::<[u8; 32]>()))
+    }
+
+    fn replay(output: &Output) -> Result<[u8; 32], VerifierError> {
+        let log_t = MIN_PADDED_TRACE_LENGTH.ilog2() as usize;
+        let mut transcript =
+            prover_transcript::<Keccak>(&jolt_transcript::protocol_tag(b"stopping-twin"), b"");
+        let tau = draw_spartan_outer_tau(&mut transcript, log_t)?;
+        let challenge = uniskip::verify_clear(
+            &output.uniskip_proof,
+            &UniskipParams::spartan_outer(),
+            Fr::from_u64(0),
+            output.claims.uniskip_output_claim,
+            &mut transcript,
+        )?;
+        let sumchecks = Stage1BatchSumchecks {
+            outer_remainder: OuterRemainder::new(
+                SpartanOuterDimensions::rv64(log_t),
+                tau,
+                challenge,
+            ),
+        };
+        let challenges = sumchecks.draw_challenges(&mut transcript)?;
+        let inputs = Stage1BatchInputClaims {
+            outer_remainder: outer_remainder_input_values_from_uniskip_output(
+                output.claims.uniskip_output_claim,
+            ),
+        };
+        sumchecks.verify_clear(
+            &inputs,
+            &sumchecks.empty_input_points(),
+            &challenges,
+            &output.claims.outer,
+            &output.sumcheck_proof,
+            &mut transcript,
+            1,
+        )?;
+        sumchecks.append_output_claims(&mut transcript, &output.claims.outer);
+        Ok(transcript.verifier_message::<[u8; 32]>())
+    }
+
+    #[test]
+    fn repeatable_exits_match_both_engines_at_the_maximum_domain_boundary() {
+        for real_rows in [MIN_PADDED_TRACE_LENGTH - 1, MIN_PADDED_TRACE_LENGTH] {
+            for end in [
+                End::Jal,
+                End::Jalr,
+                End::StableOverwritingJalr,
+                End::CompressedJump,
+                End::Ebreak,
+            ] {
+                let witness = witness(real_rows, end);
+                let (reference, reference_state) = prove(&witness, false).unwrap();
+                let (optimized, optimized_state) = prove(&witness, true).unwrap();
+                assert_eq!(
+                    reference.uniskip_proof, optimized.uniskip_proof,
+                    "{end:?}, {real_rows}"
+                );
+                assert_eq!(
+                    reference.sumcheck_proof, optimized.sumcheck_proof,
+                    "{end:?}, {real_rows}"
+                );
+                assert_eq!(reference.claims, optimized.claims, "{end:?}, {real_rows}");
+                assert_eq!(reference_state, optimized_state);
+                assert_eq!(replay(&optimized).unwrap(), optimized_state);
+            }
+        }
+    }
+
+    #[test]
+    fn truncated_jump_witnesses_cannot_produce_an_accepted_stage1_proof() {
+        for end in [
+            End::ArbitraryJump,
+            End::UnstableJalr,
+            End::CompressedJalr,
+            End::ExpansionMidpoint,
+        ] {
+            let witness = witness(MIN_PADDED_TRACE_LENGTH, end);
+            for optimized in [false, true] {
+                if let Ok((output, _)) = prove(&witness, optimized) {
+                    assert!(
+                        replay(&output).is_err(),
+                        "accepted {end:?}, optimized={optimized}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn verifier_rejects_tampered_stopping_target_and_authenticated_flag() {
+        let witness = witness(MIN_PADDED_TRACE_LENGTH, End::Jal);
+        let (mut output, _) = prove(&witness, true).unwrap();
+        let honest = output.claims.clone();
+        output.claims.outer.outer_remainder.lookup_output += Fr::from_u64(1);
+        assert!(replay(&output).is_err());
+        output.claims = honest;
+        output.claims.outer.outer_remainder.can_end = Fr::from_u64(0);
+        assert!(replay(&output).is_err());
+    }
 }

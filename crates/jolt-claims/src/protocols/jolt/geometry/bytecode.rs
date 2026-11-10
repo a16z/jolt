@@ -1051,6 +1051,7 @@ mod tests {
                     for is_first_in_sequence in [false, true] {
                         for (address, operands) in operands.into_iter().enumerate() {
                             let row = JoltInstructionRow {
+                                source_can_end: false,
                                 instruction_kind,
                                 address: 4 * address + 8,
                                 operands,
@@ -1077,6 +1078,7 @@ mod tests {
     #[expect(clippy::unwrap_used)]
     fn folded_stage_values_match_weighted_row_values() {
         let row = |instruction_kind, address, rs1, rs2, rd, imm| JoltInstructionRow {
+            source_can_end: false,
             instruction_kind,
             address,
             operands: NormalizedOperands { rs1, rs2, rd, imm },

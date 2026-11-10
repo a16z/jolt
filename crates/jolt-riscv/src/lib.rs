@@ -426,6 +426,9 @@ macro_rules! jolt_instruction {
                 if instruction.is_first_in_sequence {
                     flags = flags.set($crate::CircuitFlags::IsFirstInSequence);
                 }
+                if instruction.can_end() {
+                    flags = flags.set($crate::CircuitFlags::CanEnd);
+                }
                 flags
             }
 
@@ -464,6 +467,9 @@ macro_rules! jolt_instruction {
                 }
                 if instruction.is_first_in_sequence {
                     flags = flags.set($crate::CircuitFlags::IsFirstInSequence);
+                }
+                if instruction.can_end() {
+                    flags = flags.set($crate::CircuitFlags::CanEnd);
                 }
                 flags
             }

@@ -922,6 +922,7 @@ macro_rules! test_sequence {
                     address: 8,
                     is_compressed: false,
                     is_first_in_sequence: false,
+                    source_can_end: false,
                     virtual_sequence_remaining: None,
                 };
                 test_correctness($expected, &instr);
@@ -937,6 +938,7 @@ macro_rules! test_sequence {
                     address: 8,
                     is_compressed: false,
                     is_first_in_sequence: false,
+                    source_can_end: false,
                     virtual_sequence_remaining: None,
                 };
                 test_consistency(&Instruction::$instr(instr));
@@ -1225,6 +1227,7 @@ fn test_LB_negative_imm_correctness() {
         address: 8,
         is_compressed: false,
         is_first_in_sequence: false,
+        source_can_end: false,
         virtual_sequence_remaining: None,
     };
     test_correctness(
@@ -1248,6 +1251,7 @@ fn test_SH_negative_imm_correctness() {
         address: 8,
         is_compressed: false,
         is_first_in_sequence: false,
+        source_can_end: false,
         virtual_sequence_remaining: None,
     };
     test_correctness(
