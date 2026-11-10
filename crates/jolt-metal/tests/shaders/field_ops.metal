@@ -80,3 +80,12 @@ kernel void jolt_test_field_write_non_canonical(device F* out [[buffer(0)]],
         bytes[k] = 0xff;
     }
 }
+
+// Instantiated only by the Fp128 suite: the input is raw unsigned limbs,
+// rather than a canonical field-element buffer.
+template <typename F>
+kernel void jolt_test_field_from_u128(device const ulong2* v [[buffer(0)]],
+                                    device F* out [[buffer(1)]],
+                                    uint i [[thread_position_in_grid]]) {
+    out[i] = F::from_u128(v[i]);
+}

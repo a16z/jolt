@@ -249,6 +249,11 @@ struct Fp128 {
     static Fp128 zero() { return Fp128{uint4(0u)}; }
     static Fp128 one() { return Fp128{uint4(1u, 0u, 0u, 0u)}; }
     static Fp128 from_u64(ulong v) { return Fp128{fp128_detail::from_u64(v)}; }
+    // Raw little-endian limbs may encode any u128, including [p, 2^128).
+    static Fp128 from_u128(ulong2 v) {
+        uint4 limbs(uint(v.x), uint(v.x >> 32), uint(v.y), uint(v.y >> 32));
+        return Fp128{fp128_detail::fold2_canonicalize<C>(limbs, 0ul)};
+    }
     static Fp128 from_i64(long v) { return Fp128{fp128_detail::from_i64<C>(v)}; }
 
     friend Fp128 operator+(Fp128 a, Fp128 b) {

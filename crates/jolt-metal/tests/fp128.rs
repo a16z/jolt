@@ -18,6 +18,7 @@ mod support;
 
 mod gpu {
     use jolt_field::solinas::{Prime128Offset275, Prime128OffsetA7F7};
+    use jolt_metal::runtime::{Binding, DeviceBuffer};
     use jolt_metal::ErrorClass;
 
     use super::field::{edges, element, modulus, random_elements, TestField};
@@ -115,9 +116,31 @@ mod gpu {
 
     fn conformance<F: TestField>(test: &'static str, seed: u64) {
         let (_gpu, device) = gpu(test);
-        let library = library::<F>(&device, &[], &[]);
+        let library = library::<F>(&device, &[], &["jolt_test_field_from_u128"]);
         let mut words = SplitMix64(seed);
         let p = modulus::<F>();
+
+        let mut raw_values = edges::<F>();
+        raw_values.extend([p - 1, p, p + 1, u128::MAX]);
+        let raw_words: Vec<[u64; 2]> = raw_values
+            .iter()
+            .map(|&v| [v as u64, (v >> 64) as u64])
+            .collect();
+        let raw = DeviceBuffer::from_slice(&device, &raw_words).unwrap();
+        // SAFETY: the elementwise constructor reads one 16-byte raw word and
+        // writes one field element for each of the supplied input rows.
+        let got = unsafe {
+            run::<F>(
+                &device,
+                &library,
+                "jolt_test_field_from_u128",
+                vec![Binding::buffer(&raw)],
+                raw_words.len(),
+            )
+        }
+        .unwrap();
+        let expected: Vec<F> = raw_values.into_iter().map(F::from_u128).collect();
+        assert_eq!(got, expected, "unsigned128 conversion");
 
         // Binary operations: every pair of edges, the fold windows, random.
         let edges = edges::<F>();

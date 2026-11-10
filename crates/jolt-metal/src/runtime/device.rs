@@ -72,14 +72,22 @@ impl Device {
                 self.limits.max_buffer_length as u128,
             ));
         }
+        self.check_additional_peak(bytes)
+    }
+
+    /// Advisory preflight for additional allocations that can coexist at a
+    /// consumer's peak, including its temporary outputs and scratch. This does
+    /// not reserve memory: concurrent allocations can change the available
+    /// budget, and each actual allocation still performs its own checks.
+    pub fn check_additional_peak(&self, bytes: usize) -> Result<(), MetalError> {
         let budget = self.limits.recommended_max_working_set_size as u128;
         let allocated = self.sys.allocated_bytes()? as u128;
         if allocated.saturating_add(bytes as u128) > budget {
-            return Err(exceeded(
-                CapacityLimit::WorkingSet,
-                bytes,
-                budget.saturating_sub(allocated),
-            ));
+            return Err(MetalError::CapacityExceeded {
+                limit: CapacityLimit::WorkingSet,
+                requested: bytes as u128,
+                available: budget.saturating_sub(allocated),
+            });
         }
         Ok(())
     }
