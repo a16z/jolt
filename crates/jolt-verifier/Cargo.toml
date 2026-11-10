@@ -12,6 +12,8 @@ categories = ["cryptography"]
 workspace = true
 
 [features]
+# Guest transcript acceleration through the shared claims feature.
+blake2-inline = ["jolt-claims/blake2-inline"]
 # Heap flamegraph visitation of the stage clear-output carriers (profile
 # harness's per-stage SVGs).
 allocative = ["dep:allocative", "jolt-claims/allocative"]
@@ -39,7 +41,7 @@ allocative = { workspace = true, optional = true }
 ark-serialize.workspace = true
 bincode.workspace = true
 common.workspace = true
-jolt-blindfold.workspace = true
+jolt-zk.workspace = true
 jolt-claims.workspace = true
 jolt-claims-derive.workspace = true
 jolt-crypto.workspace = true
@@ -73,3 +75,4 @@ postcard = { workspace = true, features = ["use-std"] }
 serde_json = { workspace = true, features = ["std"] }
 quote.workspace = true
 syn = { workspace = true, features = ["visit"] }
+tempfile = "3.27.0"

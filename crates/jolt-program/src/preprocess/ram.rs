@@ -123,8 +123,11 @@ pub fn compute_max_ram_k(memory_layout: &MemoryLayout) -> Result<usize, RamDomai
             lowest_address,
         },
     )?;
+    // Count every word that starts below `heap_end`, including a partial last
+    // word: the tracer admits an access whose start lies below `heap_end`, so
+    // the highest touched word index is at most `total_bytes.div_ceil(8) - 1`.
     let total_words =
-        usize::try_from(total_bytes / 8).map_err(|_| RamDomainError::DomainTooLarge)?;
+        usize::try_from(total_bytes.div_ceil(8)).map_err(|_| RamDomainError::DomainTooLarge)?;
     total_words
         .checked_next_power_of_two()
         .ok_or(RamDomainError::DomainTooLarge)
@@ -261,6 +264,17 @@ mod tests {
                 lowest_address,
             })
         );
+    }
+
+    #[test]
+    fn compute_max_ram_k_counts_a_partial_last_word() {
+        let mut layout = bounded_device().memory_layout;
+        let lowest_address = layout.get_lowest_address();
+        layout.heap_end = lowest_address + 8 * 1024;
+        assert_eq!(compute_max_ram_k(&layout), Ok(1024));
+        // Word 1024 starts below `heap_end`, so a run may touch it.
+        layout.heap_end = lowest_address + 8 * 1024 + 4;
+        assert_eq!(compute_max_ram_k(&layout), Ok(2048));
     }
 
     #[test]

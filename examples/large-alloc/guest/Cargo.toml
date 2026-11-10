@@ -6,6 +6,9 @@ edition = "2021"
 [features]
 guest = []
 field-inline = ["jolt/field-inline"]
+# `shared_heap_roundtrip`: Rust allocations on the size-class arena, with a
+# spawned thread so musl maps a pthread stack.
+size-class-alloc = ["jolt/guest-size-class-alloc", "jolt/thread"]
 
 [dependencies]
 jolt = { package = "jolt-sdk", path = "../../../jolt-sdk", features = [

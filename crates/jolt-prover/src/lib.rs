@@ -46,6 +46,7 @@ mod config;
 pub mod dory;
 pub mod driver;
 mod error;
+mod memory_budget;
 mod preprocessing;
 #[cfg(feature = "profiling")]
 pub mod profile;
@@ -60,6 +61,7 @@ pub use dory::prove;
 pub use driver::{KernelSource, Proved, StageProver};
 pub use error::{PreprocessingError, ProverError};
 pub use jolt_kernels::{JoltBackend, ProofSession};
+pub use memory_budget::MemoryBudget;
 pub use preprocessing::{
     CommittedProgramProverData, JoltProverPreprocessing, JoltSharedPreprocessing,
 };

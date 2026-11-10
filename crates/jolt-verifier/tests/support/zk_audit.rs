@@ -1,10 +1,10 @@
 use common::jolt_device::JoltDevice;
-use jolt_blindfold::BlindFoldProtocol;
 use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_crypto::{HomomorphicCommitment, VectorCommitment};
 use jolt_field::JoltField;
 use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, ZkOpeningScheme};
 use jolt_transcript::{Encoding, FieldTranscript, VerifierInit};
+use jolt_zk::BlindFoldProtocol;
 
 use jolt_verifier::{
     preprocessing::JoltVerifierPreprocessing,

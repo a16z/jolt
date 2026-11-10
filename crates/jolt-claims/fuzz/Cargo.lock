@@ -405,6 +405,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "jolt-algebra"
+version = "0.1.0"
+dependencies = [
+ "ark-bn254",
+ "ark-ff",
+ "ark-serialize",
+ "cc",
+ "num-traits",
+ "rand_core",
+ "serde",
+ "spongefish",
+ "thiserror",
+]
+
+[[package]]
 name = "jolt-claims"
 version = "0.1.0"
 dependencies = [
@@ -418,7 +433,6 @@ dependencies = [
  "jolt-riscv",
  "jolt-transcript",
  "jolt-utils",
- "rayon",
  "serde",
  "sha3",
  "thiserror",
@@ -467,15 +481,7 @@ dependencies = [
 name = "jolt-field"
 version = "0.1.0"
 dependencies = [
- "ark-bn254",
- "ark-ff",
- "ark-serialize",
- "cc",
- "num-traits",
- "rand_core",
- "serde",
- "spongefish",
- "thiserror",
+ "jolt-algebra",
 ]
 
 [[package]]
@@ -497,6 +503,7 @@ dependencies = [
  "jolt-poly",
  "jolt-transcript",
  "serde",
+ "spongefish",
  "thiserror",
  "tracing",
 ]

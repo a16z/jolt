@@ -31,7 +31,7 @@ fn verifier(narg: &[u8]) -> VerifierState<'_, Keccak> {
 
 fn bytes(values: &[F8]) -> Vec<u8> {
     let mut out = vec![0u8; values.len()];
-    for (value, byte) in values.iter().zip(out.chunks_exact_mut(1)) {
+    for (value, byte) in values.iter().zip(out.as_chunks_mut::<1>().0) {
         value.to_bytes_le(byte);
     }
     out

@@ -469,8 +469,8 @@ mod tests {
     fn decode_elf_ignores_sections_below_ram_start() {
         let elf = build_elf64(&[text_section(0x1000, &[0x01, 0x45])]);
         let image = decode_elf(&elf, RV64IMAC_JOLT).expect("image must decode");
-        assert!(image.instructions.is_empty());
-        assert!(image.memory_init.is_empty());
+        assert_eq!(image.instructions, []);
+        assert_eq!(image.memory_init, []);
         assert_eq!(image.program_end, RAM_START_ADDRESS);
     }
 

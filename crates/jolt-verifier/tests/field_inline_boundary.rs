@@ -25,7 +25,7 @@ fn rust_sources(dir: &Path) -> Vec<PathBuf> {
 }
 
 #[test]
-fn composed_relations_use_symbolic_claim_evaluation() {
+fn composed_relations_keep_shared_claim_evaluators() {
     use syn::{ImplItem, Item};
     let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/stages");
     for file in [
@@ -47,9 +47,15 @@ fn composed_relations_use_symbolic_claim_evaluation() {
                 }
                 for method in item.items {
                     if let ImplItem::Fn(method) = method {
+                        // The outer check uses the canonical factored R1CS evaluator;
+                        // its value is checked against the live symbolic relation in
+                        // outer_remainder's RV64 and composed tests.
+                        let factored_outer = file == "stage1/outer_remainder.rs"
+                            && method.sig.ident == "expected_output";
                         assert!(
-                            method.sig.ident != "input_claim"
-                                && method.sig.ident != "expected_output",
+                            factored_outer
+                                || (method.sig.ident != "input_claim"
+                                    && method.sig.ident != "expected_output"),
                             "{file} bypasses its symbolic claim contract with {}",
                             method.sig.ident
                         );

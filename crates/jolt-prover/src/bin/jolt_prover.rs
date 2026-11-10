@@ -9,7 +9,7 @@
 //! profiling smoke test can drive the same entry point in-process.
 
 use clap::{Parser, Subcommand};
-use jolt_prover::profile::{BenchmarkArgs, ProfileArgs};
+use jolt_prover::profile::{BenchmarkArgs, PrepareArgs, ProfileArgs};
 
 #[derive(Parser)]
 #[command(name = "jolt-prover", about = "Modular Jolt prover telemetry harness")]
@@ -20,6 +20,8 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Build a guest and serialize fixed inputs without executing a proof.
+    Prepare(PrepareArgs),
     /// Prove a named workload and emit the telemetry artifacts.
     Profile(ProfileArgs),
     /// Sweep workloads across scales (one `profile` subprocess per run),
@@ -27,11 +29,19 @@ enum Command {
     Benchmark(BenchmarkArgs),
 }
 
+#[expect(
+    clippy::print_stderr,
+    reason = "the CLI reports a rejected run on stderr"
+)]
 fn main() {
     let cli = Cli::parse();
     match cli.command {
+        Command::Prepare(args) => jolt_prover::profile::prepare(&args),
         Command::Profile(args) => {
-            let _artifacts = jolt_prover::profile::run(&args);
+            if let Err(error) = jolt_prover::profile::run(&args) {
+                eprintln!("error: {error}");
+                std::process::exit(1);
+            }
         }
         Command::Benchmark(args) => {
             if !jolt_prover::profile::run_sweep(&args) {

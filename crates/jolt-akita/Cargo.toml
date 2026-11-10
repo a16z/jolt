@@ -9,9 +9,18 @@ description = "Akita batch opening adapter for the Jolt zkVM"
 workspace = true
 
 [features]
+default = ["parallel"]
+# Akita's rayon-backed kernels and backend thread pool. A single-core zkVM
+# guest builds without it; Jolt's own prover kernels in this crate still link
+# rayon, which a guest verifier never calls.
+parallel = ["akita-pcs/parallel"]
+# Akita's NTT kernels over the jolt-inlines NTT inline, for a RISC-V guest
+# verifier. Akita runs on Jolt's Keccak transcript sponge, for which
+# jolt-transcript has no guest inline.
+ntt-inline = ["akita-pcs/ntt-inline"]
 # Enables field-inline schedule coverage alongside the prover's field profile.
 field-inline = []
-profiling = []
+profiling = ["parallel"]
 
 [dependencies]
 # Jolt keeps its own catalogs for Jolt-specific trace shapes; Akita's shipped
@@ -19,11 +28,14 @@ profiling = []
 akita-algebra.workspace = true
 akita-config.workspace = true
 akita-error.workspace = true
-akita-pcs = { workspace = true, features = ["parallel", "transcript-blake2b"] }
+akita-pcs = { workspace = true, features = ["transcript-keccak"] }
 akita-challenges.workspace = true
 akita-planner.workspace = true
 akita-schedules.workspace = true
+akita-transcript.workspace = true
 akita-types.workspace = true
+akita-verifier.workspace = true
+akita-prover.workspace = true
 akita-params.workspace = true
 # Canonical trace geometry without selecting the Akita PIOP feature.
 jolt-claims.workspace = true
@@ -37,11 +49,13 @@ jolt-openings = { path = "../jolt-openings", default-features = false, features 
   "parallel",
 ] }
 jolt-poly.workspace = true
+jolt-platform.workspace = true
 jolt-transcript = { path = "../jolt-transcript", default-features = false, features = [
   "solinas",
 ] }
 rayon.workspace = true
 serde = { workspace = true, features = ["derive"] }
+serde_bytes.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]

@@ -10,19 +10,26 @@ use jolt_crypto::HomomorphicCommitment;
 use jolt_crypto::VectorCommitment;
 use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
+#[cfg(feature = "akita")]
+use jolt_openings::GroupBatchOpening;
 #[cfg(not(feature = "akita"))]
 use jolt_openings::{AdditivelyHomomorphic, ZkOpeningScheme};
 use jolt_program::preprocess::{compute_max_ram_k, compute_min_ram_k};
 use jolt_sumcheck::SumcheckProof;
+#[cfg(feature = "akita")]
+use jolt_transcript::VerifierState;
 use jolt_transcript::{
     protocol_tag, BytesMsg, Encoding, FieldTranscript, Transcript, VerifierInit, TAG_BYTES,
 };
+#[cfg(feature = "akita")]
+use std::borrow::BorrowMut;
 
 #[cfg(not(feature = "akita"))]
 use crate::proof::JoltCommitments;
-#[cfg(feature = "akita")]
-use crate::stages::stage8::OneHotTraceCommitmentMetadata;
+#[cfg(not(feature = "akita"))]
 use crate::stages::stage8::Stage8Output;
+#[cfg(feature = "akita")]
+use crate::stages::stage8::{OneHotTraceCommitmentMetadata, OneHotTraceSetupMetadata};
 use crate::{
     config::{
         validate_proof_config, CommitmentConfig, JoltProtocolConfig, ZkConfig,
@@ -187,12 +194,47 @@ pub fn verify<'a, F, PCS, VC, T>(
 ) -> Result<(), VerifierError>
 where
     F: JoltField + Encoding,
-    PCS: CommitmentScheme<Field = F>,
+    PCS: CommitmentScheme<Field = F> + GroupBatchOpening,
     PCS::Output: Clone + Encoding + OneHotTraceCommitmentMetadata,
-    PCS::VerifierSetup: stage8::OneHotTraceSetupMetadata,
+    PCS::VerifierSetup: OneHotTraceSetupMetadata,
     VC: VectorCommitment<Field = F>,
     VC::Output: Copy + Encoding,
-    T: FieldTranscript<F> + VerifierInit<'a>,
+    T: FieldTranscript<F>
+        + VerifierInit<'a>
+        + BorrowMut<VerifierState<'a, PCS::Sponge>>
+        + Into<VerifierState<'a, PCS::Sponge>>,
+{
+    verify_with_context::<F, PCS, VC, T>(
+        preprocessing,
+        public_io,
+        proof,
+        trusted_advice_commitment,
+        &mut PCS::VerificationContext::default(),
+    )
+}
+
+/// Verify with backend-owned runtime state, keeping the stage replay shared.
+/// Deferred callers must authenticate and discharge every exported setup claim
+/// in an enclosing proof before treating this result as acceptance.
+#[cfg(feature = "akita")]
+pub fn verify_with_context<'a, F, PCS, VC, T>(
+    preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
+    public_io: &JoltDevice,
+    proof: &'a JoltProof<PCS, VC>,
+    trusted_advice_commitment: Option<&PCS::Output>,
+    context: &mut PCS::VerificationContext<'_>,
+) -> Result<(), VerifierError>
+where
+    F: JoltField + Encoding,
+    PCS: CommitmentScheme<Field = F> + GroupBatchOpening,
+    PCS::Output: Clone + Encoding + OneHotTraceCommitmentMetadata,
+    PCS::VerifierSetup: OneHotTraceSetupMetadata,
+    VC: VectorCommitment<Field = F>,
+    VC::Output: Copy + Encoding,
+    T: FieldTranscript<F>
+        + VerifierInit<'a>
+        + BorrowMut<VerifierState<'a, PCS::Sponge>>
+        + Into<VerifierState<'a, PCS::Sponge>>,
 {
     let (checked, mut transcript) = validate_and_seed_transcript(
         preprocessing,
@@ -264,7 +306,9 @@ where
         &stage4,
         &stage6b,
     )?;
-    let stage8 = stage8::verify(
+    // Akita writes its argument into the same string; its end-of-proof check
+    // is the whole proof's.
+    let pending = stage8::verify(
         &checked,
         preprocessing,
         proof,
@@ -274,15 +318,10 @@ where
         &stage4,
         &stage6b,
         &stage7,
+        context,
     )?;
 
-    let Stage8Output::Clear = stage8 else {
-        return Err(VerifierError::ExpectedClearProof { field: "stage8" });
-    };
-
-    transcript
-        .check_eof()
-        .map_err(|_| VerifierError::NargNotConsumed)
+    PCS::check_eof(pending, transcript.into()).map_err(|_| VerifierError::NargNotConsumed)
 }
 
 /// The session every Jolt transcript is bound to: a fixed 32-byte tag.
@@ -1134,6 +1173,7 @@ mod tests {
         ClearProof, ClearSumcheckProof, CommittedSumcheckProof, CompressedSumcheckProof,
     };
     use jolt_transcript::FieldTranscript;
+    use jolt_zk::BlindFoldProof;
     use num_traits::Zero;
 
     use crate::preprocessing::ProgramPreprocessing;
@@ -1153,6 +1193,7 @@ mod tests {
         type Proof = ();
         type ProverSetup = ();
         type VerifierSetup = ();
+        type VerificationContext<'a> = ();
         type OpeningHint = ();
         type SetupParams = ();
 
@@ -1201,7 +1242,7 @@ mod tests {
     }
 
     type TestProof = JoltProof<TestPcs, Pedersen<Bn254G1>>;
-    type TestClaims = JoltProofClaims<Fr, jolt_blindfold::BlindFoldProof<Fr, Bn254G1>>;
+    type TestClaims = JoltProofClaims<Fr, BlindFoldProof<Fr, Bn254G1>>;
 
     #[test]
     fn proof_wrapper_uses_modular_trait_bounds() {
@@ -1509,7 +1550,7 @@ mod tests {
 
         public_io.outputs = vec![0, 0];
         let checked = validate_inputs(&preprocessing, &public_io, &proof, false).unwrap();
-        assert!(checked.public_io.outputs.is_empty());
+        assert_eq!(checked.public_io.outputs, [0u8; 0]);
     }
 
     #[test]
@@ -1941,8 +1982,8 @@ mod tests {
         }
     }
 
-    fn empty_blindfold_proof() -> jolt_blindfold::BlindFoldProof<Fr, Bn254G1> {
-        jolt_blindfold::BlindFoldProof {
+    fn empty_blindfold_proof() -> BlindFoldProof<Fr, Bn254G1> {
+        BlindFoldProof {
             auxiliary_row_commitments: Vec::new(),
             random_round_commitments: Vec::new(),
             random_output_claim_row_commitments: Vec::new(),

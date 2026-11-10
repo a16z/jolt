@@ -14,7 +14,7 @@
 //! - **Sparse one-hot access.** Each `ra_i(·, j)` is one-hot in the chunk
 //!   domain, so the per-cycle hot index is a chunk of that cycle's lookup
 //!   index / mapped PC / remapped RAM address. Both phases gather through
-//!   [`RaChunkSelector`]s over the packed stage-5 rows
+//!   the canonical address chunks of the packed stage-5 rows
 //!   (`SharedInstructionRows`, reclaimed from the [`ProofSession`] or
 //!   collected in one streaming pass) and never materialize the `K × T`
 //!   grids the naive tier's `oracle_table` walks, nor per-polynomial index
@@ -23,9 +23,9 @@
 //!   eq(r_ref_cycle, j) · ra_i(k, j)` collapses to a scatter of the
 //!   tensor-factored eq weights into a `K`-sized accumulator per
 //!   polynomial: per `E_out` block, the `E_in` weights accumulate
-//!   *unreduced* into the hot buckets (no per-cycle multiply at all), and
-//!   each block reduces and folds by its `e_out` once (legacy
-//!   `compute_all_G`).
+//!   *unreduced* into nonzero instruction/bytecode buckets and all hot RAM
+//!   buckets. Each block reduces and folds by its `e_out` once. The omitted
+//!   instruction/bytecode zero buckets are recovered from total mass one.
 //! - **Shared expanded-eq gather (cycle phase).** The address-folded row
 //!   `x_i(j) = eq(r_address)[hot_i(j)]` is a lookup into a `K`-sized table
 //!   pre-scaled by `γ^i`, so `γ^{2i}(x² − x) = H(H − γ^i)` needs no
@@ -53,24 +53,19 @@
 //! construction — so it reuses the reference kernel's explicit four-point
 //! sampling verbatim; only the table construction is replaced.
 //!
-//! Cross-stage carry: both prepares reclaim the packed stage-5 rows with
-//! [`ProofSession::take`], clone the [`Arc`], and park the carry back for
-//! the later consumers (mixed-backend registries fall back to a fresh
-//! streaming pass when the carry is absent or geometry-stale).
+//! Cross-stage carry: both prepares share the packed stage-5 rows through
+//! `SharedInstructionRows`, whose docs own the carry protocol.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use jolt_claims::protocols::jolt::geometry::booleanity::BooleanityDimensions;
-use jolt_claims::protocols::jolt::geometry::ra::JoltRaPolynomial;
+use jolt_claims::protocols::jolt::geometry::ra::{JoltRaPolynomial, JoltRaPolynomialLayout};
 use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_claims::protocols::jolt::{BooleanityPublic, JoltDerivedId, JoltOpeningId};
 use jolt_claims::OutputClaims;
 use jolt_field::{Accumulator, JoltField};
-use jolt_poly::{
-    try_eq_mle, BindingOrder, EqPolynomial, GruenSplitEqPolynomial, Polynomial, TensorEqTable,
-    UnivariatePoly,
-};
+use jolt_poly::{try_eq_mle, BindingOrder, GruenSplitEqPolynomial, Polynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
     ConcreteSumcheck, SumcheckInputClaims, SumcheckInputPoints, SumcheckOutputClaims,
@@ -82,12 +77,11 @@ use jolt_verifier::stages::stage6a::booleanity::{
 use jolt_verifier::stages::stage6b::booleanity::{Booleanity, BooleanityCyclePhaseChallenges};
 use jolt_witness::witnesses::RaChunkSelector;
 use jolt_witness::JoltWitnessPlane;
-#[cfg(feature = "parallel")]
-use rayon::prelude::*;
 
 use super::constant_suffix::ConstantSuffix;
 use super::instruction_read_raf::InstructionCycleRow;
 use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa};
+use super::one_hot_histograms::{pushforwards, FamilySelectors};
 use super::support::{gamma_powers, pin_derived_term_if_derived, GruenRoundMessage, RoundProgress};
 use crate::reference::views::eq_table;
 use crate::{
@@ -169,92 +163,24 @@ impl BooleanityColumns {
     }
 }
 
-/// The one-hot pushforward `G_i[k] = Σ_{j : hot_i(j) = k} eq(point, j)`
-/// (legacy `compute_all_G` / `one_hot_pushforwards`): per `E_out` block,
-/// the `E_in` weights scatter into per-polynomial `K`-sized
-/// deferred-reduction buckets (an unreduced add per hot polynomial, no
-/// per-cycle multiply); each block then reduces its touched buckets and
-/// folds them by `e_out` into the running partials. Equals the reference's
-/// per-chunk cycle masses exactly — same terms, regrouped through the
-/// `eq = E_out ⊗ E_in` factorization.
+/// Canonical-layout masses `G_i[k] = Σ_{j : hot_i(j) = k} eq(point, j)`.
+/// Instruction and bytecode digit-zero masses follow from total weight one;
+/// RAM may be cold, so every RAM bucket is accumulated directly.
 fn cycle_pushforward<F: JoltField>(
     rows: &ConstantSuffix<InstructionCycleRow>,
-    selectors: &[ColumnSelector],
+    layout: JoltRaPolynomialLayout,
     k_chunk: usize,
     point: &[F],
-) -> Vec<Vec<F>> {
-    let eq = TensorEqTable::new(point);
-    debug_assert_eq!(eq.len(), rows.len());
-    let e_out = eq.e_out();
-    let e_in = eq.e_in();
-    let in_len = e_in.len();
-    let suffix_start = rows.prefix_len();
-    let blocks = suffix_start.div_ceil(in_len);
-
-    struct State<F: JoltField> {
-        partial: Vec<Vec<F::Accumulator>>,
-        block: Vec<Vec<F::Accumulator>>,
+) -> Result<Vec<Vec<F>>, KernelError<F>> {
+    let families = FamilySelectors::new::<F>(
+        (layout.instruction(), layout.bytecode(), layout.ram()),
+        k_chunk.trailing_zeros() as usize,
+    )?;
+    let mut masses = pushforwards(rows, point, &families, k_chunk, true)?;
+    for mass in &mut masses[..layout.instruction() + layout.bytecode()] {
+        mass[0] = F::one() - mass[1..].iter().copied().sum::<F>();
     }
-    let zero = || State::<F> {
-        partial: vec![vec![F::Accumulator::default(); k_chunk]; selectors.len()],
-        block: vec![vec![F::Accumulator::default(); k_chunk]; selectors.len()],
-    };
-    let scatter = |mut state: State<F>, x_out: usize| {
-        let base = x_out * in_len;
-        for (x_in, e) in e_in.iter().take(suffix_start - base).enumerate() {
-            let row = &rows[base + x_in];
-            for (selector, block) in selectors.iter().zip(state.block.iter_mut()) {
-                if let Some(k) = selector.index(row) {
-                    block[k].add(*e);
-                }
-            }
-        }
-        let e_out = e_out[x_out];
-        for (partial, block) in state.partial.iter_mut().zip(state.block.iter_mut()) {
-            for (partial, block) in partial.iter_mut().zip(block.iter_mut()) {
-                let value = std::mem::take(block).reduce();
-                if value != F::zero() {
-                    partial.fmadd(e_out, value);
-                }
-            }
-        }
-        state
-    };
-    let finish = |state: State<F>| -> Vec<Vec<F>> {
-        state
-            .partial
-            .into_iter()
-            .map(|buckets| buckets.into_iter().map(|bucket| bucket.reduce()).collect())
-            .collect()
-    };
-    let merge = |mut left: State<F>, right: State<F>| {
-        for (left, right) in left.partial.iter_mut().zip(right.partial) {
-            for (left, right) in left.iter_mut().zip(right) {
-                left.merge(right);
-            }
-        }
-        left
-    };
-
-    #[cfg(feature = "parallel")]
-    let mut masses = finish(
-        (0..blocks)
-            .into_par_iter()
-            .fold(zero, scatter)
-            .reduce(zero, merge),
-    );
-    #[cfg(not(feature = "parallel"))]
-    let mut masses = {
-        let _ = merge;
-        finish((0..blocks).fold(zero(), scatter))
-    };
-    let suffix_mass = EqPolynomial::suffix_sum(point, suffix_start);
-    for (selector, mass) in selectors.iter().zip(&mut masses) {
-        if let Some(k) = selector.index(&rows[suffix_start]) {
-            mass[k] += suffix_mass;
-        }
-    }
-    masses
+    Ok(masses)
 }
 
 pub struct OptimizedBooleanityAddress;
@@ -282,14 +208,18 @@ impl<F: JoltField> PrepareKernel<F, BooleanityAddressPhase<F>> for OptimizedBool
             });
         }
 
-        let columns = BooleanityColumns::new(witness, dimensions)?;
-        let rows = InstructionCycleRow::shared(session, witness, 1usize << dimensions.log_t)?;
+        drop(BooleanityColumns::new(witness, dimensions)?);
+        let rows = InstructionCycleRow::shared_for_next_consumer(
+            session,
+            witness,
+            1usize << dimensions.log_t,
+        )?;
         let masses = cycle_pushforward(
             &rows,
-            &columns.selectors,
+            dimensions.layout,
             1usize << dimensions.log_k_chunk,
             &reference_cycle,
-        );
+        )?;
 
         Ok(Box::new(OptimizedBooleanityAddressKernel::new(
             relation.rounds(),
@@ -552,7 +482,7 @@ impl<F: JoltField> OptimizedBooleanityCycleKernel<F> {
 /// Cache the two nonlinear coefficients over that alphabet, retaining the
 /// existing exact split-equality fold. The extra category is a cold RAM row;
 /// it must remain distinct from hot address zero, including after a bind.
-struct CategoricalProducts<'a, F: JoltField, S> {
+struct CategoricalProducts<'a, F: JoltField, S, const TRIANGULAR: bool> {
     source: &'a S,
     width: usize,
     radix: usize,
@@ -560,7 +490,26 @@ struct CategoricalProducts<'a, F: JoltField, S> {
     products: Vec<(Vec<F>, Vec<F>)>,
 }
 
-impl<'a, F: JoltField, S: ChunkIndexSource> CategoricalProducts<'a, F, S> {
+impl<'a, F: JoltField, S: ChunkIndexSource, const TRIANGULAR: bool>
+    CategoricalProducts<'a, F, S, TRIANGULAR>
+{
+    fn square_entries(states: usize) -> usize {
+        if TRIANGULAR {
+            states * (states + 1) / 2
+        } else {
+            states * states
+        }
+    }
+
+    #[inline]
+    fn square_index(&self, lo: usize, hi: usize) -> usize {
+        if TRIANGULAR {
+            Self::square_entries(lo.max(hi)) + lo.min(hi)
+        } else {
+            lo * self.states + hi
+        }
+    }
+
     fn fits_budget(width: usize, addresses: usize, cycles: usize) -> bool {
         if width != 1 && width != 2 {
             return false;
@@ -574,7 +523,7 @@ impl<'a, F: JoltField, S: ChunkIndexSource> CategoricalProducts<'a, F, S> {
         };
         // Cached products, construction temporary and lazy branches fit
         // within the existing T/16 dense allocation budget per family.
-        states * (states + 2) + width * addresses <= cycles / 16
+        Self::square_entries(states) + 2 * states + width * addresses <= cycles / 16
     }
 
     fn new(tables: &'a [Vec<F>], width: usize, source: &'a S, rho: &[F]) -> Self {
@@ -600,9 +549,11 @@ impl<'a, F: JoltField, S: ChunkIndexSource> CategoricalProducts<'a, F, S> {
                     })
                     .collect();
                 let constants = values.iter().map(|v| *v * (*v - *rho)).collect();
-                let mut squares = Vec::with_capacity(states * states);
-                for lo in &values {
-                    squares.extend(values.iter().map(|hi| (*hi - *lo).square()));
+                let mut squares = Vec::with_capacity(Self::square_entries(states));
+                for (row, lo) in values.iter().enumerate() {
+                    // (hi - lo)^2 = (lo - hi)^2, including cold RAM categories.
+                    let columns = if TRIANGULAR { row + 1 } else { states };
+                    squares.extend(values[..columns].iter().map(|hi| (*hi - *lo).square()));
                 }
                 (constants, squares)
             })
@@ -658,7 +609,7 @@ impl<'a, F: JoltField, S: ChunkIndexSource> CategoricalProducts<'a, F, S> {
                     |family, lo, hi| {
                         let (constants, squares) = &self.products[family];
                         constant.add(constants[lo]);
-                        leading.add(squares[lo * self.states + hi]);
+                        leading.add(squares[self.square_index(lo, hi)]);
                     },
                 );
                 lanes[0].fmadd(weight, constant.reduce());
@@ -735,21 +686,52 @@ impl<F: JoltField> ProveRounds<F> for OptimizedBooleanityCycleKernel<F> {
             ..
         } = &self.tables
         {
-            if !tables.is_empty()
-                && CategoricalProducts::<F, BooleanityChunks>::fits_budget(
-                    *width,
-                    tables[0].len() / width,
-                    source.cycles(),
-                )
-            {
-                let products = CategoricalProducts::new(tables, *width, source, &self.gamma_powers);
-                return products.lookup(&self.eq, round, previous_claim, prefix_pairs, tail_mass);
+            if !tables.is_empty() {
+                let addresses = tables[0].len() / width;
+                let cycles = source.cycles();
+                if CategoricalProducts::<F, BooleanityChunks, false>::fits_budget(
+                    *width, addresses, cycles,
+                ) {
+                    return CategoricalProducts::<F, _, false>::new(
+                        tables,
+                        *width,
+                        source,
+                        &self.gamma_powers,
+                    )
+                    .lookup(
+                        &self.eq,
+                        round,
+                        previous_claim,
+                        prefix_pairs,
+                        tail_mass,
+                    );
+                }
+                // Retain direct indexing whenever the full table fits. The
+                // compact table enables caching without increasing its budget.
+                if CategoricalProducts::<F, BooleanityChunks, true>::fits_budget(
+                    *width, addresses, cycles,
+                ) {
+                    return CategoricalProducts::<F, _, true>::new(
+                        tables,
+                        *width,
+                        source,
+                        &self.gamma_powers,
+                    )
+                    .lookup(
+                        &self.eq,
+                        round,
+                        previous_claim,
+                        prefix_pairs,
+                        tail_mass,
+                    );
+                }
             }
         }
         let tables = &self.tables;
         let gamma_powers = &self.gamma_powers;
         let num_polys = gamma_powers.len();
         let active_polys = gamma_powers.iter().take_while(|rho| !rho.is_zero()).count();
+        let paired = tables.paired_lo_hi(active_polys);
 
         struct Scratch<F: JoltField> {
             lanes: [F::Accumulator; 2],
@@ -769,7 +751,11 @@ impl<F: JoltField> ProveRounds<F> for OptimizedBooleanityCycleKernel<F> {
                 pairs: vec![(F::zero(), F::zero()); num_polys],
             },
             |scratch, row, _x_in, e_in| {
-                tables.lo_hi_all(row, &mut scratch.pairs);
+                if let Some(paired) = &paired {
+                    paired.gather(row, &mut scratch.pairs);
+                } else {
+                    tables.lo_hi_all(row, &mut scratch.pairs);
+                }
                 let mut constant = F::Accumulator::default();
                 let mut leading = F::Accumulator::default();
                 for ((h_0, h_1), rho) in scratch.pairs.iter().zip(gamma_powers).take(active_polys) {
@@ -808,7 +794,11 @@ impl<F: JoltField> ProveRounds<F> for OptimizedBooleanityCycleKernel<F> {
                             )
                         },
                         |(pairs, sum), row, _, weight| {
-                            tables.lo_hi_all(row, pairs);
+                            if let Some(paired) = &paired {
+                                paired.gather(row, pairs);
+                            } else {
+                                tables.lo_hi_all(row, pairs);
+                            }
                             let mut value = F::Accumulator::default();
                             for ((_, hi), rho) in pairs.iter().zip(gamma_powers).take(active_polys)
                             {
@@ -1093,6 +1083,8 @@ mod tests {
     use crate::optimized::parity::ExceptionalEq;
     use jolt_claims::protocols::jolt::JoltChallengeId;
     use jolt_claims::{InputClaims, OutputClaims, SumcheckChallenges};
+    #[cfg(feature = "akita")]
+    use jolt_field::Prime128OffsetA7F7;
     use jolt_field::{Fr, Ring, Zero};
     use jolt_poly::EqPolynomial;
     use jolt_verifier::stages::relations::ConcreteSumcheckChallenges;
@@ -1104,17 +1096,20 @@ mod tests {
     use super::*;
     use crate::ReferenceBackend;
 
-    #[test]
-    fn address_masses_include_constant_suffix_at_exceptional_points() {
+    fn check_address_masses<F: JoltField>() {
         with_booleanity_backend(6, 4, |backend, dimensions| {
             let columns = BooleanityColumns::new::<Fr>(backend, dimensions).unwrap();
             let original = InstructionCycleRow::collect::<Fr>(backend, 64).unwrap();
             for prefix in [0, 1, 7, 8, 9, 33, 63] {
                 let mut rows: Vec<_> = (0..original.len()).map(|i| original[i]).collect();
                 rows[prefix..].fill(original[0]);
-                for point in [point(19, 6), vec![Fr::zero(); 6], vec![Fr::from_u64(1); 6]] {
-                    let weights = EqPolynomial::<Fr>::evals(&point, None);
-                    let expected: Vec<Vec<Fr>> = columns
+                for point in [
+                    (0..6).map(|i| F::from_u64(19 + 3 * i)).collect(),
+                    vec![F::zero(); 6],
+                    vec![F::one(); 6],
+                ] {
+                    let weights = EqPolynomial::<F>::evals(&point, None);
+                    let expected: Vec<Vec<F>> = columns
                         .selectors
                         .iter()
                         .map(|selector| {
@@ -1130,12 +1125,24 @@ mod tests {
                         })
                         .collect();
                     assert_eq!(
-                        cycle_pushforward(&rows.clone().into(), &columns.selectors, 16, &point),
+                        cycle_pushforward(&rows.clone().into(), dimensions.layout, 16, &point)
+                            .unwrap(),
                         expected,
                     );
                 }
             }
         });
+    }
+
+    #[test]
+    fn address_masses_include_constant_suffix_at_exceptional_points() {
+        check_address_masses::<Fr>();
+    }
+
+    #[cfg(feature = "akita")]
+    #[test]
+    fn address_masses_include_constant_suffix_at_exceptional_points_akita() {
+        check_address_masses::<Prime128OffsetA7F7>();
     }
 
     #[expect(clippy::type_complexity)]
@@ -1409,6 +1416,19 @@ mod tests {
     #[test]
     fn cycle_kernel_matches_reference_with_zero_batching_gamma() {
         cycle_parity_with_gamma(5, 4, false, Fr::from_u64(0));
+    }
+
+    /// Round 0 reaches the categorical cache from `BooleanityChunks`: at
+    /// `log_t = 12` only the triangular table fits `T/16`.
+    #[test]
+    fn cycle_kernel_matches_reference_with_triangular_categories() {
+        cycle_parity(12, 4, false);
+    }
+
+    /// At `log_t = 13` round 0 caches with the full table.
+    #[test]
+    fn cycle_kernel_matches_reference_with_full_categories() {
+        cycle_parity(13, 4, false);
     }
 
     #[test]
@@ -1718,7 +1738,6 @@ mod categorical_tests {
                     else {
                         unreachable!()
                     };
-                    let products = CategoricalProducts::new(tables, *width, source, &rho);
                     let prefix_pairs = prefix_len.div_ceil(1 << (round + 1));
                     let tail_value: F = dense
                         .iter()
@@ -1729,11 +1748,18 @@ mod categorical_tests {
                         })
                         .sum();
                     let tail_mass = suffix[prefix_pairs..].iter().copied().sum::<F>() * tail_value;
-                    let polynomial = products
-                        .lookup(&eq, round, direct[0] + direct[1], prefix_pairs, tail_mass)
-                        .unwrap();
-                    for (x, value) in direct.iter().enumerate() {
-                        assert_eq!(polynomial.evaluate(F::from_u64(x as u64)), *value);
+                    let polynomials = [
+                        CategoricalProducts::<F, _, false>::new(tables, *width, source, &rho)
+                            .lookup(&eq, round, direct[0] + direct[1], prefix_pairs, tail_mass)
+                            .unwrap(),
+                        CategoricalProducts::<F, _, true>::new(tables, *width, source, &rho)
+                            .lookup(&eq, round, direct[0] + direct[1], prefix_pairs, tail_mass)
+                            .unwrap(),
+                    ];
+                    for polynomial in polynomials {
+                        for (x, value) in direct.iter().enumerate() {
+                            assert_eq!(polynomial.evaluate(F::from_u64(x as u64)), *value);
+                        }
                     }
                     for column in &mut dense {
                         for row in 0..column.len() / 2 {

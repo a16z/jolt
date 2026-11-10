@@ -1,0 +1,133 @@
+name: AI merge gate evaluation
+
+on:
+  workflow_call:
+    inputs:
+      pr:
+        required: true
+        type: string
+    secrets:
+      OPENAI_API_KEY:
+        required: true
+
+permissions: {}
+
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      checks: read
+      contents: read
+      pull-requests: write
+    outputs:
+      needed: ${{ steps.prepare.outputs.needed }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - id: prepare
+        env:
+          GH_TOKEN: ${{ github.token }}
+          AI_MERGE_GATE_MAINTAINERS: ${{ vars.AI_MERGE_GATE_MAINTAINERS }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          PR_NUMBER: ${{ inputs.pr }}
+          CLASSIFIER_DIRECTORY: ${{ runner.temp }}/classifier
+        run: python3 scripts/ci/ai_merge_gate.py prepare "$PR_NUMBER"
+      - if: steps.prepare.outputs.needed == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: classifier-input
+          path: ${{ runner.temp }}/classifier
+          include-hidden-files: true
+          retention-days: 1
+      - if: steps.prepare.outputs.needed == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: classifier-plan
+          path: ${{ runner.temp }}/classifier/plan.json
+          retention-days: 1
+
+  classify:
+    needs: prepare
+    if: needs.prepare.outputs.needed == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 305
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+          sparse-checkout: scripts/ci
+      - name: Install ripgrep
+        run: |
+          curl -fsSL https://github.com/BurntSushi/ripgrep/releases/download/15.1.0/ripgrep-15.1.0-x86_64-unknown-linux-musl.tar.gz -o "$RUNNER_TEMP/ripgrep.tar.gz"
+          echo "1c9297be4a084eea7ecaedf93eb03d058d6faae29bbc57ecdaf5063921491599  $RUNNER_TEMP/ripgrep.tar.gz" | sha256sum -c -
+          mkdir "$RUNNER_TEMP/ripgrep-bin"
+          tar -xzf "$RUNNER_TEMP/ripgrep.tar.gz" --strip-components=1 -C "$RUNNER_TEMP/ripgrep-bin" ripgrep-15.1.0-x86_64-unknown-linux-musl/rg
+          echo "$RUNNER_TEMP/ripgrep-bin" >> "$GITHUB_PATH"
+      - name: Install pinned coding agent and sandbox tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y bubblewrap apparmor-profiles
+          sudo apparmor_parser -r /usr/share/apparmor/extra-profiles/bwrap-userns-restrict
+          curl -fsSL https://github.com/openai/codex/releases/download/rust-v0.162.0/codex-x86_64-unknown-linux-musl.tar.gz -o "$RUNNER_TEMP/codex.tar.gz"
+          echo "8daf67f6261161aa5939d8d42a516032d760406216779d7ce6040f242140ff73  $RUNNER_TEMP/codex.tar.gz" | sha256sum -c -
+          mkdir "$RUNNER_TEMP/codex-bin"
+          tar -xzf "$RUNNER_TEMP/codex.tar.gz" -C "$RUNNER_TEMP/codex-bin"
+          mv "$RUNNER_TEMP/codex-bin/codex-x86_64-unknown-linux-musl" "$RUNNER_TEMP/codex-bin/codex"
+          curl -fsSL https://github.com/openai/codex/releases/download/rust-v0.162.0/codex-code-mode-host-x86_64-unknown-linux-musl.tar.gz -o "$RUNNER_TEMP/code-mode-host.tar.gz"
+          echo "dee8bf3df637c68e1495b928d643b76d4ad44f94e4f0ed79fe8482fa79e23d97  $RUNNER_TEMP/code-mode-host.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/code-mode-host.tar.gz" -C "$RUNNER_TEMP/codex-bin"
+          mv "$RUNNER_TEMP/codex-bin/codex-code-mode-host-x86_64-unknown-linux-musl" "$RUNNER_TEMP/codex-bin/codex-code-mode-host"
+          echo "$RUNNER_TEMP/codex-bin" >> "$GITHUB_PATH"
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: classifier-input
+          path: ${{ runner.temp }}/classifier
+      - name: Classify with no GitHub credential
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: python3 scripts/ci/classifier_agent.py "$RUNNER_TEMP/classifier"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: classifier-result
+          path: ${{ runner.temp }}/classifier/result.json
+          retention-days: 1
+
+  publish:
+    needs: [prepare, classify]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      checks: write
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        continue-on-error: true
+        with:
+          name: classifier-plan
+          path: ${{ runner.temp }}/classifier
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        continue-on-error: true
+        with:
+          name: classifier-result
+          path: ${{ runner.temp }}/classifier
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          AI_MERGE_GATE_MAINTAINERS: ${{ vars.AI_MERGE_GATE_MAINTAINERS }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          PR_NUMBER: ${{ inputs.pr }}
+          CLASSIFIER_DIRECTORY: ${{ runner.temp }}/classifier
+        run: python3 scripts/ci/ai_merge_gate.py evaluate "$PR_NUMBER"

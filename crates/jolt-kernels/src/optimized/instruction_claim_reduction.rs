@@ -7,7 +7,7 @@
 use jolt_claims::protocols::jolt::relations::claim_reductions::instruction::InstructionClaimReductionOutputClaims;
 use jolt_claims::protocols::jolt::{InstructionClaimReductionPublic, JoltDerivedId};
 use jolt_field::{Accumulator, JoltField};
-use jolt_poly::{BindingOrder, EqPolynomial, GruenSplitEqPolynomial, UnivariatePoly};
+use jolt_poly::{BindingOrder, EqPolynomial, GruenSplitEqPolynomial, Polynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 #[cfg(feature = "parallel")]
 use jolt_utils::par_collect_windows;
@@ -24,7 +24,9 @@ use jolt_witness::{JoltWitnessPlane, WitnessBundle, WitnessError};
 use rayon::prelude::*;
 
 use super::prefix_product::PrefixColumn;
-use super::support::{pin_derived_term, BundleStore, GruenRoundMessage, RoundProgress};
+use super::support::{
+    fallible_collect_bytes, pin_derived_term, BundleStore, GruenRoundMessage, RoundProgress,
+};
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
@@ -60,6 +62,39 @@ impl InstructionOperandRow {
 }
 
 pub struct OptimizedInstructionClaimReduction;
+
+impl OptimizedInstructionClaimReduction {
+    /// Construction allowance over `2^log_t` cycles, or `None` past
+    /// `usize::MAX`. The fallible-collect bound covers the combined prefix
+    /// table; parallel materialization fills its destination directly.
+    /// Not counted: the row store, a handle on the witness's rows when it
+    /// has one.
+    pub fn construction_bytes<F: JoltField>(log_t: usize) -> Option<usize> {
+        fallible_collect_bytes::<F>(1usize.checked_shl(u32::try_from(log_t).ok()?)?)
+    }
+
+    /// Peak bytes over `2^log_t` cycles, `log_t >= 1`, from the end of
+    /// `prepare` through the output walk, or `None` past `usize::MAX`: the
+    /// combined table bounded by `T` entries, its split-eq tables
+    /// ([`GruenSplitEqPolynomial::low_to_high_bytes`]) and `log_t` challenge
+    /// slots, plus the larger of the buffer the table's first in-place shrink
+    /// allocates ([`Polynomial::in_place_shrink_len`]) and the output walk's
+    /// reversed challenges and two eq tables. Both windows keep the table's
+    /// full capacity counted. Not counted: the row store, a handle on the
+    /// witness's rows when it has one; the round messages.
+    pub fn post_prepare_peak_bytes<F: JoltField>(log_t: usize) -> Option<usize> {
+        let pow2 = |bits: usize| 1usize.checked_shl(u32::try_from(bits).ok()?);
+        let cycles = pow2(log_t)?;
+        let walk = log_t
+            .checked_add(pow2(log_t / 2)?)?
+            .checked_add(pow2(log_t.div_ceil(2))?)?;
+        cycles
+            .checked_add(log_t)?
+            .checked_add(Polynomial::<F>::in_place_shrink_len(cycles).max(walk))?
+            .checked_mul(size_of::<F>())?
+            .checked_add(GruenSplitEqPolynomial::<F>::low_to_high_bytes(log_t)?)
+    }
+}
 
 impl<F: JoltField> PrepareKernel<F, InstructionClaimReduction<F>>
     for OptimizedInstructionClaimReduction
@@ -202,17 +237,29 @@ impl<F: JoltField> OptimizedInstructionClaimReductionKernel<F> {
         let access = self.rows.access();
 
         let block = |idx_hi: usize| -> Result<[F; NUM_TABLES], WitnessError> {
-            let mut sums = [F::zero(); NUM_TABLES];
+            let mut lookup_output = F::Accumulator::default();
+            let mut left_lookup = F::Accumulator::default();
+            let mut right_lookup = F::Accumulator::default();
+            let mut left_input = F::Accumulator::default();
+            let mut right_input = F::SignedProductAccumulator::default();
             let start = idx_hi * lo_len;
             for (offset, &weight) in e_lo.iter().take(self.prefix_cycles - start).enumerate() {
                 let row = access.row(start + offset)?;
-                let values = row.field_values::<F>();
-                for (sum, value) in sums.iter_mut().zip(values) {
-                    *sum += weight * value;
-                }
+                lookup_output.fmadd_u64(weight, row.lookup_output.0);
+                left_lookup.fmadd_u64(weight, row.left_lookup_operand.0);
+                right_lookup.fmadd_u128(weight, row.right_lookup_operand.0);
+                left_input.fmadd_u64(weight, row.left_instruction_input.0);
+                right_input.fmadd_i128(weight, row.right_instruction_input.0);
             }
             let e_hi_eval = e_hi[idx_hi];
-            Ok(sums.map(|sum| e_hi_eval * sum))
+            Ok([
+                lookup_output.reduce(),
+                left_lookup.reduce(),
+                right_lookup.reduce(),
+                left_input.reduce(),
+                right_input.reduce(),
+            ]
+            .map(|sum| e_hi_eval * sum))
         };
         let merge = |mut left: [F; NUM_TABLES], right: [F; NUM_TABLES]| {
             for (left, right) in left.iter_mut().zip(right) {
@@ -381,7 +428,9 @@ mod tests {
     use jolt_claims::protocols::jolt::{
         InstructionClaimReductionPublic, JoltDerivedId, TraceDimensions,
     };
-    use jolt_field::{Fr, Ring};
+    #[cfg(feature = "akita")]
+    use jolt_field::Prime128OffsetA7F7;
+    use jolt_field::{Fr, JoltField, Ring};
     use jolt_poly::{BindingOrder, Polynomial};
     use jolt_sumcheck::ProveRounds;
     use jolt_verifier::stages::relations::ConcreteSumcheck;
@@ -564,5 +613,54 @@ mod tests {
                 assert_parity(6, 103, Some((prefix, zero)));
             }
         }
+    }
+
+    fn check_operand_claims_at_scalar_boundaries<F: JoltField>() {
+        let unsigned = [0, 1, u128::MAX, 1u128 << 127, (1u128 << 64) + 7];
+        let signed = [0, 1, -1, i128::MIN, i128::MAX, -(1i128 << 64)];
+        let original: Vec<_> = (0..32)
+            .map(|i| InstructionOperandRow {
+                lookup_output: LookupOutput(u64::MAX - i as u64),
+                left_lookup_operand: LeftLookupOperand(i as u64),
+                right_lookup_operand: RightLookupOperand(unsigned[i % unsigned.len()]),
+                left_instruction_input: LeftInstructionInput(1u64 << (i % 64)),
+                right_instruction_input: RightInstructionInput(signed[i % signed.len()]),
+            })
+            .collect();
+        let points = [
+            [0, 1, 0, 1, 0],
+            [2, 3, 5, 7, 11],
+            [u128::MAX - 7, 3, u128::MAX - 19, 7, 11],
+        ];
+        for prefix in [0, 1, 7, 8, 9, 31, 32] {
+            let mut rows = original.clone();
+            rows[prefix..].fill(original[31]);
+            for point in points {
+                let point = point.map(F::from_u128);
+                let weights = eq_table(&point);
+                let expected: [F; 5] = std::array::from_fn(|column| {
+                    weights
+                        .iter()
+                        .zip(&rows)
+                        .map(|(weight, row)| *weight * row.field_values::<F>()[column])
+                        .sum()
+                });
+                let mut kernel = OptimizedInstructionClaimReductionKernel::new(
+                    &[F::from_u64(13); 5],
+                    BundleStore::Retained(rows.clone()),
+                    F::from_u64(17),
+                )
+                .unwrap();
+                kernel.bound_challenges = point.into_iter().rev().collect();
+                assert_eq!(kernel.operand_claims().unwrap(), expected);
+            }
+        }
+    }
+
+    #[test]
+    fn operand_claims_match_dense_evaluation_at_scalar_boundaries() {
+        check_operand_claims_at_scalar_boundaries::<Fr>();
+        #[cfg(feature = "akita")]
+        check_operand_claims_at_scalar_boundaries::<Prime128OffsetA7F7>();
     }
 }

@@ -40,7 +40,7 @@ if [[ -z "$ARCHITECTURE" ]]; then
 fi
 
 HOST_ARCHITECTURE=$(normalize_architecture "$(uname -m)") || true
-CARGO_BUILD_ARGS=(build --locked -p jolt-field --release)
+CARGO_BUILD_ARGS=(build --locked -p jolt-algebra --release)
 TARGET_TRIPLE=""
 if [[ "$ARCHITECTURE" != "$HOST_ARCHITECTURE" ]]; then
   if [[ "$(uname -s)" == Darwin && "$ARCHITECTURE" == x86_64 ]]; then
@@ -82,7 +82,7 @@ else
   PROFILE_ROOT="$PROOF_TARGET/release"
 fi
 
-find_jolt_field_out_dir() {
+find_jolt_algebra_out_dir() {
   python3 - "$1" <<'PY'
 import json
 import sys
@@ -97,12 +97,12 @@ with open(sys.argv[1], encoding="utf-8") as messages:
         if message.get("reason") != "build-script-executed":
             continue
         out_dir = message.get("out_dir", "")
-        if "/build/jolt-field-" in out_dir:
+        if "/build/jolt-algebra-" in out_dir:
             out_dirs.append(out_dir)
 
 out_dirs = list(dict.fromkeys(out_dirs))
 if len(out_dirs) != 1:
-    raise SystemExit(f"expected one jolt-field build output, found {out_dirs}")
+    raise SystemExit(f"expected one jolt-algebra build output, found {out_dirs}")
 print(out_dirs[0])
 PY
 }
@@ -120,7 +120,7 @@ CARGO_TARGET_DIR="$PROOF_TARGET" \
     --example fp128_production_witness \
     --message-format=json-render-diagnostics >"$BUILD_MESSAGES"
 
-BUILD_OUT_DIR=$(find_jolt_field_out_dir "$BUILD_MESSAGES")
+BUILD_OUT_DIR=$(find_jolt_algebra_out_dir "$BUILD_MESSAGES")
 ADD_OBJECT="$BUILD_OUT_DIR/fp128_add.o"
 SUB_OBJECT="$BUILD_OUT_DIR/fp128_sub.o"
 MUL_OBJECT="$BUILD_OUT_DIR/fp128_mul.o"
@@ -144,7 +144,7 @@ if [[ "$ARCHITECTURE" == x86_64 ]]; then
       --features solinas,fp128-proof-linkage \
       --example fp128_production_witness \
       --message-format=json-render-diagnostics >"$BMI2_ADX_BUILD_MESSAGES"
-  BMI2_ADX_BUILD_OUT_DIR=$(find_jolt_field_out_dir "$BMI2_ADX_BUILD_MESSAGES")
+  BMI2_ADX_BUILD_OUT_DIR=$(find_jolt_algebra_out_dir "$BMI2_ADX_BUILD_MESSAGES")
   BMI2_ADX_MUL_OBJECT="$BMI2_ADX_BUILD_OUT_DIR/fp128_mul_bmi2_adx.o"
   BMI2_ADX_PRODUCTION_WITNESS="$BMI2_ADX_PROFILE_ROOT/examples/fp128_production_witness"
 fi
@@ -186,20 +186,20 @@ if [[ "$ARCHITECTURE" == x86_64 && "$(uname -s)" == Darwin ]]; then
   ELF_OBJECT_DIR="$PROOF_TARGET/x86_64-elf"
   mkdir -p "$ELF_OBJECT_DIR"
   clang --target=x86_64-unknown-linux-gnu \
-    -c -I "$REPO_ROOT/crates/jolt-field/asm/x86_64" \
-    "$REPO_ROOT/crates/jolt-field/asm/x86_64/fp128_add.S" \
+    -c -I "$REPO_ROOT/crates/jolt-algebra/asm/x86_64" \
+    "$REPO_ROOT/crates/jolt-algebra/asm/x86_64/fp128_add.S" \
     -o "$ELF_OBJECT_DIR/fp128_add.o"
   clang --target=x86_64-unknown-linux-gnu \
-    -c -I "$REPO_ROOT/crates/jolt-field/asm/x86_64" \
-    "$REPO_ROOT/crates/jolt-field/asm/x86_64/fp128_sub.S" \
+    -c -I "$REPO_ROOT/crates/jolt-algebra/asm/x86_64" \
+    "$REPO_ROOT/crates/jolt-algebra/asm/x86_64/fp128_sub.S" \
     -o "$ELF_OBJECT_DIR/fp128_sub.o"
   clang --target=x86_64-unknown-linux-gnu \
-    -c -I "$REPO_ROOT/crates/jolt-field/asm/x86_64" \
-    "$REPO_ROOT/crates/jolt-field/asm/x86_64/fp128_mul.S" \
+    -c -I "$REPO_ROOT/crates/jolt-algebra/asm/x86_64" \
+    "$REPO_ROOT/crates/jolt-algebra/asm/x86_64/fp128_mul.S" \
     -o "$ELF_OBJECT_DIR/fp128_mul.o"
   clang --target=x86_64-unknown-linux-gnu \
-    -c -I "$REPO_ROOT/crates/jolt-field/asm/x86_64" \
-    "$REPO_ROOT/crates/jolt-field/asm/x86_64/fp128_mul_bmi2_adx.S" \
+    -c -I "$REPO_ROOT/crates/jolt-algebra/asm/x86_64" \
+    "$REPO_ROOT/crates/jolt-algebra/asm/x86_64/fp128_mul_bmi2_adx.S" \
     -o "$ELF_OBJECT_DIR/fp128_mul_bmi2_adx.o"
   ADD_PROOF_OBJECT="$ELF_OBJECT_DIR/fp128_add.o"
   SUB_PROOF_OBJECT="$ELF_OBJECT_DIR/fp128_sub.o"
@@ -282,7 +282,7 @@ if [[ "$ARCHITECTURE" == x86_64 ]]; then
   printf 'print_endline "[HOL 4/5] Proving BMI2 and ADX x86-64 multiplication";;\n' >>"$COMBINED_SOURCE"
   printf 'loadt "%s/fp128_mul_x86_64_bmi2_adx_object.ml";;\n' "$PROOF_DIR" >>"$COMBINED_SOURCE"
   printf 'loadt "%s/fp128_mul_x86_64_bmi2_adx_correct.ml";;\n' "$PROOF_DIR" >>"$COMBINED_SOURCE"
-  printf 'print_endline "[HOL 5/5] Certifying the A7F7 modulus";;\n' >>"$COMBINED_SOURCE"
+  printf 'print_endline "[HOL 5/5] Certifying the A7F7 and 6A23801F moduli";;\n' >>"$COMBINED_SOURCE"
   printf 'loadt "%s/fp128_prime.ml";;\n' "$PROOF_DIR" >>"$COMBINED_SOURCE"
   PROOF_SOURCES=(
     "$COMBINED_SOURCE"
@@ -316,7 +316,7 @@ else
   printf 'print_endline "[HOL 3/4] Proving AArch64 multiplication";;\n' >>"$COMBINED_SOURCE"
   printf 'loadt "%s/fp128_mul_object.ml";;\n' "$PROOF_DIR" >>"$COMBINED_SOURCE"
   printf 'loadt "%s/fp128_mul_correct.ml";;\n' "$PROOF_DIR" >>"$COMBINED_SOURCE"
-  printf 'print_endline "[HOL 4/4] Certifying the A7F7 modulus";;\n' >>"$COMBINED_SOURCE"
+  printf 'print_endline "[HOL 4/4] Certifying the A7F7 and 6A23801F moduli";;\n' >>"$COMBINED_SOURCE"
   printf 'loadt "%s/fp128_prime.ml";;\n' "$PROOF_DIR" >>"$COMBINED_SOURCE"
   PROOF_SOURCES=(
     "$COMBINED_SOURCE"
@@ -348,6 +348,8 @@ if [[ -n "$BMI2_ADX_MUL_THEOREM" ]]; then
     "$BMI2_ADX_MUL_THEOREM" "$BMI2_ADX_MUL_THEOREM" >>"$COMBINED_SOURCE"
 fi
 printf 'Printf.printf "val JOLT_FP128_A7F7_PRIME : thm = %%s\\n" (string_of_thm JOLT_FP128_A7F7_PRIME);;\n' \
+  >>"$COMBINED_SOURCE"
+printf 'Printf.printf "val JOLT_FP128_6A23801F_PRIME : thm = %%s\\n" (string_of_thm JOLT_FP128_6A23801F_PRIME);;\n' \
   >>"$COMBINED_SOURCE"
 
 CACHE_KEY=$(
@@ -386,5 +388,6 @@ if [[ -n "$BMI2_ADX_MUL_THEOREM" ]]; then
   grep -F "val $BMI2_ADX_MUL_THEOREM : thm" "$LOG_PATH"
 fi
 grep -F "val JOLT_FP128_A7F7_PRIME : thm" "$LOG_PATH"
+grep -F "val JOLT_FP128_6A23801F_PRIME : thm" "$LOG_PATH"
 
 echo "Fp128 $ARCHITECTURE inspection witness proofs passed."

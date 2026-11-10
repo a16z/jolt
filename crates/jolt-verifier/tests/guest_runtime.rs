@@ -3,6 +3,7 @@
 use common::{constants::RAM_START_ADDRESS, jolt_device::MemoryConfig};
 use jolt_host::Program;
 use memory_copy::CopyRuntime;
+use std::io::Result;
 use tracer::emulator::Emulator;
 
 #[path = "guest_runtime/memory_copy.rs"]
@@ -24,6 +25,42 @@ fn large_alloc_munmap_trace() {
         !io_device.panic,
         "large-alloc guest panicked: a non-exact munmap corrupted the ZeroOS kernel heap"
     );
+}
+
+// Under guest-size-class-alloc, musl's mmap-backed memory (C malloc, pthread
+// stacks) and Rust allocations draw from one arena.
+#[test]
+fn size_class_heap_serves_musl_mappings() {
+    let mut program = Program::new("large-alloc-guest");
+    program.set_std(true);
+    program.set_func("shared_heap_roundtrip");
+    program.add_guest_feature("size-class-alloc");
+    program.set_heap_size(16_777_216);
+    program.set_stack_size(1_048_576);
+    let (_, io_device) = program.execute_with_output(&[], &[], &[]);
+    assert!(
+        !io_device.panic,
+        "shared-heap guest panicked: musl could not map memory beside the Rust heap"
+    );
+}
+
+#[test]
+fn large_heap_and_stack_symbols_decode() -> Result<()> {
+    let target = tempfile::tempdir()?;
+    for std in [false, true] {
+        let mut program = Program::new(if std {
+            "large-alloc-guest"
+        } else {
+            "fibonacci-guest"
+        });
+        program.set_std(std);
+        program.set_func(if std { "large_alloc_roundtrip" } else { "fib" });
+        program.set_heap_size(3 << 30);
+        program.set_stack_size(3 << 30);
+        program.build(&target.path().to_string_lossy());
+        let _ = program.decode();
+    }
+    Ok(())
 }
 
 #[test]

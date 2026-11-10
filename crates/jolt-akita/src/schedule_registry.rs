@@ -494,6 +494,7 @@ mod tests {
                 .collect();
             let row = admitted
                 .resolve_key(&ScheduleLookupKey {
+                    root_accumulated_setup_prefix_len: 0,
                     final_group: params.final_group,
                     precommitteds,
                 })
@@ -502,6 +503,42 @@ mod tests {
                 row.schedule().root.params.witness_chunk,
                 profile.witness_cfg()
             );
+        }
+    }
+
+    #[test]
+    fn grouped_extension_preserves_existing_schedule_selections() {
+        let profile = AkitaChunkProfile::new(8, 2);
+        let artifacts = AkitaScheduleArtifacts::shared_from_default_directory(profile);
+        let dense = artifacts.dense_catalog().unwrap();
+        let full_dense = artifacts.full_dense_catalog().unwrap();
+        let mut catalog = artifacts
+            .one_hot_catalog_for_profile(AKITA_ONE_HOT_K16, profile)
+            .unwrap();
+        for arity in [20, 22] {
+            let params = GroupedScheduleParams::new(
+                None,
+                Some(14),
+                Vec::new(),
+                PolynomialGroupLayout::singleton(arity),
+            );
+            let extended = params
+                .extend_catalog(&dense, &full_dense, &catalog, AKITA_ONE_HOT_K16, profile)
+                .unwrap();
+            for row in catalog.rows() {
+                let key = ScheduleLookupKey {
+                    root_accumulated_setup_prefix_len: row
+                        .schedule()
+                        .root_accumulated_setup_prefix_len,
+                    final_group: row.profiles().final_group.group,
+                    precommitteds: row.profiles().precommitteds.clone(),
+                };
+                assert_eq!(
+                    extended.resolve_key(&key).unwrap().selection(),
+                    row.selection(),
+                );
+            }
+            catalog = extended;
         }
     }
 
@@ -556,6 +593,7 @@ mod tests {
                             .extend_catalog(&dense, &full_dense, &base, AKITA_ONE_HOT_K16, profile)
                             .unwrap();
                         let key = ScheduleLookupKey {
+                            root_accumulated_setup_prefix_len: 0,
                             final_group: PolynomialGroupLayout::new(final_num_vars, num_polys),
                             precommitteds: [untrusted, trusted]
                                 .into_iter()
@@ -617,6 +655,7 @@ mod tests {
                             precommitteds.push(full_producer);
                         }
                         let key = ScheduleLookupKey {
+                            root_accumulated_setup_prefix_len: 0,
                             final_group: PolynomialGroupLayout::new(final_num_vars, 1),
                             precommitteds,
                         };

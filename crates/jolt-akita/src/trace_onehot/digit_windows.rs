@@ -14,6 +14,11 @@ use crate::AkitaField;
 /// Keep four on other targets to avoid spilling on baseline SSE2.
 const TILE: usize = if cfg!(target_arch = "aarch64") { 8 } else { 4 };
 
+/// Shifted views resolved per pass over a destination. Every production batch
+/// fits in one pass: at most `D / one_hot_k` (commit.rs) and below
+/// `DOT_BATCH * NTT_MIN_SHIFTS_PER_RING` (ntt_commit.rs).
+const VIEW_BATCH: usize = 64;
+
 /// One destination ring element as unreduced [`Fp128x8i32`] lanes.
 pub(super) type DigitAccumulator<const D: usize> = [Fp128x8i32; D];
 
@@ -65,26 +70,55 @@ impl<const D: usize> DigitWindows<D> {
             .iter()
             .flat_map(AsRef::as_ref)
             .all(|&shift| shift < D));
-        if shifts.iter().all(|shifts| shifts.as_ref().is_empty()) {
+        let Some(first) = windows.first() else {
+            return;
+        };
+        let mut views = [first.shifted(0); VIEW_BATCH];
+        let mut len = 0;
+        for (window, shifts) in windows.iter().zip(shifts) {
+            for &shift in shifts.as_ref() {
+                if len == VIEW_BATCH {
+                    Self::accumulate_views(dst, &views);
+                    len = 0;
+                }
+                views[len] = window.shifted(shift);
+                len += 1;
+            }
+        }
+        Self::accumulate_views(dst, &views[..len]);
+    }
+
+    /// Coefficient `j` of `a · X^shift` is entry `j` of the view.
+    #[expect(
+        clippy::expect_used,
+        reason = "new() sizes digits to 2 * D, so the tail from D - shift holds D + shift entries"
+    )]
+    fn shifted(&self, shift: usize) -> &[[u16; 8]; D] {
+        self.digits[D - shift..]
+            .first_chunk::<D>()
+            .expect("digit windows hold 2 * D entries")
+    }
+
+    // Full-length views let the tile loop skip the window/shift walk and
+    // index each tile at a constant offset into a fixed-length array.
+    fn accumulate_views(dst: &mut DigitAccumulator<D>, views: &[&[[u16; 8]; D]]) {
+        if views.is_empty() {
             return;
         }
-        for (tile, out) in dst.chunks_exact_mut(TILE).enumerate() {
-            let base = D + tile * TILE;
-            let mut sums = [[0u32; 8]; TILE];
-            for (window, shifts) in windows.iter().zip(shifts) {
-                for &shift in shifts.as_ref() {
-                    for (sum, digits) in sums.iter_mut().zip(&window.digits[base - shift..][..TILE])
-                    {
-                        for (sum, &digit) in sum.iter_mut().zip(digits) {
-                            *sum += u32::from(digit);
-                        }
+        for (tile, out) in dst.as_chunks_mut::<TILE>().0.iter_mut().enumerate() {
+            // Start with the destination so the tile needs no final addition pass.
+            // Each digit is non-negative, so every intermediate sum lies between
+            // the original destination and the bounded final accumulator.
+            let mut sums: [[i32; 8]; TILE] = std::array::from_fn(|i| out[i].0);
+            for view in views {
+                for (sum, digits) in sums.iter_mut().zip(&view[tile * TILE..][..TILE]) {
+                    for (sum, &digit) in sum.iter_mut().zip(digits) {
+                        *sum += i32::from(digit);
                     }
                 }
             }
             for (out, sum) in out.iter_mut().zip(sums) {
-                for (lane, sum) in out.0.iter_mut().zip(sum) {
-                    *lane += sum as i32;
-                }
+                out.0 = sum;
             }
         }
     }

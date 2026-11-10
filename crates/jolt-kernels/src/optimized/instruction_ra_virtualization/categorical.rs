@@ -57,7 +57,9 @@ impl<F: JoltField> OptimizedInstructionRaVirtualizationKernel<F> {
         let group_mask = (1u128 << (4 * bits)) - 1;
         let tail_index = source.packed_index(source.cycles() - 1);
         let groups: Vec<_> = tables
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .take(self.active_virtuals)
             .enumerate()
             .map(|(g, tables)| {
@@ -88,9 +90,14 @@ impl<F: JoltField> OptimizedInstructionRaVirtualizationKernel<F> {
                     let shift = (source.num_columns() - 4 * (g + 1)) * bits;
                     let low = ((lo >> shift) & group_mask) as usize;
                     let high = ((hi >> shift) & group_mask) as usize;
-                    if low == group.tail_index && high == group.tail_index {
+                    if low == high {
+                        let value = if low == group.tail_index {
+                            group.tail_value
+                        } else {
+                            group.products[0][low >> pair_bits] * group.products[1][low & pair_mask]
+                        };
                         for lane in &mut row_lanes[..3] {
-                            lane.add(group.tail_value);
+                            lane.add(value);
                         }
                         continue;
                     }

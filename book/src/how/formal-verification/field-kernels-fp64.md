@@ -83,7 +83,7 @@ The matrix fixes these inputs.
 The proof runner rejects ambient Rust flags and profile overrides. It passes
 every release profile setting recorded by the matrix to Cargo as an explicit
 command line value. It also passes an identifier for the current matrix
-contents. The `jolt-field` build script requires that identifier whenever
+contents. The `jolt-algebra` build script requires that identifier whenever
 `fp64-proof-linkage` is enabled. It then checks the target, feature set, visible
 profile fields, and toolchain. An unknown target or feature set stops before
 the inspection witness is accepted.
@@ -175,7 +175,7 @@ function. The Python checker compares those bytes with the matching standalone
 object. HOL Light independently checks the bytes that it imports from that
 object.
 
-The pinned Rust 1.95.0 toolchain emits different AArch64 schedules on Darwin
+The certified Rust 1.99.1 toolchain emits different AArch64 schedules on Darwin
 and Linux. The formulas are the same, but the order of independent
 instructions and the temporary registers differ. Jolt keeps a separate exact
 object and a separate machine proof for each sequence. The checker does not
@@ -364,7 +364,7 @@ independent `u128` modular-arithmetic oracle. CI runs it on Linux AArch64 and
 x86-64 with BMI2 enabled; the general field fuzz workflow also runs the
 baseline x86-64 build.
 
-Run it locally from `crates/jolt-field`.
+Run it locally from `crates/jolt-algebra`.
 
 ```sh
 cargo +nightly fuzz run fp64_scalar_differential -- -max_total_time=120

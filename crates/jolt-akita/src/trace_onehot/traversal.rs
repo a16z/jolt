@@ -295,20 +295,50 @@ where
             let (part_start, part_end) = schedule.part_range(task % schedule.parts);
             let ring_start = task / schedule.parts * span + part_start;
             let ring_end = task / schedule.parts * span + part_end;
-            let first_positions = (0..num_columns)
-                .map(|_| ring_start % positions_per_block)
-                .collect::<Vec<_>>();
             let mut sums = vec![E::zero(); num_columns * D];
-            visit_segment_ring_range::<D>(source, ring_start, ring_end, |ring, contributions| {
-                let offset = ring - ring_start;
-                for &(column, coefficient) in contributions {
-                    sums[column * D + coefficient] +=
-                        position_weights[first_positions[column] + offset];
-                }
-            })?;
+            // segment_ring_elems above checks the logical domain's alignment at D.
+            if source.one_hot_k < D && source.rows.num_rows().is_multiple_of(D / source.one_hot_k) {
+                visit_segment_ring_row_range::<D>(
+                    source,
+                    ring_start,
+                    ring_end,
+                    |ring, selected_rows, masks| {
+                        let weight = position_weights[ring % positions_per_block];
+                        for (row_offset, (row, &mask)) in selected_rows
+                            .chunks_exact(num_columns)
+                            .zip(masks)
+                            .enumerate()
+                        {
+                            for (column, &hot) in row.iter().enumerate() {
+                                if row_is_committed(hot, mask, column) {
+                                    let coefficient =
+                                        row_offset * source.one_hot_k + usize::from(hot);
+                                    sums[column * D + coefficient] += weight;
+                                }
+                            }
+                        }
+                    },
+                )?;
+            } else {
+                let first_position = ring_start % positions_per_block;
+                visit_segment_ring_range::<D>(
+                    source,
+                    ring_start,
+                    ring_end,
+                    |ring, contributions| {
+                        let offset = ring - ring_start;
+                        for &(column, coefficient) in contributions {
+                            sums[column * D + coefficient] +=
+                                position_weights[first_position + offset];
+                        }
+                    },
+                )?;
+            }
             let mut blocks = vec![E::zero(); num_columns * subring_dimension];
             for (column_sums, column_blocks) in sums
-                .chunks_exact(D)
+                .as_chunks::<D>()
+                .0
+                .iter()
                 .zip(blocks.chunks_exact_mut(subring_dimension))
             {
                 for (coefficient, sum) in column_sums.iter().enumerate() {
@@ -401,12 +431,27 @@ pub(super) struct TraceBlockTaskSchedule {
 }
 
 impl TraceBlockTaskSchedule {
+    /// Start every part of an unaligned schedule at a multiple of `batch`
+    /// positions. `batch` need not divide `num_positions`: the last part
+    /// absorbs the remainder instead of becoming a short task of its own.
+    pub(super) fn with_ring_alignment(mut self, batch: usize) -> Self {
+        debug_assert_eq!(self.ring_alignment, 1);
+        self.ring_alignment = batch;
+        self.parts = self.parts.min((self.num_positions / batch).max(1));
+        self
+    }
+
     pub(super) fn part_range(&self, part: usize) -> (usize, usize) {
         debug_assert!(part < self.parts);
         let aligned_positions = self.num_positions / self.ring_alignment;
+        let end = if part + 1 == self.parts {
+            self.num_positions
+        } else {
+            (part + 1) * aligned_positions / self.parts * self.ring_alignment
+        };
         (
             part * aligned_positions / self.parts * self.ring_alignment,
-            (part + 1) * aligned_positions / self.parts * self.ring_alignment,
+            end,
         )
     }
 }
