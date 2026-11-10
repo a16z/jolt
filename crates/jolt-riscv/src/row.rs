@@ -184,3 +184,87 @@ impl JoltInstructionRow {
         link.wrapping_add(imm as u64) & !1 == address
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        instructions::{Jal, Jalr},
+        CircuitFlags, Flags, JoltInstruction,
+    };
+
+    #[test]
+    fn can_end_requires_a_repeatable_source_jump() {
+        for (kind, rd, rs1, imm, compressed, expected) in [
+            (JoltInstructionKind::JAL, 0, 0, 0, false, true),
+            (JoltInstructionKind::JAL, 0, 0, 0, true, true),
+            (JoltInstructionKind::JALR, 5, 5, 0, false, false),
+            (JoltInstructionKind::JALR, 1, 1, 0, true, false),
+            (JoltInstructionKind::JALR, 0, 5, 0, false, true),
+            (JoltInstructionKind::JALR, 5, 5, -4, false, true),
+            (JoltInstructionKind::JALR, 5, 5, -3, false, true),
+            (JoltInstructionKind::JALR, 1, 1, -2, true, true),
+            (JoltInstructionKind::JALR, 1, 1, -4, true, false),
+            (JoltInstructionKind::BEQ, 0, 0, 0, false, false),
+        ] {
+            let row = JoltInstructionRow {
+                instruction_kind: kind,
+                address: 0x8000_0000,
+                operands: NormalizedOperands {
+                    rd: Some(rd),
+                    rs1: Some(rs1),
+                    imm,
+                    ..Default::default()
+                },
+                is_compressed: compressed,
+                ..Default::default()
+            };
+            assert_eq!(row.can_end(), expected, "{row:?}");
+            assert_eq!(
+                JoltInstruction::from(row).circuit_flags()[CircuitFlags::CanEnd],
+                expected,
+                "{row:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn typed_jump_flags_use_the_instruction_variant() {
+        let row = JoltInstructionRow {
+            instruction_kind: JoltInstructionKind::ADDI,
+            operands: NormalizedOperands {
+                rs1: Some(5),
+                rd: Some(5),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert!(Jal(row).circuit_flags()[CircuitFlags::CanEnd]);
+        assert!(!Jalr(row).circuit_flags()[CircuitFlags::CanEnd]);
+        let stable = JoltInstructionRow {
+            operands: NormalizedOperands {
+                imm: -4,
+                ..row.operands
+            },
+            ..row
+        };
+        assert!(Jalr(stable).circuit_flags()[CircuitFlags::CanEnd]);
+    }
+
+    #[test]
+    fn expanded_jump_needs_source_permission_and_terminal_position() {
+        let mut row = JoltInstructionRow {
+            instruction_kind: JoltInstructionKind::JAL,
+            virtual_sequence_remaining: Some(0),
+            ..Default::default()
+        };
+        assert!(!row.can_end());
+        row.source_can_end = true;
+        assert!(row.can_end());
+        row.virtual_sequence_remaining = Some(1);
+        assert!(!row.can_end());
+        row.virtual_sequence_remaining = Some(0);
+        row.instruction_kind = JoltInstructionKind::ADDI;
+        assert!(!row.can_end());
+    }
+}

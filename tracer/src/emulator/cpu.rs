@@ -316,9 +316,8 @@ pub struct Cpu {
     #[allow(dead_code)]
     f: [f64; 32],
     pub(crate) pc: u64,
-    /// Whether the last tick reached the PC-stall fixed point that ends a
-    /// guest: it left the PC where it was, and re-running it would too
-    /// (`JoltInstructionRow::self_jump_repeats`).
+    /// Whether the last tick executed a repeatable source jump to itself
+    /// (`JoltInstructionRow::can_end`), including EBREAK's terminal expansion.
     stalled: bool,
     csr: [u64; CSR_CAPACITY],
     pub mmu: Mmu,
@@ -1605,6 +1604,43 @@ mod test_cpu {
         }
         assert!(cpu.has_stalled(), "no PC stall");
         rows.len()
+    }
+
+    #[test]
+    fn stopping_requires_a_repeatable_source_jump() {
+        for (code, expected) in [
+            (&[0x63, 0, 0, 0][..], false),       // beq x0, x0, 0
+            (&[0x6f, 0, 0, 0][..], true),        // jal x0, 0
+            (&[0x01, 0xa0][..], true),           // c.j 0
+            (&[0x73, 0, 0x10, 0][..], true),     // ebreak
+            (&[0x02, 0x90][..], true),           // c.ebreak
+            (&[0x67, 0x80, 0x02, 0][..], true),  // jalr x0, 0(x5)
+            (&[0xe7, 0x82, 0x02, 0][..], false), // jalr x5, 0(x5)
+            (&[0x82, 0x90][..], false),          // c.jalr ra
+            (&[0x73, 0, 0x20, 0x30][..], false), // mret
+            (&[0x73, 0, 0, 0][..], false),       // ecall
+        ] {
+            let mut cpu = create_cpu();
+            cpu.get_mut_mmu().init_memory(1 << 16);
+            for (index, byte) in code.iter().enumerate() {
+                cpu.get_mut_mmu().store_raw(DRAM_BASE + index as u64, *byte);
+            }
+            for register in [1, 5, 34, 36] {
+                cpu.x[register] = DRAM_BASE as i64;
+            }
+            cpu.update_pc(DRAM_BASE);
+            let mut trace = Vec::new();
+            cpu.tick(Some(&mut trace));
+            assert_eq!(cpu.read_pc(), DRAM_BASE, "{code:x?}");
+            assert_eq!(cpu.has_stalled(), expected, "{code:x?}");
+            let terminal = trace
+                .last()
+                .unwrap()
+                .instruction()
+                .try_jolt_instruction_row()
+                .unwrap();
+            assert_eq!(terminal.can_end(), expected, "{code:x?}");
+        }
     }
 
     #[test]

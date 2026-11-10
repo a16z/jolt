@@ -274,7 +274,6 @@ impl<F: JoltField> ConcreteSumcheck<F> for OuterRemainder<F> {
             advice: opening_point.clone(),
             is_compressed: opening_point.clone(),
             is_first_in_sequence: opening_point.clone(),
-            source_can_end: false,
             is_last_in_sequence: opening_point.clone(),
             can_end: opening_point.clone(),
             #[cfg(feature = "field-inline")]
@@ -426,7 +425,6 @@ mod tests {
             advice: next(),
             is_compressed: next(),
             is_first_in_sequence: next(),
-            source_can_end: false,
             is_last_in_sequence: next(),
             can_end: next(),
         }

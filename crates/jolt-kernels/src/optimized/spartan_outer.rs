@@ -1401,6 +1401,7 @@ impl<F: JoltField> ClaimAccumulator<F> {
         flag(32, row.circuit_flags[CircuitFlags::IsCompressed]);
         flag(33, row.circuit_flags[CircuitFlags::IsFirstInSequence]);
         flag(34, row.circuit_flags[CircuitFlags::IsLastInSequence]);
+        // One extra scalar accumulation in this existing pass authenticates the stopping flag.
         flag(35, row.circuit_flags[CircuitFlags::CanEnd]);
         #[cfg(feature = "field-inline")]
         {

@@ -1126,7 +1126,9 @@ mod execution_witness_tests {
             w[V_LOOKUP_OUTPUT] = Fr::from_u64(target);
             w[V_UNEXPANDED_PC] = Fr::from_u64(pc);
             let eval = |row: &SparseRow<Fr>| {
-                row.iter().map(|&(column, coefficient)| coefficient * w[column]).sum::<Fr>()
+                row.iter()
+                    .map(|&(column, coefficient)| coefficient * w[column])
+                    .sum::<Fr>()
             };
             assert_ne!(eval(&matrices.a[19]) * eval(&matrices.b[19]), Fr::zero());
         }

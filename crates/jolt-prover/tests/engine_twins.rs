@@ -348,7 +348,10 @@ mod stopping {
     use jolt_claims::protocols::jolt::geometry::spartan::SpartanOuterDimensions;
     use jolt_claims::protocols::jolt::JoltOneHotConfig;
     use jolt_dory::DoryScheme;
+    use jolt_field::Field as _;
+    use jolt_kernels::{ProverInputs, SumcheckKernel};
     use jolt_program::execution::{JoltProgram, TraceData, TraceOutput};
+    use jolt_program::expand::{expand_instruction, ExpansionAllocator};
     use jolt_program::preprocess::{
         BytecodePreprocessing, JoltProgramPreprocessing, RAMPreprocessing,
     };
@@ -356,14 +359,18 @@ mod stopping {
     use jolt_prover::{JoltBackend, ProofMode, ProverConfig, ProverError};
     use jolt_riscv::{
         JoltInstructionKind as Kind, JoltInstructionRow, JoltTraceRow, NormalizedOperands,
-        RamAccess, RegisterRead, RegisterState, RegisterWrite, RV64IMAC_JOLT,
+        RamAccess, RegisterRead, RegisterState, RegisterWrite, SourceInstruction,
+        SourceInstructionKind, SourceInstructionRow, RV64IMAC_JOLT,
     };
     use jolt_transcript::ProverState;
     use jolt_verifier::config::MIN_PADDED_TRACE_LENGTH;
     use jolt_verifier::stages::stage1::outer_remainder::{
         outer_remainder_input_values_from_uniskip_output, OuterRemainder,
     };
-    use jolt_verifier::stages::stage1::outputs::{Stage1BatchInputClaims, Stage1BatchSumchecks};
+    use jolt_verifier::stages::stage1::outputs::{
+        Stage1BatchInputClaims, Stage1BatchOutputClaims, Stage1BatchSumchecks, Stage1ClearOutput,
+        Stage1OutputClaims,
+    };
     use jolt_verifier::stages::uniskip::draw_spartan_outer_tau;
     use jolt_verifier::VerifierError;
     use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
@@ -382,6 +389,7 @@ mod stopping {
         UnstableJalr,
         CompressedJalr,
         ExpansionMidpoint,
+        GeneratedTerminalJump,
     }
 
     // These rows bypass execution deliberately: the rejected cases are prefixes
@@ -416,7 +424,10 @@ mod stopping {
             5
         };
         let rs1 = if matches!(end, End::Jalr) { 6 } else { rd };
-        let generated = matches!(end, End::Ebreak | End::ExpansionMidpoint);
+        let generated = matches!(
+            end,
+            End::Ebreak | End::ExpansionMidpoint | End::GeneratedTerminalJump
+        );
         let last = JoltInstructionRow {
             instruction_kind: if indirect { Kind::JALR } else { Kind::JAL },
             address: pc as usize,
@@ -433,15 +444,25 @@ mod stopping {
                 ..Default::default()
             },
             is_compressed: compressed,
-            virtual_sequence_remaining: generated.then_some(
-                if matches!(end, End::ExpansionMidpoint) {
-                    1
-                } else {
-                    0
-                },
-            ),
+            virtual_sequence_remaining: generated
+                .then_some(u16::from(matches!(end, End::ExpansionMidpoint))),
             is_first_in_sequence: generated,
             source_can_end: matches!(end, End::Ebreak),
+        };
+        let last = if matches!(end, End::Ebreak) {
+            let source = SourceInstruction::new(
+                SourceInstructionKind::EBREAK,
+                SourceInstructionRow {
+                    address: pc as usize,
+                    ..Default::default()
+                },
+            );
+            let expansion =
+                expand_instruction(&source, &mut ExpansionAllocator::new(), RV64IMAC_JOLT).unwrap();
+            assert_eq!(expansion.len(), 1);
+            JoltInstructionRow::from(expansion[0])
+        } else {
+            last
         };
         bytecode.push(last);
         observations.push(RegisterState {
@@ -454,8 +475,8 @@ mod stopping {
                         0
                     },
             }),
-            rd: Some(RegisterWrite {
-                register: rd,
+            rd: last.operands.rd.map(|register| RegisterWrite {
+                register,
                 pre_value: 0,
                 post_value: pc + if compressed { 2 } else { 4 },
             }),
@@ -537,6 +558,119 @@ mod stopping {
         Ok((output, transcript.verifier_message::<[u8; 32]>()))
     }
 
+    struct ForgedEndpoints {
+        inner: Box<dyn SumcheckKernel<Fr, Relation = OuterRemainder<Fr>>>,
+    }
+
+    impl ProveRounds<Fr> for ForgedEndpoints {
+        fn num_rounds(&self) -> usize {
+            self.inner.num_rounds()
+        }
+
+        fn prove_round(
+            &mut self,
+            bind: Option<Fr>,
+            round: usize,
+            previous_claim: Fr,
+        ) -> Result<UnivariatePoly<Fr>, SumcheckError<Fr>> {
+            match self.inner.prove_round(bind, round, previous_claim) {
+                // The reference kernel binds before checking the endpoints.
+                // Retry without binding and shift only the constant to forge
+                // their sum while retaining the actual witness polynomial.
+                Err(SumcheckError::RoundCheckFailed { actual, .. }) => {
+                    let mut coefficients = self
+                        .inner
+                        .prove_round(None, round, actual)?
+                        .into_coefficients();
+                    let correction = (previous_claim - actual) * Fr::from_u64(2).inverse().unwrap();
+                    if let Some(constant) = coefficients.first_mut() {
+                        *constant += correction;
+                    } else {
+                        coefficients.push(correction);
+                    }
+                    Ok(UnivariatePoly::new(coefficients))
+                }
+                result => result,
+            }
+        }
+
+        fn finish_rounds(&mut self, bind: Fr) -> Result<(), SumcheckError<Fr>> {
+            self.inner.finish_rounds(bind)
+        }
+    }
+
+    // A malicious prover can forge endpoint sums and omit the final-claim
+    // self-check. The remaining computation uses the reference kernel's real
+    // witness polynomials and genuine extracted output claims.
+    fn prove_with_forged_endpoints(witness: &TraceBackend) -> Result<Output, ProverError<Fr>> {
+        let backend = JoltBackend::<Fr, DoryScheme>::reference();
+        let mut context = backend.with_witness(witness);
+        let log_t = MIN_PADDED_TRACE_LENGTH.ilog2() as usize;
+        let mut transcript =
+            prover_transcript::<Keccak>(&jolt_transcript::protocol_tag(b"stopping-twin"), b"");
+        let tau = draw_spartan_outer_tau(&mut transcript, log_t)?;
+        context.prepare_outer_uniskip(log_t, &tau)?;
+        let params = UniskipParams::spartan_outer();
+        let uniskip = prove_uniskip_clear::<Fr, _>(
+            context.outer_uniskip_poly()?,
+            Fr::from_u64(0),
+            params.degree(),
+            params.domain_size(),
+            &mut transcript,
+        )?;
+        let sumchecks = Stage1BatchSumchecks {
+            outer_remainder: OuterRemainder::new(
+                SpartanOuterDimensions::rv64(log_t),
+                tau,
+                uniskip.challenge,
+            ),
+        };
+        let challenges = sumchecks.draw_challenges(&mut transcript)?;
+        let input_points = sumchecks.empty_input_points();
+        let inputs = Stage1BatchInputClaims {
+            outer_remainder: outer_remainder_input_values_from_uniskip_output(uniskip.output_claim),
+        };
+        let mut recorder = ClearSumcheckRecorder::<Fr>::new();
+        let (batch, _) =
+            sumchecks.begin_batch(&inputs, &challenges, &mut recorder, &mut transcript)?;
+        let mut dishonest = ForgedEndpoints {
+            inner: context.prepare(ProverInputs {
+                relation: &sumchecks.outer_remainder,
+                claims: &inputs.outer_remainder,
+                points: &input_points.outer_remainder,
+                challenges: &challenges.outer_remainder,
+            })?,
+        };
+        let mut members: Vec<&mut dyn ProveRounds<Fr>> = vec![&mut dishonest];
+        let proved = prove_batch(
+            &batch,
+            &mut members,
+            &mut SequentialRounds,
+            &mut recorder,
+            &mut transcript,
+        )?;
+        let output_points = sumchecks.derive_opening_points(&proved.challenges, &input_points)?;
+        dishonest.inner.validate_derived_tables(
+            &sumchecks.outer_remainder,
+            &input_points.outer_remainder,
+            &output_points.outer_remainder,
+            &challenges.outer_remainder,
+        )?;
+        let outer = Stage1BatchOutputClaims {
+            outer_remainder: dishonest.inner.output_claims(&inputs.outer_remainder)?,
+        };
+        sumchecks.validate_output_claims(&outer)?;
+        let recorded = recorder.finish(&sumchecks.opening_values(&outer), &mut transcript)?;
+        Ok(Output {
+            tau_pow_nonce: None,
+            pow_nonce: None,
+            uniskip_proof: uniskip.proof.into(),
+            sumcheck_proof: recorded.proof.into(),
+            claims: Stage1OutputClaims::new(uniskip.output_claim, outer.clone()),
+            clear_output: Stage1ClearOutput::new(outer, output_points),
+        })
+    }
+
     fn replay(output: &Output) -> Result<[u8; 32], VerifierError> {
         let log_t = MIN_PADDED_TRACE_LENGTH.ilog2() as usize;
         let mut transcript =
@@ -562,7 +696,7 @@ mod stopping {
                 output.claims.uniskip_output_claim,
             ),
         };
-        sumchecks.verify_clear(
+        let _ = sumchecks.verify_clear(
             &inputs,
             &sumchecks.empty_input_points(),
             &challenges,
@@ -604,22 +738,34 @@ mod stopping {
     }
 
     #[test]
+    fn endpoint_forging_path_preserves_an_honest_proof() {
+        let witness = witness(MIN_PADDED_TRACE_LENGTH, End::Jal);
+        let (honest, state) = prove(&witness, false).unwrap();
+        let output = prove_with_forged_endpoints(&witness).unwrap();
+        assert_eq!(output.uniskip_proof, honest.uniskip_proof);
+        assert_eq!(output.sumcheck_proof, honest.sumcheck_proof);
+        assert_eq!(output.claims, honest.claims);
+        assert_eq!(replay(&output).unwrap(), state);
+    }
+
+    #[test]
     fn truncated_jump_witnesses_cannot_produce_an_accepted_stage1_proof() {
         for end in [
             End::ArbitraryJump,
             End::UnstableJalr,
             End::CompressedJalr,
             End::ExpansionMidpoint,
+            End::GeneratedTerminalJump,
         ] {
             let witness = witness(MIN_PADDED_TRACE_LENGTH, end);
-            for optimized in [false, true] {
-                if let Ok((output, _)) = prove(&witness, optimized) {
-                    assert!(
-                        replay(&output).is_err(),
-                        "accepted {end:?}, optimized={optimized}"
-                    );
-                }
-            }
+            let output = prove_with_forged_endpoints(&witness).unwrap();
+            assert!(
+                matches!(
+                    replay(&output),
+                    Err(VerifierError::StageClaimOutputMismatch { stage: 1 })
+                ),
+                "accepted {end:?}"
+            );
         }
     }
 

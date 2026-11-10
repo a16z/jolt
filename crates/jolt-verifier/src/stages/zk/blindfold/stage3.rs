@@ -112,7 +112,6 @@ where
             pc: zero,
             is_virtual: zero,
             is_first_in_sequence: zero,
-            source_can_end: false,
             is_noop: zero,
         }
         .canonical_order(),

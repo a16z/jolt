@@ -387,11 +387,28 @@ mod tests {
         rows.extend(SPARTAN_OUTER_SECOND_GROUP_ROWS);
         rows.sort_unstable();
         assert_eq!(rows, (0..SPARTAN_OUTER_ROW_COUNT).collect::<Vec<_>>());
-        assert_eq!(SPARTAN_OUTER_SECOND_GROUP_ROW_COUNT, SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE);
+        assert_eq!(
+            SPARTAN_OUTER_SECOND_GROUP_ROW_COUNT,
+            SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE
+        );
         #[cfg(not(feature = "field-inline"))]
-        assert_eq!((SPARTAN_OUTER_ROW_COUNT, SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE, SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE), (20, 10, 27));
+        assert_eq!(
+            (
+                SPARTAN_OUTER_ROW_COUNT,
+                SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE,
+                SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE
+            ),
+            (20, 10, 27)
+        );
         #[cfg(feature = "field-inline")]
-        assert_eq!((SPARTAN_OUTER_ROW_COUNT, SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE, SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE), (30, 15, 42));
+        assert_eq!(
+            (
+                SPARTAN_OUTER_ROW_COUNT,
+                SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE,
+                SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE
+            ),
+            (30, 15, 42)
+        );
     }
 
     #[cfg(not(feature = "field-inline"))]

@@ -1842,7 +1842,6 @@ mod tests {
                     pc: zero,
                     is_virtual: zero,
                     is_first_in_sequence: zero,
-                    source_can_end: false,
                     is_noop: zero,
                 },
                 instruction_input: stage3::outputs::InstructionInputOutputClaims {

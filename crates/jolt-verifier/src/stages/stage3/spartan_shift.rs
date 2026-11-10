@@ -84,7 +84,6 @@ impl<F: JoltField> ConcreteSumcheck<F> for SpartanShift<F> {
             pc: opening_point.clone(),
             is_virtual: opening_point.clone(),
             is_first_in_sequence: opening_point.clone(),
-            source_can_end: false,
             is_noop: opening_point,
         })
     }

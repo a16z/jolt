@@ -185,6 +185,9 @@ mod tests {
         assert!(output.contains("OpFlags_CanEnd : ZKExpr f"));
         assert!(output.contains("FinalJumpIsRepeatableSelfJump"));
         assert!(output.contains("18446744073709551616"));
-        assert_eq!(output.matches("ZKBuilder.constrainR1CS").count(), RV64_CONSTRAINT_NAMES.len());
+        assert_eq!(
+            output.matches("ZKBuilder.constrainR1CS").count(),
+            RV64_CONSTRAINT_NAMES.len()
+        );
     }
 }

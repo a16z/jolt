@@ -151,6 +151,7 @@ impl<F: JoltField> PreparedBFolds<F> {
             }
         }
         let mut second = <F as WithAccumulator>::SignedProductAccumulator::default();
+        // Select precombined flag constants without another per-row field product.
         second.add(self.second_constant[d + 2 * c + 4 * e]);
         let second_word_values = [
             row.ram_address.0,

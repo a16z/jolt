@@ -167,6 +167,8 @@ pub enum TraceRowError {
     InvalidBytecodePc { kind: JoltInstructionKind, pc: u32 },
     #[error("no-op rows cannot be compressed or first in a virtual sequence")]
     NoOpMetadata,
+    #[error("source stopping permission requires a repeatable terminal jump")]
+    InvalidStoppingMetadata,
 }
 
 /// Four aliased 64-bit value slots. Their logical meaning depends on the row's
@@ -264,8 +266,15 @@ impl JoltTraceRow {
     ) -> Result<Self, TraceRowError> {
         let kind = instruction.instruction_kind;
         let lowered = JoltInstruction::from(instruction);
+        // CanEnd adds a static predicate to this existing decode and reuses the cached flag word.
         let circuit_flags = lowered.circuit_flags();
         let instruction_flags = lowered.instruction_flags();
+        if instruction.source_can_end
+            && (instruction.virtual_sequence_remaining != Some(0)
+                || !circuit_flags[CircuitFlags::CanEnd])
+        {
+            return Err(TraceRowError::InvalidStoppingMetadata);
+        }
         let is_noop = instruction_flags.get(InstructionFlags::IsNoop);
         if is_noop != (bytecode_pc == 0) {
             return Err(TraceRowError::InvalidBytecodePc {
@@ -600,12 +609,8 @@ impl JoltTraceRow {
 }
 
 #[inline]
-fn pack_meta(
-    circuit_flags: CircuitFlagSet,
-    instruction_flags: InstructionFlagSet,
-) -> u32 {
-    circuit_flags.bits()
-        | ((instruction_flags.bits() as u32) << META_INSTRUCTION_FLAGS_SHIFT)
+fn pack_meta(circuit_flags: CircuitFlagSet, instruction_flags: InstructionFlagSet) -> u32 {
+    circuit_flags.bits() | ((instruction_flags.bits() as u32) << META_INSTRUCTION_FLAGS_SHIFT)
 }
 
 #[inline(always)]
@@ -968,6 +973,28 @@ mod tests {
             JoltTraceRow::new(reserved, RegisterState::default(), RamAccess::NoOp, 1),
             Err(TraceRowError::RegisterIdTooWide { .. })
         ));
+    }
+
+    #[test]
+    fn source_stopping_metadata_round_trips_or_is_rejected() {
+        let mut terminal = instruction(JoltInstructionKind::JAL, NormalizedOperands::default());
+        terminal.virtual_sequence_remaining = Some(0);
+        terminal.source_can_end = true;
+        let row =
+            JoltTraceRow::new(terminal, RegisterState::default(), RamAccess::NoOp, 1).unwrap();
+        assert_eq!(row.instruction(), terminal);
+        for (kind, remaining) in [
+            (JoltInstructionKind::JAL, None),
+            (JoltInstructionKind::JAL, Some(1)),
+            (JoltInstructionKind::ADDI, Some(0)),
+        ] {
+            terminal.instruction_kind = kind;
+            terminal.virtual_sequence_remaining = remaining;
+            assert!(matches!(
+                JoltTraceRow::new(terminal, RegisterState::default(), RamAccess::NoOp, 1),
+                Err(TraceRowError::InvalidStoppingMetadata)
+            ));
+        }
     }
 
     #[test]

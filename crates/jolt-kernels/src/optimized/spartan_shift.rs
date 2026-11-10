@@ -65,7 +65,6 @@ struct SpartanShiftRow {
     is_virtual: OpFlag,
     #[opening(OpFlags(CircuitFlags::IsFirstInSequence))]
     is_first_in_sequence: OpFlag,
-    source_can_end: false,
     #[opening(InstructionFlags(InstructionFlags::IsNoop))]
     is_noop: InstructionFlag,
 }
@@ -282,7 +281,6 @@ enum Phase<F> {
         pc: Vec<F>,
         is_virtual: Vec<F>,
         is_first_in_sequence: Vec<F>,
-        source_can_end: false,
         is_noop: Vec<F>,
     },
 }
@@ -388,7 +386,6 @@ impl<F: JoltField> ShiftKernel<F> {
             pc: folds.iter().map(|fold| fold[1]).collect(),
             is_virtual: folds.iter().map(|fold| fold[2]).collect(),
             is_first_in_sequence: folds.iter().map(|fold| fold[3]).collect(),
-            source_can_end: false,
             is_noop: folds.iter().map(|fold| fold[4]).collect(),
         };
         Ok(())
@@ -543,7 +540,6 @@ impl<F: JoltField> SumcheckKernel<F> for ShiftKernel<F> {
             pc: pc[0],
             is_virtual: is_virtual[0],
             is_first_in_sequence: is_first_in_sequence[0],
-            source_can_end: false,
             is_noop: is_noop[0],
         })
     }
