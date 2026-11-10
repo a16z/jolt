@@ -413,25 +413,30 @@ The sparse register prototype at `5bd928644` passed its independent oracle,
 Metal validation, and full proofs, but its data transfer cost erased the GPU
 benefit. Preparation rose from 0.2682 to 1.4401 s, including 1.1721 s packing
 and upload, while round time fell only from 1.9889 to 1.9240 s. The optimized
-CPU implementation remains the accepted baseline. This isolated candidate
-restores register GPU routing with direct seed production: the canonical
-collector writes padding-free 24-byte entries into typed uninitialized shared
-Metal storage. Sparse bind outputs become initialized only after their complete
-writer finishes. The existing runtime API is reused without runtime changes;
-CPU topology and coefficient-table policy remain canonical. Allocation and
-seed-fill spans charge preparation to the proof. Compilation, the existing
-reference oracle, Metal validation and an inclusive full-proof comparison are
-still required. The next isolated change transplants the donor's cooperative
-indexed/transition/direct bind-message schedule from
-`7aa549cc9:crates/jolt-kernels/src/metal/solinas/registers_read_write/fused_sequence.metal`.
-It retains current CPU topology and direct seed production, adapts masks to 128
-columns and guards odd/missing rows. Both bind-only and fused paths call the
-same transition, increment and message helpers. The canonical LUT advances
-once; indexed messages use the new codebook and transition messages resolve
-the old saturated codebook. Seed rounds and natural small-tail handoff stay
-unchanged. GPU dispatch time alone
-(0.5208 s) is not evidence of an improvement. The frozen prototype and profile
-remain in `registers-metal/` under the artifact directory.
+CPU baseline was restored while the adapter was revised. The current port
+restores GPU routing using a canonical producer that writes padding-free
+24-byte seed entries directly into typed uninitialized Metal storage. Sparse
+outputs become initialized only after their complete writer finishes. CPU
+topology, coefficient-table policy and small-tail handoff remain canonical.
+
+The donor cooperative indexed/transition/direct bind-message schedule is
+adapted from `7aa549cc9:crates/jolt-kernels/src/metal/solinas/registers_read_write/fused_sequence.metal`.
+It supports the current 128-column masks and odd/missing rows. Bind-only and
+fused paths share transition, increment and message helpers. The LUT advances
+once; indexed messages use the newly bound codebook, while the transition
+resolves the old saturated codebook.
+
+At measured Jolt `b13eba9d2` / Akita `978d7060`, the normal and instrumented
+reference oracle, five CPU boundary checks and kernel/prover Clippy passed.
+Small and T27 proofs verified. The untraced T27 observation took 20.747624417 s
+(6.469064858 padded MHz), versus the saved 21.99135675 s baseline observation.
+The separate profile reduced the register-family wall union by 0.636915 s.
+Native seed filling took 0.236916 s; the profile confirmed one fused indexed,
+one transition and ten direct dispatches. Peak RSS was 39.1484 GiB. This is
+one development observation, not the final matched four-workload acceptance
+comparison. The measured code is integrated; evidence and the frozen binary
+are in `registers-current-metal/` and `registers-current-metal-jolt-prover`.
+The earlier prototype remains preserved in `registers-metal/`.
 
 Spartan outer remainder stays on the optimized CPU path. Its initial GPU port
 was correct, but upload and buffer preparation alone exceeded the measured CPU
