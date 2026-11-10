@@ -4091,6 +4091,7 @@ dependencies = [
  "getrandom 0.4.3",
  "jolt-field",
  "jolt-inlines-blake2",
+ "jolt-transcript",
  "light-poseidon",
  "num-bigint",
  "sha3 0.12.0",
