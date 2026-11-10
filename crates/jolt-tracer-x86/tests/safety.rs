@@ -10,6 +10,7 @@
 #![expect(clippy::expect_used, clippy::panic)]
 
 use common::constants::STACK_CANARY_SIZE;
+use common::jolt_device::JoltDevice;
 use jolt_riscv::{JoltInstructionKind, JoltInstructionRow, NormalizedOperands};
 use jolt_tracer_x86::harness::{
     compile_program, memory_config, run_program, single_row_program, Outcome, TEST_ADDR,
@@ -137,9 +138,7 @@ fn store_to(address: u64) -> Outcome {
 }
 
 fn harness_stack_end() -> u64 {
-    common::jolt_device::JoltDevice::new(&memory_config())
-        .memory_layout
-        .stack_end
+    JoltDevice::new(&memory_config()).memory_layout.stack_end
 }
 
 /// A store into the stack canary `[stack_end, stack_end + STACK_CANARY_SIZE)`
@@ -222,5 +221,46 @@ fn static_branch_to_unmapped_target_faults_only_when_taken() {
         if exit == 3 {
             assert_eq!(outcome.fault_addr, target);
         }
+    }
+}
+
+#[test]
+fn code_stores_accept_the_old_value_and_reject_changes() {
+    let mut store = row(JoltInstructionKind::SD, Some(1), None, 0);
+    store.operands.rs2 = Some(3);
+    let program = single_row_program(store);
+    let mut pre = [0u64; REGS];
+    pre[1] = TEST_ADDR;
+    // The synthetic harness initializes this word to zero.
+    let unchanged = run_program(&program, &pre, &[], &[]).expect("run unchanged code store");
+    assert_eq!(unchanged.exit, 1);
+    pre[3] = 1;
+    let changed = run_program(&program, &pre, &[], &[]).expect("run changed code store");
+    assert_eq!(changed.exit, 4);
+    assert!(changed
+        .helper_error
+        .expect("code-store error")
+        .contains("protected doubleword"));
+}
+
+#[test]
+fn slow_load_rejects_addresses_below_the_lowest_mapped_word() {
+    let program = single_row_program(row(JoltInstructionKind::LD, Some(1), Some(2), 0));
+    let mut pre = [0u64; REGS];
+    let lowest = JoltDevice::new(&memory_config())
+        .memory_layout
+        .get_lowest_address();
+    pre[1] = lowest;
+    let accepted = run_program(&program, &pre, &[], &[]).expect("run lowest load");
+    assert_eq!(accepted.exit, 1);
+    assert_eq!(accepted.regs[2], 0);
+    for address in [0, lowest - 8] {
+        pre[1] = address;
+        let rejected = run_program(&program, &pre, &[], &[]).expect("run low load");
+        assert_eq!(rejected.exit, 4);
+        assert!(rejected
+            .helper_error
+            .expect("low-load error")
+            .contains("I/O underflow"));
     }
 }

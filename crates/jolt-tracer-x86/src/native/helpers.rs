@@ -110,11 +110,49 @@ pub extern "sysv64" fn slow_load_doubleword(state: *mut GuestState, address: u64
         state.exit = ExitReason::FaultOutOfBounds as u64;
         return 0;
     }
+    if address < host.device.memory_layout.get_lowest_address() {
+        return fail(
+            state,
+            host,
+            format!("I/O underflow: Attempted to read from {address:#X}"),
+        );
+    }
     let mut value = 0u64;
     for i in 0..8 {
         value |= (host.device.load(address + i) as u64) << (i * 8);
     }
     value
+}
+
+/// A generated interval guard sends only aligned, in-bounds protected words here.
+/// Same-value stores leave the plane unchanged and still record the RAM access.
+pub extern "sysv64" fn code_store_doubleword(
+    state: *mut GuestState,
+    address: u64,
+    value: u64,
+) -> u64 {
+    let (state, host) = host_context(state);
+    let offset = address - RAM_START_ADDRESS;
+    // SAFETY: the generated store admission checked alignment and plane bounds
+    // before comparing the address with the canonical public code intervals.
+    let old = unsafe {
+        (state.mem_base as *const u8)
+            .add(offset as usize)
+            .cast::<u64>()
+            .read()
+    };
+    if old != value {
+        return fail(
+            state,
+            host,
+            format!("Code store changes protected doubleword at {address:#x}"),
+        );
+    }
+    if !state.obs_cursor.is_null() && state.obs_cursor < state.obs_end {
+        // SAFETY: the observation cursor points at this row and is in bounds.
+        unsafe { (*state.obs_cursor).ram_pre = old };
+    }
+    0
 }
 
 /// Record the pre-value of a device-region store into the current row's

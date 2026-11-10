@@ -6,7 +6,9 @@ use crate::emulator::decode_cache::DecodeCache;
 use crate::emulator::memory::Memory;
 use common::constants::{RAM_START_ADDRESS, STACK_CANARY_SIZE};
 use common::jolt_device::JoltDevice;
+use jolt_program::preprocess::ram::is_code_word;
 use jolt_riscv::{RamRead, RamWrite};
+use std::sync::Arc;
 
 use super::cpu::{get_privilege_mode, PrivilegeMode, Trap, TrapType};
 use super::terminal::Terminal;
@@ -21,6 +23,8 @@ pub struct Mmu {
     /// Pre-decoded instruction cache. Lives on the Mmu so the store paths can
     /// invalidate it directly when the executable range is written.
     pub decode_cache: DecodeCache,
+
+    pub(crate) code_word_intervals: Arc<[(usize, usize)]>,
 
     pub jolt_device: Option<JoltDevice>,
 
@@ -50,6 +54,7 @@ impl Mmu {
             privilege_mode: PrivilegeMode::Machine,
             memory: MemoryWrapper::new(),
             decode_cache: DecodeCache::empty(),
+            code_word_intervals: Arc::from([]),
             jolt_device: None,
             mstatus: 0,
         }
@@ -128,7 +133,7 @@ impl Mmu {
                 "I/O overflow: Attempted to {verb} 0x{ea:X}. Out of bounds.\n{layout:#?}",
             );
             assert!(
-                ea >= layout.get_lowest_address() || ea <= RAM_START_ADDRESS - 8,
+                ea >= layout.get_lowest_address() || (is_write && ea <= RAM_START_ADDRESS - 8),
                 "I/O underflow: Attempted to {verb} 0x{ea:X}. Out of bounds.\n{layout:#?}",
             );
 
@@ -593,6 +598,7 @@ impl Mmu {
         match effective_address >= DRAM_BASE {
             true => {
                 self.assert_effective_store_address(effective_address);
+                self.assert_code_store(effective_address, value as u64, 1);
                 self.memory.write_byte(effective_address, value)
             }
             false => match effective_address {
@@ -610,6 +616,37 @@ impl Mmu {
                 }
             },
         };
+    }
+
+    fn assert_code_store(&mut self, address: u64, value: u64, width: u64) {
+        let Some(device) = self.jolt_device.as_ref() else {
+            return;
+        };
+        let lowest_address = device.memory_layout.get_lowest_address();
+        // One interval lookup per touched word, fused into the existing write; only
+        // protected words need another read. Naturally aligned stores touch one word.
+        let first = address & !7;
+        let last = (address + width - 1) & !7;
+        for word in [first, last]
+            .into_iter()
+            .take(1 + usize::from(first != last))
+        {
+            let index = ((word - lowest_address) >> 3) as usize;
+            if !is_code_word(&self.code_word_intervals, index) {
+                continue;
+            }
+            let old = self.memory.read_doubleword(word);
+            let start = address.max(word);
+            let end = (address + width).min(word + 8);
+            let bits = 8 * (end - start);
+            let mask = (u64::MAX >> (64 - bits)) << (8 * (start - word));
+            let replacement = (value >> (8 * (start - address))) << (8 * (start - word));
+            assert_eq!(
+                old & mask,
+                replacement & mask,
+                "Code store changes protected doubleword at {word:#x}",
+            );
+        }
     }
 
     pub fn setup_bytecode(&mut self, p_address: u64, value: u8) {
@@ -638,6 +675,7 @@ impl Mmu {
         {
             true => {
                 self.assert_effective_store_address(effective_address);
+                self.assert_code_store(effective_address, value as u64, 2);
                 self.memory.write_halfword(effective_address, value)
             }
             false => {
@@ -659,6 +697,7 @@ impl Mmu {
         {
             true => {
                 self.assert_effective_store_address(effective_address);
+                self.assert_code_store(effective_address, value as u64, 4);
                 self.memory.write_word(effective_address, value)
             }
             false => {
@@ -680,6 +719,7 @@ impl Mmu {
         {
             true => {
                 self.assert_effective_store_address(effective_address);
+                self.assert_code_store(effective_address, value, 8);
                 self.memory.write_doubleword(effective_address, value)
             }
             false => {
@@ -845,6 +885,7 @@ impl Mmu {
                 memory: Memory::empty(),
             },
             decode_cache: self.decode_cache.snapshot_with_empty_entries(),
+            code_word_intervals: Arc::clone(&self.code_word_intervals),
             jolt_device: self.jolt_device.clone(),
             mstatus: self.mstatus,
         }
@@ -861,6 +902,7 @@ impl Mmu {
             // Snapshotted separately (pooled image / checkpoint layer).
             memory: _,
             decode_cache: _,
+            code_word_intervals: _,
             jolt_device: _,
             mstatus,
         } = self;
@@ -1262,6 +1304,161 @@ mod test_mmu {
         let write = mmu.store(output_start + 16, 0x5A).unwrap();
         assert_eq!(write.address, (output_start + 16) & !7);
         assert_eq!(mmu.jolt_device.as_ref().unwrap().outputs[16], 0x5A);
+    }
+
+    #[test]
+    fn protected_code_stores_preserve_every_lane_before_mutation() {
+        use std::panic::{catch_unwind, AssertUnwindSafe};
+
+        const OLD: u64 = 0x8877_6655_4433_2211;
+        for width in [1u64, 2, 4, 8] {
+            for offset in (0..8).step_by(width as usize) {
+                let mut mmu = setup_mmu();
+                let address = DRAM_BASE + 0x40;
+                mmu.store_doubleword(address, OLD).unwrap();
+                let lowest = mmu
+                    .jolt_device
+                    .as_ref()
+                    .unwrap()
+                    .memory_layout
+                    .get_lowest_address();
+                mmu.code_word_intervals = jolt_program::preprocess::ram::code_word_intervals(
+                    [(address + 6, true)],
+                    lowest,
+                )
+                .unwrap()
+                .into();
+                let lane = OLD >> (8 * offset);
+                let store = |mmu: &mut Mmu, value: u64| match width {
+                    1 => mmu.store(address + offset, value as u8),
+                    2 => mmu.store_halfword(address + offset, value as u16),
+                    4 => mmu.store_word(address + offset, value as u32),
+                    _ => mmu.store_doubleword(address + offset, value),
+                };
+                let write = store(&mut mmu, lane).unwrap();
+                assert_eq!((write.pre_value, write.post_value), (OLD, OLD));
+                assert!(catch_unwind(AssertUnwindSafe(|| store(&mut mmu, lane ^ 1))).is_err());
+                assert_eq!(mmu.load_doubleword(address).unwrap().0, OLD);
+                assert_eq!(store(&mut mmu, lane).unwrap().post_value, OLD);
+            }
+        }
+    }
+
+    #[test]
+    fn raw_code_store_paths_reject_changes() {
+        use std::panic::{catch_unwind, AssertUnwindSafe};
+
+        for width in [1, 2, 4, 8] {
+            let mut mmu = setup_mmu();
+            let lowest = mmu
+                .jolt_device
+                .as_ref()
+                .unwrap()
+                .memory_layout
+                .get_lowest_address();
+            mmu.code_word_intervals =
+                jolt_program::preprocess::ram::code_word_intervals([(DRAM_BASE, false)], lowest)
+                    .unwrap()
+                    .into();
+            assert!(catch_unwind(AssertUnwindSafe(|| match width {
+                1 => mmu.store_raw(DRAM_BASE, 1),
+                2 => mmu.store_halfword_raw(DRAM_BASE, 1),
+                4 => mmu.store_word_raw(DRAM_BASE, 1),
+                _ => mmu.store_doubleword_raw(DRAM_BASE, 1),
+            }))
+            .is_err());
+            assert_eq!(mmu.load_doubleword(DRAM_BASE).unwrap().0, 0);
+        }
+    }
+
+    #[test]
+    fn atomic_and_successful_conditional_stores_obey_code_protection() {
+        use crate::emulator::cpu::Cpu;
+        use crate::instruction::Instruction;
+        use std::panic::{catch_unwind, AssertUnwindSafe};
+
+        for conditional in [false, true] {
+            for trace in [false, true] {
+                let mut cpu = Cpu::new(Box::new(DummyTerminal::default()));
+                cpu.mmu = setup_mmu();
+                let address = DRAM_BASE + 0x40;
+                cpu.mmu.store_doubleword(address, 11).unwrap();
+                let lowest = cpu
+                    .mmu
+                    .jolt_device
+                    .as_ref()
+                    .unwrap()
+                    .memory_layout
+                    .get_lowest_address();
+                cpu.mmu.code_word_intervals =
+                    jolt_program::preprocess::ram::code_word_intervals([(address, false)], lowest)
+                        .unwrap()
+                        .into();
+                cpu.x[1] = address as i64;
+                cpu.x[2] = if conditional { 11 } else { 0 };
+                let instruction = Instruction::decode(
+                    if conditional {
+                        0x1820_b1af
+                    } else {
+                        0x0020_b1af
+                    },
+                    DRAM_BASE + 0x100,
+                    false,
+                )
+                .unwrap();
+                let reserve = Instruction::decode(0x1000_b22f, DRAM_BASE + 0xfc, false).unwrap();
+                if conditional {
+                    if trace {
+                        reserve.trace(&mut cpu, Some(&mut Vec::new()));
+                    } else {
+                        reserve.execute(&mut cpu);
+                    }
+                }
+                if trace {
+                    instruction.trace(&mut cpu, Some(&mut Vec::new()));
+                } else {
+                    instruction.execute(&mut cpu);
+                }
+                assert_eq!(cpu.mmu.load_doubleword(address).unwrap().0, 11);
+                if conditional {
+                    assert_eq!(cpu.x[3], 0, "same-value SC.D must succeed");
+                }
+                cpu.x[2] = if conditional { 12 } else { 1 };
+                if conditional {
+                    if trace {
+                        reserve.trace(&mut cpu, Some(&mut Vec::new()));
+                    } else {
+                        reserve.execute(&mut cpu);
+                    }
+                }
+                assert!(catch_unwind(AssertUnwindSafe(|| {
+                    if trace {
+                        instruction.trace(&mut cpu, Some(&mut Vec::new()));
+                    } else {
+                        instruction.execute(&mut cpu);
+                    }
+                }))
+                .is_err());
+                assert_eq!(cpu.mmu.load_doubleword(address).unwrap().0, 11);
+            }
+        }
+    }
+
+    #[test]
+    fn loads_admit_the_lowest_mapped_word_and_reject_lower_addresses() {
+        use std::panic::{catch_unwind, AssertUnwindSafe};
+
+        let mut mmu = setup_mmu();
+        let lowest = mmu
+            .jolt_device
+            .as_ref()
+            .unwrap()
+            .memory_layout
+            .get_lowest_address();
+        assert_eq!(mmu.load_doubleword(lowest).unwrap().0, 0);
+        for address in [0, lowest - 8] {
+            assert!(catch_unwind(AssertUnwindSafe(|| mmu.load_doubleword(address))).is_err());
+        }
     }
 
     #[test]
