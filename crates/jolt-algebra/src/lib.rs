@@ -98,6 +98,7 @@
 )]
 #![deny(unsafe_op_in_unsafe_fn)]
 
+mod accum;
 mod algebra;
 #[cfg(feature = "binary")]
 mod binary;
@@ -120,6 +121,7 @@ pub mod signed;
 pub mod solinas;
 mod unreduced;
 
+pub use accum::reduce_signed_accum;
 pub use algebra::{
     Accumulator, AdditiveGroup, CanonicalBytes, CanonicalEncoding, Field, JoltField,
     MaybeAllocative, MaybeEncoding, NaiveAccumulator, PseudoMersenne, Ring, WithAccumulator,
