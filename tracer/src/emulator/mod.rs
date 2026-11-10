@@ -40,6 +40,16 @@ use std::path::Path;
 /// writing a value to `tohost` that is not an HTIF exit command.
 const UNRECOGNIZED_TOHOST_ENDCODE: u64 = 1;
 
+/// Returns `payload >> 1` only for an HTIF syscall-proxy exit command:
+/// device (bits 63..56) and command (bits 55..48) must both be zero, and
+/// bit 0 of the 48-bit payload must be set. Other words have no endcode.
+pub fn decode_htif_exit(value: u64) -> Option<u64> {
+    let device = (value >> 56) & 0xFF;
+    let command = (value >> 48) & 0xFF;
+    let payload = value & 0xFFFF_FFFF_FFFF;
+    (device == 0 && command == 0 && payload & 1 == 1).then_some(payload >> 1)
+}
+
 #[derive(Clone, Debug)]
 pub struct Emulator {
     pub elf_path: Option<std::path::PathBuf>,
@@ -146,28 +156,12 @@ impl Emulator {
             cycle_count += 1;
 
             let tohost_value = self.cpu.get_mut_mmu().load_doubleword_raw(self.tohost_addr);
-            if tohost_value != 0 {
-                // Extract device, cmd and payload from tohost value
-                // Format matches sail-riscv's htif_cmd bitfield:
-                // device  : 63 .. 56
-                // cmd     : 55 .. 48
-                // payload : 47 .. 0
-                let device = (tohost_value >> 56) & 0xFF;
-                let cmd = (tohost_value >> 48) & 0xFF;
-                let payload = tohost_value & 0xFFFFFFFFFFFF;
-
-                // An exit is the syscall-proxy device's (0) command 0 with
-                // payload bit 0 set. Anything else is not an exit; if the
-                // guest then spins, the stall check above reports a failure.
-                if device == 0 && cmd == 0 && (payload & 1) == 1 {
-                    // Extract exit code by shifting payload right by 1
-                    let endcode = payload >> 1;
-                    match endcode {
-                        0 => tracing::info!("Test Passed with {endcode:X}\n"),
-                        _ => tracing::error!("Test Failed with {endcode:X}\n"),
-                    };
-                    return endcode;
-                }
+            if let Some(endcode) = decode_htif_exit(tohost_value) {
+                match endcode {
+                    0 => tracing::info!("Test Passed with {endcode:X}\n"),
+                    _ => tracing::error!("Test Failed with {endcode:X}\n"),
+                };
+                return endcode;
             }
         }
     }
@@ -452,11 +446,9 @@ mod tests {
         assert_eq!(run(&[0x0000_006f], 0), (0, 0)); // jal x0, 0
     }
 
-    /// The halt sequence ACT4's `Zalrsc-sc.d-00` ran when it failed: it wrote
-    /// `(gp << 1) | 1` and spun. With gp = 0x1cadd5ae9e2ac9c5 (that test's
-    /// value) the write sets the HTIF device byte; with gp = 2^47 it sets
-    /// command 1 with payload 1. Neither is an exit command, so neither run
-    /// may count as a pass.
+    /// Encoding `(gp << 1) | 1` with gp = 0x1cadd5ae9e2ac9c5 sets the HTIF
+    /// device byte; with gp = 2^47 it sets command 1 with payload 1. Neither
+    /// is an exit command, and a subsequent spin must fail.
     #[test]
     fn run_test_fails_a_spin_after_a_tohost_write_that_is_not_an_exit_command() {
         let halt_with_wide_code = [
