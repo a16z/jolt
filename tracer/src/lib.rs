@@ -17,8 +17,8 @@ use common::{
 };
 use emulator::{cpu, default_terminal::DefaultTerminal};
 use instruction::{Cycle, Instruction};
-use jolt_program::preprocess::ram::code_word_intervals;
 use jolt_program::execution::TraceError;
+use jolt_program::preprocess::ram::code_word_intervals;
 use jolt_riscv::RV64IMAC_JOLT;
 #[cfg(not(feature = "field-inline"))]
 use jolt_riscv::RV64IMAC_JOLT_ALL_INLINES;

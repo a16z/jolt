@@ -551,6 +551,7 @@ fn ram_guards_committed_engine_twin_keeps_transcripts_equal() {
         prover.verifier_message::<[u8; 32]>(),
         verifier.verifier_message::<[u8; 32]>()
     );
+}
 
 #[cfg(not(any(feature = "zk", feature = "akita", feature = "field-inline")))]
 mod stopping {
