@@ -34,6 +34,10 @@ impl<G: GuestConfig + 'static> Objective for ProverTimeObjective<G> {
         self.name.as_str()
     }
 
+    #[expect(
+        clippy::expect_used,
+        reason = "the allocated trace length fits a representable power-of-two domain"
+    )]
     fn setup(&self) -> ProverTimeSetup {
         let mc = self.guest.memory_config();
         let input = self.guest.input();
