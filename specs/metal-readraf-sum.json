@@ -1,0 +1,6 @@
+{
+  "scope": "ReadRAF9/17 message accumulation in the existing lazy, materializing and dense modes. Source gathering, bind policy, transcript, output writes, finalization and CPU handoff are unchanged.",
+  "arithmetic": "SumAccumulator stores five carried32-bit words and only accepts canonical field additions/merges. At most2^32 original terms sum to less than2^160; reduction uses the existing canonical fold2 owner. Each ReadRAF output adds at most checked-u32 in_len original terms across disjoint lanes. All modes produce canonical samples before addition. General product and signed accumulators remain unchanged.",
+  "measurement": "An isolated same-input CI paired experiment at4aa9bfc5 compared every81920 partials for each lazy width1/2/4. Summed GPU duration was0.414878875s general versus0.397114751s sum-only (17.764ms,4.28% lower). Orders alternate by width, not within the same shape. This is component evidence only; materializing/dense modes were not performance-paired and no whole-proof gain is claimed.",
+  "validation": "Existing fp128_accum oracle covers canonical edges, bounded sums/merge and capacity. Existing ReadRAF independent reference oracle exercises9/17 factors, ordinary/exceptional equality, odd suffixes, materialization, dense continuation and CPU handoff. No paired entrypoints or diagnostic selectors remain in production."
+}

@@ -92,8 +92,11 @@ void read_raf_round_impl(
     device const F* e_in, device const F* e_out, device F* partials,
     constant ReadRafParams& p, constant ulong4& tail, constant F& challenge,
     uint group, uint local, uint threads, ushort lane, ushort simdgroup,
-    ushort simdgroups, ushort simdwidth, threadgroup jolt::Accumulator<F> (*scratch)[READ_RAF_MAX_SIMDGROUPS]) {
-    using Acc = jolt::Accumulator<F>;
+    ushort simdgroups, ushort simdwidth, threadgroup jolt::SumAccumulator<F> (*scratch)[READ_RAF_MAX_SIMDGROUPS]) {
+    using Acc = jolt::SumAccumulator<F>;
+    // Every mode adds canonical samples, never unreduced products. Across all
+    // lanes, each output receives at most the checked uint p.in_len original
+    // terms; merging disjoint lanes preserves the <=2^32-term bound.
     static_assert(Acc::CAPACITY >= 0xFFFFFFFFul, "one equality block fits");
     Acc sums[N + 1];
     for (uint i = 0; i <= N; i++) sums[i] = Acc::zero();
@@ -144,7 +147,7 @@ template <typename F> kernel void NAME( \
     uint local [[thread_index_in_threadgroup]], uint threads [[threads_per_threadgroup]], \
     ushort lane [[thread_index_in_simdgroup]], ushort simdgroup [[simdgroup_index_in_threadgroup]], \
     ushort simdgroups [[simdgroups_per_threadgroup]], ushort simdwidth [[threads_per_simdgroup]]) { \
-    threadgroup jolt::Accumulator<F> scratch[N + 1][READ_RAF_MAX_SIMDGROUPS]; \
+    threadgroup jolt::SumAccumulator<F> scratch[N + 1][READ_RAF_MAX_SIMDGROUPS]; \
     read_raf_round_impl<F, N>(rows, ra, claims, previous, next, tails, cached, e_in, e_out, \
         partials, p, tail, challenge, group, local, threads, lane, simdgroup, simdgroups, simdwidth, scratch); \
 }
