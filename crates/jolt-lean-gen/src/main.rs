@@ -415,6 +415,14 @@ fn source_shape(kind: SourceInstructionKind) -> SourceShape {
             rs2: false,
             imm: true,
         }
+    } else if matches!(name, "LRW" | "LRD") {
+        // LR's operands are rd and rs1, for example `lr.w rd, (rs1)`.
+        SourceShape {
+            rd: true,
+            rs1: true,
+            rs2: false,
+            imm: false,
+        }
     } else {
         SourceShape {
             rd: true,
@@ -600,7 +608,7 @@ fn render_rows(
 
 fn emit_program(kind: SourceInstructionKind) -> Result<(), Box<dyn std::error::Error>> {
     let name = kind.name();
-    let shape = source_shape(kind); // TODO: (Ari): Make this more robust later.
+    let shape = source_shape(kind);
     let (load_class, align_fault) = load_class_and_align_fault(kind);
 
     println!("--- {name} ---");
