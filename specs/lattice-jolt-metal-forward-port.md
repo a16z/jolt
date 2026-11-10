@@ -270,8 +270,18 @@ verified two proofs and matched all 32 windows. Source transformation and
 packing accounted for 72.39% of summed encoder durations, dot products 24.98%,
 inverse transforms 2.30%, and combination 0.33%. These are diagnostic duration
 shares, not production GPU occupancy or throughput. Evidence is in
-`tensor-stage-overlap-timestamps/`. Further Tensor tuning is deferred until
-the donor commitment path has an inclusive comparison.
+`tensor-stage-overlap-timestamps/`.
+
+A subsequent isolated candidate (`369dd00bb` / Akita `9a8beb4c`) coalesces
+Tensor source writes and uses the current runtime with a per-library Metal 4
+selection. Its focused arithmetic oracle passed normally and under Metal
+validation; the small and frozen T27 proofs verified. The untraced Fib proof
+took 22.9884 s (5.8385 padded MHz). In the separate profile, commitment used
+3.9071 s of GPU time and 4.7646 s inclusive, versus 4.0850 and 4.7800 s in the
+saved NTT profile. Extra Tensor key preparation took 0.1158 s. These unmatched
+observations establish neither a full-proof gain nor a benefit from coalescing;
+other components also varied. Keep NTT as the default and this candidate
+isolated. Evidence is in `tensor-coalesced-current-metal/`.
 
 The current limb-NTT commitment substantially reuses the November 8 reference
 `cdf52d02`. The donor also has a direct radix26 K16 panel algorithm, which fits
@@ -340,6 +350,16 @@ slower than the saved K16 Registers observation (20.7476 s); K256 remains
 isolated. This is not a paired comparison. Evidence and the repaired final
 runner-status write are preserved in `k256-metal/`; no proof was rerun for
 that postprocessing repair.
+
+A subsequent same-proof diagnostic (`dd0f014e1` / Akita `a87f64c0`) compared
+32-task and 16-task panels on identical keys and sources, alternating order.
+Every coefficient agreed across all 15 windows, and the proof verified. GPU
+time totaled 5.3690 s for 32 tasks and 4.8767 s for 16; dispatch through copied
+readback totaled 5.4290 and 4.9093 s. The 16-task schedule won in all 14 full
+windows under both orders; the eight-block tail was essentially unchanged.
+This supports selecting 16 tasks for the next K256 candidate. The diagnostic
+used release optimization with LTO disabled and executed both schedules, so its
+whole-proof time is not throughput. Evidence is in `k256-panel-tasks/`.
 
 The isolated Outer diagnostic (`6cef6ad8a`) also verified. Outer occupied
 2.024 s in its separate profile. Sampled extraction accounted for 13.8%,
