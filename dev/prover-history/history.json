@@ -2,6 +2,52 @@
   "format_version": 1,
   "runs": [
     {
+      "key": "github-d81e23acdf0cfdec68a4d78247bc9a464165dd48-42913944338-1",
+      "source": {
+        "type": "github",
+        "repository": "a16z/jolt",
+        "commit": "d81e23acdf0cfdec68a4d78247bc9a464165dd48",
+        "run_head_sha": "a459a08803c5fbd6d8823a74121d44549ea4466f",
+        "run_id": 42913944338,
+        "run_attempt": 1,
+        "event": "push",
+        "workflow": "End-to-end benchmark ingest",
+        "workflow_file": ".github/workflows/e2e-bench-ingest.yml",
+        "url": "https://github.com/a16z/jolt/actions/runs/42913944338/attempts/1",
+        "conclusion": "success",
+        "artifact": {
+          "id": 13808122956,
+          "name": "jolt-e2e-42913944338-1",
+          "digest": "sha256:606ae50223cd8214a954326b56e10acfceaf52bbddfede93ec3b61b4a4763a18"
+        },
+        "plan_run_id": 42905303879,
+        "plan_run_attempt": 1,
+        "plan_artifact_id": 13803878344,
+        "plan_sha256": "624b9b0f6152a4473c971f85be4fcf49fffbba2895ed7e131e2764f9b05947f1",
+        "commit_index": 0,
+        "push_range": {
+          "producer_before": "6bde64bf4b4a24273b9e8b55af50b0ced68ce0d1",
+          "after": "d81e23acdf0cfdec68a4d78247bc9a464165dd48",
+          "ancestry_base": "6bde64bf4b4a24273b9e8b55af50b0ced68ce0d1",
+          "ancestry_verified": true,
+          "event_bound_verified": false,
+          "commits": 1
+        }
+      },
+      "started_at": "2026-11-10T21:27:59+00:00",
+      "tier": "main",
+      "kind": "history",
+      "status": "complete",
+      "publication_status": "ready",
+      "reason": null,
+      "benchmark_schema": 1,
+      "sha256": "f88e0741956287f394f89a6d572fe391b4bf2859c8455ab1915423778b20a01d",
+      "push_index": "runs/github-d81e23acdf0cfdec68a4d78247bc9a464165dd48-42913944338-1.index.json",
+      "push_index_sha256": "3fe83b31fe0811c1db441988cf53fb6824e3a18b9cf6f74adc519841d76fa78b",
+      "publisher_revision": "a459a08803c5fbd6d8823a74121d44549ea4466f",
+      "raw": "runs/github-d81e23acdf0cfdec68a4d78247bc9a464165dd48-42913944338-1.json"
+    },
+    {
       "key": "github-fd51872b7e800ea31f5934948f4f3663cfa4f91c-42895123947-1",
       "source": {
         "type": "github",
