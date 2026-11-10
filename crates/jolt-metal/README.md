@@ -49,9 +49,9 @@ let spec = FIELD_HEADERS
     .iter()
     .fold(LibrarySpec::new(), |spec, (name, text)| spec.source(name, text))
     .source("my_kernels.metal", MY_KERNELS)
-    .instantiate::<Prime128OffsetA7F7>("my_mul");
+    .instantiate::<Prime128Offset6A23801F>("my_mul");
 let library = ShaderLibrary::compile(&device, &spec)?;
-let pipeline = library.pipeline(&host_name::<Prime128OffsetA7F7>("my_mul"))?;
+let pipeline = library.pipeline(&host_name::<Prime128Offset6A23801F>("my_mul"))?;
 ```
 
 The runtime compiles one source string, so `#include` does not resolve: add
