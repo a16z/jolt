@@ -286,6 +286,13 @@ omitted fused cooperative register rounds and a width-one Booleanity lookup
 table. These ports take priority over further new algorithms. Source crosswalks
 and exact donor references are in `metal-pcs-donor-provenance-crosswalk.json`
 and `donor-sumcheck-crosswalk.json` in the task artifact directory.
+The first panel port (`ec4f1d62f` / Akita `18448889`) passed the independent
+ring oracle, Metal validation, and small/T27 proofs, but remained isolated:
+the T27 proof took 25.163155083 s (5.333899011 padded MHz), and the separate
+profile recorded 6.9160 s of commitment GPU work. The one-position tile doubles
+barrier frequency relative to the donor. A faithful two-position comparison is
+pending; the slower first port does not establish the donor algorithm's limit.
+Evidence is in `donor-panels-metal/`.
 The reported donor 5x speedup was against the older CPU implementation, and
 Markos believed roughly 10x was possible. Its measured throughput is therefore
 a reference, not the target or an optimization ceiling. After each port, use
