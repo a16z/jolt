@@ -96,6 +96,8 @@ pub(super) fn materialize(
     let tile_outputs = (tile_rows / 2).min(output_len);
     let allocate = tracing::info_span!("metal_input_allocate", rows = output_len).entered();
     let pending = Pending::new(&gpu, output_len, true).map_err(compute_error)?;
+    let unused_words = DeviceBuffer::zeroed(&gpu.device, 1).map_err(compute_error)?;
+    let unused_lut = DeviceBuffer::zeroed(&gpu.device, 1).map_err(compute_error)?;
     let mut source =
         DeviceBuffer::<MaybeUninit<NativeOperands>>::uninit(&gpu.device, tile_outputs * 2)
             .map_err(compute_error)?;
@@ -146,7 +148,7 @@ pub(super) fn materialize(
                         Binding::buffer(&equality.inner),
                         Binding::buffer(&equality.outer),
                         Binding::buffer(&pending.values),
-                        pending.words_binding(&gpu),
+                        pending.words_binding(&unused_words),
                         Binding::buffer(&partials),
                         Binding::value(&constants),
                         Binding::value(&params),
@@ -171,6 +173,8 @@ pub(super) fn materialize(
         device: Box::new(ResidentInput {
             gpu,
             columns,
+            unused_words,
+            unused_lut,
             flags: Some(flag_table),
             prefix: output_len,
             tails,

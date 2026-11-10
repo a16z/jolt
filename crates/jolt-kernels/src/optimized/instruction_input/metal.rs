@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use bytemuck_derive::{NoUninit, Pod, Zeroable};
 use jolt_akita::AkitaField as F;
-use jolt_field::{Ring, Zero};
+use jolt_field::{One, Zero};
 use jolt_metal::runtime::{
     host_name, Batch, Binding, Device, DeviceBuffer, Grid, LibrarySpec, ShaderLibrary,
 };
@@ -82,8 +82,6 @@ impl Constants {
 struct Gpu {
     device: Device,
     library: ShaderLibrary,
-    unused_words: DeviceBuffer<[u32; 4]>,
-    unused_lut: DeviceBuffer<F>,
     min_prefix: usize,
     cpu_tail: usize,
     tile_rows: usize,
@@ -114,13 +112,9 @@ impl MetalInstructionInput {
                 return Err(invalid("input kernels exceed SIMD/threadgroup limits"));
             }
         }
-        let unused_words = DeviceBuffer::zeroed(&device, 1)?;
-        let unused_lut = DeviceBuffer::zeroed(&device, 1)?;
         Ok(Self(Arc::new(Gpu {
             device,
             library,
-            unused_words,
-            unused_lut,
             min_prefix: MIN_PREFIX,
             cpu_tail: CPU_TAIL,
             tile_rows: TILE_ROWS,
@@ -219,10 +213,10 @@ impl Pending {
             },
         })
     }
-    fn words_binding<'a>(&'a self, gpu: &'a Gpu) -> Binding<'a> {
+    fn words_binding<'a>(&'a self, unused_words: &'a DeviceBuffer<[u32; 4]>) -> Binding<'a> {
         match &self.words {
             Some(words) => Binding::buffer(words),
-            None => Binding::buffer(&gpu.unused_words),
+            None => Binding::buffer(unused_words),
         }
     }
     /// # Safety

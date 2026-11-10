@@ -4,6 +4,12 @@ use super::*;
 pub(super) struct ResidentInput {
     #[cfg_attr(feature = "allocative", allocative(skip))]
     pub(super) gpu: Arc<Gpu>,
+    // Even unused typed bindings are mutable device storage. They belong to
+    // this proof, not the shared Send+Sync device/pipeline factory.
+    #[cfg_attr(feature = "allocative", allocative(skip))]
+    pub(super) unused_words: DeviceBuffer<[u32; 4]>,
+    #[cfg_attr(feature = "allocative", allocative(skip))]
+    pub(super) unused_lut: DeviceBuffer<F>,
     pub(super) columns: Columns,
     pub(super) flags: Option<FlagTable<F>>,
     pub(super) prefix: usize,
@@ -82,17 +88,12 @@ impl InputDevice<F> for ResidentInput {
                         .map_err(compute_error)?,
                     &[
                         Binding::buffer(&self.columns.values),
-                        Binding::buffer(
-                            self.columns
-                                .words
-                                .as_ref()
-                                .unwrap_or(&self.gpu.unused_words),
-                        ),
-                        Binding::buffer(lut.as_ref().unwrap_or(&self.gpu.unused_lut)),
+                        Binding::buffer(self.columns.words.as_ref().unwrap_or(&self.unused_words)),
+                        Binding::buffer(lut.as_ref().unwrap_or(&self.unused_lut)),
                         Binding::buffer(&equality.inner),
                         Binding::buffer(&equality.outer),
                         Binding::buffer(&pending.values),
-                        pending.words_binding(&self.gpu),
+                        pending.words_binding(&self.unused_words),
                         Binding::buffer(&partials),
                         Binding::value(&constants),
                         Binding::value(&params),

@@ -583,8 +583,8 @@ At a full T27 prefix, compact source writes total about 6.125 GiB, initial
 resident fields/words occupy 6 GiB, and the largest old/new bind overlap is
 9 GiB. Source staging is normally bounded to 49 MiB. Admission checks single
 buffer and working-set bounds; runtime allocation still accounts for other live
-buffers. Setup owns only the device, pipelines and typed unused bindings.
-Witness-derived storage belongs to this member and is released at CPU handoff.
+buffers. Setup owns only the device and pipelines. The member owns typed unused
+bindings and witness-derived storage, which are released at CPU handoff.
 
 The reusable typed initialization runtime change is independent of register
 kernel routing. Signed-i128 conversion stays private to InstructionInput until

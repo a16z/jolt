@@ -377,10 +377,10 @@ impl<F: JoltField> OptimizedInstructionInputKernel<F> {
         }
     }
 
-    fn operand_product(&self, values: &[F; NUM_TABLES]) -> F {
+    fn operand_product(gamma: F, values: &[F; NUM_TABLES]) -> F {
         let right = values[4] * values[5] + values[6] * values[7] + values[8] * values[9];
         let left = values[0] * values[1] + values[2] * values[3];
-        right + self.gamma * left
+        right + gamma * left
     }
 
     /// Sum the quadratic's constant and leading coefficients directly. The
@@ -393,7 +393,9 @@ impl<F: JoltField> OptimizedInstructionInputKernel<F> {
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
         let pairs = self.prefix_len.div_ceil(2);
-        let coefficients = self.gruen.par_fold_out_in_prefix(
+        let gamma = self.gamma;
+        let gruen = &self.gruen;
+        let coefficients = gruen.par_fold_out_in_prefix(
             pairs,
             || [F::Accumulator::default(); 4],
             |lanes, row, _x_in, e_in| {
@@ -416,14 +418,14 @@ impl<F: JoltField> OptimizedInstructionInputKernel<F> {
             |_x_out, e_out, lanes| {
                 let [left_0, left_2, right_0, right_2] = lanes;
                 [
-                    e_out * (right_0.reduce() + self.gamma * left_0.reduce()),
-                    e_out * (right_2.reduce() + self.gamma * left_2.reduce()),
+                    e_out * (right_0.reduce() + gamma * left_0.reduce()),
+                    e_out * (right_2.reduce() + gamma * left_2.reduce()),
                 ]
             },
             |a, b| [a[0] + b[0], a[1] + b[1]],
         );
-        let suffix = self.gruen.suffix_weight(pairs) * self.operand_product(&self.tail);
-        self.gruen.checked_cubic(
+        let suffix = gruen.suffix_weight(pairs) * Self::operand_product(gamma, &self.tail);
+        gruen.checked_cubic(
             coefficients[0] + suffix,
             coefficients[1],
             previous_claim,
@@ -431,12 +433,12 @@ impl<F: JoltField> OptimizedInstructionInputKernel<F> {
             || {
                 // Exceptional equality challenges require q(1) explicitly.
                 suffix
-                    + self.gruen.par_fold_out_in_prefix(
+                    + gruen.par_fold_out_in_prefix(
                         pairs,
                         F::Accumulator::default,
                         |sum, row, _x_in, e_in| {
                             let values = core::array::from_fn(|i| pair_at(i, row).1);
-                            sum.fmadd(e_in, self.operand_product(&values));
+                            sum.fmadd(e_in, Self::operand_product(gamma, &values));
                         },
                         |_x_out, e_out, sum| e_out * sum.reduce(),
                         |a, b| a + b,
@@ -450,6 +452,7 @@ impl<F: JoltField> OptimizedInstructionInputKernel<F> {
         round: usize,
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
+        let tail = self.tail;
         match &self.state {
             InputState::Device(_) => Err(SumcheckError::Compute {
                 backend: "instruction input",
@@ -457,7 +460,7 @@ impl<F: JoltField> OptimizedInstructionInputKernel<F> {
             }),
             InputState::Native(rows) => {
                 let suffix = self.gruen.suffix_weight(self.prefix_len.div_ceil(2))
-                    * self.operand_product(&self.tail);
+                    * Self::operand_product(self.gamma, &self.tail);
                 if self.gruen.current_linear_evals().1.is_zero() {
                     let [q_zero, q_leading, q_one] = self
                         .native_q_terms::<3>(rows)
@@ -487,7 +490,7 @@ impl<F: JoltField> OptimizedInstructionInputKernel<F> {
                 |i, row| {
                     (
                         tables[i][2 * row],
-                        tables[i].get(2 * row + 1).copied().unwrap_or(self.tail[i]),
+                        tables[i].get(2 * row + 1).copied().unwrap_or(tail[i]),
                     )
                 },
                 round,
@@ -500,10 +503,7 @@ impl<F: JoltField> OptimizedInstructionInputKernel<F> {
                     } else {
                         (
                             operands[i / 2][2 * row],
-                            operands[i / 2]
-                                .get(2 * row + 1)
-                                .copied()
-                                .unwrap_or(self.tail[i]),
+                            operands[i / 2].get(2 * row + 1).copied().unwrap_or(tail[i]),
                         )
                     }
                 },
@@ -681,7 +681,7 @@ impl<F: JoltField> ProveRounds<F> for OptimizedInstructionInputKernel<F> {
         if let Some(challenge) = bind {
             if let Some([q0, q2, q1]) = self.bind(challenge)? {
                 let suffix = self.gruen.suffix_weight(self.prefix_len.div_ceil(2))
-                    * self.operand_product(&self.tail);
+                    * Self::operand_product(self.gamma, &self.tail);
                 return self
                     .gruen
                     .checked_cubic(q0 + suffix, q2, previous_claim, round, || q1 + suffix);

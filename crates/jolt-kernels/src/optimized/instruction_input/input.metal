@@ -27,7 +27,7 @@ template <typename F> F input_signed(ulong low, ulong high) {
     if (high == 0) return lo;
     F radix = F::from_u64(1ul << 63) + F::from_u64(1ul << 63);
     if (high == ~0ul) return lo - radix;
-    return lo + F::from_i64(metal::as_type<long>(high)) * radix;
+    return lo + F::from_i64(as_type<long>(high)) * radix;
 }
 template <typename F> F input_operand(InputNative row, uint column) {
     switch (column) {
