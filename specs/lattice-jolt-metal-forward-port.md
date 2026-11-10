@@ -996,3 +996,48 @@ The runner, frozen identities and logs are in `combined-first-message-metal/froz
 The 20 MHz target remains unmet. The final matched, repeated four-workload
 comparison remains pending; neither this observation nor the component experiment
 establishes target acceptance.
+
+
+### Categorical Booleanity and fully written ReadRAF buffers
+
+Measured source `9b79391b2` (Akita `2eec879a`) carries two separate changes.
+Booleanity shares the CPU's canonical categorical-product tables at widths 1/2
+and paired-branch tables at widths 4/8. The existing arithmetic kernel remains the
+fallback. Its 128 MiB admission bound includes host/device tables and construction
+scratch; construction, upload and readback are charged inside the existing round.
+The largest observed checked peak was 105986728 bytes, including 52297440 bytes of
+device tables. Numeric tables are not shared with instruction RA, whose address
+point and gamma placement differ.
+
+ReadRAF allocates its fully overwritten round outputs and partials through the
+existing typed uninitialized-buffer API. Its shader and arithmetic are unchanged.
+Every real output and partial is initialized before successful completion and
+conversion. The mode-zero placeholder is never converted; empty prefixes expose
+no logical values. This removes a host memory pass before the dispatch span, so
+measurement uses enclosing round and family intervals.
+
+Both existing GPU oracles passed normally and with Metal validation, both CPU
+table guards passed, and parallel/serial/integrated Clippy passed. The standard
+release binary verified the small proof and all four frozen T27 workloads:
+
+| Workload | Prove seconds | Padded MHz | Actual MHz |
+| --- | ---: | ---: | ---: |
+| Fibonacci | 18.089142542 | 7.419794923 | 7.419794481 |
+| SHA-2 chain | 20.630624000 | 6.505752225 | 6.505739235 |
+| BTreeMap | 22.316781000 | 6.014206440 | 6.013153017 |
+| BLAKE2b chain | 15.460259667 | 8.681466605 | 5.800842866 |
+| Arithmetic mean of rates | — | 7.155305048 | 6.434882400 |
+
+The separate profile measured Booleanity's inclusive family at 1.5814 s versus
+1.8697 s in the saved combined profile. Widths 1/2/4/8 enclosing-round times were
+0.4674/0.2696/0.2034/0.1363 s versus 0.5807/0.3631/0.2344/0.1659 s. ReadRAF's
+cycle-round union, including allocation, was 0.6741 s versus 0.8178 s. Its full
+family was 1.9459 s versus 2.1843 s; the difference outside cycle rounds is not
+attributed to buffer initialization. Peak RSS was 38.7533 GiB versus 38.6783 GiB.
+These are unmatched development observations, not isolated causal savings or
+final target acceptance. The 20 MHz target remains unmet.
+
+Evidence is in `booleanity-categorical-metal/`, including its `frozen-suite/`;
+the frozen executable is `booleanity-categorical-jolt-prover`. The filename covers
+both changes. The experimental shared-source Outer implementation is not included
+in this production checkpoint.
