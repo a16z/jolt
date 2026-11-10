@@ -2,7 +2,8 @@ use jolt_field::{Accumulator, Field, WithAccumulator};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use crate::{Endianness, EqPolynomial, PointLike, PointRef, HIGH_TO_LOW};
+use crate::eq::fallible::domain_len;
+use crate::{Endianness, EqBudget, EqPolynomial, EqTableError, PointLike, PointRef, HIGH_TO_LOW};
 
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -49,6 +50,37 @@ impl<F: Field> TensorEqTable<F> {
                 scale,
             )
         }
+    }
+
+    /// Fallible factorization; the cap covers both factor tables together.
+    #[track_caller]
+    pub fn try_from_point<P: PointLike<Coord = F> + ?Sized>(
+        point: &P,
+        scale: F,
+        outer_vars: usize,
+        budget: EqBudget,
+    ) -> Result<Self, EqTableError> {
+        let n = point.num_vars();
+        if outer_vars > n {
+            return Err(EqTableError::LengthMismatch {
+                expected: n,
+                got: outer_vars,
+            });
+        }
+        let _len = domain_len(n)?;
+        let in_bits = n - outer_vars;
+        let elements = domain_len(outer_vars)?
+            .checked_add(domain_len(in_bits)?)
+            .ok_or(EqTableError::DimensionOverflow { num_vars: n })?;
+        budget.check::<F>(elements, n)?;
+        let e_out =
+            EqPolynomial::<F>::try_evals(&point.msb_range(0..outer_vars), Some(scale), budget)?;
+        let e_in = EqPolynomial::<F>::try_evals(&point.msb_range(outer_vars..n), None, budget)?;
+        Ok(Self {
+            e_out,
+            e_in,
+            in_bits,
+        })
     }
 
     fn from_parts<const E: Endianness>(
@@ -98,6 +130,17 @@ impl<F: Field> TensorEqTable<F> {
     pub fn evaluate_index(&self, index: usize) -> F {
         let (outer, inner) = self.factors_at_index(index);
         outer * inner
+    }
+
+    /// Evaluates a Boolean index without allocating, rejecting out-of-domain indices.
+    pub fn try_evaluate_index(&self, index: usize) -> Result<F, EqTableError> {
+        if index >= self.len() {
+            return Err(EqTableError::IndexOutOfRange {
+                index,
+                len: self.len(),
+            });
+        }
+        Ok(self.evaluate_index(index))
     }
 
     /// Sum the tables at one Boolean index with a single accumulator reduction.

@@ -15,16 +15,7 @@ impl<F: Field> EqPolynomial<F> {
         let mut evals: Vec<Vec<F>> = (0..=r.num_vars())
             .map(|i| vec![scaling_factor.unwrap_or(F::one()); 1 << i])
             .collect();
-        let mut size = 1;
-        for j in 0..r.num_vars() {
-            let r_j = r.msb(j);
-            size *= 2;
-            for i in (0..size).rev().step_by(2) {
-                let scalar = evals[j][i / 2];
-                evals[j + 1][i] = scalar * r_j;
-                evals[j + 1][i - 1] = scalar - evals[j + 1][i];
-            }
-        }
+        Self::fill_cached(r, &mut evals, true);
         evals
     }
 
@@ -39,17 +30,40 @@ impl<F: Field> EqPolynomial<F> {
         let mut evals: Vec<Vec<F>> = (0..=r.num_vars())
             .map(|i| vec![scaling_factor.unwrap_or(F::one()); 1 << i])
             .collect();
-        let mut size = 1;
-        for j in 0..r.num_vars() {
-            let r_j = r.msb(r.num_vars() - 1 - j);
-            for i in 0..size {
-                let scalar = evals[j][i];
-                let multiple = 1 << j;
-                evals[j + 1][i + multiple] = scalar * r_j;
-                evals[j + 1][i] = scalar - evals[j + 1][i + multiple];
-            }
-            size *= 2;
-        }
+        Self::fill_cached(r, &mut evals, false);
         evals
+    }
+
+    #[inline]
+    pub(super) fn fill_cached<P>(r: &P, evals: &mut [Vec<F>], msb: bool)
+    where
+        P: PointLike + ?Sized,
+        P::Coord: Send + Sync + Into<F>,
+        F: Mul<P::Coord, Output = F>,
+    {
+        if msb {
+            let mut size = 1;
+            for j in 0..r.num_vars() {
+                let r_j = r.msb(j);
+                size *= 2;
+                for i in (0..size).rev().step_by(2) {
+                    let scalar = evals[j][i / 2];
+                    evals[j + 1][i] = scalar * r_j;
+                    evals[j + 1][i - 1] = scalar - evals[j + 1][i];
+                }
+            }
+        } else {
+            let mut size = 1;
+            for j in 0..r.num_vars() {
+                let r_j = r.msb(r.num_vars() - 1 - j);
+                for i in 0..size {
+                    let scalar = evals[j][i];
+                    let multiple = 1 << j;
+                    evals[j + 1][i + multiple] = scalar * r_j;
+                    evals[j + 1][i] = scalar - evals[j + 1][i + multiple];
+                }
+                size *= 2;
+            }
+        }
     }
 }

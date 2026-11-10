@@ -1,9 +1,20 @@
 use super::boolean_bits_msb;
+use super::fallible::domain_len;
 use super::EqPolynomial;
 use crate::point::{msb_index, Endianness, PointLike};
+#[cfg(feature = "parallel")]
+use crate::{PointRef, HIGH_TO_LOW};
 use jolt_field::Field;
 use jolt_utils::Math;
 use std::ops::{Mul, SubAssign};
+
+#[cfg(feature = "parallel")]
+const PARALLEL_SLAB_MIN_VARS: usize = 14;
+#[cfg(feature = "parallel")]
+const PARALLEL_SLAB_MAX_VARS: usize = 16;
+#[cfg(feature = "parallel")]
+const MINIMUM_SLAB_VARS: usize = 8;
+
 impl<F: Field> EqPolynomial<F> {
     /// Computes `eq(x, y) = Π_i (x_i y_i + (1 - x_i)(1 - y_i))` for two slices.
     pub fn mle<C>(x: &[C], y: &[C]) -> F
@@ -37,6 +48,83 @@ impl<F: Field> EqPolynomial<F> {
         } else {
             Self::evals_parallel(r, scaling_factor)
         }
+    }
+
+    /// Computes `map(scale * eq(r, x))`, applying `map` once per output.
+    #[expect(
+        clippy::expect_used,
+        reason = "infallible builder must panic on dimension overflow"
+    )]
+    pub fn evals_mapped<P, G>(r: &P, scaling_factor: Option<F>, map: G) -> Vec<F>
+    where
+        P: PointLike + ?Sized,
+        P::Coord: Send + Sync + Into<F>,
+        F: Mul<P::Coord, Output = F>,
+        G: Fn(F) -> F + Sync,
+    {
+        let len = domain_len(r.num_vars()).expect("equality table capacity overflow");
+        let mut values = F::zeroed_vec(len);
+        values[0] = scaling_factor.unwrap_or(F::one());
+        Self::fill_mapped(r, &mut values, &map);
+        values
+    }
+
+    pub(super) fn fill_mapped<P, G>(r: &P, values: &mut [F], map: &G)
+    where
+        P: PointLike + ?Sized,
+        P::Coord: Send + Sync + Into<F>,
+        F: Mul<P::Coord, Output = F>,
+        G: Fn(F) -> F + Sync,
+    {
+        #[cfg(feature = "parallel")]
+        if r.num_vars() >= PARALLEL_SLAB_MIN_VARS && rayon::current_num_threads() > 1 {
+            if r.num_vars() <= PARALLEL_SLAB_MAX_VARS {
+                Self::fill_slabs(r, values, map);
+            } else {
+                use rayon::prelude::*;
+                Self::fill_parallel_coords::<_, true>(r.coords(), P::ENDIANNESS, values);
+                values.par_iter_mut().for_each(|value| *value = map(*value));
+            }
+            return;
+        }
+        Self::fill_serial(r, values, map);
+    }
+
+    #[cfg(feature = "parallel")]
+    fn fill_slabs<P, G>(r: &P, values: &mut [F], map: &G)
+    where
+        P: PointLike + ?Sized,
+        P::Coord: Send + Sync + Into<F>,
+        F: Mul<P::Coord, Output = F>,
+        G: Fn(F) -> F + Sync,
+    {
+        use rayon::prelude::*;
+        let outer_vars = (rayon::current_num_threads().next_power_of_two().ilog2() as usize)
+            .min(r.num_vars() - MINIMUM_SLAB_VARS);
+        let inner_vars = r.num_vars() - outer_vars;
+        let slab_len = 1 << inner_vars;
+        // Seeds occupy slab starts, avoiding an extra outer-table allocation.
+        let mut size = 1;
+        for j in 0..outer_vars {
+            let coord = r.msb(j);
+            size *= 2;
+            for i in (0..size).rev().step_by(2) {
+                let scalar = values[(i / 2) * slab_len];
+                let at_one = scalar * coord;
+                values[i * slab_len] = at_one;
+                values[(i - 1) * slab_len] = scalar - at_one;
+            }
+        }
+        // Capture only the coordinate slice: PointLike views need not be Sync.
+        let coords = r.msb_range(outer_vars..r.num_vars());
+        let coords = coords.coords();
+        values.par_chunks_mut(slab_len).for_each(|slab| {
+            if P::ENDIANNESS == HIGH_TO_LOW {
+                Self::fill_serial(&PointRef::high_to_low(coords), slab, map);
+            } else {
+                Self::fill_serial(&PointRef::low_to_high(coords), slab, map);
+            }
+        });
     }
 
     /// Computes `eq(r, k)` over an aligned power-of-two block of Boolean indices.
@@ -114,6 +202,21 @@ impl<F: Field> EqPolynomial<F> {
         F: Mul<P::Coord, Output = F> + SubAssign<F>,
     {
         let mut evals: Vec<F> = vec![scaling_factor.unwrap_or(F::one()); r.num_vars().pow2()];
+        Self::fill_serial(r, &mut evals, &|x| x);
+        evals
+    }
+
+    #[inline]
+    pub(super) fn fill_serial<P, G>(r: &P, evals: &mut [F], map: &G)
+    where
+        P: PointLike + ?Sized,
+        P::Coord: Send + Sync + Into<F>,
+        F: Mul<P::Coord, Output = F>,
+        G: Fn(F) -> F + Sync,
+    {
+        if r.num_vars() == 0 {
+            evals[0] = map(evals[0]);
+        }
         let mut size = 1;
         for j in 0..r.num_vars() {
             let r_j = r.msb(j);
@@ -122,9 +225,12 @@ impl<F: Field> EqPolynomial<F> {
                 let scalar = evals[i / 2];
                 evals[i] = scalar * r_j;
                 evals[i - 1] = scalar - evals[i];
+                if j + 1 == r.num_vars() {
+                    evals[i] = map(evals[i]);
+                    evals[i - 1] = map(evals[i - 1]);
+                }
             }
         }
-        evals
     }
 
     /// Parallel eq table construction with optional scaling.
@@ -155,8 +261,21 @@ impl<F: Field> EqPolynomial<F> {
     {
         let final_size = r.len().pow2();
         let mut evals: Vec<F> = F::zeroed_vec(final_size);
-        let mut size = 1;
         evals[0] = scaling_factor.unwrap_or(F::one());
+        Self::fill_parallel_coords::<_, true>(r, endianness, &mut evals);
+        evals
+    }
+
+    #[inline(always)]
+    pub(super) fn fill_parallel_coords<C, const PARALLEL: bool>(
+        r: &[C],
+        endianness: Endianness,
+        evals: &mut [F],
+    ) where
+        C: Copy + Send + Sync + Into<F>,
+        F: Mul<C, Output = F>,
+    {
+        let mut size = 1;
         let mut i = r.len();
 
         while i >= 2 {
@@ -170,7 +289,7 @@ impl<F: Field> EqPolynomial<F> {
             let (q3, _) = rest.split_at_mut(size);
 
             #[cfg(feature = "parallel")]
-            {
+            if PARALLEL {
                 use rayon::prelude::*;
                 q0.par_iter_mut()
                     .zip(q1.par_iter_mut())
@@ -187,8 +306,7 @@ impl<F: Field> EqPolynomial<F> {
                     });
             }
 
-            #[cfg(not(feature = "parallel"))]
-            {
+            if !cfg!(feature = "parallel") || !PARALLEL {
                 for j in 0..size {
                     let x_val = q0[j];
                     let with_lo = x_val * r_lo;
@@ -210,7 +328,7 @@ impl<F: Field> EqPolynomial<F> {
             let (evals_right, _) = evals_right.split_at_mut(size);
 
             #[cfg(feature = "parallel")]
-            {
+            if PARALLEL {
                 use rayon::prelude::*;
                 evals_left
                     .par_iter_mut()
@@ -221,8 +339,7 @@ impl<F: Field> EqPolynomial<F> {
                     });
             }
 
-            #[cfg(not(feature = "parallel"))]
-            {
+            if !cfg!(feature = "parallel") || !PARALLEL {
                 for i in 0..size {
                     evals_right[i] = evals_left[i] * *r;
                     evals_left[i] -= evals_right[i];
@@ -231,7 +348,5 @@ impl<F: Field> EqPolynomial<F> {
 
             size *= 2;
         }
-
-        evals
     }
 }

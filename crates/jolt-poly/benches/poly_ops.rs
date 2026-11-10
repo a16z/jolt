@@ -1,8 +1,10 @@
 #![expect(unused_results)]
 
 use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion};
-use jolt_field::{Field, FpExt4, Fr, JoltField, Prime128OffsetA7F7, Prime32Offset99};
-use jolt_poly::{EqPolynomial, PointRef, Polynomial, TensorEqTable, UnivariatePoly};
+use jolt_field::{
+    Field, FpExt4, Fr, JoltField, Prime128Offset275, Prime128OffsetA7F7, Prime32Offset99,
+};
+use jolt_poly::{EqBudget, EqPolynomial, PointRef, Polynomial, TensorEqTable, UnivariatePoly};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
 
@@ -146,6 +148,58 @@ fn bench_eq_field<F: Field>(c: &mut Criterion, field: &str) {
     group.finish();
 }
 
+fn bench_eq_fallible(c: &mut Criterion) {
+    bench_eq_fallible_field::<Fr>(c, "Fr");
+    bench_eq_fallible_field::<Prime128Offset275>(c, "Prime128Offset275");
+    bench_eq_fallible_field::<FpExt4<Prime32Offset99>>(c, "FpExt4");
+}
+
+fn bench_eq_fallible_field<F: Field>(c: &mut Criterion, field: &str) {
+    let mut group = c.benchmark_group(format!("eq_builders/{field}"));
+    let budget = EqBudget {
+        max_bytes: usize::MAX,
+    };
+    for n in 12..=18 {
+        let mut rng = ChaCha20Rng::seed_from_u64(0xe12 + n as u64);
+        let r: Vec<F> = (0..n).map(|_| F::random(&mut rng)).collect();
+        let point = PointRef::low_to_high(&r);
+        group.bench_function(BenchmarkId::new("evals", n), |bench| {
+            bench.iter(|| EqPolynomial::<F>::evals(std::hint::black_box(&point), None));
+        });
+        group.bench_function(BenchmarkId::new("try_evals", n), |bench| {
+            bench.iter(|| EqPolynomial::<F>::try_evals(std::hint::black_box(&point), None, budget));
+        });
+        group.bench_function(BenchmarkId::new("mapped", n), |bench| {
+            bench.iter(|| {
+                EqPolynomial::<F>::evals_mapped(std::hint::black_box(&point), None, |x| x * x)
+            });
+        });
+        group.bench_function(BenchmarkId::new("evals_then_map", n), |bench| {
+            bench.iter(|| {
+                let mut table = EqPolynomial::<F>::evals(std::hint::black_box(&point), None);
+                #[cfg(feature = "parallel")]
+                {
+                    use rayon::prelude::*;
+                    table.par_iter_mut().for_each(|x| *x *= *x);
+                }
+                #[cfg(not(feature = "parallel"))]
+                for x in &mut table {
+                    *x *= *x;
+                }
+                table
+            });
+        });
+        for len in [1, (1 << n) / 3, 1 << n] {
+            group.bench_function(BenchmarkId::new(format!("prefix_{len}"), n), |bench| {
+                bench.iter(|| {
+                    EqPolynomial::<F>::evals_prefix(std::hint::black_box(&point), None, len)
+                });
+            });
+        }
+    }
+    group.finish();
+}
+
 fn bench_univariate_interpolation(c: &mut Criterion) {
     let mut group = c.benchmark_group("UnivariatePoly::from_evals");
     for num_evals in [3, 4, 8, 16] {
@@ -170,6 +224,7 @@ criterion_group!(
     bench_evaluate,
     bench_eq_evals,
     bench_eq_orders,
+    bench_eq_fallible,
     bench_univariate_interpolation,
 );
 criterion_main!(benches);
