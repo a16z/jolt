@@ -159,10 +159,8 @@ pub(super) fn materialize(
         }
         gpu_time += batch.commit_and_wait().map_err(compute_error)?;
         // SAFETY: every partial was written by the completed native dispatch.
-        for (sum, value) in terms
-            .iter_mut()
-            .zip(unsafe { sum_partials(partials) }.map_err(compute_error)?)
-        {
+        let partial_sums = unsafe { sum_partials(partials) }.map_err(compute_error)?;
+        for (sum, value) in terms.iter_mut().zip(partial_sums) {
             *sum += value;
         }
     }

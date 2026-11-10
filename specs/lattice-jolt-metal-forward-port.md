@@ -307,15 +307,15 @@ materialize directly on the GPU and keep shrinking field prefixes there until
 the small CPU tail. Both use the same selector materialization and fold helper.
 They share one proof-owned compact device row buffer. The session keeps a weak
 reference, so materialization by the last consumer releases it. Independent
-round oracles and Metal validation passed in isolation; combined full-proof
-measurements are pending.
+round oracles and Metal validation passed, and the combined candidate verified
+the frozen Fibonacci T27 proof. Its measurement is recorded below.
 
 ReadRAF keeps its canonical address-phase schedule and grouped first cycle
 message. Qualified address scans retain coalesced representatives and weights
 on the device; three-lane histograms handle RAF and suffix jobs separately,
 within the device's shared-memory limit even under Metal validation. The
 canonical CPU scalar suffix definitions remain the independent test oracle.
-Full-proof measurements of this address path are pending. The cycle path
+The combined full-proof profile exercised all sixteen address phases. The cycle path
 offloads lazy width-two/four messages, materializes directly at the existing
 lazy-policy crossover, and keeps subsequent shrinking prefixes on the device
 until the small CPU tail. Separate claim and selector extents retain their
@@ -329,8 +329,27 @@ histograms. A signed-magnitude increment sidecar stays separate from the shared
 selector rows and survives the address-to-cycle handoff. The cycle kernel
 consumes the canonical equality-term recipe, combines repeated PC tuples,
 and materializes RA and increment prefixes at their existing lazy-policy
-crossovers. It retains shrinking prefixes until the CPU tail. Focused reference checks, Metal validation, and integrated lint checks pass;
-full-proof performance measurements are pending.
+crossovers. It retains shrinking prefixes until the CPU tail. Focused reference
+checks, Metal validation, and integrated lint checks pass. The combined full-proof
+profile exercised native production and resident continuation.
+
+The combined candidate `02eefba441` with Akita `aa58a7af` verified the frozen
+Fibonacci T27 proof in 25.760409167 s (5.210232770 padded MHz), one untraced
+observation. Its separate profile confirmed reuse of all 32 selector windows
+without root repacking. Native Product spent 2.698438 s in three passes, including
+1.135321 s packing and 0.896267 s upload; its total instrumented subtotal was
+3.16634 s. That result justified restoring CPU Product before further integration.
+The CPU subtotal omits its opening walk, so the subtotal difference is not an
+exact end-to-end regression estimate. Evidence is in `resident-metal/`.
+
+The next combined candidate adds uninitialized RA/Booleanity outputs, direct
+ReadRAF address fills and row projection, InstructionInput native production,
+shared CPU instruction rows from commitment through stage five, and retained-source
+coefficient packing. The shared row carry uses exact immutable source identity,
+keeps physical selector extent distinct from the padded domain, and leaves only
+a weak reference in opening sources. Coefficient packing borrows the selector
+cache; root folding consumes it later. Focused ownership and arithmetic checks
+pass. Inclusive full-proof timing remains pending for these changes.
 
 The sparse register prototype at `5bd928644` passed its independent oracle,
 Metal validation, and full proofs, but its data transfer cost erased the GPU

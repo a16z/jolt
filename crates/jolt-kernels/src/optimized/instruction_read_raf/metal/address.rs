@@ -338,8 +338,7 @@ impl DeviceAddressScan {
         // SAFETY: the canonical class/block ranges partition the exact live
         // extent. Each task initialized every complete element in its slices;
         // these types have no padding. No GPU use occurred during host writes.
-        let records = unsafe { records.assume_init()? };
-        let weights = unsafe { weights.assume_init()? };
+        let (records, weights) = unsafe { (records.assume_init()?, weights.assume_init()?) };
         drop(fill_span);
         let cache_meta = DeviceBuffer::from_slice(
             device,

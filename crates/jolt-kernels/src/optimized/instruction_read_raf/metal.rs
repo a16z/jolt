@@ -90,16 +90,15 @@ fn prepare_address_scan(
         return Ok(Box::new(input.build()));
     }
     let (host, owner) = build_projected_scan(&gpu, session, input)?;
-    match address::DeviceAddressScan::try_new(gpu, session, &host, minimum)
-        .map_err(compute_error)?
+    if let Some(device) =
+        address::DeviceAddressScan::try_new(gpu, session, &host, minimum).map_err(compute_error)?
     {
-        Some(device) => Ok(Box::new(device)),
-        None => {
-            // The cycle consumer can still reuse the completed projection
-            // when address-specific admission declines.
-            owner.carry_to_next_stage(session);
-            Ok(Box::new(host))
-        }
+        Ok(Box::new(device))
+    } else {
+        // The cycle consumer can still reuse the completed projection
+        // when address-specific admission declines.
+        owner.carry_to_next_stage(session);
+        Ok(Box::new(host))
     }
 }
 
