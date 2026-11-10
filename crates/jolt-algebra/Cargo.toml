@@ -61,7 +61,7 @@ spongefish = { workspace = true }
 bincode = { workspace = true }
 criterion = { workspace = true }
 num-bigint = { workspace = true }
-rand = { workspace = true }
+rand = { workspace = true, features = ["std_rng"] }
 rand_chacha = { workspace = true }
 
 [build-dependencies]

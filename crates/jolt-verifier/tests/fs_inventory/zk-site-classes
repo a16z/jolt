@@ -11,8 +11,6 @@
 # a nonce is challenge-derived, and the generic append/absorb forwarders are
 # listed as statement; their callers carry their own classes here.
 # Format: <class><TAB><absorb-sites entry>.
-challenge-derived	akita-challenges::binary/xof.rs::IndexedXofPrefix::new::absorb_bytes#0::absorb_bytes(&mutstate,0,seed)
-challenge-derived	akita-challenges::binary/xof.rs::IndexedXofPrefix::reader::absorb_bytes#0::absorb_bytes(&mutstate,GROUP_ROOT_LEN,&coordinate_index.to_le_bytes())
 challenge-derived	jolt-crypto::challenge/sampler/xof.rs::IndexedXofPrefix::new::absorb_bytes#0::absorb_bytes(&mutstate,0,seed)
 challenge-derived	jolt-crypto::challenge/sampler/xof.rs::IndexedXofPrefix::reader::absorb_bytes#0::absorb_bytes(&mutstate,GROUP_ROOT_LEN,&coordinate_index.to_le_bytes())
 challenge-derived	jolt-hyperkzg::types.rs::HyperKZGVerifierSetup::append_statement::append_values#6::transcript.append_values(point)
@@ -122,10 +120,10 @@ sigma	jolt-zk::whiteout/sigma.rs::verify_sigma::absorb_targets#0::setup.absorb_t
 sigma	jolt-zk::whiteout/transport.rs::AttemptFork<H>::absorb::absorb#0::self.0.absorb(bytes)
 sigma	jolt-zk::whiteout/transport.rs::AttemptFork<H>::new::absorb#0::sponge.absorb(seed)
 sigma	jolt-zk::whiteout/transport.rs::AttemptFork<H>::new::absorb#1::sponge.absorb(nonce)
-statement	jolt-akita::whiteout/mod.rs::WhiteoutRow::absorb_selection::append#0::transcript.append(&self.catalog.scheme.schedules().catalog_digest())
-statement	jolt-akita::whiteout/mod.rs::WhiteoutRow::absorb_selection::append#1::transcript.append(selection.row_digest.as_bytes())
-statement	jolt-akita::whiteout/mod.rs::WhiteoutRow::count_masked::absorb_selection#0::self.absorb_selection(transcript)
-statement	jolt-akita::whiteout/mod.rs::WhiteoutRow::verify_masked::absorb_selection#0::self.absorb_selection(transcript)
+statement	jolt-akita::whiteout/row.rs::WhiteoutRow::absorb_selection::append#0::transcript.append(&self.catalog.scheme.schedules().catalog_digest())
+statement	jolt-akita::whiteout/row.rs::WhiteoutRow::absorb_selection::append#1::transcript.append(selection.row_digest.as_bytes())
+statement	jolt-akita::whiteout/row.rs::WhiteoutRow::count_masked::absorb_selection#0::self.absorb_selection(transcript)
+statement	jolt-akita::whiteout/row.rs::WhiteoutRow::verify_masked::absorb_selection#0::self.absorb_selection(transcript)
 statement	jolt-akita::whiteout/mod.rs::absorb_pad_statement::append#0::transcript.append(digest)
 statement	jolt-crypto::lattice/matrix.rs::SetupSeedPageXof::new::absorb_len_prefixed#0::absorb_len_prefixed(&mutxof,b"domain",PUBLIC_MATRIX_DOMAIN)
 statement	jolt-crypto::lattice/matrix.rs::SetupSeedPageXof::new::absorb_len_prefixed#1::absorb_len_prefixed(&mutxof,b"derivation",derivation_tag)
