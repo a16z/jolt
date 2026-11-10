@@ -35,6 +35,15 @@
 //! representation-transparent. `Fp128` is stored canonically and needs no
 //! correction.
 
+// A guest selects one field, so the other field's helpers go unused: the
+// Montgomery constants and corrections serve only `Fr`, and the accumulating
+// kernels only `Fp128`. Guest builds deny warnings.
+#![expect(
+    dead_code,
+    unused_imports,
+    reason = "each field selector leaves the other field's helpers unused"
+)]
+
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use jolt_riscv::{FieldInlineOp, FIELD_INLINE_OPCODE};
