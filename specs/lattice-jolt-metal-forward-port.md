@@ -370,6 +370,18 @@ Keep the transform isolated. The final report's quoted-string parsing error was
 repaired from the saved profile without rerunning the proof. Evidence is in
 `k256-tiled-ntt/`; the dual-run proof time is not throughput.
 
+A same-proof radix-26 comparison (`5e069c4e3` / Akita `a09702f1`) retained the
+current D512/K256 geometry and raw setup key. It decoded key tiles into five
+radix-26 limbs and delayed normalization for eight positions, adapting the
+donor's signed carry bound. The one-position tile fits Metal validation limits.
+Normal/instrumented arithmetic checks and parallel/serial/integrated Clippy
+passed. Every coefficient matched in all 15 windows and the full proof verified.
+GPU time fell from 4.8285 to 3.8794 s; allocation through owned readback fell
+from 4.8857 to 3.9160 s. All 14 full windows improved under both execution
+orders. This selects radix-26 for further K256 work; K16 remains the default
+because the K256 opening costs still need an end-to-end comparison. Evidence
+is in `k256-radix26/`. The dual-run CI profile is not a throughput measurement.
+
 The isolated Outer diagnostic (`6cef6ad8a`) also verified. Outer occupied
 2.024 s in its separate profile. Sampled extraction accounted for 13.8%,
 20.3%, and 26.9% of staged worker work across uniskip, remainder preparation
