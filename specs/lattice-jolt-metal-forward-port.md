@@ -1132,3 +1132,81 @@ Evidence is in `packing-sum-metal/`, including its `frozen-suite/`, and
 `packing-sum-production-profile-review.json`; the frozen executable is
 `packing-sum-jolt-prover`. No held Outer, Booleanity-fusion, two-prime or K256
 candidate is included.
+
+
+## Address and Booleanity development checkpoint (2026-11-10)
+
+Candidate Jolt `8bd0b867` retains published Akita `5668262b`. It combines
+ReadRAF address condensation in the existing scan batch with zero-safe
+Booleanity equality factoring at widths 1, 4 and 8. Width 2 retains its
+categorical route. Focused normal and Metal-validation oracles and integrated
+checks passed. The standard release verified the small proof and all four
+frozen workloads with both verifiers and exact inputs, outputs and cycle counts.
+
+The initial saved observations improve Fibonacci but are slower for the other
+three workloads. They prompted the matched comparison below; adoption is not
+based on Fibonacci alone. Each row here has one untraced observation per
+revision, and Fibonacci reuses the release-pipeline result.
+
+| Workload | Packing/sum seconds | Candidate seconds | Change in time | Candidate padded MHz | Candidate actual MHz |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Fibonacci | 17.421603917 | 17.004268459 | -2.40% | 7.893178605 | 7.893178135 |
+| SHA-2 chain | 19.631253416 | 21.474414500 | +9.39% | 6.250122815 | 6.250110335 |
+| BTreeMap | 20.679329083 | 22.704490417 | +9.79% | 5.911505853 | 5.910470420 |
+| BLAKE2b chain | 13.791036292 | 14.800083083 | +7.32% | 9.068714496 | 6.059596862 |
+
+The separate Fibonacci profiles show complete Booleanity falling from 1.6012 s
+to 1.2124 s and ReadRAF from 2.1082 s to 1.8533 s. The address phase falls from
+1.0425 s to 0.7779 s. Disjoint stages 5 and 6b fall from 2.3662/3.1762 s to
+2.1145/2.7971 s; these stage and nested family differences must not be added.
+Commitment is effectively flat at 3.8890/3.8976 s, and native packing takes
+0.1684/0.1644 s. Stage 0 takes 4.6033/4.6795 s and stage 8 takes
+1.8907/1.8614 s.
+
+The Fibonacci profile confirms all 16 fused address phases, equality blocks
+of 16 at widths 1/4/8, and the unchanged width-2 route. Weighted tables occupy
+3,055,104/5,770,752/11,541,504 bytes respectively; the reported table peak
+already includes these allocations. All 32 shared-key commitment windows and
+four-bin packing windows remain present, alongside the existing ReadRAF sum
+accumulator, shared Product/ICR/Input source and sparse RAM handoff. No paired
+diagnostic executes in this build. Peak RSS is 38.6692 GiB and footprint
+45.1279 GiB, versus 38.7071/44.9560 GiB in the saved baseline profile. These
+process peaks do not separately measure table destruction.
+
+The other three workloads were untraced, so their route and component-cost
+differences remain unknown. Their unchanged setup times also rose by roughly
+15–19%, which motivates controlling measurement conditions but does not
+establish that drift caused the slower proofs.
+
+The matched saved-binary comparison below ran two observations per binary per
+workload, reversing both binary and workload order in the second repetition.
+All 16 proofs preserved exact outputs and cycle counts and passed both verifiers.
+
+| Workload | Baseline median [range], s | Candidate median [range], s | Candidate minus baseline, first / reversed order, s |
+| --- | ---: | ---: | ---: |
+| Fibonacci | 19.356260 [17.220433, 21.492087] | 19.045981 [17.108651, 20.983311] | -0.111783 / -0.508776 |
+| SHA-2 chain | 22.682980 [20.660069, 24.705891] | 22.186928 [21.057440, 23.316415] | +0.397371 / -1.389477 |
+| BTreeMap | 23.300371 [23.000096, 23.600646] | 23.268480 [23.077552, 23.459409] | +0.077456 / -0.141237 |
+| BLAKE2b chain | 15.281876 [15.059459, 15.504293] | 14.695987 [14.544727, 14.847247] | -0.657046 / -0.514732 |
+
+Fibonacci and BLAKE improve in both orders; SHA and BTree have mixed signs.
+No workload median is worse, but absolute drift is substantial: baseline
+Fibonacci rises from 17.2204 to 21.4921 s, and SHA from 20.6601 to 24.7059 s.
+Each median is the midpoint of two observations. These medians and paired
+differences do not establish a precise
+whole-proof speedup or rule out workload-specific regressions.
+
+The evidence supports this combined revision as a development checkpoint:
+independent paired experiments improved complete address preparation/message
+cost from 1.0559 to 0.8838 s under conservative accounting and Booleanity
+preparation/message cost from 0.8039 to 0.4093 s; exact component comparisons,
+production route checks and full-proof correctness passed. The matched suite
+did not reproduce a consistent cross-workload regression. Final three-run
+matched CPU-versus-Metal acceptance remains separate.
+
+Evidence is in `address-booleanity-metal/` and
+`address-booleanity-production-profile-review.json`; matched results are in
+`address-booleanity-matched-suite/`, with the development decision in
+`address-booleanity-development-adoption.json`. The frozen executable is
+`address-booleanity-jolt-prover`. The 20 MHz target and stretch 40 MHz target
+remain unmet.
