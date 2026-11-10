@@ -349,7 +349,23 @@ coefficient packing. The shared row carry uses exact immutable source identity,
 keeps physical selector extent distinct from the padded domain, and leaves only
 a weak reference in opening sources. Coefficient packing borrows the selector
 cache; root folding consumes it later. Focused ownership and arithmetic checks
-pass. Inclusive full-proof timing remains pending for these changes.
+pass. At `71cb1b601` with Akita `982abab4`, the frozen Fibonacci workload
+verified in 20.907483458 s: 134,217,720 actual cycles and 134,217,728 padded
+cycles, or 6.419601875 actual / 6.419602257 padded MHz. This is one untraced
+observation, not the final matched four-workload comparison. Packing, uploads,
+witness preparation and first-use key preparation are inside the prover timer.
+
+The separate profile confirmed all new GPU paths and continued reuse of all
+32 selector windows. ReadRAF preparation fell from 1.113811 s to 0.105636 s,
+with 0.186938 s now separately attributed to scan construction and projection;
+shared CPU-row collection cost 0.153521 s in stage zero. The inclusive ReadRAF
+family union fell by 1.028104 s. Input rounds fell from 0.869291 s to
+0.675459 s. Coefficient packing took 0.575866 s, including 0.537854 s on the
+GPU, compared with the previous CPU packing span of 0.748200 s. These profile
+comparisons include run variation and are attribution evidence, not isolated
+causal measurements. Peak RSS was 43.8073 GiB; the proof-exit RSS was 13.1803
+GiB. Artifacts and the frozen binary are under `direct-source-metal/` and
+`direct-source-metal-jolt-prover` in the task artifact directory.
 
 The sparse register prototype at `5bd928644` passed its independent oracle,
 Metal validation, and full proofs, but its data transfer cost erased the GPU
