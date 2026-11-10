@@ -1,7 +1,9 @@
 //! Packed trace assembly for the reference Akita commitment kernel.
 
+use crate::constant_suffix::ConstantSuffix;
 #[cfg(feature = "field-inline")]
 use crate::field_inline::FieldIncrementColumn;
+use crate::instruction_rows::InstructionCycleRow;
 use crate::KernelError;
 use jolt_akita::{no_selected_row, TraceOneHotRows};
 use jolt_claims::protocols::jolt::geometry::ra::JoltRaPolynomialLayout;
@@ -15,7 +17,7 @@ use jolt_witness::{
 use rayon::prelude::*;
 #[cfg(not(feature = "field-inline"))]
 use std::marker::PhantomData;
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, OnceLock, Weak};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, WitnessBundle)]
 struct OneHotTraceSourceRow {
@@ -119,17 +121,35 @@ impl OneHotTraceColumns {
     }
 }
 
-/// Extracts rows on every read from the witness plane's compact
-/// trace, so no trace-sized row matrix lives from the commitment to the
-/// opening. The row trait cannot return extraction errors, so the first error
+/// Projects a prepared immutable row owner when available; otherwise extracts
+/// from the witness plane's compact trace. Only the proof carry retains the
+/// optional CPU projection, so opening hints do not prolong its lifetime. The row trait cannot return extraction errors, so the first error
 /// is retained for [`OneHotTraceRows::check_extraction`]. The commitment reads
 /// every row of this immutable source, so it observes any error a later read could.
 struct ExtractedRows {
     access: RandomAccessRows,
+    // The proof carry owns the allocation. Opening hints must not prolong it.
+    prepared: Weak<ConstantSuffix<InstructionCycleRow>>,
     extraction_error: OnceLock<WitnessError>,
 }
 
 impl ExtractedRows {
+    fn one_hot_window(
+        &self,
+        row: usize,
+        prepared: Option<&ConstantSuffix<InstructionCycleRow>>,
+    ) -> Option<OneHotTraceSourceRow> {
+        if let Some(rows) = prepared {
+            let row = &rows[row];
+            return Some(OneHotTraceSourceRow {
+                lookup_index: LookupIndex(row.lookup_index()),
+                bytecode_pc: BytecodePc(row.bytecode_pc()),
+                ram_address: RemappedRamAddress(row.remapped_ram_address()),
+            });
+        }
+        self.window(row)
+    }
+
     fn window<B: WitnessBundle>(&self, row: usize) -> Option<B> {
         self.access
             .window(row)
@@ -217,10 +237,11 @@ impl TraceOneHotRows for OneHotTraceRows {
         debug_assert_eq!(selected_rows.len() % num_columns, 0);
         match &self.selected_rows {
             SelectedRows::Extracted(rows) => {
+                let prepared = rows.prepared.upgrade();
                 for (row_offset, selected_rows) in
                     selected_rows.chunks_exact_mut(num_columns).enumerate()
                 {
-                    match rows.window(row_start + row_offset) {
+                    match rows.one_hot_window(row_start + row_offset, prepared.as_deref()) {
                         Some(row) => {
                             let _ = self.columns.fill(row, selected_rows);
                         }
@@ -241,12 +262,15 @@ impl TraceOneHotRows for OneHotTraceRows {
     fn fill_rows_with_masks(&self, row_start: usize, selected_rows: &mut [u8], masks: &mut [u64]) {
         match &self.selected_rows {
             SelectedRows::Extracted(rows) => {
+                let prepared = rows.prepared.upgrade();
                 for (offset, (selected, mask)) in selected_rows
                     .chunks_exact_mut(self.columns.len())
                     .zip(masks)
                     .enumerate()
                 {
-                    let ram_active = if let Some(row) = rows.window(row_start + offset) {
+                    let ram_active = if let Some(row) =
+                        rows.one_hot_window(row_start + offset, prepared.as_deref())
+                    {
                         self.columns.fill(row, selected)
                     } else {
                         selected.fill(no_selected_row());
@@ -268,9 +292,12 @@ impl TraceOneHotRows for OneHotTraceRows {
 
     fn committed_digit_zero_mask(&self, row: usize) -> u64 {
         let ram_active = match &self.selected_rows {
-            SelectedRows::Extracted(rows) => rows
-                .window::<RamAccessRow>(row)
-                .is_some_and(|row| row.ram_address.0.is_some()),
+            SelectedRows::Extracted(rows) => match rows.prepared.upgrade() {
+                Some(prepared) => prepared[row].remapped_ram_address().is_some(),
+                None => rows
+                    .window::<RamAccessRow>(row)
+                    .is_some_and(|row| row.ram_address.0.is_some()),
+            },
             SelectedRows::Packed {
                 ram_active_rows, ..
             } => {
@@ -292,6 +319,7 @@ impl TraceOneHotRows for OneHotTraceRows {
 #[tracing::instrument(skip_all, name = "assemble_one_hot_trace")]
 pub(super) fn assemble_one_hot_trace_rows<F: JoltField>(
     witness: &dyn JoltWitnessPlane<F>,
+    prepared: Option<Weak<ConstantSuffix<InstructionCycleRow>>>,
     plan: &OneHotTraceLayoutPlan,
     ra_layout: JoltRaPolynomialLayout,
     log_k_chunk: usize,
@@ -341,6 +369,7 @@ pub(super) fn assemble_one_hot_trace_rows<F: JoltField>(
         // their shared column; the one-hot rows stay lazy.
         SelectedRows::Extracted(ExtractedRows {
             access,
+            prepared: prepared.unwrap_or_default(),
             extraction_error: OnceLock::new(),
         })
     } else {
@@ -379,6 +408,8 @@ pub(super) fn assemble_one_hot_trace_rows<F: JoltField>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use jolt_field::Fr;
+    use jolt_witness::{testing::with_sample_backend, RowSource};
     use std::error::Error;
 
     #[test]
@@ -428,6 +459,54 @@ mod tests {
                 assert_eq!(&output[expected.len() - ram..], vec![0; ram]);
             }
         }
+        with_sample_backend(|backend| -> Result<(), Box<dyn Error>> {
+            let access = backend
+                .random_access()
+                .ok_or("sample backend has no random access")?;
+            let cycles = access.cycles();
+            let physical = access.physical_cycles();
+            let cached = Arc::new(InstructionCycleRow::collect::<Fr>(backend, cycles)?);
+            let mut provider = OneHotTraceRows {
+                num_rows: cycles,
+                columns: OneHotTraceColumns {
+                    layout: JoltRaPolynomialLayout::new(32, 3, 4)?,
+                    bits: TraceChunkBits::Four,
+                },
+                ram_digit_zero_mask: 15 << 35,
+                selected_rows: SelectedRows::Extracted(ExtractedRows {
+                    access,
+                    prepared: Weak::new(),
+                    extraction_error: OnceLock::new(),
+                }),
+            };
+            let mut expected = vec![0; cycles * provider.num_columns()];
+            let mut expected_masks = vec![0; cycles];
+            provider.fill_rows_with_masks(0, &mut expected, &mut expected_masks);
+            if let SelectedRows::Extracted(rows) = &mut provider.selected_rows {
+                rows.prepared = Arc::downgrade(&cached);
+            }
+            let weak = Arc::downgrade(&cached);
+            {
+                let mut actual = vec![0; expected.len()];
+                let mut masks = vec![0; cycles];
+                provider.fill_rows_with_masks(0, &mut actual, &mut masks);
+                assert_eq!(actual, expected);
+                assert_eq!(masks, expected_masks);
+                assert_eq!(provider.nonzero_prefix_len(), physical);
+                for (row, &mask) in expected_masks.iter().enumerate() {
+                    assert_eq!(provider.committed_digit_zero_mask(row), mask);
+                }
+            }
+            drop(cached);
+            assert!(weak.upgrade().is_none());
+            let mut fallback = vec![0; expected.len()];
+            let mut fallback_masks = vec![0; cycles];
+            provider.fill_rows_with_masks(0, &mut fallback, &mut fallback_masks);
+            assert_eq!(fallback, expected);
+            assert_eq!(fallback_masks, expected_masks);
+            provider.check_extraction()?;
+            Ok(())
+        })?;
         Ok(())
     }
 }

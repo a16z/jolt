@@ -5,14 +5,13 @@ pub(crate) use repeat_cache::{repeat_hash, repeats_often, RepeatCache};
 
 use std::ops::Range;
 
+use crate::instruction_rows::collect_par_map;
 use jolt_field::{Accumulator, JoltField};
 use jolt_poly::{
     BindingOrder, EqPolynomial, GruenSplitEqPolynomial, LtPolynomial, Polynomial, TensorEqTable,
     UnivariatePoly,
 };
 use jolt_sumcheck::SumcheckError;
-#[cfg(feature = "parallel")]
-use jolt_utils::par_collect_windows;
 use jolt_verifier::stages::relations::{
     ConcreteSumcheck, ConcreteSumcheckChallenges, DerivedIdOf, SumcheckInputPoints,
     SumcheckOutputPoints,
@@ -70,18 +69,6 @@ impl RoundProgress {
 /// chunks — at 2^23 cycles the two thousand dispatches rival the extraction
 /// itself).
 const COLLECT_ROWS_CHUNK: usize = 1 << 16;
-
-pub(crate) fn collect_par_map<B: WitnessBundle, V: Copy + Send>(
-    access: &RandomAccessRows,
-    cycles: usize,
-    pack: impl Fn(B) -> V + Send + Sync,
-) -> Result<Vec<V>, WitnessError> {
-    let window = |index| access.window::<B>(index).map(&pack);
-    #[cfg(feature = "parallel")]
-    return par_collect_windows(cycles, window);
-    #[cfg(not(feature = "parallel"))]
-    (0..cycles).map(window).collect()
-}
 
 /// `jolt_witness::collect_bundles` with a wider streaming chunk and a
 /// pre-sized destination (the stock pass also grows its vector realloc by
@@ -1135,16 +1122,7 @@ impl<B: WitnessBundle + Copy> BundleAccess<'_, B> {
 impl<B: WitnessBundle + Copy + PartialEq> BundleAccess<'_, B> {
     pub(crate) fn constant_suffix_start(&self, cycles: usize) -> Result<usize, WitnessError> {
         match self {
-            Self::View(view) => {
-                let prefix = view.physical_cycles().min(cycles);
-                // Only the final padding window lacks a next row. Compare it to
-                // the ordinary padding window before treating that suffix as constant.
-                if prefix < cycles && self.row(prefix)? != self.row(cycles - 1)? {
-                    Ok(cycles)
-                } else {
-                    Ok(prefix)
-                }
-            }
+            Self::View(view) => view.constant_suffix_start::<B>(cycles),
             Self::Retained(rows) => {
                 let last = &rows[cycles - 1];
                 Ok(rows[..cycles]

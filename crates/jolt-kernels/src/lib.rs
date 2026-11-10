@@ -42,9 +42,11 @@ pub mod akita;
 mod backend;
 mod commitment;
 pub mod committed_program;
+mod constant_suffix;
 mod error;
 #[cfg(feature = "field-inline")]
 pub mod field_inline;
+mod instruction_rows;
 mod kernel;
 pub mod mem;
 #[cfg(feature = "metal")]

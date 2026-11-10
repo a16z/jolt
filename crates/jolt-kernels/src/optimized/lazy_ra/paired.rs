@@ -193,8 +193,9 @@ impl<'a, F: JoltField, S: ChunkIndexSource> PairedLoHi<'a, F, S> {
 #[expect(clippy::unwrap_used, reason = "checked selector fixtures")]
 mod tests {
     use super::super::LazyFoldedRa;
-    use crate::optimized::constant_suffix::ConstantSuffix;
-    use crate::optimized::instruction_read_raf::{InstructionCycleRow, LookupIndexChunks};
+    use crate::constant_suffix::ConstantSuffix;
+    use crate::instruction_rows::InstructionCycleRow;
+    use crate::optimized::instruction_read_raf::LookupIndexChunks;
     #[cfg(feature = "akita")]
     use jolt_field::Prime128OffsetA7F7;
     use jolt_field::{Fr, JoltField};

@@ -174,6 +174,29 @@ impl RandomAccessRows {
         })
     }
 
+    /// Same immutable trace, preprocessing owner, and logical cycle domain.
+    /// Equal dimensions or instruction addresses alone do not identify a source.
+    pub fn same_source(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.rows, &other.rows)
+            && Arc::ptr_eq(&self.preprocessing, &other.preprocessing)
+            && self.cycles == other.cycles
+    }
+
+    /// First potentially constant typed suffix, preserving final lookahead.
+    pub fn constant_suffix_start<B: WitnessBundle + PartialEq>(
+        &self,
+        cycles: usize,
+    ) -> Result<usize, WitnessError> {
+        let prefix = self.physical_cycles().min(cycles);
+        // Only the final padding window lacks a next row. Compare it to the
+        // ordinary padding window before treating that suffix as constant.
+        if prefix < cycles && self.window::<B>(prefix)? != self.window::<B>(cycles - 1)? {
+            Ok(cycles)
+        } else {
+            Ok(prefix)
+        }
+    }
+
     /// Padded cycle-domain size.
     pub fn cycles(&self) -> usize {
         self.cycles
@@ -336,6 +359,18 @@ mod tests {
     #[test]
     fn random_access_collection_matches_the_chunked_walk() {
         with_sample_backend(|backend| {
+            let source = backend.random_access().unwrap();
+            assert!(source.same_source(&source.clone()));
+            let larger = RandomAccessRows::new(
+                Arc::clone(&source.rows),
+                source.cycles + 1,
+                Arc::clone(&source.preprocessing),
+            )
+            .unwrap();
+            assert!(!source.same_source(&larger));
+            with_sample_backend(|other| {
+                assert!(!source.same_source(&other.random_access().unwrap()));
+            });
             let routed: Vec<WindowBundle> = collect_bundles(backend, 4).unwrap();
             let mut consumers = (CollectBundles::<WindowBundle>::default(),);
             stream_witnesses(backend, 0..4, 2, &mut consumers).unwrap();

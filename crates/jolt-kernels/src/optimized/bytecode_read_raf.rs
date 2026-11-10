@@ -75,15 +75,15 @@ use jolt_witness::JoltWitnessPlane;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use super::constant_suffix::ConstantSuffix;
 use super::eq_prefix::EqPrefix;
-use super::instruction_read_raf::InstructionCycleRow;
 use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa};
 use super::support::{
     bind_all, eq_table, gamma_powers, map_reduce_chunks, merge_evals, pair, par_sum_pair_groups,
     par_sum_pair_groups_reusing, repeat_hash, repeats_often, round_poly_from_skipped_evals,
     RepeatCache, RoundProgress,
 };
+use crate::constant_suffix::ConstantSuffix;
+use crate::instruction_rows::InstructionCycleRow;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
@@ -1776,8 +1776,8 @@ mod tests {
     use jolt_witness::testing::with_sample_backend;
     use jolt_witness::{JoltWitnessOracle, ProgramSource, TraceBackend};
 
-    use super::super::instruction_read_raf::{SharedInstructionRows, SharedInstructionRowsWeak};
     use super::*;
+    use crate::instruction_rows::{SharedInstructionRows, SharedInstructionRowsWeak};
     #[cfg(feature = "field-inline")]
     use crate::optimized::field_registers_testing::structured_field_register_fixture;
     use crate::optimized::parity::{

@@ -47,7 +47,6 @@ pub mod booleanity;
 pub mod bytecode_read_raf;
 #[cfg(not(feature = "akita"))]
 pub mod commitment;
-mod constant_suffix;
 mod eq_prefix;
 #[cfg(feature = "field-inline")]
 pub mod field_registers_claim_reduction;

@@ -4,9 +4,9 @@ use jolt_akita::AkitaField;
 use jolt_metal::runtime::{Device, DeviceBuffer};
 use jolt_metal::MetalError;
 
-use super::constant_suffix::ConstantSuffix;
-use super::instruction_read_raf::InstructionCycleRow;
 use super::support::map_indices;
+use crate::constant_suffix::ConstantSuffix;
+use crate::instruction_rows::InstructionCycleRow;
 use crate::{KernelError, ProofSession};
 
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]

@@ -78,11 +78,11 @@ use jolt_verifier::stages::stage6b::booleanity::{Booleanity, BooleanityCyclePhas
 use jolt_witness::witnesses::RaChunkSelector;
 use jolt_witness::JoltWitnessPlane;
 
-use super::constant_suffix::ConstantSuffix;
-use super::instruction_read_raf::InstructionCycleRow;
 use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa};
 use super::one_hot_histograms::{pushforwards, FamilySelectors};
 use super::support::{gamma_powers, pin_derived_term_if_derived, GruenRoundMessage, RoundProgress};
+use crate::constant_suffix::ConstantSuffix;
+use crate::instruction_rows::InstructionCycleRow;
 use crate::reference::views::eq_table;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -1135,9 +1135,9 @@ mod tests {
     use jolt_verifier::stages::stage6b::booleanity::BooleanityInputClaims;
     use jolt_witness::JoltWitnessOracle;
 
-    use super::super::instruction_read_raf::{SharedInstructionRows, SharedInstructionRowsWeak};
     use super::testing::{test_challenge, with_booleanity_backend};
     use super::*;
+    use crate::instruction_rows::{SharedInstructionRows, SharedInstructionRowsWeak};
     use crate::ReferenceBackend;
 
     fn check_address_masses<F: JoltField>() {

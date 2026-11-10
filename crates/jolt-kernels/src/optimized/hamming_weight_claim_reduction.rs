@@ -31,12 +31,12 @@ use jolt_verifier::stages::relations::{
 use jolt_verifier::stages::stage7::hamming_weight_claim_reduction::HammingWeightClaimReduction;
 use jolt_witness::JoltWitnessPlane;
 
-use super::instruction_read_raf::InstructionCycleRow;
 use super::one_hot_histograms::{pushforward_access, pushforwards, FamilySelectors, HistogramRow};
 use super::support::{
     bind_all, eq_table, gamma_powers, pair, par_sum_pair_groups, round_poly_from_skipped_evals,
     BundleAccess, RoundProgress,
 };
+use crate::instruction_rows::InstructionCycleRow;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
@@ -381,10 +381,8 @@ mod tests {
 #[cfg(all(test, feature = "akita"))]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod akita_tests {
-    use crate::optimized::constant_suffix::ConstantSuffix;
-    use crate::optimized::instruction_read_raf::{
-        SharedInstructionRows, SharedInstructionRowsWeak,
-    };
+    use crate::constant_suffix::ConstantSuffix;
+    use crate::instruction_rows::{SharedInstructionRows, SharedInstructionRowsWeak};
     use jolt_claims::protocols::jolt::geometry::claim_reductions::hamming_weight::HammingWeightClaimReductionDimensions;
     use jolt_field::{Fr, Ring};
     use jolt_verifier::stages::stage7::hamming_weight_claim_reduction::{

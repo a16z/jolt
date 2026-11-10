@@ -5,8 +5,8 @@ use jolt_witness::{WitnessBundle, WitnessError};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use super::constant_suffix::ConstantSuffix;
-use super::instruction_read_raf::InstructionCycleRow;
+use crate::constant_suffix::ConstantSuffix;
+use crate::instruction_rows::InstructionCycleRow;
 use crate::KernelError;
 
 /// Per-family chunk selectors in canonical layout order.
@@ -297,7 +297,7 @@ fn add_instruction_digits<A: Accumulator, B: AsMut<[A]>>(
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod pushforward_tests {
     use super::{pushforwards, FamilySelectors, InstructionCycleRow, InstructionHistogram};
-    use crate::optimized::constant_suffix::ConstantSuffix;
+    use crate::constant_suffix::ConstantSuffix;
     #[cfg(feature = "akita")]
     use jolt_field::Prime128OffsetA7F7;
     use jolt_field::{Accumulator, Fr, JoltField};

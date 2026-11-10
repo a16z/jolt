@@ -5,8 +5,8 @@ use jolt_lookup_tables::{LookupTableKind, XLEN as RISCV_XLEN};
 use jolt_verifier::stages::stage6b::booleanity::BooleanityInputClaims;
 use jolt_witness::witnesses::FusedInc;
 
-use super::super::super::constant_suffix::ConstantSuffix;
 use super::*;
+use crate::constant_suffix::ConstantSuffix;
 
 #[test]
 fn compact_booleanity_matches_dense_rounds_and_releases_shared_rows() {

@@ -40,13 +40,14 @@ pub(crate) mod metal;
 
 use std::sync::Arc;
 
-use super::constant_suffix::ConstantSuffix;
-use super::instruction_read_raf::{InstructionCycleRow, LookupIndexChunks};
+use super::instruction_read_raf::LookupIndexChunks;
 use super::lazy_ra::LazyFoldedRa;
 use super::support::{
     accumulate_product_grid, map_indices, pin_derived_term, product_grid_scratch_len,
     GruenRoundMessage, RoundProgress, MAX_GRID_FACTORS,
 };
+use crate::constant_suffix::ConstantSuffix;
+use crate::instruction_rows::InstructionCycleRow;
 use crate::reference::views::eq_table;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -557,12 +558,12 @@ mod tests {
         KernelError, NaiveSumcheckProver, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel,
     };
 
-    use super::super::instruction_read_raf::{
-        InstructionCycleRow, SharedInstructionRows, SharedInstructionRowsWeak,
-    };
     use super::super::support::MAX_GRID_FACTORS;
     use super::super::testing::{with_ram_fixture, FixtureShape};
     use super::{OptimizedInstructionRaVirtualization, OptimizedInstructionRaVirtualizationKernel};
+    use crate::instruction_rows::{
+        InstructionCycleRow, SharedInstructionRows, SharedInstructionRowsWeak,
+    };
 
     #[test]
     fn constant_suffix_matches_dense_rounds() {

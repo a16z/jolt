@@ -8,6 +8,7 @@ use jolt_openings::{CommitmentScheme, GroupSetupMetadata, TransparentObjectSetup
 use jolt_witness::JoltWitnessPlane;
 
 use crate::akita::commitment::{CommitWitness, WitnessCommitRequest, WitnessCommitment};
+use crate::instruction_rows::InstructionCycleRow;
 use crate::{KernelError, ProofSession, ReferenceBackend};
 
 use super::witness::assemble_one_hot_trace_rows;
@@ -20,12 +21,14 @@ where
 {
     fn commit_witness(
         &self,
-        _session: &mut ProofSession,
+        session: &mut ProofSession,
         witness: &dyn JoltWitnessPlane<F>,
         request: WitnessCommitRequest<'_, PCS>,
     ) -> Result<WitnessCommitment<PCS>, KernelError<F>> {
+        let prepared = InstructionCycleRow::prepared(session, witness, 1 << request.shape().log_t)?;
         let assembled = assemble_one_hot_trace_rows(
             witness,
+            prepared.as_ref().map(Arc::downgrade),
             request.plan(),
             request.shape().ra_layout,
             request.shape().log_k_chunk,
@@ -57,7 +60,7 @@ where
         let (commitment, hint) = committed?;
         PCS::release_post_commit_residency(request.setup())?;
         #[cfg(feature = "field-inline")]
-        _session.park(assembled.increments);
+        session.park(assembled.increments);
         Ok(WitnessCommitment {
             fused_inc,
             commitment,
