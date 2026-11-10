@@ -93,7 +93,7 @@ use jolt_verifier::stages::stage1::outer_remainder::OuterRemainder;
 #[cfg(feature = "field-inline")]
 use jolt_witness::field_inline::FieldInlineSpartanRow;
 use jolt_witness::witnesses::{
-    lookup_values, Imm, LeftInstructionInput, LeftLookupOperand, LookupOutput,
+    lookup_values, Extract as _, Imm, LeftInstructionInput, LeftLookupOperand, LookupOutput,
     NextIsFirstInSequence, NextIsVirtual, NextPc, NextUnexpandedPc, Pc, Product, RamAddress,
     RamReadValue, RamWriteValue, RdWriteValue, RightInstructionInput, RightLookupOperand, Rs1Value,
     Rs2Value, ShouldBranch, ShouldJump, UnexpandedPc, WitnessEnv,
@@ -211,7 +211,7 @@ impl WitnessBundle for SpartanOuterRow {
     fn from_row(
         row: &TraceRow,
         next: Option<&TraceRow>,
-        _env: &WitnessEnv<'_>,
+        env: &WitnessEnv<'_>,
     ) -> Result<Self, WitnessError> {
         let circuit_flags = row.circuit_flags();
         let instruction_flags = row.instruction_flags();
@@ -252,9 +252,7 @@ impl WitnessBundle for SpartanOuterRow {
                 next_flags.is_some_and(|flags| flags[CircuitFlags::IsFirstInSequence]),
             ),
             lookup_output: LookupOutput(lookup_output),
-            should_jump: ShouldJump(
-                circuit_flags[CircuitFlags::Jump] && !next.is_some_and(|row| row.is_noop()),
-            ),
+            should_jump: ShouldJump::extract(row, next, env)?,
             circuit_flags,
         })
     }

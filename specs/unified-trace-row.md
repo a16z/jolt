@@ -311,8 +311,8 @@ backward over the canonical trailing suffix of the collected vector.
 event's cycle. There is no full trace conversion or normalization copy.
 
 `ProverConfig::derive` now consumes `&[JoltTraceRow]`; callers supply
-`proof_rows()`. Its existing minimum domain and final-no-op sizing law are
-unchanged. Its last-row Jump precondition (`ProverError::TraceDoesNotEndInJump`)
+`proof_rows()`. Its minimum domain is unchanged; it pads to the smallest power
+of two holding the proof rows, with no reserved final no-op row. Its last-row Jump precondition (`ProverError::TraceDoesNotEndInJump`)
 also depends on that prefix: `rows()` can end in canonical padding and would
 reject an honest trace. Witness and field construction validate the same retained
 `proof_len` against the cycle domain, and random-access proof consumers use
