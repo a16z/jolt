@@ -1453,6 +1453,7 @@ dependencies = [
  "jolt-transcript",
  "jolt-verifier",
  "jolt-witness",
+ "jolt-zk",
  "rayon",
  "serde",
  "thiserror 2.0.18",
@@ -1640,6 +1641,7 @@ dependencies = [
  "jolt-transcript",
  "jolt-utils",
  "rand_core",
+ "rayon",
  "serde",
  "thiserror 2.0.18",
 ]
