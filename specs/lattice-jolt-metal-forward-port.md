@@ -255,15 +255,17 @@ root-fold binary took 25.2315 and 27.8937 s. That variation prevents a firm
 full-proof speedup claim. The frozen binaries, manifests, and observations are
 in `read-raf-metal/` and `read-raf-paired/` under the same artifact directory.
 
-The isolated TensorOps commitment candidate (`50091ea52`, Akita `0ba25771`)
-verified two full T27 proofs and matched every coefficient in all 32 source
-windows. One scalar-first component comparison measured 5.2391 s for scalar
-and 4.8359 s for TensorOps, including source packing and each backend's key
+The isolated TensorOps candidate (`866ae6cdd`, Akita `52b079d8`) verified
+three T27 proofs and matched every coefficient in all 32 source windows under
+both execution orders. The paired component means were 5.2212 s for scalar
+and 4.8131 s for TensorOps, including source packing and each backend's key
 preparation, but excluding common output allocation, scatter, and RingVec
-construction. GPU times were 4.0317 and 3.5859 s. This diagnostic executes both
-backends within each proof, so its proof timer is not a throughput result.
-Reversed-order comparisons and stage attribution are pending; TensorOps is
-not enabled in this branch. Evidence is in `tensor-component/`.
+construction. GPU means were 4.1016 and 3.6021 s. These dual-execution proof
+timers are not throughput results; TensorOps remains disabled in this branch.
+Evidence is in `tensor-paired/`. Dispatch-boundary counters are unsupported on
+this M5 Max. Encoder-boundary counters are supported, but independent encoders
+can overlap: the corrected diagnostic reports interval union and overlap
+separately. Full Tensor phase attribution with that correction remains pending.
 
 Reuse existing profiler stage labels and `jolt-eval` telemetry objectives for
 prover/stage time where available. Add only measurements needed to identify GPU
@@ -456,12 +458,22 @@ in position/chunk/coefficient order. Chunk ranges partition each column's blocks
 challenges remain claim-major. CPU and GPU share digit expansion and witness
 construction, with no coefficient copy for one chunk and one digit. The fold
 reuses bounded row packing and checks term-index and accumulation bounds before
-dispatch. Coefficient packing still uses the current CPU kernel.
+dispatch. Base-field coefficient packing uses the canonical PCS position and
+packing weights over the same retained selectors, in bounded block tiles. It
+borrows those windows so root folding can consume them later. Unsupported
+extensions, geometries, or unavailable caches retain the CPU implementation.
 
 Stage 0 may retain its existing `DeviceK16Sources` windows for root folding.
 For `P` physical prefix rows and `C` columns, their device payload is
 `C * P + C * ceil(P / 32)` bytes: selectors plus ring classifications. Host masks
-and packing buffers remain transient. The implicit suffix allocates nothing.
+and packing buffers remain transient. The direct producer now uses at most
+8192 rows of selector/mask scratch per active worker and writes normalized
+selectors and ring classifications directly to their final uninitialized shared
+buffers. Both source constructors use one encoder for absent/committed-zero
+semantics and partial-ring classification. Successful completion of all host
+writes precedes publication; errors drop the unpublished buffers. The implicit
+suffix allocates nothing. Standalone arithmetic and Metal validation passed
+against the published runtime pin; inclusive timing of this producer is pending.
 Retention is admitted only when that payload fits the smaller of 8 GiB or
 one-sixteenth of the device's recommended working set. This is an additional
 payload cap, excluding allocator overhead and small per-window host metadata,
@@ -477,10 +489,11 @@ kept in the setup. Device errors propagate rather than retrying GPU work.
 
 The measured T27 Fibonacci geometry has 39 columns and at most 5,398,069,248
 bytes (5.0273 GiB) of resident source payload. The preceding root-fold profile
-spent 0.9311 s packing/uploading and 0.3345 s on GPU execution. Residency has not
-yet been measured. Its acceptance run must verify the same proof, report retained
-bytes and reused window count, compare root-fold packing and total proof time,
-and record peak RSS/footprint and memory after the proof's source handles drop.
+spent 0.9311 s packing/uploading and 0.3345 s on GPU execution. The verified
+`71cb1b601` profile reused all 32 windows without repacking; root folding took
+0.3612 s inclusive, with 0.3343 s on the GPU. Retained payload, peak memory,
+and proof-exit memory are recorded in `direct-source-metal/memory.json`. These
+remain development observations; final matched full-proof comparison is pending.
 
 Integer limb-NTT and deferred-accumulation kernels retain explicit reconstruction
 and accumulation bounds for every admitted geometry. Changing tile sizes or
