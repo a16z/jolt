@@ -3,7 +3,7 @@ use std::iter::once;
 use jolt_akita::AkitaField;
 use jolt_field::Zero;
 use jolt_metal::runtime::{
-    host_name, Batch, Binding, Device, DeviceBuffer, Grid, LibrarySpec, ShaderLibrary,
+    host_name, Batch, Binding, Device, DeviceBuffer, Grid, LibrarySpec, Pipeline, ShaderLibrary,
 };
 use jolt_metal::shaders::FIELD_HEADERS;
 use jolt_metal::MetalError;
@@ -13,7 +13,7 @@ use super::super::metal_rows::ResidentInstructionRows;
 use super::*;
 
 mod tables;
-use tables::CachedTables;
+use tables::{CachedTables, EqualityBlock, TableBudget, WeightedTables};
 
 const MIN_GPU_PREFIX: usize = 1 << 16;
 
@@ -36,7 +36,9 @@ impl MetalBooleanity {
                 include_str!("cached_booleanity.metal"),
             )
             .instantiate::<AkitaField>("lazy_booleanity")
-            .instantiate::<AkitaField>("lazy_booleanity_cached");
+            .instantiate::<AkitaField>("lazy_booleanity_cached")
+            .instantiate::<AkitaField>("lazy_booleanity_factored")
+            .instantiate::<AkitaField>("booleanity_weight_tables");
         let library = ShaderLibrary::compile(&device, &spec)?;
         Ok(Self(Arc::new(BooleanityGpu {
             device,
@@ -73,6 +75,8 @@ impl PrepareKernel<AkitaField, Booleanity<AkitaField>> for MetalBooleanity {
             table_policy_cycles: None,
             #[cfg(test)]
             cached_widths: 0,
+            #[cfg(test)]
+            factored_widths: 0,
         }))
     }
 }
@@ -98,6 +102,8 @@ struct MetalBooleanityKernel {
     table_policy_cycles: Option<usize>,
     #[cfg(test)]
     cached_widths: u32,
+    #[cfg(test)]
+    factored_widths: u32,
 }
 
 impl MetalBooleanityKernel {
@@ -199,7 +205,9 @@ impl MetalBooleanityKernel {
                 table_mode = tracing::field::Empty,
                 table_device_bytes = tracing::field::Empty,
                 table_peak_bytes = tracing::field::Empty,
-                gpu_s = tracing::field::Empty
+                gpu_s = tracing::field::Empty,
+                equality_block_pairs = 1usize,
+                weighted_bytes = 0usize,
             );
             let _span = span.enter();
             let mut params = [0u32; 9];
@@ -243,40 +251,77 @@ impl MetalBooleanityKernel {
                 .library
                 .pipeline(&host_name::<AkitaField>("lazy_booleanity_cached"))
                 .map_err(compute_error)?;
-            let cached_width = cached_pipeline.thread_execution_width();
-            let cached_group = cached_pipeline
-                .max_total_threads_per_threadgroup()
-                .min(128)
-                .checked_div(cached_width)
-                .unwrap_or(0)
-                * cached_width;
-            let cached_admitted = cached_group != 0
-                && cached_group / cached_width <= 32
-                && cached_group / cached_width <= cached_width
-                && cached_pipeline.static_threadgroup_memory_length()
-                    <= self.gpu.device.limits().max_threadgroup_memory_length;
-            let cached = if cached_admitted {
+            let cached_group = admitted_group(cached_pipeline, &self.gpu.device);
+            let factored_pipeline = self
+                .gpu
+                .library
+                .pipeline(&host_name::<AkitaField>("lazy_booleanity_factored"))
+                .map_err(compute_error)?;
+            let weight_pipeline = self
+                .gpu
+                .library
+                .pipeline(&host_name::<AkitaField>("booleanity_weight_tables"))
+                .map_err(compute_error)?;
+            let factored_group = admitted_group(factored_pipeline, &self.gpu.device);
+            let weight_group = admitted_group(weight_pipeline, &self.gpu.device);
+            let mut equality_block = if factored_group.is_some() && weight_group.is_some() {
+                EqualityBlock::prepare(eq, width, radix, active).map_err(compute_error)?
+            } else {
+                None
+            };
+            let cached = if cached_group.is_some() {
                 if let Some(source) = lazy_source {
                     #[cfg(not(test))]
                     let policy_cycles = source.cycles();
                     #[cfg(test)]
                     let policy_cycles = self.table_policy_cycles.unwrap_or_else(|| source.cycles());
-                    CachedTables::prepare(
-                        &self.gpu.device,
-                        tables,
-                        width,
-                        source,
-                        &self.cpu.gamma_powers,
-                        auxiliary_bytes,
-                        policy_cycles,
-                    )
-                    .map_err(compute_error)?
+                    let prepare = |weighted_copies| {
+                        CachedTables::prepare(
+                            &self.gpu.device,
+                            tables,
+                            width,
+                            source,
+                            &self.cpu.gamma_powers,
+                            TableBudget {
+                                auxiliary_bytes,
+                                policy_cycles,
+                                weighted_copies,
+                            },
+                        )
+                    };
+                    if equality_block.is_some() {
+                        if let Some(cache) = prepare(16).map_err(compute_error)? {
+                            Some(cache)
+                        } else {
+                            equality_block = None;
+                            prepare(0).map_err(compute_error)?
+                        }
+                    } else {
+                        prepare(0).map_err(compute_error)?
+                    }
                 } else {
                     None
                 }
             } else {
                 None
             };
+            if cached.is_none() {
+                equality_block = None;
+            }
+            let weighted = match (&cached, &equality_block) {
+                (Some(cache), Some(block)) => Some(
+                    WeightedTables::new(&self.gpu.device, cache, block).map_err(compute_error)?,
+                ),
+                _ => None,
+            };
+            if let Some(weighted) = &weighted {
+                let _ = span.record("equality_block_pairs", 16usize);
+                let _ = span.record("weighted_bytes", weighted.bytes());
+                #[cfg(test)]
+                {
+                    self.factored_widths |= 1 << width;
+                }
+            }
             let mode = cached.as_ref().map_or(0, |tables| tables.mode);
             let _ = span.record("table_mode", mode);
             let _ = span.record(
@@ -352,8 +397,13 @@ impl MetalBooleanityKernel {
                 },
             )
             .map_err(compute_error)?;
-            let e_in = DeviceBuffer::from_slice(&self.gpu.device, eq.e_in_current())
-                .map_err(compute_error)?;
+            let e_in = DeviceBuffer::from_slice(
+                &self.gpu.device,
+                equality_block
+                    .as_ref()
+                    .map_or(eq.e_in_current(), |block| block.high),
+            )
+            .map_err(compute_error)?;
             let e_out = DeviceBuffer::from_slice(&self.gpu.device, eq.e_out_current())
                 .map_err(compute_error)?;
             let mut partials = DeviceBuffer::<AkitaField>::zeroed(&self.gpu.device, partial_len)
@@ -386,27 +436,48 @@ impl MetalBooleanityKernel {
             }
             let mut batch = Batch::new(&self.gpu.device).map_err(compute_error)?;
             if let Some(cache) = &cached {
-                // SAFETY: canonical tables cover every checked category and
-                // active column. The two layouts have distinct mode tags.
-                // All row loads use the retained prefix/tail; all groups write
-                // three partials. Cache owners and 48-byte params outlive wait.
+                let mut bindings = vec![
+                    Binding::buffer(rows),
+                    Binding::buffer(&rho),
+                    Binding::buffer(&selectors),
+                    Binding::buffer(&e_in),
+                    Binding::buffer(&e_out),
+                    Binding::buffer(&partials),
+                    Binding::value(&cached_params),
+                    Binding::value(&packed_tail),
+                    Binding::buffer(&cache.values),
+                    Binding::buffer(cache.squares.as_ref().unwrap_or(&cache.values)),
+                ];
+                let (pipeline, group) = if let Some(weighted) = &weighted {
+                    weighted
+                        .encode(
+                            cache,
+                            &mut batch,
+                            weight_pipeline,
+                            weight_group.ok_or_else(|| {
+                                compute_error(invalid("missing admitted weight geometry"))
+                            })?,
+                        )
+                        .map_err(compute_error)?;
+                    bindings.push(Binding::buffer(&weighted.values));
+                    (factored_pipeline, factored_group)
+                } else {
+                    (cached_pipeline, cached_group)
+                };
+                let group = group
+                    .ok_or_else(|| compute_error(invalid("missing admitted cached geometry")))?;
+                // SAFETY: canonical tables cover every checked category/column;
+                // source reads use the retained prefix/tail. Each original group
+                // writes three partials. Factored blocks have sixteen low weights
+                // and old_in_len/16 high weights; the preceding serial dispatch
+                // fully initializes weighted tables before any consumer reads.
+                // Buffer owners and 48-byte params outlive the synchronous wait.
                 unsafe {
                     batch
                         .dispatch_unchecked(
-                            cached_pipeline,
-                            &[
-                                Binding::buffer(rows),
-                                Binding::buffer(&rho),
-                                Binding::buffer(&selectors),
-                                Binding::buffer(&e_in),
-                                Binding::buffer(&e_out),
-                                Binding::buffer(&partials),
-                                Binding::value(&cached_params),
-                                Binding::value(&packed_tail),
-                                Binding::buffer(&cache.values),
-                                Binding::buffer(cache.squares.as_ref().unwrap_or(&cache.values)),
-                            ],
-                            Grid::linear(groups * cached_group, cached_group),
+                            pipeline,
+                            &bindings,
+                            Grid::linear(groups * group, group),
                         )
                         .map_err(compute_error)?;
                 }
@@ -459,6 +530,21 @@ impl MetalBooleanityKernel {
         })
         .map(Some)
     }
+}
+
+fn admitted_group(pipeline: &Pipeline, device: &Device) -> Option<usize> {
+    let width = pipeline.thread_execution_width();
+    let group = pipeline
+        .max_total_threads_per_threadgroup()
+        .min(128)
+        .checked_div(width)?
+        * width;
+    (group != 0
+        && group / width <= 32
+        && group / width <= width
+        && pipeline.static_threadgroup_memory_length()
+            <= device.limits().max_threadgroup_memory_length)
+        .then_some(group)
 }
 
 impl MetalBooleanityKernel {

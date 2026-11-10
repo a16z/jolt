@@ -9,6 +9,12 @@ use crate::optimized::lazy_ra::PairedBranchTables;
 // flattened host upload mirror and no new trace-row storage.
 const MAX_TABLE_PEAK_BYTES: usize = 128 << 20;
 
+pub(super) struct TableBudget {
+    pub(super) auxiliary_bytes: usize,
+    pub(super) policy_cycles: usize,
+    pub(super) weighted_copies: usize,
+}
+
 pub(super) struct CachedTables {
     pub(super) values: DeviceBuffer<AkitaField>,
     pub(super) squares: Option<DeviceBuffer<AkitaField>>,
@@ -33,8 +39,7 @@ impl CachedTables {
         width: usize,
         source: &BooleanityChunks,
         rho: &[AkitaField],
-        auxiliary_bytes: usize,
-        policy_cycles: usize,
+        budget: TableBudget,
     ) -> Result<Option<Self>, MetalError> {
         type Full<'a> = CategoricalProducts<'a, AkitaField, BooleanityChunks, false>;
         type Triangular<'a> = CategoricalProducts<'a, AkitaField, BooleanityChunks, true>;
@@ -48,14 +53,14 @@ impl CachedTables {
         if active == 0 || active > tables.len() {
             return Ok(None);
         }
-        let shape = if Full::fits_budget(width, addresses, policy_cycles) {
+        let shape = if Full::fits_budget(width, addresses, budget.policy_cycles) {
             let states = (addresses + 1).pow(width as u32);
             Shape {
                 mode: 1,
                 states,
                 square_stride: Full::square_entries(states),
             }
-        } else if Triangular::fits_budget(width, addresses, policy_cycles) {
+        } else if Triangular::fits_budget(width, addresses, budget.policy_cycles) {
             let states = (addresses + 1).pow(width as u32);
             Shape {
                 mode: 2,
@@ -102,16 +107,25 @@ impl CachedTables {
                 .and_then(|bytes| bytes.checked_add(size_of::<Vec<AkitaField>>()))
                 .and_then(|bytes| sum.checked_add(bytes))
         });
+        let Some(copies) = 2usize.checked_add(budget.weighted_copies) else {
+            return Ok(None);
+        };
         let Some(peak_bytes) = device_bytes
-            .checked_mul(2)
+            .checked_mul(copies)
             .and_then(|bytes| bytes.checked_add(temporary?))
             .and_then(|bytes| bytes.checked_add(headers?))
             .and_then(|bytes| bytes.checked_add(branches?))
-            .and_then(|bytes| bytes.checked_add(auxiliary_bytes))
+            .and_then(|bytes| bytes.checked_add(budget.auxiliary_bytes))
         else {
             return Ok(None);
         };
-        if peak_bytes > MAX_TABLE_PEAK_BYTES || device_bytes > device.limits().max_buffer_length {
+        let Some(weighted_bytes) = device_bytes.checked_mul(budget.weighted_copies) else {
+            return Ok(None);
+        };
+        if peak_bytes > MAX_TABLE_PEAK_BYTES
+            || device_bytes > device.limits().max_buffer_length
+            || weighted_bytes > device.limits().max_buffer_length
+        {
             return Ok(None);
         }
         match device.check_additional_peak(peak_bytes) {
@@ -209,4 +223,96 @@ fn upload<'a>(
     }
     // SAFETY: every logical slot was written above, with exact length checked.
     unsafe { buffer.assume_init() }
+}
+
+/// Canonical low/high equality factors for sixteen adjacent message pairs.
+pub(super) struct EqualityBlock<'a> {
+    pub(super) high: &'a [AkitaField],
+    active: Vec<AkitaField>,
+}
+
+impl<'a> EqualityBlock<'a> {
+    pub(super) fn prepare(
+        eq: &'a GruenSplitEqPolynomial<AkitaField>,
+        width: usize,
+        radix: usize,
+        columns: usize,
+    ) -> Result<Option<Self>, MetalError> {
+        if !matches!(width, 1 | 4 | 8)
+            || radix != 16
+            || !(1..=128).contains(&columns)
+            || eq.e_in_current_len() < 16
+        {
+            return Ok(None);
+        }
+        let (outer, high) = eq.e_out_in_for_window(5);
+        let active = eq.e_active_for_window(5);
+        if high.len().checked_mul(16) != Some(eq.e_in_current_len())
+            || active.len() != 16
+            || outer != eq.e_out_current()
+        {
+            return Err(cache_error(
+                "canonical window does not factor current inner equality",
+            ));
+        }
+        Ok(Some(Self { high, active }))
+    }
+}
+
+/// GPU-written weighted copies; no host field view is exposed before or after dispatch.
+pub(super) struct WeightedTables {
+    pub(super) values: DeviceBuffer<MaybeUninit<AkitaField>>,
+    active: DeviceBuffer<AkitaField>,
+    params: [u32; 3],
+}
+
+impl WeightedTables {
+    pub(super) fn new(
+        device: &Device,
+        cache: &CachedTables,
+        block: &EqualityBlock<'_>,
+    ) -> Result<Self, MetalError> {
+        let values = cache.values.len();
+        let squares = cache.squares.as_ref().map_or(0, DeviceBuffer::len);
+        let len = values
+            .checked_add(squares)
+            .and_then(|n| n.checked_mul(block.active.len()))
+            .filter(|n| u32::try_from(*n).is_ok())
+            .ok_or_else(|| cache_error("weighted table exceeds 32-bit indexing"))?;
+        Ok(Self {
+            values: DeviceBuffer::uninit(device, len)?,
+            active: DeviceBuffer::from_slice(device, &block.active)?,
+            params: [values as u32, squares as u32, block.active.len() as u32],
+        })
+    }
+
+    pub(super) fn bytes(&self) -> usize {
+        self.values.len() * size_of::<AkitaField>()
+    }
+
+    pub(super) fn encode<'a>(
+        &'a self,
+        cache: &'a CachedTables,
+        batch: &mut Batch<'a>,
+        pipeline: &Pipeline,
+        group: usize,
+    ) -> Result<(), MetalError> {
+        // SAFETY: the rounded grid uniquely writes every weighted index; the
+        // checked table lengths and sixteen canonical factors cover all reads.
+        // The following message dispatch uses the same serial, tracked batch.
+        unsafe {
+            batch.dispatch_unchecked(
+                pipeline,
+                &[
+                    Binding::buffer(&cache.values),
+                    Binding::buffer(cache.squares.as_ref().unwrap_or(&cache.values)),
+                    Binding::buffer(&self.active),
+                    Binding::buffer(&self.values),
+                    Binding::value(&self.params),
+                ],
+                Grid::linear(self.values.len().div_ceil(group) * group, group),
+            )?;
+        }
+        Ok(())
+    }
 }

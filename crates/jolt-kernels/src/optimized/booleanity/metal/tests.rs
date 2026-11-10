@@ -149,6 +149,7 @@ fn compact_booleanity_matches_dense_rounds_and_releases_shared_rows() {
             // budget while keeping the independent dense domain small.
             table_policy_cycles: (prefix > 30000).then_some(1 << 21),
             cached_widths: 0,
+            factored_widths: 0,
         };
         let mut claim = None;
         let mut saw_device = false;
@@ -208,6 +209,13 @@ fn compact_booleanity_matches_dense_rounds_and_releases_shared_rows() {
             assert!(saw_dense_bind);
         }
         if prefix > 30000 {
+            for width in [1, 4, 8] {
+                assert_ne!(
+                    kernel.factored_widths & (1 << width),
+                    0,
+                    "factored width {width}"
+                );
+            }
             for width in [1, 2, 4, 8] {
                 assert_ne!(
                     kernel.cached_widths & (1 << width),
