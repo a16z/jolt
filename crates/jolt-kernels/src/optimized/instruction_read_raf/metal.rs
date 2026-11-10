@@ -236,8 +236,8 @@ impl ReadRafGpu {
                 .checked_mul(n)
                 .ok_or_else(|| compute_error(invalid("device prefix size overflows")))?
         };
-        let output =
-            DeviceBuffer::<AkitaField>::zeroed(&self.device, output_len).map_err(compute_error)?;
+        let output = DeviceBuffer::<MaybeUninit<AkitaField>>::uninit(&self.device, output_len)
+            .map_err(compute_error)?;
         let mut totals = vec![AkitaField::zero(); n + 1];
         if pairs != 0 {
             let span = tracing::info_span!(
@@ -304,8 +304,9 @@ impl ReadRafGpu {
             let partial_len = groups
                 .checked_mul(n + 1)
                 .ok_or_else(|| compute_error(invalid("partial size overflows")))?;
-            let mut partials = DeviceBuffer::<AkitaField>::zeroed(&self.device, partial_len)
-                .map_err(compute_error)?;
+            let partials =
+                DeviceBuffer::<MaybeUninit<AkitaField>>::uninit(&self.device, partial_len)
+                    .map_err(compute_error)?;
             let pipeline = self
                 .library
                 .pipeline(&host_name::<AkitaField>(template))
@@ -354,6 +355,9 @@ impl ReadRafGpu {
             }
             let elapsed = batch.commit_and_wait().map_err(compute_error)?;
             let _ = span.record("gpu_s", elapsed.as_secs_f64());
+            // SAFETY: every group writes all n+1 fields, including the unused
+            // exceptional slot. The complete dispatch succeeded before readback.
+            let mut partials = unsafe { partials.assume_init().map_err(compute_error)? };
             for values in partials.read().map_err(compute_error)?.chunks_exact(n + 1) {
                 for (sum, value) in totals.iter_mut().zip(values) {
                     *sum += *value;
@@ -366,9 +370,19 @@ impl ReadRafGpu {
         }
         totals[n] += suffix;
         let polynomial = eq.checked_toom(&totals[..n], claim, round, || totals[n])?;
+        let bound_prefix = if mode == 0 {
+            // This mode never writes its one-element binding placeholder.
+            None
+        } else {
+            // SAFETY: the completed mode-1/2 dispatch visits every pair and both
+            // sides, writing all n factors for each row < prefix exactly once.
+            // An odd final row omits only the out-of-range sibling. With prefix
+            // zero, no dispatch is needed because output has no logical elements.
+            Some(unsafe { output.assume_init().map_err(compute_error)? })
+        };
         Ok(RoundOutput {
             polynomial,
-            bound_prefix: (mode != 0).then_some(output),
+            bound_prefix,
         })
     }
 }
