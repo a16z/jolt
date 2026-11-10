@@ -93,7 +93,7 @@ dependencies = [
 [[package]]
 name = "akita-algebra"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?branch=whiteout%2Fpreview#1ddb56babace17c928e1e65e6508b046a7206c0f"
+source = "git+https://github.com/LayerZero-Labs/akita.git?branch=whiteout%2Fpreview#fe1e1e4237dba1d14e30ceb34aee2b6d749e08cd"
 dependencies = [
  "akita-error",
  "akita-serialization",
@@ -107,7 +107,7 @@ dependencies = [
 [[package]]
 name = "akita-challenges"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?branch=whiteout%2Fpreview#1ddb56babace17c928e1e65e6508b046a7206c0f"
+source = "git+https://github.com/LayerZero-Labs/akita.git?branch=whiteout%2Fpreview#fe1e1e4237dba1d14e30ceb34aee2b6d749e08cd"
 dependencies = [
  "akita-error",
  "akita-transcript",
@@ -115,7 +115,6 @@ dependencies = [
  "jolt-crypto",
  "keccak 0.1.6",
  "num-bigint 0.5.1",
- "serde",
  "shake",
  "smallvec",
 ]
@@ -123,7 +122,7 @@ dependencies = [
 [[package]]
 name = "akita-config"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?branch=whiteout%2Fpreview#1ddb56babace17c928e1e65e6508b046a7206c0f"
+source = "git+https://github.com/LayerZero-Labs/akita.git?branch=whiteout%2Fpreview#fe1e1e4237dba1d14e30ceb34aee2b6d749e08cd"
 dependencies = [
  "akita-error",
  "akita-params",
@@ -132,13 +131,12 @@ dependencies = [
  "akita-transcript",
  "akita-types",
  "jolt-algebra",
- "jolt-crypto",
 ]
 
 [[package]]
 name = "akita-cpu-backend"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?branch=whiteout%2Fpreview#1ddb56babace17c928e1e65e6508b046a7206c0f"
+source = "git+https://github.com/LayerZero-Labs/akita.git?branch=whiteout%2Fpreview#fe1e1e4237dba1d14e30ceb34aee2b6d749e08cd"
 dependencies = [
  "akita-algebra",
  "akita-challenges",
@@ -163,7 +161,7 @@ dependencies = [
 [[package]]
 name = "akita-error"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?branch=whiteout%2Fpreview#1ddb56babace17c928e1e65e6508b046a7206c0f"
+source = "git+https://github.com/LayerZero-Labs/akita.git?branch=whiteout%2Fpreview#fe1e1e4237dba1d14e30ceb34aee2b6d749e08cd"
 dependencies = [
  "jolt-algebra",
  "jolt-crypto",
@@ -174,7 +172,7 @@ dependencies = [
 [[package]]
 name = "akita-labinius-prover"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?branch=whiteout%2Fpreview#1ddb56babace17c928e1e65e6508b046a7206c0f"
+source = "git+https://github.com/LayerZero-Labs/akita.git?branch=whiteout%2Fpreview#fe1e1e4237dba1d14e30ceb34aee2b6d749e08cd"
 dependencies = [
  "akita-algebra",
  "akita-challenges",
@@ -192,7 +190,7 @@ dependencies = [
 [[package]]
 name = "akita-labinius-verifier"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?branch=whiteout%2Fpreview#1ddb56babace17c928e1e65e6508b046a7206c0f"
+source = "git+https://github.com/LayerZero-Labs/akita.git?branch=whiteout%2Fpreview#fe1e1e4237dba1d14e30ceb34aee2b6d749e08cd"
 dependencies = [
  "akita-algebra",
  "akita-challenges",
@@ -209,7 +207,7 @@ dependencies = [
 [[package]]
 name = "akita-params"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?branch=whiteout%2Fpreview#1ddb56babace17c928e1e65e6508b046a7206c0f"
+source = "git+https://github.com/LayerZero-Labs/akita.git?branch=whiteout%2Fpreview#fe1e1e4237dba1d14e30ceb34aee2b6d749e08cd"
 dependencies = [
  "akita-algebra",
  "akita-challenges",
@@ -229,7 +227,7 @@ dependencies = [
 [[package]]
 name = "akita-pcs"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?branch=whiteout%2Fpreview#1ddb56babace17c928e1e65e6508b046a7206c0f"
+source = "git+https://github.com/LayerZero-Labs/akita.git?branch=whiteout%2Fpreview#fe1e1e4237dba1d14e30ceb34aee2b6d749e08cd"
 dependencies = [
  "akita-algebra",
  "akita-config",
@@ -255,7 +253,7 @@ dependencies = [
 [[package]]
 name = "akita-planner"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?branch=whiteout%2Fpreview#1ddb56babace17c928e1e65e6508b046a7206c0f"
+source = "git+https://github.com/LayerZero-Labs/akita.git?branch=whiteout%2Fpreview#fe1e1e4237dba1d14e30ceb34aee2b6d749e08cd"
 dependencies = [
  "akita-error",
  "akita-params",
@@ -268,7 +266,7 @@ dependencies = [
 [[package]]
 name = "akita-prover"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?branch=whiteout%2Fpreview#1ddb56babace17c928e1e65e6508b046a7206c0f"
+source = "git+https://github.com/LayerZero-Labs/akita.git?branch=whiteout%2Fpreview#fe1e1e4237dba1d14e30ceb34aee2b6d749e08cd"
 dependencies = [
  "akita-algebra",
  "akita-config",
@@ -290,7 +288,7 @@ dependencies = [
 [[package]]
 name = "akita-schedules"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?branch=whiteout%2Fpreview#1ddb56babace17c928e1e65e6508b046a7206c0f"
+source = "git+https://github.com/LayerZero-Labs/akita.git?branch=whiteout%2Fpreview#fe1e1e4237dba1d14e30ceb34aee2b6d749e08cd"
 dependencies = [
  "akita-error",
  "akita-params",
@@ -304,7 +302,7 @@ dependencies = [
 [[package]]
 name = "akita-serialization"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?branch=whiteout%2Fpreview#1ddb56babace17c928e1e65e6508b046a7206c0f"
+source = "git+https://github.com/LayerZero-Labs/akita.git?branch=whiteout%2Fpreview#fe1e1e4237dba1d14e30ceb34aee2b6d749e08cd"
 dependencies = [
  "jolt-algebra",
  "jolt-crypto",
@@ -315,7 +313,7 @@ dependencies = [
 [[package]]
 name = "akita-setup"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?branch=whiteout%2Fpreview#1ddb56babace17c928e1e65e6508b046a7206c0f"
+source = "git+https://github.com/LayerZero-Labs/akita.git?branch=whiteout%2Fpreview#fe1e1e4237dba1d14e30ceb34aee2b6d749e08cd"
 dependencies = [
  "akita-config",
  "akita-cpu-backend",
@@ -331,7 +329,7 @@ dependencies = [
 [[package]]
 name = "akita-sumcheck"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?branch=whiteout%2Fpreview#1ddb56babace17c928e1e65e6508b046a7206c0f"
+source = "git+https://github.com/LayerZero-Labs/akita.git?branch=whiteout%2Fpreview#fe1e1e4237dba1d14e30ceb34aee2b6d749e08cd"
 dependencies = [
  "akita-algebra",
  "akita-error",
@@ -344,7 +342,7 @@ dependencies = [
 [[package]]
 name = "akita-transcript"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?branch=whiteout%2Fpreview#1ddb56babace17c928e1e65e6508b046a7206c0f"
+source = "git+https://github.com/LayerZero-Labs/akita.git?branch=whiteout%2Fpreview#fe1e1e4237dba1d14e30ceb34aee2b6d749e08cd"
 dependencies = [
  "akita-error",
  "jolt-algebra",
@@ -356,7 +354,7 @@ dependencies = [
 [[package]]
 name = "akita-types"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?branch=whiteout%2Fpreview#1ddb56babace17c928e1e65e6508b046a7206c0f"
+source = "git+https://github.com/LayerZero-Labs/akita.git?branch=whiteout%2Fpreview#fe1e1e4237dba1d14e30ceb34aee2b6d749e08cd"
 dependencies = [
  "akita-algebra",
  "akita-challenges",
@@ -368,7 +366,6 @@ dependencies = [
  "jolt-algebra",
  "jolt-crypto",
  "jolt-poly",
- "jolt-sumcheck",
  "jolt-transcript",
  "jolt-zk",
  "rand_core 0.6.4",
@@ -380,7 +377,7 @@ dependencies = [
 [[package]]
 name = "akita-verifier"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?branch=whiteout%2Fpreview#1ddb56babace17c928e1e65e6508b046a7206c0f"
+source = "git+https://github.com/LayerZero-Labs/akita.git?branch=whiteout%2Fpreview#fe1e1e4237dba1d14e30ceb34aee2b6d749e08cd"
 dependencies = [
  "akita-algebra",
  "akita-config",
@@ -1817,7 +1814,7 @@ version = "3.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "faf9468729b8cbcea668e36183cb69d317348c2e08e994829fb56ebfdfbaac34"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3359,6 +3356,7 @@ dependencies = [
  "akita-params",
  "akita-pcs",
  "akita-planner",
+ "akita-prover",
  "akita-schedules",
  "akita-transcript",
  "akita-types",
@@ -3368,6 +3366,7 @@ dependencies = [
  "jolt-claims",
  "jolt-crypto",
  "jolt-openings",
+ "jolt-platform",
  "jolt-poly",
  "jolt-transcript",
  "jolt-zk",
@@ -3379,6 +3378,85 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.20",
  "tracing",
+]
+
+[[package]]
+name = "jolt-akita-advice-guest"
+version = "0.1.0"
+dependencies = [
+ "jolt-akita",
+ "jolt-akita-external",
+ "jolt-sdk",
+]
+
+[[package]]
+name = "jolt-akita-external"
+version = "0.1.0"
+dependencies = [
+ "akita-types",
+ "anyhow",
+ "bincode 2.0.1",
+ "common",
+ "jolt-akita",
+ "jolt-akita-recursion",
+ "jolt-algebra",
+ "jolt-host",
+ "jolt-inlines-blake2",
+ "jolt-inlines-keccak256",
+ "jolt-verifier",
+ "postcard",
+ "serde",
+ "serde_json",
+ "tracer",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "jolt-akita-external-guest"
+version = "0.1.0"
+dependencies = [
+ "jolt-akita",
+ "jolt-akita-external",
+ "jolt-sdk",
+]
+
+[[package]]
+name = "jolt-akita-recursion"
+version = "0.1.0"
+dependencies = [
+ "akita-params",
+ "akita-planner",
+ "akita-types",
+ "bincode 2.0.1",
+ "clap",
+ "common",
+ "jolt-akita",
+ "jolt-crypto",
+ "jolt-host",
+ "jolt-inlines-blake2",
+ "jolt-inlines-keccak256",
+ "jolt-inlines-sha2",
+ "jolt-openings",
+ "jolt-program",
+ "jolt-prover",
+ "jolt-verifier",
+ "jolt-witness",
+ "postcard",
+ "serde",
+ "serde_json",
+ "tracer",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "jolt-akita-recursion-guest"
+version = "0.1.0"
+dependencies = [
+ "jolt-akita",
+ "jolt-akita-recursion",
+ "jolt-sdk",
 ]
 
 [[package]]
@@ -3919,6 +3997,7 @@ dependencies = [
  "jolt-dory",
  "jolt-host",
  "jolt-inlines-keccak256",
+ "jolt-inlines-secp256k1",
  "jolt-inlines-sha2",
  "jolt-kernels",
  "jolt-lookup-tables",
@@ -4132,6 +4211,7 @@ dependencies = [
  "serde_json",
  "sha3 0.12.0",
  "syn 3.0.9",
+ "tempfile",
  "thiserror 2.0.20",
  "tracer",
  "tracing",
@@ -5340,7 +5420,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "22505a5c94da8e3b7c2996394d1c933236c4d743e81a410bcca4e6989fc066a4"
 dependencies = [
  "bytes",
- "heck 0.4.1",
+ "heck 0.5.0",
  "itertools 0.10.5",
  "log",
  "multimap",
@@ -5606,7 +5686,6 @@ dependencies = [
  "jolt-akita",
  "jolt-algebra",
  "jolt-inlines-blake2",
- "jolt-inlines-keccak256",
  "jolt-inlines-ntt",
  "jolt-poly",
  "jolt-program",
@@ -5632,7 +5711,6 @@ dependencies = [
  "jolt-inlines-blake2",
  "jolt-riscv",
  "jolt-sdk",
- "jolt-transcript",
  "serde",
 ]
 
@@ -6822,9 +6900,9 @@ dependencies = [
 
 [[package]]
 name = "sysinfo"
-version = "0.39.6"
+version = "0.40.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d2071df9448915b71c4fe6d25deaf1c22f12bd234f01540b77312bb8e41361e6"
+checksum = "0e8a3edbe0394ce115f3917a00349dd242be09eb5a091ed509eaf67b55cfb8a8"
 dependencies = [
  "libc",
  "memchr",
@@ -7502,7 +7580,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
