@@ -644,7 +644,7 @@ mod tests {
     use jolt_crypto::{Pedersen, VectorCommitment};
     use jolt_field::{Field, Ring};
     use jolt_poly::Polynomial;
-    use jolt_transcript::Blake2bTranscript;
+    use jolt_transcript::{prover_transcript, Blake2b512};
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;
 
@@ -697,7 +697,9 @@ mod tests {
             .all(|row| *row == <ArkG1 as DoryGroup>::identity()));
         row_commitments.truncate(1 << WIDE.0);
         let ark_point: Vec<ArkFr> = point.iter().rev().map(jolt_fr_to_ark).collect();
-        let mut transcript = Blake2bTranscript::new(b"matrix-shape");
+        let mut transcript =
+            prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"matrix-shape"), b"");
+        let mut dory_transcript = JoltToDoryTranscript::new(&mut transcript);
         let (proof, _) = dory::prove::<ArkFr, InnerBN254, JoltG1Routines, JoltG2Routines, _, _, M>(
             &DorySourceAdapter::new(wide),
             &ark_point,
@@ -706,9 +708,10 @@ mod tests {
             WIDE.0,
             WIDE.1,
             &setup.0,
-            &mut JoltToDoryTranscript::new(&mut transcript),
+            &mut dory_transcript,
         )
         .unwrap();
+        dory_transcript.finish().unwrap();
         DoryProof(proof)
     }
 
@@ -721,16 +724,18 @@ mod tests {
         setup: &DoryVerifierSetup,
     ) -> bool {
         let ark_point: Vec<ArkFr> = point.iter().rev().map(jolt_fr_to_ark).collect();
-        let mut transcript = Blake2bTranscript::new(b"matrix-shape");
-        dory::verify::<ArkFr, InnerBN254, JoltG1Routines, JoltG2Routines, _>(
+        let mut transcript =
+            prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"matrix-shape"), b"");
+        let mut dory_transcript = JoltToDoryTranscript::new(&mut transcript);
+        let result = dory::verify::<ArkFr, InnerBN254, JoltG1Routines, JoltG2Routines, _>(
             jolt_gt_to_ark(&commitment.0),
             jolt_fr_to_ark(&eval),
             &ark_point,
             &proof.0,
             setup.0.clone().into_inner(),
-            &mut JoltToDoryTranscript::new(&mut transcript),
-        )
-        .is_ok()
+            &mut dory_transcript,
+        );
+        result.is_ok() && dory_transcript.finish().is_ok()
     }
 
     /// dory accepts an opening of a square commitment under a wider layout,
@@ -757,7 +762,8 @@ mod tests {
             &verifier_setup
         ));
 
-        let mut transcript = Blake2bTranscript::new(b"matrix-shape");
+        let mut transcript =
+            prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"matrix-shape"), b"");
         let result = DoryScheme::verify(
             &commitment,
             &point,
@@ -795,7 +801,8 @@ mod tests {
             &verifier_setup
         ));
 
-        let mut transcript = Blake2bTranscript::new(b"matrix-shape");
+        let mut transcript =
+            prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"matrix-shape"), b"");
         let result = DoryScheme::verify_zk(
             &commitment,
             &point,
