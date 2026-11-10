@@ -73,11 +73,13 @@ pub struct SingleReduction<E> {
 
 mod channels;
 #[cfg(feature = "prover")]
+mod prover;
+#[cfg(feature = "prover")]
 mod rounds;
 mod shape;
 pub use channels::{BindScalarClaim, ClearVerifierRounds, VerifierRoundChannel};
 #[cfg(feature = "prover")]
-pub use channels::{ClearProverRounds, ProverRoundChannel};
+pub use prover::{ClearProverRounds, ProverRoundChannel};
 #[cfg(feature = "prover")]
 pub use rounds::{FullRounds, ProveSingleRounds, ProverRound};
 pub use shape::{SumcheckShape, SumcheckShapeError};
