@@ -359,6 +359,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cdd35008169921d80bc60d3d0ab416eecb028c4cd653352907921d95084790be"
 dependencies = [
  "hybrid-array",
+ "zeroize",
 ]
 
 [[package]]
@@ -406,6 +407,18 @@ name = "cfg-if"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9330f8b2ff13f34540b44e946ef35111825727b38d33286ef986142615121801"
+
+[[package]]
+name = "chacha20"
+version = "0.10.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "65c35e4b699c7e15ccbe7ee35c005e4fc0a278d22238a2857e6ce2dadeda1b06"
+dependencies = [
+ "cfg-if",
+ "cpufeatures",
+ "rand_core 0.10.1",
+ "zeroize",
+]
 
 [[package]]
 name = "clap"
@@ -698,6 +711,7 @@ dependencies = [
  "const-oid",
  "crypto-common 0.2.1",
  "ctutils",
+ "zeroize",
 ]
 
 [[package]]
@@ -726,7 +740,7 @@ dependencies = [
  "blake2 0.10.6",
  "digest 0.10.7",
  "dory-derive",
- "rand_core",
+ "rand_core 0.6.4",
  "rayon",
  "serde",
  "thiserror 2.0.18",
@@ -1132,7 +1146,7 @@ dependencies = [
  "ark-serialize",
  "cc",
  "num-traits",
- "rand_core",
+ "rand_core 0.6.4",
  "rayon",
  "serde",
  "spongefish",
@@ -1182,7 +1196,7 @@ dependencies = [
  "num-bigint",
  "num-integer",
  "num-traits",
- "rand_core",
+ "rand_core 0.6.4",
  "rayon",
  "serde",
 ]
@@ -1414,7 +1428,7 @@ dependencies = [
  "jolt-transcript",
  "jolt-utils",
  "num-traits",
- "rand_core",
+ "rand_core 0.6.4",
  "rayon",
  "serde",
  "thiserror 2.0.18",
@@ -1525,7 +1539,7 @@ dependencies = [
  "jolt-poly",
  "jolt-r1cs",
  "jolt-transcript",
- "rand_core",
+ "rand_core 0.6.4",
  "serde",
  "thiserror 2.0.18",
  "tracing",
@@ -1551,12 +1565,15 @@ dependencies = [
  "ark-bn254",
  "ark-ff",
  "blake2 0.11.0-rc.6",
+ "chacha20",
  "getrandom 0.4.2",
  "jolt-field",
  "light-poseidon",
+ "rand_core 0.6.4",
  "sha3",
  "shake",
  "spongefish",
+ "zeroize",
 ]
 
 [[package]]
@@ -1640,7 +1657,7 @@ dependencies = [
  "jolt-sumcheck",
  "jolt-transcript",
  "jolt-utils",
- "rand_core",
+ "rand_core 0.6.4",
  "rayon",
  "serde",
  "thiserror 2.0.18",
@@ -2039,7 +2056,7 @@ checksum = "22f6172bdec972074665ed81ed53b71da00bfc44b65a753cfde883ec4c702a1a"
 dependencies = [
  "libc",
  "rand_chacha",
- "rand_core",
+ "rand_core 0.6.4",
 ]
 
 [[package]]
@@ -2049,7 +2066,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e6c10a63a0fa32252be49d21e7709d4d4baf8d231c2dbce1eaa8141b9b127d88"
 dependencies = [
  "ppv-lite86",
- "rand_core",
+ "rand_core 0.6.4",
 ]
 
 [[package]]
@@ -2060,6 +2077,12 @@ checksum = "ec0be4795e2f6a28069bec0b5ff3e2ac9bafc99e6a9a7dc3547996c5c816922c"
 dependencies = [
  "getrandom 0.2.17",
 ]
+
+[[package]]
+name = "rand_core"
+version = "0.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "63b8176103e19a2643978565ca18b50549f6101881c443590420e4dc998a3c69"
 
 [[package]]
 name = "rayon"
@@ -2408,6 +2431,9 @@ name = "sponge-cursor"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3a0219bd7d979d58245a4f41f695e1ac9f8befdffadd7f61f1bae9e39abc6620"
+dependencies = [
+ "zeroize",
+]
 
 [[package]]
 name = "spongefish"
@@ -2418,6 +2444,8 @@ dependencies = [
  "digest 0.11.2",
  "getrandom 0.4.2",
  "keccak",
+ "shake",
+ "turboshake",
  "zeroize",
 ]
 
@@ -2763,6 +2791,17 @@ checksum = "4e8ed0ecb931cdff13c6a13f45ccd615156e2779d9ffb0395864e05505e6e86d"
 dependencies = [
  "cc",
  "tree-sitter",
+]
+
+[[package]]
+name = "turboshake"
+version = "0.7.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f892c6904b0bd5a9241eac848347abcbbbd2b9f3892bad23ac3e6efab8d6f06a"
+dependencies = [
+ "digest 0.11.2",
+ "keccak",
+ "sponge-cursor",
 ]
 
 [[package]]
