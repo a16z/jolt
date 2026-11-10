@@ -32,10 +32,7 @@ struct FailingAllocator;
 #[global_allocator]
 static ALLOCATOR: FailingAllocator = FailingAllocator;
 thread_local! {
-    // Table storage is reserved on this thread before Rayon fills; scheduler
-    // bookkeeping on other threads is outside the allocation contract.
     static ARMED: Cell<bool> = const { Cell::new(false) };
-    static RESERVATIONS_LEFT: Cell<Option<usize>> = const { Cell::new(None) };
 }
 static SESSION: AtomicUsize = AtomicUsize::new(0);
 static ATTEMPTS: AtomicUsize = AtomicUsize::new(0);
@@ -111,14 +108,6 @@ impl FailingAllocator {
             if armed {
                 let _previous = LIVE.fetch_add(1, Ordering::SeqCst);
                 let _previous = BYTES.fetch_add(layout.size(), Ordering::SeqCst);
-                RESERVATIONS_LEFT.with(|remaining| match remaining.get() {
-                    Some(1) => {
-                        remaining.set(None);
-                        ARMED.with(|armed| armed.set(false));
-                    }
-                    Some(count) => remaining.set(Some(count - 1)),
-                    None => (),
-                });
             }
             base.add(offset)
         }
@@ -127,7 +116,6 @@ impl FailingAllocator {
 
 fn measure<T>(
     fail_at: usize,
-    reservations: usize,
     build: impl FnOnce() -> Result<T, EqTableError>,
 ) -> (bool, usize, usize, usize) {
     let _previous = SESSION.fetch_add(1, Ordering::SeqCst);
@@ -135,16 +123,6 @@ fn measure<T>(
     LIVE.store(0, Ordering::SeqCst);
     BYTES.store(0, Ordering::SeqCst);
     FAIL_AT.store(fail_at, Ordering::SeqCst);
-    // External callers may allocate Rayon bookkeeping after reservation. Inside
-    // the warmed worker pool, monitor the whole call for output reallocations too.
-    let reservation_limit = (reservations != 0).then_some(reservations);
-    #[cfg(feature = "parallel")]
-    let reservation_limit = if rayon::current_thread_index().is_some() {
-        None
-    } else {
-        reservation_limit
-    };
-    RESERVATIONS_LEFT.with(|remaining| remaining.set(reservation_limit));
     ARMED.with(|armed| armed.set(true));
     let result = build();
     let expected = if fail_at == 0 {
@@ -165,13 +143,13 @@ fn measure<T>(
 fn sweep<T>(allocations: usize, bytes: usize, build: impl Fn() -> Result<T, EqTableError>) {
     // Runtime initialization is outside the table-reservation contract.
     drop(build().unwrap());
-    let (ok, attempts, live, allocated) = measure(0, allocations, &build);
+    let (ok, attempts, live, allocated) = measure(0, &build);
     assert!(ok);
     assert_eq!(attempts, allocations);
     assert_eq!(allocated, bytes);
     assert_eq!(live, 0);
     for k in 1..=allocations {
-        let (ok, attempts, live, _) = measure(k, allocations, &build);
+        let (ok, attempts, live, _) = measure(k, &build);
         assert!(ok, "allocation {k} did not return AllocationFailed");
         assert_eq!(attempts, k);
         assert_eq!(live, 0, "allocation {k} leaked an earlier buffer");
@@ -309,6 +287,19 @@ fn every_table_reservation_is_fallible_and_partial_failures_release_storage() {
         panic!("infallible allocator returned after injected OOM");
     }
     #[cfg(feature = "parallel")]
+    {
+        // A single worker prevents fill jobs from escaping the armed thread;
+        // startup completes before monitoring each entire measured call.
+        let pool = ThreadPoolBuilder::new().num_threads(1).build().unwrap();
+        drop(pool.broadcast(|_| ()));
+        pool.install(measured_builders);
+    }
+    #[cfg(not(feature = "parallel"))]
+    measured_builders();
+}
+
+fn measured_builders() {
+    #[cfg(feature = "parallel")]
     drop(rayon::broadcast(|_| ()));
     let point = [Fr::from_u64(2); 17];
     let budget = EqBudget {
@@ -328,7 +319,7 @@ fn every_table_reservation_is_fallible_and_partial_failures_release_storage() {
     gruen_builders::<NonZeroRepr, LOW_TO_HIGH>();
     #[cfg(feature = "parallel")]
     {
-        let pool = ThreadPoolBuilder::new().num_threads(4).build().unwrap();
+        let pool = ThreadPoolBuilder::new().num_threads(1).build().unwrap();
         // Complete worker startup before arming the builder-only sweep.
         drop(pool.broadcast(|_| ()));
         pool.install(|| {
