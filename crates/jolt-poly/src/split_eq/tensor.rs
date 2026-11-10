@@ -53,6 +53,8 @@ impl<F: Field> TensorEqTable<F> {
     }
 
     /// Fallible factorization; the cap covers both factor tables together.
+    /// Both buffers are reserved before filling. Rayon's runtime bookkeeping
+    /// allocations are outside the table-storage guarantee; see [`EqBudget`].
     #[track_caller]
     pub fn try_from_point<P: PointLike<Coord = F> + ?Sized>(
         point: &P,
@@ -73,9 +75,29 @@ impl<F: Field> TensorEqTable<F> {
             .checked_add(domain_len(in_bits)?)
             .ok_or(EqTableError::DimensionOverflow { num_vars: n })?;
         budget.check::<F>(elements, n)?;
-        let e_out =
-            EqPolynomial::<F>::try_evals(&point.msb_range(0..outer_vars), Some(scale), budget)?;
-        let e_in = EqPolynomial::<F>::try_evals(&point.msb_range(outer_vars..n), None, budget)?;
+        let mut e_out = EqPolynomial::<F>::try_evals_buffer(outer_vars, Some(scale))?;
+        let mut e_in = EqPolynomial::<F>::try_evals_buffer(in_bits, None)?;
+        let out_view = point.msb_range(0..outer_vars);
+        let in_view = point.msb_range(outer_vars..n);
+        let out_coords = out_view.coords();
+        let in_coords = in_view.coords();
+        let fill = |coords: &[F], values: &mut Vec<F>| {
+            if P::ENDIANNESS == HIGH_TO_LOW {
+                EqPolynomial::<F>::fill_evals(&PointRef::high_to_low(coords), values);
+            } else {
+                EqPolynomial::<F>::fill_evals(&PointRef::low_to_high(coords), values);
+            }
+        };
+        #[cfg(feature = "parallel")]
+        rayon::join(
+            || fill(out_coords, &mut e_out),
+            || fill(in_coords, &mut e_in),
+        );
+        #[cfg(not(feature = "parallel"))]
+        {
+            fill(out_coords, &mut e_out);
+            fill(in_coords, &mut e_in);
+        }
         Ok(Self {
             e_out,
             e_in,

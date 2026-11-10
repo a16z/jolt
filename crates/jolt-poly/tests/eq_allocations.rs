@@ -32,8 +32,10 @@ struct FailingAllocator;
 #[global_allocator]
 static ALLOCATOR: FailingAllocator = FailingAllocator;
 thread_local! {
-    // try_* fills are serial; unrelated runtime threads must not enter the sweep.
+    // Table storage is reserved on this thread before Rayon fills; scheduler
+    // bookkeeping on other threads is outside the allocation contract.
     static ARMED: Cell<bool> = const { Cell::new(false) };
+    static RESERVATIONS_LEFT: Cell<Option<usize>> = const { Cell::new(None) };
 }
 static SESSION: AtomicUsize = AtomicUsize::new(0);
 static ATTEMPTS: AtomicUsize = AtomicUsize::new(0);
@@ -109,6 +111,14 @@ impl FailingAllocator {
             if armed {
                 let _previous = LIVE.fetch_add(1, Ordering::SeqCst);
                 let _previous = BYTES.fetch_add(layout.size(), Ordering::SeqCst);
+                RESERVATIONS_LEFT.with(|remaining| match remaining.get() {
+                    Some(1) => {
+                        remaining.set(None);
+                        ARMED.with(|armed| armed.set(false));
+                    }
+                    Some(count) => remaining.set(Some(count - 1)),
+                    None => (),
+                });
             }
             base.add(offset)
         }
@@ -117,6 +127,7 @@ impl FailingAllocator {
 
 fn measure<T>(
     fail_at: usize,
+    reservations: usize,
     build: impl FnOnce() -> Result<T, EqTableError>,
 ) -> (bool, usize, usize, usize) {
     let _previous = SESSION.fetch_add(1, Ordering::SeqCst);
@@ -124,6 +135,16 @@ fn measure<T>(
     LIVE.store(0, Ordering::SeqCst);
     BYTES.store(0, Ordering::SeqCst);
     FAIL_AT.store(fail_at, Ordering::SeqCst);
+    // External callers may allocate Rayon bookkeeping after reservation. Inside
+    // the warmed worker pool, monitor the whole call for output reallocations too.
+    let reservation_limit = (reservations != 0).then_some(reservations);
+    #[cfg(feature = "parallel")]
+    let reservation_limit = if rayon::current_thread_index().is_some() {
+        None
+    } else {
+        reservation_limit
+    };
+    RESERVATIONS_LEFT.with(|remaining| remaining.set(reservation_limit));
     ARMED.with(|armed| armed.set(true));
     let result = build();
     let expected = if fail_at == 0 {
@@ -142,13 +163,15 @@ fn measure<T>(
 }
 
 fn sweep<T>(allocations: usize, bytes: usize, build: impl Fn() -> Result<T, EqTableError>) {
-    let (ok, attempts, live, allocated) = measure(0, &build);
+    // Runtime initialization is outside the table-reservation contract.
+    drop(build().unwrap());
+    let (ok, attempts, live, allocated) = measure(0, allocations, &build);
     assert!(ok);
     assert_eq!(attempts, allocations);
     assert_eq!(allocated, bytes);
     assert_eq!(live, 0);
     for k in 1..=allocations {
-        let (ok, attempts, live, _) = measure(k, &build);
+        let (ok, attempts, live, _) = measure(k, allocations, &build);
         assert!(ok, "allocation {k} did not return AllocationFailed");
         assert_eq!(attempts, k);
         assert_eq!(live, 0, "allocation {k} leaked an earlier buffer");
@@ -274,7 +297,7 @@ fn gruen_builders<F: Field, const E: Endianness>() {
 }
 
 #[test]
-fn every_builder_allocation_is_fallible_and_partial_failures_release_storage() {
+fn every_table_reservation_is_fallible_and_partial_failures_release_storage() {
     if let Some(mode) = std::env::var_os("JOLT_EQ_ALLOC_ABORT") {
         FAIL_AT.store(1, Ordering::SeqCst);
         ARMED.with(|armed| armed.set(true));
@@ -285,15 +308,17 @@ fn every_builder_allocation_is_fallible_and_partial_failures_release_storage() {
         }
         panic!("infallible allocator returned after injected OOM");
     }
-    let cold = [Fr::from_u64(2); 17];
+    #[cfg(feature = "parallel")]
+    drop(rayon::broadcast(|_| ()));
+    let point = [Fr::from_u64(2); 17];
     let budget = EqBudget {
         max_bytes: usize::MAX,
     };
     sweep(1, (1 << 17) * size_of::<Fr>(), || {
-        EqPolynomial::<Fr>::try_evals(&cold, None, budget)
+        EqPolynomial::<Fr>::try_evals(&point, None, budget)
     });
     sweep(1, (1 << 17) * size_of::<Fr>(), || {
-        EqPolynomial::<Fr>::try_evals_mapped(&cold, None, |x| x * x, budget)
+        EqPolynomial::<Fr>::try_evals_mapped(&point, None, |x| x * x, budget)
     });
     builders::<Fr>();
     builders::<NonZeroRepr>();
@@ -307,6 +332,12 @@ fn every_builder_allocation_is_fallible_and_partial_failures_release_storage() {
         // Complete worker startup before arming the builder-only sweep.
         drop(pool.broadcast(|_| ()));
         pool.install(|| {
+            builders::<Fr>();
+            builders::<NonZeroRepr>();
+            gruen_builders::<Fr, HIGH_TO_LOW>();
+            gruen_builders::<Fr, LOW_TO_HIGH>();
+            gruen_builders::<NonZeroRepr, HIGH_TO_LOW>();
+            gruen_builders::<NonZeroRepr, LOW_TO_HIGH>();
             let warm = [Fr::from_u64(2); 17];
             for n in [14, 15, 16, 17] {
                 let point = &warm[..n];
@@ -347,7 +378,7 @@ fn every_builder_allocation_is_fallible_and_partial_failures_release_storage() {
         let output = Command::new(std::env::current_exe().unwrap())
             .args([
                 "--exact",
-                "every_builder_allocation_is_fallible_and_partial_failures_release_storage",
+                "every_table_reservation_is_fallible_and_partial_failures_release_storage",
             ])
             .env("JOLT_EQ_ALLOC_ABORT", mode)
             .output()

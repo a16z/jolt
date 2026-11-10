@@ -56,9 +56,7 @@ impl<F: Field> GruenSplitEqPolynomial<F> {
             };
         }
 
-        let (out_view, in_view) = Self::table_points(point, binding_order);
-        let out_point = out_view.coords();
-        let in_point = in_view.coords();
+        let (out_point, in_point) = Self::table_points(point, binding_order);
         match binding_order {
             BindingOrder::LowToHigh => {
                 #[cfg(feature = "parallel")]
@@ -107,6 +105,8 @@ impl<F: Field> GruenSplitEqPolynomial<F> {
     /// The cap covers the point and both caches' field elements, excluding Vec headers.
     /// Empty points are accepted as a finished constant polynomial.
     /// High-to-low binding keeps the more significant variables in the inner cache.
+    /// All point/cache storage is reserved fallibly before parallel filling.
+    /// Rayon's pool and scheduler bookkeeping is outside this guarantee; see [`EqBudget`].
     #[track_caller]
     pub fn try_from_point<P: PointLike<Coord = F> + ?Sized>(
         point: &P,
@@ -116,28 +116,30 @@ impl<F: Field> GruenSplitEqPolynomial<F> {
     ) -> Result<Self, EqTableError> {
         let n = point.num_vars();
         let _domain = domain_len(n)?;
-        let (out_point, in_point) = Self::table_points(point, binding_order);
-        let out_elements = cached_elements(out_point.num_vars())?;
-        let in_elements = cached_elements(in_point.num_vars())?;
+        let (out_shape, in_shape) = Self::table_points(point.coords(), binding_order);
+        let out_vars = out_shape.len();
+        let in_vars = in_shape.len();
+        let out_elements = cached_elements(out_vars)?;
+        let in_elements = cached_elements(in_vars)?;
         let elements = n
             .checked_add(out_elements)
             .and_then(|elements| elements.checked_add(in_elements))
             .ok_or(EqTableError::DimensionOverflow { num_vars: n })?;
         budget.check::<F>(elements, n)?;
         let mut canonical_point = try_storage(n, n)?;
-        for k in 0..n {
-            canonical_point.push(point.msb(k));
+        let mut e_out_vec = EqPolynomial::<F>::try_cached_buffers(out_vars, None)?;
+        let mut e_in_vec = EqPolynomial::<F>::try_cached_buffers(in_vars, None)?;
+        if P::ENDIANNESS == HIGH_TO_LOW {
+            canonical_point.extend_from_slice(point.coords());
+        } else {
+            canonical_point.extend(point.coords().iter().rev().copied());
         }
-        let (e_out_vec, e_in_vec) = match binding_order {
-            BindingOrder::LowToHigh => (
-                EqPolynomial::<F>::try_evals_cached_msb(&out_point, None, budget)?,
-                EqPolynomial::<F>::try_evals_cached_msb(&in_point, None, budget)?,
-            ),
-            BindingOrder::HighToLow => (
-                EqPolynomial::<F>::try_evals_cached_lsb(&out_point, None, budget)?,
-                EqPolynomial::<F>::try_evals_cached_lsb(&in_point, None, budget)?,
-            ),
-        };
+        Self::fill_tables(
+            &canonical_point,
+            binding_order,
+            &mut e_out_vec,
+            &mut e_in_vec,
+        );
         Ok(Self {
             current_index: match binding_order {
                 BindingOrder::LowToHigh => n,
@@ -152,19 +154,56 @@ impl<F: Field> GruenSplitEqPolynomial<F> {
     }
 
     #[inline]
-    fn table_points<P: PointLike<Coord = F> + ?Sized>(
-        point: &P,
+    fn fill_tables(
+        point: &[F],
         binding_order: BindingOrder,
-    ) -> (P::View<'_>, P::View<'_>) {
-        let n = point.num_vars();
-        if n == 0 {
-            return (point.msb_range(0..0), point.msb_range(0..0));
-        }
-        let split = n / 2;
+        e_out: &mut [Vec<F>],
+        e_in: &mut [Vec<F>],
+    ) {
+        let (out_point, in_point) = Self::table_points(point, binding_order);
         match binding_order {
-            BindingOrder::LowToHigh => (point.msb_range(0..split), point.msb_range(split..n - 1)),
+            BindingOrder::LowToHigh => {
+                #[cfg(feature = "parallel")]
+                let _filled = rayon::join(
+                    || EqPolynomial::<F>::fill_reserved_cached::<_, true>(out_point, e_out),
+                    || EqPolynomial::<F>::fill_reserved_cached::<_, true>(in_point, e_in),
+                );
+                #[cfg(not(feature = "parallel"))]
+                {
+                    EqPolynomial::<F>::fill_reserved_cached::<_, true>(out_point, e_out);
+                    EqPolynomial::<F>::fill_reserved_cached::<_, true>(in_point, e_in);
+                }
+            }
             BindingOrder::HighToLow => {
-                (point.msb_range(1 + split..n), point.msb_range(1..1 + split))
+                #[cfg(feature = "parallel")]
+                let _filled = rayon::join(
+                    || EqPolynomial::<F>::fill_reserved_cached::<_, false>(in_point, e_in),
+                    || EqPolynomial::<F>::fill_reserved_cached::<_, false>(out_point, e_out),
+                );
+                #[cfg(not(feature = "parallel"))]
+                {
+                    EqPolynomial::<F>::fill_reserved_cached::<_, false>(in_point, e_in);
+                    EqPolynomial::<F>::fill_reserved_cached::<_, false>(out_point, e_out);
+                }
+            }
+        }
+    }
+
+    #[inline(always)]
+    fn table_points(point: &[F], binding_order: BindingOrder) -> (&[F], &[F]) {
+        if point.is_empty() {
+            return (point, point);
+        }
+        let split = point.len() / 2;
+        match binding_order {
+            BindingOrder::LowToHigh => {
+                let head = &point[..point.len() - 1];
+                head.split_at(split.min(head.len()))
+            }
+            BindingOrder::HighToLow => {
+                let tail = &point[1..];
+                let (inner, outer) = tail.split_at(split.min(tail.len()));
+                (outer, inner)
             }
         }
     }
