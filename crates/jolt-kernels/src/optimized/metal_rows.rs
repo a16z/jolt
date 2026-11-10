@@ -31,6 +31,19 @@ pub(crate) struct UploadedRows {
     pub(crate) tail: [u64; 4],
 }
 
+impl UploadedRows {
+    /// Explicit transport fields derived only from the canonical typed row.
+    pub(crate) fn pack(row: &InstructionCycleRow) -> [u64; 4] {
+        let index = row.lookup_index();
+        [
+            index as u64,
+            (index >> 64) as u64,
+            row.bytecode_pc() as u64 | (u64::from(row.claim_byte()) << 56),
+            row.remapped_ram_address().map_or(0, |address| address + 1),
+        ]
+    }
+}
+
 impl ResidentInstructionRows {
     pub(crate) fn shared(
         session: &mut ProofSession,
@@ -65,6 +78,35 @@ impl ResidentInstructionRows {
         Ok(owner)
     }
 
+    /// Publish a completed projection of this exact source owner. The CPU
+    /// rows remain available to consumers that need their additional fields.
+    pub(crate) fn initialize(&self, values: UploadedRows) -> Result<(), MetalError> {
+        let invalid = |reason: &str| MetalError::InvalidDispatch {
+            pipeline: "compact RA rows".into(),
+            reason: reason.into(),
+        };
+        let rows = self
+            .source
+            .upgrade()
+            .ok_or_else(|| invalid("instruction source expired"))?;
+        if values.prefix.len() != rows.prefix_len()
+            || rows.representatives().last().map(UploadedRows::pack) != Some(values.tail)
+        {
+            return Err(invalid(
+                "instruction projection disagrees with source prefix/tail",
+            ));
+        }
+        let mut uploaded = self
+            .uploaded
+            .lock()
+            .map_err(|_| invalid("row cache lock poisoned"))?;
+        if uploaded.is_some() {
+            return Err(invalid("instruction projection was already initialized"));
+        }
+        *uploaded = Some(values);
+        Ok(())
+    }
+
     pub(crate) fn carry_to_next_stage(self: Arc<Self>, session: &mut ProofSession) {
         session.park(NextMetalRows(self));
     }
@@ -87,23 +129,14 @@ impl ResidentInstructionRows {
                 .source
                 .upgrade()
                 .ok_or_else(|| invalid("instruction rows were released before upload"))?;
-            let pack = |row: &InstructionCycleRow| {
-                let index = row.lookup_index();
-                [
-                    index as u64,
-                    (index >> 64) as u64,
-                    row.bytecode_pc() as u64 | (u64::from(row.claim_byte()) << 56),
-                    row.remapped_ram_address().map_or(0, |address| address + 1),
-                ]
-            };
             let tail = rows
                 .representatives()
                 .last()
                 .ok_or_else(|| invalid("empty instruction domain"))?;
-            let values = map_indices(rows.prefix_len(), |row| pack(&rows[row]));
+            let values = map_indices(rows.prefix_len(), |row| UploadedRows::pack(&rows[row]));
             *uploaded = Some(UploadedRows {
                 prefix: DeviceBuffer::from_slice(device, &values)?,
-                tail: pack(tail),
+                tail: UploadedRows::pack(tail),
             });
         }
         Ok(uploaded)

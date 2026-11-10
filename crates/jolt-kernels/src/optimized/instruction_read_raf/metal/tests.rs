@@ -17,7 +17,10 @@ fn compact_read_raf_matches_reference_through_device_handoff() {
     address::check_suffixes(&gpu.0).unwrap();
     // Nine factors covers the cached constant products; seventeen factors
     // reaches width four on a small domain with the production lazy policy.
-    for (log_t, virtuals, prefix, zero_tail) in [(10, 8, 1001, true), (16, 16, 40001, false)] {
+    // Its aligned prefix puts the constant-suffix weight in a tail-only block.
+    for (log_t, virtuals, prefix, zero_tail) in
+        [(10, 8, 1001, true), (16, 16, 40 * SCAN_BLOCK, false)]
+    {
         let dimensions = InstructionReadRafDimensions::new(
             log_t,
             2 * RISCV_XLEN,
@@ -52,7 +55,9 @@ fn compact_read_raf_matches_reference_through_device_handoff() {
             &point,
             Arc::clone(&source),
             gamma,
-            |host| {
+            |input| {
+                let (host, projected_owner) = build_projected_scan(&gpu.0, &mut session, input)?;
+                assert!(Arc::ptr_eq(&owner, &projected_owner));
                 let device =
                     address::DeviceAddressScan::try_new(Arc::clone(&gpu.0), &mut session, &host, 0)
                         .map_err(compute_error)?

@@ -41,6 +41,8 @@ mod cycle_groups;
 pub(crate) mod metal;
 
 use cycle_groups::CyclePairGroups;
+#[cfg(feature = "metal")]
+use std::mem::MaybeUninit;
 use std::num::NonZeroU16;
 use std::sync::{Arc, Weak};
 
@@ -922,6 +924,117 @@ trait AddressPhaseScanner<F: JoltField>: crate::MaybeAllocative + Send {
     fn scan(&mut self, request: &PhaseScan<'_, F>) -> Result<PhaseSums<F>, SumcheckError<F>>;
 }
 
+/// Validated rows and initial weights before canonical class coalescing.
+/// A backend may initialize a typed row sidecar during that same pass.
+struct AddressScanInput<F: JoltField> {
+    rows: Arc<ConstantSuffix<InstructionCycleRow>>,
+    weights: Vec<F>,
+}
+
+impl<F: JoltField> AddressScanInput<F> {
+    fn build(mut self) -> HostAddressScan<F> {
+        let scan_rows = &self.rows.representatives()[..self.weights.len()];
+        let blocks = if ScanBlock::should_coalesce(scan_rows) {
+            #[cfg(feature = "parallel")]
+            let chunks = self.weights.par_chunks_mut(SCAN_BLOCK);
+            #[cfg(not(feature = "parallel"))]
+            let chunks = self.weights.chunks_mut(SCAN_BLOCK);
+            let coalesce = |cache: &mut RepeatCache<NonZeroU16>,
+                            (block, weights): (usize, &mut [F])| {
+                ScanBlock::coalesced(
+                    &scan_rows[block * SCAN_BLOCK..block * SCAN_BLOCK + weights.len()],
+                    weights,
+                    cache,
+                )
+            };
+            #[cfg(feature = "parallel")]
+            let blocks = chunks
+                .enumerate()
+                .map_init(|| RepeatCache::new(SCAN_BLOCK), coalesce)
+                .collect();
+            #[cfg(not(feature = "parallel"))]
+            let blocks = {
+                let mut cache = RepeatCache::new(SCAN_BLOCK);
+                chunks
+                    .enumerate()
+                    .map(|item| coalesce(&mut cache, item))
+                    .collect()
+            };
+            blocks
+        } else {
+            map_indices(scan_rows.len().div_ceil(SCAN_BLOCK), |block| {
+                ScanBlock::new(
+                    &scan_rows[block * SCAN_BLOCK..((block + 1) * SCAN_BLOCK).min(scan_rows.len())],
+                )
+            })
+        };
+        HostAddressScan {
+            rows: self.rows,
+            blocks: ScanBlocks::new(blocks),
+            weights: self.weights,
+        }
+    }
+
+    #[cfg(feature = "metal")]
+    fn build_with_projection<P: Send>(
+        mut self,
+        destination: &mut [MaybeUninit<P>],
+        pack: impl Fn(&InstructionCycleRow) -> P + Send + Sync,
+    ) -> Result<HostAddressScan<F>, KernelError<F>> {
+        if destination.len() != self.rows.prefix_len() {
+            return Err(KernelError::InvariantViolation {
+                reason: "instruction projection has a different prefix extent",
+            });
+        }
+        let span = tracing::info_span!("instruction_scan_build_with_projection").entered();
+        let scan_rows = &self.rows.representatives()[..self.weights.len()];
+        let coalesce = ScanBlock::should_coalesce(scan_rows);
+        // The final aggregate weight may occupy a tail-only block. It gets an
+        // empty projection slice: UploadedRows keeps that tail separately.
+        let mut remaining = destination;
+        let mut tasks = Vec::with_capacity(self.weights.len().div_ceil(SCAN_BLOCK));
+        for (block, weights) in self.weights.chunks_mut(SCAN_BLOCK).enumerate() {
+            let count = weights.len().min(remaining.len());
+            let (slots, rest) = remaining.split_at_mut(count);
+            remaining = rest;
+            tasks.push((block, weights, slots));
+        }
+        let build =
+            |cache: &mut RepeatCache<NonZeroU16>,
+             (index, weights, slots): (usize, &mut [F], &mut [MaybeUninit<P>])| {
+                let rows = &scan_rows[index * SCAN_BLOCK..index * SCAN_BLOCK + weights.len()];
+                let block = if coalesce {
+                    ScanBlock::coalesced(rows, weights, cache)
+                } else {
+                    ScanBlock::new(rows)
+                };
+                for (slot, row) in slots.iter_mut().zip(rows) {
+                    let _ = slot.write(pack(row));
+                }
+                block
+            };
+        #[cfg(feature = "parallel")]
+        let blocks = tasks
+            .into_par_iter()
+            .map_init(|| RepeatCache::new(SCAN_BLOCK), build)
+            .collect();
+        #[cfg(not(feature = "parallel"))]
+        let blocks = {
+            let mut cache = RepeatCache::new(SCAN_BLOCK);
+            tasks
+                .into_iter()
+                .map(|task| build(&mut cache, task))
+                .collect()
+        };
+        drop(span);
+        Ok(HostAddressScan {
+            rows: self.rows,
+            blocks: ScanBlocks::new(blocks),
+            weights: self.weights,
+        })
+    }
+}
+
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct HostAddressScan<F: JoltField> {
     rows: Arc<ConstantSuffix<InstructionCycleRow>>,
@@ -1349,7 +1462,9 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
         witness: &dyn JoltWitnessPlane<F>,
         inputs: ProverInputs<'_, F, InstructionReadRaf<F>>,
     ) -> Result<Self, KernelError<F>> {
-        Self::prepare_with_scanner(session, witness, inputs, |_, host| Ok(Box::new(host)))
+        Self::prepare_with_scanner(session, witness, inputs, |_, input| {
+            Ok(Box::new(input.build()))
+        })
     }
 
     fn prepare_with_scanner(
@@ -1358,7 +1473,7 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
         inputs: ProverInputs<'_, F, InstructionReadRaf<F>>,
         scanner: impl FnOnce(
             &mut ProofSession,
-            HostAddressScan<F>,
+            AddressScanInput<F>,
         ) -> Result<Box<dyn AddressPhaseScanner<F>>, KernelError<F>>,
     ) -> Result<Self, KernelError<F>> {
         let dimensions = inputs.relation.dimensions();
@@ -1383,8 +1498,8 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
         rows: Arc<ConstantSuffix<InstructionCycleRow>>,
         gamma: F,
     ) -> Result<Self, KernelError<F>> {
-        Self::new_with_scanner(dimensions, r_reduction, rows, gamma, |host| {
-            Ok(Box::new(host))
+        Self::new_with_scanner(dimensions, r_reduction, rows, gamma, |input| {
+            Ok(Box::new(input.build()))
         })
     }
 
@@ -1394,7 +1509,7 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
         rows: Arc<ConstantSuffix<InstructionCycleRow>>,
         gamma: F,
         scanner: impl FnOnce(
-            HostAddressScan<F>,
+            AddressScanInput<F>,
         ) -> Result<Box<dyn AddressPhaseScanner<F>>, KernelError<F>>,
     ) -> Result<Self, KernelError<F>> {
         let address_bits = dimensions.instruction_address_bits();
@@ -1428,7 +1543,7 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
             });
         }
 
-        let mut u_evals = PrefixCycleWeights::new(r_reduction, rows.prefix_len()).to_dense();
+        let u_evals = PrefixCycleWeights::new(r_reduction, rows.prefix_len()).to_dense();
         let scan_rows = &rows.representatives()[..u_evals.len()];
         let num_tables = LookupTableKind::<RISCV_XLEN>::COUNT;
         let present_tables = map_reduce_chunks(
@@ -1465,43 +1580,8 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
             .filter_map(|(index, present)| present.then_some(index))
             .collect();
 
-        let blocks = if ScanBlock::should_coalesce(scan_rows) {
-            #[cfg(feature = "parallel")]
-            let chunks = u_evals.par_chunks_mut(SCAN_BLOCK);
-            #[cfg(not(feature = "parallel"))]
-            let chunks = u_evals.chunks_mut(SCAN_BLOCK);
-            let coalesce = |cache: &mut RepeatCache<NonZeroU16>,
-                            (block, weights): (usize, &mut [F])| {
-                ScanBlock::coalesced(
-                    &scan_rows[block * SCAN_BLOCK..block * SCAN_BLOCK + weights.len()],
-                    weights,
-                    cache,
-                )
-            };
-            #[cfg(feature = "parallel")]
-            let blocks = chunks
-                .enumerate()
-                .map_init(|| RepeatCache::new(SCAN_BLOCK), coalesce)
-                .collect();
-            #[cfg(not(feature = "parallel"))]
-            let blocks = {
-                let mut cache = RepeatCache::new(SCAN_BLOCK);
-                chunks
-                    .enumerate()
-                    .map(|item| coalesce(&mut cache, item))
-                    .collect()
-            };
-            blocks
-        } else {
-            map_indices(scan_rows.len().div_ceil(SCAN_BLOCK), |block| {
-                ScanBlock::new(
-                    &scan_rows[block * SCAN_BLOCK..((block + 1) * SCAN_BLOCK).min(scan_rows.len())],
-                )
-            })
-        };
-        let address_scan = scanner(HostAddressScan {
+        let address_scan = scanner(AddressScanInput {
             rows: Arc::clone(&rows),
-            blocks: ScanBlocks::new(blocks),
             weights: u_evals,
         })?;
         let mut kernel = Self {

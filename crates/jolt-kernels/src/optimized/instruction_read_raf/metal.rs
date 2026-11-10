@@ -66,16 +66,8 @@ impl PrepareKernel<AkitaField, InstructionReadRaf<AkitaField>> for MetalInstruct
             session,
             witness,
             inputs,
-            |session, host| match address::DeviceAddressScan::try_new(
-                Arc::clone(&self.0),
-                session,
-                &host,
-                MIN_GPU_PREFIX,
-            )
-            .map_err(compute_error)?
-            {
-                Some(device) => Ok(Box::new(device)),
-                None => Ok(Box::new(host)),
+            |session, input| {
+                prepare_address_scan(Arc::clone(&self.0), session, input, MIN_GPU_PREFIX)
             },
         )?;
         let resident = ResidentInstructionRows::shared(session, &cpu.rows)?;
@@ -86,6 +78,66 @@ impl PrepareKernel<AkitaField, InstructionReadRaf<AkitaField>> for MetalInstruct
             gpu: Arc::clone(&self.0),
         }))
     }
+}
+
+fn prepare_address_scan(
+    gpu: Arc<ReadRafGpu>,
+    session: &mut ProofSession,
+    input: AddressScanInput<AkitaField>,
+    minimum: usize,
+) -> Result<Box<dyn AddressPhaseScanner<AkitaField>>, KernelError<AkitaField>> {
+    if input.weights.len() < minimum {
+        return Ok(Box::new(input.build()));
+    }
+    let (host, owner) = build_projected_scan(&gpu, session, input)?;
+    match address::DeviceAddressScan::try_new(gpu, session, &host, minimum)
+        .map_err(compute_error)?
+    {
+        Some(device) => Ok(Box::new(device)),
+        None => {
+            // The cycle consumer can still reuse the completed projection
+            // when address-specific admission declines.
+            owner.carry_to_next_stage(session);
+            Ok(Box::new(host))
+        }
+    }
+}
+
+fn build_projected_scan(
+    gpu: &ReadRafGpu,
+    session: &mut ProofSession,
+    input: AddressScanInput<AkitaField>,
+) -> Result<(HostAddressScan<AkitaField>, Arc<ResidentInstructionRows>), KernelError<AkitaField>> {
+    let _ = u32::try_from(input.weights.len())
+        .map_err(|_| compute_error(invalid("address scan exceeds 32-bit indexing")))?;
+    let owner = ResidentInstructionRows::shared(session, &input.rows)?;
+    let allocation = tracing::info_span!("metal_ra_rows_allocate").entered();
+    // Runtime admission checks the exact byte length and current device
+    // working set. No staging Vec or zero fill precedes the complete writes.
+    let mut projection =
+        DeviceBuffer::<MaybeUninit<[u64; 4]>>::uninit(&gpu.device, input.rows.prefix_len())
+            .map_err(compute_error)?;
+    drop(allocation);
+    let host = input.build_with_projection(
+        projection.write_uninit().map_err(compute_error)?,
+        UploadedRows::pack,
+    )?;
+    let tail = host
+        .rows
+        .representatives()
+        .last()
+        .ok_or_else(|| compute_error(invalid("empty instruction domain")))?;
+    // SAFETY: build_with_projection checked the exact prefix extent and
+    // initialized every complete [u64;4] through disjoint host slices.
+    // Arrays have no padding, and no GPU work has accessed the allocation.
+    let prefix = unsafe { projection.assume_init().map_err(compute_error)? };
+    owner
+        .initialize(UploadedRows {
+            prefix,
+            tail: UploadedRows::pack(tail),
+        })
+        .map_err(compute_error)?;
+    Ok((host, owner))
 }
 
 struct ReadRafGpu {
