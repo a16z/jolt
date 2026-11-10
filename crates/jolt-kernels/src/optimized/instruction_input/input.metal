@@ -20,21 +20,12 @@ inline uint4 input_merge(uint4 low, uint4 high, uint bits) {
     }
     return word;
 }
-// Full signed i128, including MIN, without signed negation or overflow.
-// Keep this consumer conversion private until another live consumer needs it.
-template <typename F> F input_signed(ulong low, ulong high) {
-    F lo = F::from_u64(low);
-    if (high == 0) return lo;
-    F radix = F::from_u64(1ul << 63) + F::from_u64(1ul << 63);
-    if (high == ~0ul) return lo - radix;
-    return lo + F::from_i64(as_type<long>(high)) * radix;
-}
 template <typename F> F input_operand(InputNative row, uint column) {
     switch (column) {
         case 0: return F::from_u64(row.rs1);
         case 1: return F::from_u64(row.pc);
         case 2: return F::from_u64(row.rs2);
-        case 3: return input_signed<F>(row.imm_lo, row.imm_hi);
+        case 3: return jolt::from_i128<F>(ulong2(row.imm_lo, row.imm_hi));
         default: return F::from_u64(row.rd);
     }
 }

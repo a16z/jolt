@@ -97,12 +97,14 @@ const COLLECT_CHUNK: usize = 1 << 16;
 /// Cycles per chunk of the parallel collect.
 const COLLECT_PAR_CHUNK: usize = 1 << 14;
 
-/// Signed rd write delta, or zero without an rd operand.
-#[inline]
-pub(super) fn raw_rd_inc(cycle: &RegisterCycleRow) -> i128 {
-    match cycle.rd {
-        Some((_, pre, post)) => post as i128 - pre as i128,
-        None => 0,
+impl RegisterCycleRow {
+    /// Signed rd write delta, or zero without an rd operand.
+    #[inline]
+    pub(crate) fn write_increment(&self) -> i128 {
+        match self.rd {
+            Some((_, pre, post)) => post as i128 - pre as i128,
+            None => 0,
+        }
     }
 }
 
@@ -242,7 +244,7 @@ impl StreamConsumer for CollectRegisterEntries {
             self.rs1_indices.push(cycle.rs1.map(|(k, _)| k));
             self.rs2_indices.push(cycle.rs2.map(|(k, _)| k));
             self.rd_indices.push(cycle.rd.map(|(k, ..)| k));
-            self.rd_inc.push(raw_rd_inc(cycle));
+            self.rd_inc.push(cycle.write_increment());
         }
     }
 }
@@ -340,7 +342,7 @@ impl CollectRegisterEntries {
                             let _ = rs1[offset].write(cycle.rs1.map(|(k, _)| k));
                             let _ = rs2[offset].write(cycle.rs2.map(|(k, _)| k));
                             let _ = rd[offset].write(cycle.rd.map(|(k, ..)| k));
-                            let _ = inc[offset].write(raw_rd_inc(&cycle));
+                            let _ = inc[offset].write(cycle.write_increment());
                         }
                         Err(failure) => {
                             error.record(base + offset, failure);

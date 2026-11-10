@@ -48,7 +48,7 @@ impl Topology {
 struct Seed {
     entries: DeviceBuffer<SeedEntry>,
     offsets: DeviceBuffer<u32>,
-    raw_inc: DeviceBuffer<i128>,
+    raw_inc: Arc<Mutex<DeviceBuffer<i128>>>,
     rows: usize,
     topology: Topology,
     first: Option<F>,
@@ -165,6 +165,11 @@ enum Phase {
     Sparse(Sparse),
 }
 
+pub(super) struct PreparedDeviceCycle {
+    pub cycle: DeviceCycle,
+    pub increments: Arc<Mutex<DeviceBuffer<i128>>>,
+}
+
 pub(super) struct DeviceCycle {
     phase: Phase,
     ra_lut: CoeffLut<F>,
@@ -177,10 +182,10 @@ pub(super) struct BoundCycle {
 }
 
 impl DeviceCycle {
-    pub(super) fn new(
+    pub(super) fn prepare(
         gpu: &RegisterGpu,
         seed: SeedTransfer<F, DeviceBuffer<SeedEntry>>,
-    ) -> Result<Self, MetalError> {
+    ) -> Result<PreparedDeviceCycle, MetalError> {
         let _span = tracing::info_span!("metal_registers_upload").entered();
         let SeedTransfer {
             entries: mut device_entries,
@@ -226,18 +231,22 @@ impl DeviceCycle {
         offsets[groups] = entries.len() as u32;
         let topology = Topology::new(gpu, masks)?;
         drop(topology_span);
+        let raw_inc = Arc::new(Mutex::new(DeviceBuffer::from_slice(&gpu.device, &raw_inc)?));
         let seed = Seed {
             entries: device_entries,
             offsets: DeviceBuffer::from_slice(&gpu.device, &offsets)?,
-            raw_inc: DeviceBuffer::from_slice(&gpu.device, &raw_inc)?,
+            raw_inc: Arc::clone(&raw_inc),
             rows,
             topology,
             first: None,
         };
-        Ok(Self {
-            phase: Phase::Seed(seed),
-            ra_lut,
-            wa_lut,
+        Ok(PreparedDeviceCycle {
+            cycle: Self {
+                phase: Phase::Seed(seed),
+                ra_lut,
+                wa_lut,
+            },
+            increments: raw_inc,
         })
     }
 
@@ -269,13 +278,17 @@ impl DeviceCycle {
         let mut lut_advanced = false;
         let next = match self.phase {
             Phase::Seed(seed) => {
+                let raw_inc = seed
+                    .raw_inc
+                    .lock()
+                    .map_err(|_| invalid("increment source lock poisoned"))?;
                 // Structural topology is independent of either binding challenge.
                 let params = [
                     u32_shape(seed.topology.masks.len())?,
-                    u32_shape(seed.raw_inc.len())?,
+                    u32_shape(raw_inc.len())?,
                 ];
                 let next =
-                    PendingSparse::new(gpu, seed.topology, seed.raw_inc.len().div_ceil(4), false)?;
+                    PendingSparse::new(gpu, seed.topology, raw_inc.len().div_ceil(4), false)?;
                 let first = seed
                     .first
                     .ok_or_else(|| invalid("second bind lacks first challenge"))?;
@@ -284,7 +297,7 @@ impl DeviceCycle {
                     &[
                         Binding::buffer(&seed.entries),
                         Binding::buffer(&seed.offsets),
-                        Binding::buffer(&seed.raw_inc),
+                        Binding::buffer(&*raw_inc),
                         Binding::buffer(&next.topology.device_masks),
                         Binding::buffer(&next.topology.device_offsets),
                         Binding::buffer(&next.values),
@@ -456,11 +469,15 @@ impl DeviceCycle {
         let wa_lut = DeviceBuffer::from_slice(&gpu.device, &self.wa_lut.values)?;
         match &self.phase {
             Phase::Seed(seed) => {
+                let raw_inc = seed
+                    .raw_inc
+                    .lock()
+                    .map_err(|_| invalid("increment source lock poisoned"))?;
                 let params = [
                     u32_shape(rows)?,
                     u32_shape(buffers.pairs)?,
                     u32_shape(weights.e_in.len())?,
-                    u32_shape(seed.raw_inc.len())?,
+                    u32_shape(raw_inc.len())?,
                     u32::from(seed.first.is_some()),
                     u32::from(weights.need_one),
                 ];
@@ -470,7 +487,7 @@ impl DeviceCycle {
                     &[
                         Binding::buffer(&seed.entries),
                         Binding::buffer(&seed.offsets),
-                        Binding::buffer(&seed.raw_inc),
+                        Binding::buffer(&*raw_inc),
                         Binding::buffer(&seed.topology.device_masks),
                         Binding::buffer(&ra_lut),
                         Binding::buffer(&wa_lut),

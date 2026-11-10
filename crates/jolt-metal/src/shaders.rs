@@ -7,7 +7,7 @@
 //! that uses them.
 
 /// `(name, text)` of every field header, in dependency order.
-pub const FIELD_HEADERS: [(&str, &str); 6] = [
+pub const FIELD_HEADERS: [(&str, &str); 7] = [
     (
         "jolt/field/fp128.h",
         include_str!("../shaders/jolt/field/fp128.h"),
@@ -19,6 +19,10 @@ pub const FIELD_HEADERS: [(&str, &str); 6] = [
     (
         "jolt/field/ext2.h",
         include_str!("../shaders/jolt/field/ext2.h"),
+    ),
+    (
+        "jolt/field/convert.h",
+        include_str!("../shaders/jolt/field/convert.h"),
     ),
     (
         "jolt/field/accum.h",

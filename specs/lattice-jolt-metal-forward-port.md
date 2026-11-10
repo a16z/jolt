@@ -525,6 +525,34 @@ comparison. The measured code is integrated; evidence and the frozen binary
 are in `registers-current-metal/` and `registers-current-metal-jolt-prover`.
 The earlier prototype remains preserved in `registers-metal/`.
 
+RegistersVal reuses the current register seed's immutable
+signed-increment buffer through a proof-scoped carry, capped at 2 GiB. The carry
+checks the trace, preprocessing, logical cycles and shared device owner. Stage 5
+uploads only the already collected `rd` selector prefix, then releases both native
+inputs after its first bind. No new trace extraction or increment upload is added.
+
+Its first message and fused native/dense transitions adapt
+`7aa549cc9:crates/jolt-kernels/src/metal/solinas/registers_val/shader.metal`.
+The canonical `SplitLt`, round progression, interpolation and opening claims stay
+with the CPU kernel. Within each LT block, the shader reduces the product and
+its low-LT-weighted product before applying the two high factors. Outputs retain
+only the explicit prefix; missing endpoints are zero. The CPU tail begins before
+the low LT factor collapses (at most 32,768 paired rows for T27). The
+instruction-input and value kernels share one signed-i128 conversion in the
+existing Metal arithmetic owner.
+
+The measured source (`ea798006d`, Akita `978d7060`) passed three focused GPU
+oracles normally and under Metal validation, eight existing CPU parity cases,
+parallel/serial kernel Clippy and integrated prover Clippy. Small and T27 proofs
+verified. Frozen Fib took 20.211137959 s (6.640780359 padded MHz), with unchanged
+actual/padded counts and public output. Its separate profile exercised the native
+message, first bind, eleven dense transitions and CPU handoff. RegistersVal's
+inclusive family time was 0.1990 s versus 0.5773 s in the saved Registers profile;
+peak RSS was 39.1985 GiB versus 39.1484 GiB. These unmatched observations support
+carrying the implementation forward but do not establish a causal whole-proof
+speedup or target acceptance. Evidence is in `registers-val-metal/`; the frozen
+binary is `registers-val-jolt-prover`.
+
 Spartan outer remainder stays on the optimized CPU path. Its initial GPU port
 was correct, but upload and buffer preparation alone exceeded the measured CPU
 round cost. Reconsider it when an integrated GPU producer can supply its inputs

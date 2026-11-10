@@ -332,9 +332,9 @@ impl DeviceAddressScan {
             .into_par_iter()
             .for_each(|task| task.fill(source_weights));
         #[cfg(not(feature = "parallel"))]
-        destinations
-            .into_iter()
-            .for_each(|task| task.fill(source_weights));
+        for task in destinations {
+            task.fill(source_weights);
+        }
         // SAFETY: the canonical class/block ranges partition the exact live
         // extent. Each task initialized every complete element in its slices;
         // these types have no padding. No GPU use occurred during host writes.

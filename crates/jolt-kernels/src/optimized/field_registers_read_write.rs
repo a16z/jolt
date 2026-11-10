@@ -58,7 +58,9 @@ use rayon::prelude::*;
 
 use super::registers_read_write::address::{OperandEq, RegisterAddressState};
 use super::registers_read_write::sparse::layout::{merge_bind, split_pair_group, Cell};
-use super::registers_read_write::sparse::ops::{bind_sparse_entries_in_place, pair_aligned_bounds};
+use super::registers_read_write::sparse::ops::bind_sparse_entries_in_place;
+#[cfg(feature = "parallel")]
+use super::registers_read_write::sparse::ops::pair_aligned_bounds;
 use super::support::{
     map_indices, map_reduce_chunks, pin_derived_term, GruenRoundMessage, RoundChallenges,
 };
@@ -72,6 +74,7 @@ use jolt_witness::field_inline::FieldInlineWitnessOracle;
 /// Entry count above which the round accumulation and the bind run over
 /// pair-aligned parallel blocks (the v2-port `DENSE_BIND_PAR_THRESHOLD`
 /// convention — below it the sequential walk beats the fork/join overhead).
+#[cfg(feature = "parallel")]
 const PARALLEL_THRESHOLD: usize = 1 << 12;
 
 /// One non-zero cell of the conceptual `K × T` field register matrices: the bound `Val`

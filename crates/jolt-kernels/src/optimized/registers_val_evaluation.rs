@@ -136,6 +136,9 @@ impl<F: JoltField> WaState<F> {
     }
 }
 
+#[cfg(feature = "metal")]
+pub(crate) mod metal;
+
 pub struct OptimizedRegistersValEvaluation;
 
 impl OptimizedRegistersValEvaluation {
@@ -167,6 +170,16 @@ impl<F: JoltField> PrepareKernel<F, RegistersValEvaluation<F>> for OptimizedRegi
         inputs: ProverInputs<'_, F, RegistersValEvaluation<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = RegistersValEvaluation<F>>>, KernelError<F>>
     {
+        Ok(Box::new(Self::prepare_state(session, witness, inputs)?))
+    }
+}
+
+impl OptimizedRegistersValEvaluation {
+    fn prepare_state<F: JoltField>(
+        session: &mut ProofSession,
+        witness: &dyn JoltWitnessPlane<F>,
+        inputs: ProverInputs<'_, F, RegistersValEvaluation<F>>,
+    ) -> Result<ValEvaluationKernel<F>, KernelError<F>> {
         let log_t = inputs.relation.trace_dimensions().log_t();
         if log_t == 0 {
             return Err(KernelError::Unsupported {
@@ -218,12 +231,12 @@ impl<F: JoltField> PrepareKernel<F, RegistersValEvaluation<F>> for OptimizedRegi
                 .collect(),
         };
 
-        Ok(Box::new(ValEvaluationKernel {
+        Ok(ValEvaluationKernel {
             progress: RoundProgress::new(log_t),
             inc,
             wa: WaState::new(rd, EqPolynomial::<F>::evals(r_address, None)),
             lt: SplitLt::new(r_cycle),
-        }))
+        })
     }
 }
 

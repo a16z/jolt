@@ -28,7 +28,9 @@ impl<PCS: CommitmentScheme<Field = AkitaField>> JoltBackend<AkitaField, PCS> {
             inner: self.commit,
             byte_limit: 6 << 30,
         });
-        self.registers_read_write = Box::new(MetalRegistersReadWrite::new()?);
+        let mut registers = MetalRegistersReadWrite::new()?;
+        self.registers_val_evaluation = Box::new(registers.value_evaluation()?);
+        self.registers_read_write = Box::new(registers);
         self.instruction_input = Box::new(MetalInstructionInput::new()?);
         self.instruction_read_raf = Box::new(MetalInstructionReadRaf::new()?);
         self.instruction_ra_virtualization = Box::new(MetalInstructionRa::new()?);

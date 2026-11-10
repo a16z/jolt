@@ -24,7 +24,7 @@ use jolt_witness::{JoltWitnessPlane, WitnessBundle, WitnessError};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use super::rows::{raw_rd_inc, RegisterCycleRow, SharedRdIndices};
+use super::rows::{RegisterCycleRow, SharedRdIndices};
 use crate::optimized::prefix_product::PrefixColumn;
 use crate::optimized::support::{
     fallible_collect_bytes, map_indices, pin_derived_term, pool_workers, BundleStore,
@@ -54,7 +54,7 @@ impl WitnessBundle for Access {
             rs1: row.rs1.map(|(k, _)| k),
             rs2: row.rs2.map(|(k, _)| k),
             rd: row.rd.map(|(k, ..)| k),
-            inc: raw_rd_inc(&row),
+            inc: row.write_increment(),
         })
     }
     fn annotated_ids() -> Vec<JoltPolynomialId> {

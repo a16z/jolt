@@ -1,6 +1,9 @@
 //! Sparse cycle arithmetic. The CPU kernel owns relation progress and claims.
 
-use std::{mem::MaybeUninit, sync::Arc};
+use std::{
+    mem::MaybeUninit,
+    sync::{Arc, Mutex},
+};
 
 use jolt_akita::AkitaField as F;
 use jolt_field::Zero;
@@ -28,11 +31,12 @@ pub(crate) struct MetalRegistersReadWrite {
     gpu: Arc<RegisterGpu>,
     min_rows: usize,
     tail_entries: usize,
+    retain_value_source: bool,
 }
 
 impl MetalRegistersReadWrite {
     pub(crate) fn new() -> Result<Self, MetalError> {
-        let device = Device::system_default()?;
+        let device = Arc::new(Device::system_default()?);
         let mut spec = LibrarySpec::new();
         for (name, source) in FIELD_HEADERS {
             spec = spec.source(name, source);
@@ -52,7 +56,32 @@ impl MetalRegistersReadWrite {
             gpu: Arc::new(RegisterGpu { device, library }),
             min_rows: MIN_GPU_ROWS,
             tail_entries: CPU_TAIL_ENTRIES,
+            retain_value_source: false,
         })
+    }
+}
+
+/// The immutable seed allocation already used in stage4; stage5 consumes it once.
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
+pub(crate) struct SharedRdIncrements {
+    #[cfg_attr(feature = "allocative", allocative(skip))]
+    pub(crate) values: Arc<Mutex<DeviceBuffer<i128>>>,
+    #[cfg_attr(feature = "allocative", allocative(skip))]
+    pub(crate) source: jolt_witness::RandomAccessRows,
+    #[cfg_attr(feature = "allocative", allocative(skip))]
+    pub(crate) device: Arc<Device>,
+    pub(crate) cycles: usize,
+}
+
+impl MetalRegistersReadWrite {
+    pub(crate) fn value_evaluation(
+        &mut self,
+    ) -> Result<super::super::registers_val_evaluation::metal::MetalRegistersVal, MetalError> {
+        let value = super::super::registers_val_evaluation::metal::MetalRegistersVal::new(
+            Arc::clone(&self.gpu.device),
+        )?;
+        self.retain_value_source = true;
+        Ok(value)
     }
 }
 
@@ -62,7 +91,7 @@ enum SeedStorage {
 }
 
 struct RegisterGpu {
-    device: Device,
+    device: Arc<Device>,
     library: ShaderLibrary,
 }
 
@@ -132,7 +161,10 @@ impl PrepareKernel<F, RegistersReadWriteChecking<F>> for MetalRegistersReadWrite
             }
             SeedStorage::Device(entries) => entries,
         };
-        let device = DeviceCycle::new(
+        let state::PreparedDeviceCycle {
+            cycle: device,
+            increments,
+        } = DeviceCycle::prepare(
             &self.gpu,
             SeedTransfer {
                 entries,
@@ -142,6 +174,21 @@ impl PrepareKernel<F, RegistersReadWriteChecking<F>> for MetalRegistersReadWrite
             },
         )
         .map_err(compute_error)?;
+        let increment_bytes = increments
+            .lock()
+            .map_err(|_| compute_error(invalid("increment source lock poisoned")))?
+            .len()
+            .checked_mul(size_of::<i128>());
+        if self.retain_value_source && increment_bytes.is_some_and(|bytes| bytes <= 2usize << 30) {
+            if let Some(source) = witness.random_access() {
+                session.park(SharedRdIncrements {
+                    values: increments,
+                    source,
+                    device: Arc::clone(&self.gpu.device),
+                    cycles: 1usize << dimensions.log_t(),
+                });
+            }
+        }
         Ok(Box::new(MetalRegisterKernel {
             cpu,
             device: Some(device),
