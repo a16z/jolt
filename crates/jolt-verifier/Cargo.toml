@@ -41,7 +41,7 @@ allocative = { workspace = true, optional = true }
 ark-serialize.workspace = true
 bincode.workspace = true
 common.workspace = true
-jolt-zk.workspace = true
+jolt-zk = { workspace = true, features = ["blindfold"] }
 jolt-claims.workspace = true
 jolt-claims-derive.workspace = true
 jolt-crypto.workspace = true
@@ -61,6 +61,7 @@ thiserror.workspace = true
 
 [dev-dependencies]
 jolt-transcript = { workspace = true, features = [
+  "prover-entropy",
   "bn254",
   "test-utils",
   "transcript-keccak",

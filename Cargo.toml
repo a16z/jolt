@@ -460,9 +460,9 @@ jolt-hyperkzg = { path = "./crates/jolt-hyperkzg" }
 jolt-spartan-verifier = { path = "./crates/jolt-spartan-verifier" }
 jolt-spartan-prover = { path = "./crates/jolt-spartan-prover" }
 jolt-algebra = { path = "./crates/jolt-algebra", default-features = false }
-jolt-field = { path = "./crates/jolt-field" }
+jolt-field = { path = "./crates/jolt-field", default-features = false }
 jolt-host = { path = "./crates/jolt-host" }
-jolt-openings = { path = "./crates/jolt-openings" }
+jolt-openings = { path = "./crates/jolt-openings", default-features = false }
 jolt-verifier = { path = "./crates/jolt-verifier" }
 jolt-verifier-derive = { path = "./crates/jolt-verifier-derive" }
 jolt-kernels = { path = "./crates/jolt-kernels" }
@@ -471,7 +471,7 @@ jolt-profiling = { path = "./crates/jolt-profiling" }
 jolt-prover = { path = "./crates/jolt-prover" }
 jolt-witness = { path = "./crates/jolt-witness" }
 jolt-witness-derive = { path = "./crates/jolt-witness-derive" }
-jolt-poly = { path = "./crates/jolt-poly" }
+jolt-poly = { path = "./crates/jolt-poly", default-features = false }
 jolt-r1cs = { path = "./crates/jolt-r1cs" }
 jolt-transcript = { path = "./crates/jolt-transcript", default-features = false }
 jolt-utils = { path = "./crates/jolt-utils" }
