@@ -361,6 +361,15 @@ This supports selecting 16 tasks for the next K256 candidate. The diagnostic
 used release optimization with LTO disabled and executed both schedules, so its
 whole-proof time is not throughput. Evidence is in `k256-panel-tasks/`.
 
+The subsequent tiled K256 transform (`6909518ad` / Akita `dd935204`) also
+passed its oracle normally and under Metal validation. Its paired full proof
+verified and matched every coefficient in all 15 windows. However, GPU time
+was 11.2600 s versus 4.7385 s for task16 panels; key preparation plus component
+time was 11.4053 versus 4.8739 s. Panels won every window under both orders.
+Keep the transform isolated. The final report's quoted-string parsing error was
+repaired from the saved profile without rerunning the proof. Evidence is in
+`k256-tiled-ntt/`; the dual-run proof time is not throughput.
+
 The isolated Outer diagnostic (`6cef6ad8a`) also verified. Outer occupied
 2.024 s in its separate profile. Sampled extraction accounted for 13.8%,
 20.3%, and 26.9% of staged worker work across uniskip, remainder preparation
