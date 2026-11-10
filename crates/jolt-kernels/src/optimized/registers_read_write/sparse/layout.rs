@@ -3,6 +3,8 @@ use core::{
     mem::{size_of, MaybeUninit},
 };
 
+#[cfg(feature = "metal")]
+use bytemuck_derive::{Pod, Zeroable};
 use jolt_field::{Accumulator, JoltField};
 
 use super::{CoeffLut, LutIndex, OneHotCoeff};
@@ -143,19 +145,25 @@ pub(super) trait MatrixEntry<F: JoltField>: Cell {
 }
 
 /// Round-0 entry. `val = F::from_u64(prev_val)` stays implicit until the
-/// first bind, cutting the peak layout from 64 to 24 bytes.
+/// first bind, cutting the peak layout from 64 to 24 bytes. On Metal's
+/// little-endian host ABI the last eight bytes match RegisterSeed.meta:
+/// row in bits 0..32, ra/wa/col in the next three bytes, then a zero byte.
 #[derive(Clone, Copy, Debug)]
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
+#[cfg_attr(feature = "metal", derive(Pod, Zeroable))]
+#[repr(C)]
 pub(in crate::optimized::registers_read_write) struct SeedEntry {
-    pub(super) prev_val: u64,
-    pub(super) next_val: u64,
+    pub(in crate::optimized::registers_read_write) prev_val: u64,
+    pub(in crate::optimized::registers_read_write) next_val: u64,
     /// `u32` is safe because collection rejects wider domains.
     ///
     /// [`CollectRegisterEntries::collect`]: crate::optimized::registers_read_write::rows::CollectRegisterEntries::collect
-    pub(super) row: u32,
-    pub(super) ra: u8,
-    pub(super) wa: u8,
-    pub(super) col: u8,
+    pub(in crate::optimized::registers_read_write) row: u32,
+    pub(in crate::optimized::registers_read_write) ra: u8,
+    pub(in crate::optimized::registers_read_write) wa: u8,
+    pub(in crate::optimized::registers_read_write) col: u8,
+    // Makes every byte initialized for the shared CPU/Metal seed layout.
+    reserved: u8,
 }
 
 const _: () = assert!(size_of::<SeedEntry>() == 24);
@@ -287,14 +295,14 @@ impl<F: JoltField> MatrixEntry<F> for SeedEntry {
 
 #[derive(Clone, Copy, Debug)]
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
-pub(super) struct SparseEntry<F, C> {
-    pub(super) val: F,
-    pub(super) prev_val: u64,
-    pub(super) next_val: u64,
-    pub(super) row: usize,
-    pub(super) ra: C,
-    pub(super) wa: C,
-    pub(super) col: u8,
+pub(in crate::optimized::registers_read_write) struct SparseEntry<F, C> {
+    pub(in crate::optimized::registers_read_write) val: F,
+    pub(in crate::optimized::registers_read_write) prev_val: u64,
+    pub(in crate::optimized::registers_read_write) next_val: u64,
+    pub(in crate::optimized::registers_read_write) row: usize,
+    pub(in crate::optimized::registers_read_write) ra: C,
+    pub(in crate::optimized::registers_read_write) wa: C,
+    pub(in crate::optimized::registers_read_write) col: u8,
 }
 
 impl<F: JoltField, C: OneHotCoeff<F>> Cell for SparseEntry<F, C> {
@@ -442,6 +450,7 @@ impl RegisterCycleRow {
             next_val: 0,
             row,
             col: 0,
+            reserved: 0,
         };
         let mut out = [empty; MAX_ENTRIES_PER_CYCLE];
         let mut len = 0usize;

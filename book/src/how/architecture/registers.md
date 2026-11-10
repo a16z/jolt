@@ -59,3 +59,19 @@ $$
 $$
 
 where $\widetilde{\textsf{rd}}(k_\text{bytecode}, k_\text{register}) = 1$ if the instruction at index $k_\text{bytecode}$ in the bytecode has $\texttt{rs1} = k_\text{register}$.
+
+
+### Experimental Metal storage
+
+The Metal candidate uses the canonical sparse collector to write 24-byte seed
+entries directly into shared device storage. The parallel count/scatter path
+avoids a full host seed mirror and a separate packing pass. An explicit zero
+byte completes the seed layout; typed `MaybeUninit` buffers become readable
+only after the producer writes every entry successfully.
+
+Sparse GPU bind outputs use the same initialization API after a completed
+full-write dispatch. CPU topology, lazy coefficient tables, implicit default
+suffixes, CPU tail handoff and address rounds retain their existing owners.
+Small prefixes and address-first relations use the CPU implementation. This
+candidate requires inclusive full-proof measurement: the preceding verified
+prototype lost more time preparing buffers than it saved in GPU arithmetic.

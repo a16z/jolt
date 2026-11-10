@@ -49,7 +49,7 @@ impl<F: JoltField> CoeffLut<F> {
         Self { values }
     }
 
-    fn bits(&self) -> u32 {
+    pub(super) fn bits(&self) -> u32 {
         self.values.len().trailing_zeros()
     }
 
@@ -212,13 +212,17 @@ enum CyclePhase<F: JoltField> {
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(super) struct CycleState<F: JoltField>(CyclePhase<F>);
 
-#[inline]
-fn raw_bound_inc<F: JoltField>(raw: &[i128], r1: F, y: usize) -> F {
-    bound_pair(|j| F::from_i128(raw.get(j).copied().unwrap_or(0)), r1, y)
+/// The canonical initial coefficient tables and increment prefix, independent
+/// of the consumer's entry storage.
+pub(super) struct SeedTransfer<F, E = Vec<SeedEntry>> {
+    pub(super) entries: E,
+    pub(super) ra_lut: CoeffLut<F>,
+    pub(super) wa_lut: CoeffLut<F>,
+    pub(super) rd_inc: Vec<i128>,
 }
 
-impl<F: JoltField> CycleState<F> {
-    pub(super) fn new(entries: Vec<SeedEntry>, gamma: F, mut rd_inc: Vec<i128>) -> Self {
+impl<F: JoltField, E> SeedTransfer<F, E> {
+    pub(super) fn new(entries: E, gamma: F, mut rd_inc: Vec<i128>) -> Self {
         let gamma_sq = gamma * gamma;
         let read: [F; READ_SEED_VALUES] = [F::zero(), gamma, gamma_sq, gamma + gamma_sq];
         let write: [F; WRITE_SEED_VALUES] = [F::zero(), F::one()];
@@ -228,11 +232,40 @@ impl<F: JoltField> CycleState<F> {
             .map_or(0, |i| i + 1);
         rd_inc.truncate(prefix);
         rd_inc.shrink_to_fit();
-        Self(CyclePhase::Seed {
+        Self {
             entries,
             ra_lut: CoeffLut::new(read.to_vec()),
             wa_lut: CoeffLut::new(write.to_vec()),
             rd_inc,
+        }
+    }
+}
+
+impl<F: JoltField> SeedTransfer<F> {
+    pub(super) fn into_cycle(self) -> CycleState<F> {
+        CycleState(CyclePhase::Seed {
+            entries: self.entries,
+            ra_lut: self.ra_lut,
+            wa_lut: self.wa_lut,
+            rd_inc: self.rd_inc,
+        })
+    }
+}
+
+#[inline]
+fn raw_bound_inc<F: JoltField>(raw: &[i128], r1: F, y: usize) -> F {
+    bound_pair(|j| F::from_i128(raw.get(j).copied().unwrap_or(0)), r1, y)
+}
+
+impl<F: JoltField> CycleState<F> {
+    #[cfg(feature = "metal")]
+    pub(super) fn from_direct(entries: Vec<SparseEntry<F, F>>, values: Vec<F>) -> Self {
+        Self(CyclePhase::Direct {
+            entries,
+            inc: PrefixColumn {
+                values,
+                tail: [F::zero(); 2],
+            },
         })
     }
 

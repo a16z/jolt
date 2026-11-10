@@ -1,4 +1,5 @@
 use core::mem::MaybeUninit;
+use std::borrow::Cow;
 
 use jolt_claims::protocols::jolt::geometry::dimensions::REGISTER_ADDRESS_BITS;
 use jolt_claims::protocols::jolt::JoltPolynomialId;
@@ -105,12 +106,129 @@ pub(super) fn raw_rd_inc(cycle: &RegisterCycleRow) -> i128 {
     }
 }
 
-pub(super) struct CollectRegisterEntries {
-    pub(super) entries: Vec<SeedEntry>,
+pub(super) struct CollectRegisterEntries<E = Vec<SeedEntry>> {
+    pub(super) entries: E,
     pub(super) rs1_indices: Vec<Option<u8>>,
     pub(super) rs2_indices: Vec<Option<u8>>,
     pub(super) rd_indices: Vec<Option<u8>>,
     pub(super) rd_inc: Vec<i128>,
+}
+
+/// The canonical collector's entry writer. Allocation belongs to the consumer;
+/// count, extraction and scatter remain identical for CPU and Metal storage.
+pub(super) enum SeedEntryProducer<'a> {
+    Stored(Cow<'a, [SeedEntry]>),
+    #[cfg(feature = "parallel")]
+    Trace {
+        access: &'a RandomAccessRows,
+        cycles: usize,
+        counts: &'a [usize],
+        len: usize,
+    },
+}
+
+impl SeedEntryProducer<'_> {
+    #[cfg(any(feature = "parallel", feature = "metal"))]
+    pub(super) fn len(&self) -> usize {
+        match self {
+            Self::Stored(entries) => entries.len(),
+            #[cfg(feature = "parallel")]
+            Self::Trace { len, .. } => *len,
+        }
+    }
+
+    /// On success every slot is initialized, including the seed's explicit
+    /// reserved byte. An error leaves an unspecified subset initialized.
+    #[cfg(any(feature = "parallel", feature = "metal"))]
+    pub(super) fn write<F: JoltField>(
+        &self,
+        destination: &mut [MaybeUninit<SeedEntry>],
+    ) -> Result<(), KernelError<F>> {
+        if destination.len() != self.len() {
+            return Err(KernelError::InvariantViolation {
+                reason: "register seed destination has the wrong length",
+            });
+        }
+        match self {
+            Self::Stored(entries) => {
+                for (slot, entry) in destination.iter_mut().zip(entries.iter()) {
+                    let _ = slot.write(*entry);
+                }
+            }
+            #[cfg(feature = "parallel")]
+            Self::Trace {
+                access,
+                cycles,
+                counts,
+                ..
+            } => {
+                let mut rest = destination;
+                let mut windows = Vec::with_capacity(counts.len());
+                for &count in *counts {
+                    let (head, tail) = rest.split_at_mut(count);
+                    windows.push(head);
+                    rest = tail;
+                }
+                if !rest.is_empty() {
+                    return Err(KernelError::InvariantViolation {
+                        reason: "register seed counts do not cover the destination",
+                    });
+                }
+                let error = FirstErrorLatch::new();
+                windows
+                    .into_par_iter()
+                    .enumerate()
+                    .for_each(|(chunk_index, window)| {
+                        let base = chunk_index * COLLECT_PAR_CHUNK;
+                        let top = ((chunk_index + 1) * COLLECT_PAR_CHUNK).min(*cycles);
+                        let mut written = 0usize;
+                        for row in base..top {
+                            match access.window::<RegisterCycleRow>(row) {
+                                Ok(cycle) => {
+                                    let (cells, len) = cycle.entries(row as u32);
+                                    for cell in &cells[..len] {
+                                        let _ = window[written].write(*cell);
+                                        written += 1;
+                                    }
+                                }
+                                Err(failure) => {
+                                    error.record(row, failure);
+                                    return;
+                                }
+                            }
+                        }
+                        if written != window.len() {
+                            error.record(
+                                base,
+                                WitnessError::InvalidWitnessData {
+                                    label: "register seed collection",
+                                    reason: "entry count changed between count and scatter".into(),
+                                },
+                            );
+                        }
+                    });
+                if let Some(failure) = error.take() {
+                    return Err(failure.into());
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub(super) fn into_vec<F: JoltField>(self) -> Result<Vec<SeedEntry>, KernelError<F>> {
+        match self {
+            Self::Stored(entries) => Ok(entries.into_owned()),
+            #[cfg(feature = "parallel")]
+            producer @ Self::Trace { .. } => {
+                let len = producer.len();
+                let mut entries = Vec::with_capacity(len);
+                producer.write(&mut entries.spare_capacity_mut()[..len])?;
+                // SAFETY: write succeeded and initializes the entire exact-length span.
+                unsafe { entries.set_len(len) };
+                Ok(entries)
+            }
+        }
+    }
 }
 
 impl StreamConsumer for CollectRegisterEntries {
@@ -131,18 +249,19 @@ impl StreamConsumer for CollectRegisterEntries {
 
 impl CollectRegisterEntries {
     /// Bytes of the parallel collect's bookkeeping over `cycles` cycles, live
-    /// while the entries scatter, or `None` past `usize::MAX`: a count, an
-    /// offset and an output window per chunk.
+    /// while the entries scatter, or `None` past `usize::MAX`: a count and an
+    /// output window per chunk.
     pub(super) fn chunk_bytes(cycles: usize) -> Option<usize> {
         cycles
             .div_ceil(COLLECT_PAR_CHUNK)
-            .checked_mul(2 * size_of::<usize>() + size_of::<&mut [MaybeUninit<SeedEntry>]>())
+            .checked_mul(size_of::<usize>() + size_of::<&mut [MaybeUninit<SeedEntry>]>())
     }
 
-    pub(super) fn collect<F: JoltField>(
+    pub(super) fn collect<F: JoltField, E>(
         witness: &dyn JoltWitnessPlane<F>,
         cycles: usize,
-    ) -> Result<Self, KernelError<F>> {
+        produce: impl FnOnce(SeedEntryProducer<'_>) -> Result<E, KernelError<F>>,
+    ) -> Result<CollectRegisterEntries<E>, KernelError<F>> {
         if u32::try_from(cycles.saturating_sub(1)).is_err() {
             return Err(KernelError::InvariantViolation {
                 reason: "cycle count exceeds the seed entries' packed u32 row domain",
@@ -161,7 +280,7 @@ impl CollectRegisterEntries {
             }
             #[cfg(feature = "parallel")]
             if cycles <= access.cycles() {
-                return Self::collect_par(&access, retained);
+                return Self::collect_par(&access, retained, produce);
             }
         }
         let cycles = retained;
@@ -173,22 +292,35 @@ impl CollectRegisterEntries {
             rd_inc: Vec::with_capacity(cycles),
         },);
         stream_witnesses(witness, 0..cycles, COLLECT_CHUNK, &mut consumers)?;
-        Ok(consumers.0)
+        let Self {
+            entries,
+            rs1_indices,
+            rs2_indices,
+            rd_indices,
+            rd_inc,
+        } = consumers.0;
+        Ok(CollectRegisterEntries {
+            entries: produce(SeedEntryProducer::Stored(Cow::Owned(entries)))?,
+            rs1_indices,
+            rs2_indices,
+            rd_indices,
+            rd_inc,
+        })
     }
 
     /// Two-pass parallel build: count and fill columns, then scatter entries.
     /// Exclusive offsets avoid a second entry-sized allocation.
     #[cfg(feature = "parallel")]
-    fn collect_par<F: JoltField>(
+    fn collect_par<F: JoltField, E>(
         access: &RandomAccessRows,
         cycles: usize,
-    ) -> Result<Self, KernelError<F>> {
+        produce: impl FnOnce(SeedEntryProducer<'_>) -> Result<E, KernelError<F>>,
+    ) -> Result<CollectRegisterEntries<E>, KernelError<F>> {
         let mut rs1_indices: Vec<Option<u8>> = Vec::with_capacity(cycles);
         let mut rs2_indices: Vec<Option<u8>> = Vec::with_capacity(cycles);
         let mut rd_indices: Vec<Option<u8>> = Vec::with_capacity(cycles);
         let mut rd_inc: Vec<i128> = Vec::with_capacity(cycles);
         let error = FirstErrorLatch::new();
-        let chunk_count = cycles.div_ceil(COLLECT_PAR_CHUNK);
         let mut counts: Vec<usize> = Vec::new();
         (
             rs1_indices.spare_capacity_mut()[..cycles].par_chunks_mut(COLLECT_PAR_CHUNK),
@@ -231,53 +363,12 @@ impl CollectRegisterEntries {
             rd_inc.set_len(cycles);
         }
 
-        let mut offsets: Vec<usize> = Vec::with_capacity(chunk_count);
-        let mut total = 0usize;
-        for &count in &counts {
-            offsets.push(total);
-            total += count;
-        }
-        let mut entries: Vec<SeedEntry> = Vec::with_capacity(total);
-        {
-            let mut rest: &mut [MaybeUninit<SeedEntry>] =
-                &mut entries.spare_capacity_mut()[..total];
-            let mut windows: Vec<&mut [MaybeUninit<SeedEntry>]> = Vec::with_capacity(chunk_count);
-            for &count in &counts {
-                let (head, tail) = rest.split_at_mut(count);
-                windows.push(head);
-                rest = tail;
-            }
-            let error = FirstErrorLatch::new();
-            windows
-                .into_par_iter()
-                .enumerate()
-                .for_each(|(chunk_index, window)| {
-                    let base = chunk_index * COLLECT_PAR_CHUNK;
-                    let top = ((chunk_index + 1) * COLLECT_PAR_CHUNK).min(cycles);
-                    let mut written = 0usize;
-                    for row in base..top {
-                        match access.window::<RegisterCycleRow>(row) {
-                            Ok(cycle) => {
-                                let (cells, len) = cycle.entries(row as u32);
-                                for cell in &cells[..len] {
-                                    let _ = window[written].write(*cell);
-                                    written += 1;
-                                }
-                            }
-                            Err(failure) => {
-                                error.record(row, failure);
-                                return;
-                            }
-                        }
-                    }
-                    debug_assert_eq!(written, window.len());
-                });
-            if let Some(failure) = error.take() {
-                return Err(failure.into());
-            }
-        }
-        // SAFETY: exclusive windows cover all `total` initialized slots.
-        unsafe { entries.set_len(total) };
+        let entries = produce(SeedEntryProducer::Trace {
+            access,
+            cycles,
+            len: counts.iter().sum(),
+            counts: &counts,
+        })?;
         Ok(CollectRegisterEntries {
             entries,
             rs1_indices,

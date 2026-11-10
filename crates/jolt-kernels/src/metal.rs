@@ -8,6 +8,7 @@ use crate::optimized::bytecode_read_raf::metal::MetalBytecodeReadRafAddress;
 use crate::optimized::instruction_input::metal::MetalInstructionInput;
 use crate::optimized::instruction_ra_virtualization::metal::MetalInstructionRa;
 use crate::optimized::instruction_read_raf::metal::MetalInstructionReadRaf;
+use crate::optimized::registers_read_write::metal::MetalRegistersReadWrite;
 use crate::{
     CommitWitness, JoltBackend, KernelError, ProofSession, WitnessCommitRequest, WitnessCommitment,
 };
@@ -17,7 +18,7 @@ mod trace_compute;
 pub use trace_compute::MetalTraceCompute;
 
 impl<PCS: CommitmentScheme<Field = AkitaField>> JoltBackend<AkitaField, PCS> {
-    /// Use Metal for admitted instruction, bytecode and Booleanity kernels.
+    /// Use Metal for admitted instruction, bytecode, Booleanity and register kernels.
     /// The commitment slot also shares a bounded canonical CPU row projection
     /// with later instruction kernels; other slots retain their implementations.
     /// Compiles the shaders before any proof starts; device/setup errors are
@@ -27,6 +28,7 @@ impl<PCS: CommitmentScheme<Field = AkitaField>> JoltBackend<AkitaField, PCS> {
             inner: self.commit,
             byte_limit: 6 << 30,
         });
+        self.registers_read_write = Box::new(MetalRegistersReadWrite::new()?);
         self.instruction_input = Box::new(MetalInstructionInput::new()?);
         self.instruction_read_raf = Box::new(MetalInstructionReadRaf::new()?);
         self.instruction_ra_virtualization = Box::new(MetalInstructionRa::new()?);

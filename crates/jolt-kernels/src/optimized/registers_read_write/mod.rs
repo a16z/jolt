@@ -34,6 +34,8 @@ use crate::{
 pub(crate) mod address;
 mod address_first;
 use address::{OperandEq, RegisterAddressState};
+#[cfg(feature = "metal")]
+pub(crate) mod metal;
 mod rows;
 pub(crate) mod sparse;
 #[cfg(test)]
@@ -46,8 +48,8 @@ mod tests;
 pub(crate) use rows::{RegisterCycleRow, SharedRdIndices};
 
 use address_first::AddressFirstKernel;
-use rows::CollectRegisterEntries;
-use sparse::CycleState;
+use rows::{CollectRegisterEntries, SeedEntryProducer};
+use sparse::{CycleState, SeedTransfer};
 
 pub struct OptimizedRegistersReadWrite;
 
@@ -82,14 +84,21 @@ impl OptimizedRegistersReadWrite {
     }
 }
 
-impl<F: JoltField> PrepareKernel<F, RegistersReadWriteChecking<F>> for OptimizedRegistersReadWrite {
-    fn prepare(
-        &self,
+enum PreparedReadWrite<F: JoltField, E> {
+    Cycle {
+        kernel: ReadWriteKernel<F>,
+        seed: SeedTransfer<F, E>,
+    },
+    Address(AddressFirstKernel<F>),
+}
+
+impl OptimizedRegistersReadWrite {
+    fn prepare_state<F: JoltField, E>(
         session: &mut ProofSession,
         witness: &dyn JoltWitnessPlane<F>,
         inputs: ProverInputs<'_, F, RegistersReadWriteChecking<F>>,
-    ) -> Result<Box<dyn SumcheckKernel<F, Relation = RegistersReadWriteChecking<F>>>, KernelError<F>>
-    {
+        produce: impl FnOnce(SeedEntryProducer<'_>) -> Result<E, KernelError<F>>,
+    ) -> Result<PreparedReadWrite<F, E>, KernelError<F>> {
         let dimensions = inputs.relation.register_dimensions();
         let order = ReadWriteOrder::new::<F>(dimensions)?;
         let log_t = dimensions.log_t();
@@ -111,36 +120,56 @@ impl<F: JoltField> PrepareKernel<F, RegistersReadWriteChecking<F>> for Optimized
             });
         }
         if order == ReadWriteOrder::AddressFirst {
-            return Ok(Box::new(AddressFirstKernel::prepare(
+            return Ok(PreparedReadWrite::Address(AddressFirstKernel::prepare(
                 session, witness, &inputs,
             )?));
         }
         let cycles = 1usize << log_t;
 
-        // Sparse entry construction: one trace pass — the typed rows are
-        // never materialized whole (80 bytes per cycle saved at the stage's
-        // peak moment).
+        // The canonical collector writes entries directly to consumer-owned
+        // storage; typed rows are never materialized whole.
         let CollectRegisterEntries {
             entries,
             rs1_indices,
             rs2_indices,
             rd_indices,
             rd_inc,
-        } = CollectRegisterEntries::collect(witness, cycles)?;
-        let cycle = CycleState::new(entries, inputs.challenges.gamma, rd_inc);
+        } = CollectRegisterEntries::collect(witness, cycles, produce)?;
+        let seed = SeedTransfer::new(entries, inputs.challenges.gamma, rd_inc);
 
         // Park the rd hot indices for the stage-5 val-evaluation kernel.
         session.park(SharedRdIndices::new(rd_indices, cycles));
 
-        Ok(Box::new(ReadWriteKernel {
-            dimensions,
-            cycle,
-            gruen: GruenSplitEqPolynomial::new(r_cycle, BindingOrder::LowToHigh),
-            address: RegisterAddressState::default(),
-            rs1_indices,
-            rs2_indices,
-            challenges: RoundChallenges::new(log_t + log_k),
-        }))
+        Ok(PreparedReadWrite::Cycle {
+            kernel: ReadWriteKernel {
+                dimensions,
+                cycle: None,
+                gruen: GruenSplitEqPolynomial::new(r_cycle, BindingOrder::LowToHigh),
+                address: RegisterAddressState::default(),
+                rs1_indices,
+                rs2_indices,
+                challenges: RoundChallenges::new(log_t + log_k),
+            },
+            seed,
+        })
+    }
+}
+
+impl<F: JoltField> PrepareKernel<F, RegistersReadWriteChecking<F>> for OptimizedRegistersReadWrite {
+    fn prepare(
+        &self,
+        session: &mut ProofSession,
+        witness: &dyn JoltWitnessPlane<F>,
+        inputs: ProverInputs<'_, F, RegistersReadWriteChecking<F>>,
+    ) -> Result<Box<dyn SumcheckKernel<F, Relation = RegistersReadWriteChecking<F>>>, KernelError<F>>
+    {
+        match Self::prepare_state(session, witness, inputs, SeedEntryProducer::into_vec)? {
+            PreparedReadWrite::Cycle { mut kernel, seed } => {
+                kernel.cycle = Some(seed.into_cycle());
+                Ok(Box::new(kernel))
+            }
+            PreparedReadWrite::Address(kernel) => Ok(Box::new(kernel)),
+        }
     }
 }
 
@@ -148,7 +177,7 @@ impl<F: JoltField> PrepareKernel<F, RegistersReadWriteChecking<F>> for Optimized
 struct ReadWriteKernel<F: JoltField> {
     #[cfg_attr(feature = "allocative", allocative(skip))]
     dimensions: ReadWriteDimensions,
-    cycle: CycleState<F>,
+    cycle: Option<CycleState<F>>,
     gruen: GruenSplitEqPolynomial<F>,
     address: RegisterAddressState<F>,
     rs1_indices: Vec<Option<u8>>,
@@ -164,39 +193,46 @@ impl<F: JoltField> ReadWriteKernel<F> {
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
         let e_in = self.gruen.e_in_current();
         let e_out = self.gruen.e_out_current();
-        let quadratic = self.cycle.quadratic(e_in, e_out);
+        let cycle = self.cycle.as_ref().ok_or_else(missing_cycle)?;
+        let quadratic = cycle.quadratic(e_in, e_out);
         self.gruen
             .checked_cubic(quadratic[0], quadratic[1], previous_claim, round, || {
-                self.cycle
-                    .q_at_one(self.gruen.e_in_current(), self.gruen.e_out_current())
+                cycle.q_at_one(self.gruen.e_in_current(), self.gruen.e_out_current())
             })
     }
 
-    fn bind(&mut self, r: F) {
-        let mut layout_transitioned = false;
+    fn bind(&mut self, r: F) -> Result<(), SumcheckError<F>> {
         if self.challenges.bound() < self.dimensions.log_t() {
-            self.gruen.bind(r);
-            layout_transitioned = self.cycle.bind(r);
+            let transitioned = self.cycle.as_mut().ok_or_else(missing_cycle)?.bind(r);
+            self.advance_cycle(r)?;
+            if transitioned {
+                crate::mem::purge_retained_memory(self.dimensions.log_t());
+            }
         } else {
             self.address.bind(r);
+            self.challenges.push(r);
         }
-        self.challenges.push(r);
+        Ok(())
+    }
 
+    /// Advance the relation after its cycle data owner has consumed the bind.
+    fn advance_cycle(&mut self, r: F) -> Result<(), SumcheckError<F>> {
+        self.gruen.bind(r);
+        self.challenges.push(r);
         if self.challenges.bound() == self.dimensions.log_t() {
-            // Replacing the state frees the entry allocation here rather
-            // than at kernel drop.
             (
                 self.address.ra,
                 self.address.wa,
                 self.address.val,
                 self.address.inc_scalar,
-            ) = self.cycle.take_dense(1usize << self.dimensions.log_k());
+            ) = self
+                .cycle
+                .as_mut()
+                .ok_or_else(missing_cycle)?
+                .take_dense(1usize << self.dimensions.log_k());
             self.address.eq_scalar = self.gruen.current_scalar();
         }
-
-        if layout_transitioned {
-            crate::mem::purge_retained_memory(self.dimensions.log_t());
-        }
+        Ok(())
     }
 
     /// `Σ_j [index_j hot] · eq(r_address, index_j) · eq(r_cycle, j)` for the
@@ -260,7 +296,7 @@ impl<F: JoltField> ProveRounds<F> for ReadWriteKernel<F> {
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
         if let Some(challenge) = bind {
-            self.bind(challenge);
+            self.bind(challenge)?;
         }
         if self.challenges.bound() < self.dimensions.log_t() {
             self.cycle_round_message(round, previous_claim)
@@ -270,8 +306,7 @@ impl<F: JoltField> ProveRounds<F> for ReadWriteKernel<F> {
     }
 
     fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {
-        self.bind(bind);
-        Ok(())
+        self.bind(bind)
     }
 }
 
@@ -317,5 +352,12 @@ impl<F: JoltField> SumcheckKernel<F> for ReadWriteKernel<F> {
             challenges,
             self.address.eq_scalar,
         )
+    }
+}
+
+fn missing_cycle<F: JoltField>() -> SumcheckError<F> {
+    SumcheckError::Compute {
+        backend: "register read/write",
+        reason: "host cycle arithmetic called while its data has another owner".into(),
     }
 }

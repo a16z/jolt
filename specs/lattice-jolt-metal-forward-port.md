@@ -413,8 +413,15 @@ The sparse register prototype at `5bd928644` passed its independent oracle,
 Metal validation, and full proofs, but its data transfer cost erased the GPU
 benefit. Preparation rose from 0.2682 to 1.4401 s, including 1.1721 s packing
 and upload, while round time fell only from 1.9889 to 1.9240 s. The optimized
-CPU implementation is restored. A further attempt must avoid the seed repacking
-and transfer cost or use a later compact handoff; GPU dispatch time alone
+CPU implementation remains the accepted baseline. This isolated candidate
+restores register GPU routing with direct seed production: the canonical
+collector writes padding-free 24-byte entries into typed uninitialized shared
+Metal storage. Sparse bind outputs become initialized only after their complete
+writer finishes. The existing runtime API is reused without runtime changes;
+CPU topology and coefficient-table policy remain canonical. Allocation and
+seed-fill spans charge preparation to the proof. Compilation, the existing
+reference oracle, Metal validation and an inclusive full-proof comparison are
+still required. GPU dispatch time alone
 (0.5208 s) is not evidence of an improvement. The frozen prototype and profile
 remain in `registers-metal/` under the artifact directory.
 
