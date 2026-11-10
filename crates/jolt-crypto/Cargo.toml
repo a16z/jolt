@@ -58,6 +58,7 @@ serde_json = { workspace = true, features = ["std"] }
 bincode = { workspace = true }
 criterion = { workspace = true }
 jolt-transcript = { workspace = true, features = [
+  "prover-entropy",
   "bn254",
   "transcript-blake2b",
 ] }
