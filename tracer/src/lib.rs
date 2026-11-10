@@ -5,16 +5,20 @@ extern crate alloc;
 extern crate core;
 
 use itertools::Itertools;
-use std::vec;
+use std::{path::PathBuf, vec};
 use tracing::{error, info};
 
 #[cfg(not(feature = "std"))]
 use alloc::{boxed::Box, vec::Vec};
 
-use common::{self, jolt_device::MemoryConfig};
+use common::{
+    self,
+    jolt_device::{JoltDeviceMemory, MemoryConfig},
+};
 use emulator::{cpu, default_terminal::DefaultTerminal};
 use instruction::{Cycle, Instruction};
 use jolt_program::preprocess::ram::code_word_intervals;
+use jolt_program::execution::TraceError;
 use jolt_riscv::RV64IMAC_JOLT;
 #[cfg(not(feature = "field-inline"))]
 use jolt_riscv::RV64IMAC_JOLT_ALL_INLINES;
@@ -79,19 +83,49 @@ fn env_rows(name: &str, default: usize) -> usize {
 #[tracing::instrument(skip_all)]
 pub fn trace(
     elf_contents: &[u8],
-    elf_path: Option<&std::path::PathBuf>,
+    elf_path: Option<&PathBuf>,
     inputs: &[u8],
     untrusted_advice: &[u8],
     trusted_advice: &[u8],
     memory_config: &MemoryConfig,
-    advice_tape: Option<cpu::AdviceTape>,
+    advice_tape: Option<AdviceTape>,
 ) -> (
     LazyTraceIterator,
     Vec<Cycle>,
     Memory,
     JoltDevice,
-    cpu::AdviceTape,
+    AdviceTape,
 ) {
+    try_trace(
+        elf_contents,
+        elf_path,
+        inputs,
+        untrusted_advice,
+        trusted_advice,
+        memory_config,
+        advice_tape,
+    )
+    .expect("guest execution violated the I/O contract")
+}
+
+pub(crate) fn try_trace(
+    elf_contents: &[u8],
+    elf_path: Option<&PathBuf>,
+    inputs: &[u8],
+    untrusted_advice: &[u8],
+    trusted_advice: &[u8],
+    memory_config: &MemoryConfig,
+    advice_tape: Option<AdviceTape>,
+) -> Result<
+    (
+        LazyTraceIterator,
+        Vec<Cycle>,
+        Memory,
+        JoltDevice,
+        AdviceTape,
+    ),
+    TraceError,
+> {
     let mut emulator = create_emulator(
         elf_contents,
         elf_path,
@@ -128,28 +162,31 @@ pub fn trace(
         }
     };
 
-    let (advice_tape_result, final_memory_state, jolt_device) = finish_emulator(emulator);
-    (
+    let (advice_tape_result, final_memory_state, jolt_device) = finish_emulator(emulator)?;
+    Ok((
         lazy_trace_iter,
         trace,
         final_memory_state,
         jolt_device,
         advice_tape_result,
-    )
+    ))
 }
 
 /// Shared teardown for every execution path (eager [`trace`], execute-only
 /// [`execute`], and the chunked fast pass): report a guest panic (log +
 /// backtrace), then extract the advice tape, final memory, and device.
 #[expect(clippy::expect_used)]
-pub(crate) fn finish_emulator(mut emulator: Emulator) -> (cpu::AdviceTape, Memory, JoltDevice) {
+pub(crate) fn finish_emulator(
+    mut emulator: Emulator,
+) -> Result<(AdviceTape, Memory, JoltDevice), TraceError> {
     if emulator
         .get_cpu()
         .mmu
         .jolt_device
         .as_ref()
         .expect("JoltDevice was not initialized")
-        .panic
+        .flags
+        .outcome()?
     {
         error!(
             "Guest program terminated due to panic after {} cycles.",
@@ -160,13 +197,14 @@ pub(crate) fn finish_emulator(mut emulator: Emulator) -> (cpu::AdviceTape, Memor
 
     let advice_tape = emulator.take_advice_tape();
     let cpu = emulator.get_mut_cpu();
-    let final_memory = cpu.mmu.memory.memory.take_memory();
+    let mut final_memory = cpu.mmu.memory.memory.take_memory();
     let jolt_device = cpu
         .get_mut_mmu()
         .jolt_device
         .take()
         .expect("JoltDevice was not initialized");
-    (advice_tape, final_memory, jolt_device)
+    final_memory.flag_memory = Some((jolt_device.memory_layout.panic, jolt_device.flags));
+    Ok((advice_tape, final_memory, jolt_device.into_public()?))
 }
 
 /// Executes a RISC-V program to completion without materializing trace rows
@@ -187,13 +225,13 @@ pub(crate) fn finish_emulator(mut emulator: Emulator) -> (cpu::AdviceTape, Memor
 #[tracing::instrument(skip_all)]
 pub fn execute(
     elf_contents: &[u8],
-    elf_path: Option<&std::path::PathBuf>,
+    elf_path: Option<&PathBuf>,
     inputs: &[u8],
     untrusted_advice: &[u8],
     trusted_advice: &[u8],
     memory_config: &MemoryConfig,
-    advice_tape: Option<cpu::AdviceTape>,
-) -> (usize, JoltDevice, cpu::AdviceTape) {
+    advice_tape: Option<AdviceTape>,
+) -> (usize, JoltDevice, AdviceTape) {
     let mut emulator = create_emulator(
         elf_contents,
         elf_path,
@@ -208,7 +246,8 @@ pub fn execute(
     }
 
     let executed = emulator.get_cpu().trace_len;
-    let (advice_tape_result, _final_memory, jolt_device) = finish_emulator(emulator);
+    let (advice_tape_result, _final_memory, jolt_device) =
+        finish_emulator(emulator).expect("guest execution violated the I/O contract");
     (executed, jolt_device, advice_tape_result)
 }
 
@@ -216,12 +255,12 @@ use crate::utils::trace_writer::{TraceBatchCollector, TraceWriter, TraceWriterCo
 
 pub fn trace_to_file(
     elf_contents: &[u8],
-    elf_path: Option<&std::path::PathBuf>,
+    elf_path: Option<&PathBuf>,
     inputs: &[u8],
     untrusted_advice: &[u8],
     trusted_advice: &[u8],
     memory_config: &MemoryConfig,
-    out_path: &std::path::PathBuf,
+    out_path: &PathBuf,
 ) -> (Memory, JoltDevice) {
     let config = TraceWriterConfig::default();
 
@@ -255,12 +294,12 @@ pub fn trace_to_file(
 #[tracing::instrument(skip_all)]
 pub fn trace_lazy(
     elf_contents: &[u8],
-    elf_path: Option<&std::path::PathBuf>,
+    elf_path: Option<&PathBuf>,
     inputs: &[u8],
     untrusted_advice: &[u8],
     trusted_advice: &[u8],
     memory_config: &MemoryConfig,
-    advice_tape: Option<cpu::AdviceTape>,
+    advice_tape: Option<AdviceTape>,
 ) -> LazyTraceIterator {
     LazyTraceIterator::new(CheckpointingTracer::new(create_emulator(
         elf_contents,
@@ -356,12 +395,12 @@ fn setup_emulator(
 /// (mode-equivalence gates, two-pass parallel tracing).
 pub fn create_emulator(
     elf_contents: &[u8],
-    elf_path: Option<&std::path::PathBuf>,
+    elf_path: Option<&PathBuf>,
     inputs: &[u8],
     untrusted_advice: &[u8],
     trusted_advice: &[u8],
     memory_config: &MemoryConfig,
-    advice_tape: Option<cpu::AdviceTape>,
+    advice_tape: Option<AdviceTape>,
 ) -> Emulator {
     let term = DefaultTerminal::default();
     let mut emulator = Emulator::new(Box::new(term));
@@ -388,7 +427,7 @@ pub fn create_emulator(
         memory_config.max_input_size,
     );
 
-    let mut jolt_device = JoltDevice::new(memory_config);
+    let mut jolt_device = JoltDeviceMemory::new(memory_config);
     jolt_device.inputs = inputs.to_vec();
     jolt_device.trusted_advice = trusted_advice.to_vec();
     jolt_device.untrusted_advice = untrusted_advice.to_vec();
@@ -530,7 +569,9 @@ impl LazyTracer for Checkpoint {
             .jolt_device
             .as_ref()
             .unwrap()
-            .panic
+            .flags
+            .outcome()
+            == Ok(true)
     }
 
     fn at_tick_boundary(&self) -> bool {
@@ -570,6 +611,8 @@ impl LazyTracer for Checkpoint {
             .jolt_device
             .take()
             .unwrap()
+            .into_public()
+            .expect("guest execution violated the I/O contract")
     }
 }
 
@@ -654,7 +697,7 @@ impl CheckpointingTracer {
     }
 
     /// Take ownership of the advice tape from the emulator, replacing it with an empty one
-    pub fn take_advice_tape(&mut self) -> cpu::AdviceTape {
+    pub fn take_advice_tape(&mut self) -> AdviceTape {
         self.emulator_state.take_advice_tape()
     }
 }
@@ -671,7 +714,9 @@ impl LazyTracer for CheckpointingTracer {
             .jolt_device
             .as_ref()
             .unwrap()
-            .panic
+            .flags
+            .outcome()
+            == Ok(true)
     }
 
     fn at_tick_boundary(&self) -> bool {
@@ -699,6 +744,16 @@ impl LazyTracer for CheckpointingTracer {
             self.finished = true;
             let emulator = &mut self.emulator_state;
             let cpu = emulator.get_mut_cpu();
+            let device = cpu
+                .mmu
+                .jolt_device
+                .as_ref()
+                .expect("JoltDevice was not initialized");
+            device
+                .flags
+                .outcome()
+                .expect("guest execution violated the I/O contract");
+            cpu.mmu.memory.memory.flag_memory = Some((device.memory_layout.panic, device.flags));
             // When checkpoint saving is active, the caller still saves one
             // final checkpoint after termination, which snapshots the live
             // memory's capacity — clone instead of emptying it.
@@ -723,6 +778,8 @@ impl LazyTracer for CheckpointingTracer {
             .jolt_device
             .take()
             .expect("JoltDevice was not initialized")
+            .into_public()
+            .expect("guest execution violated the I/O contract")
     }
 }
 
@@ -753,8 +810,26 @@ pub fn decode(elf: &[u8]) -> (Vec<Instruction>, Vec<(u64, u8)>, u64, u64) {
 
 #[cfg(test)]
 pub(crate) mod test_utils {
+    use common::jolt_device::{MemoryConfig, MemoryLayout};
+
+    pub(crate) fn flag_exit_words(panic: u32, termination: u32) -> Vec<u32> {
+        let layout = MemoryLayout::new(&MemoryConfig {
+            program_size: Some(1024),
+            ..Default::default()
+        });
+        let address = layout.panic as u32;
+        vec![
+            ((address + 0x800) & 0xffff_f000) | 0x537,
+            ((address & 0xfff) << 20) | 0x50513,
+            (panic << 20) | 0x593,
+            0x00b5_3023,
+            (termination << 20) | 0x593,
+            0x00b5_3423,
+            0x0000_006f,
+        ]
+    }
+
     /// Build the muldiv guest and return the ELF bytes.
-    /// Mirrors the pattern used by `jolt_host::Program::build()`.
     pub(crate) fn build_muldiv_guest() -> Vec<u8> {
         let guest = "muldiv-guest";
         let func = "muldiv";
@@ -913,11 +988,9 @@ mod tests {
 
     /// addi x1, x0, 1 ; addi x2, x1, 2 ; j .  — terminates via PC stall.
     fn tiny_guest_elf() -> Vec<u8> {
-        build_elf64(
-            &[0x0010_0093, 0x0020_8113, 0x0000_006f],
-            &[],
-            StrtabOrder::GnuLd,
-        )
+        let mut words = vec![0x0010_0093, 0x0020_8113];
+        words.extend(crate::test_utils::flag_exit_words(0, 1));
+        build_elf64(&words, &[], StrtabOrder::GnuLd)
     }
 
     fn tiny_guest_config(elf: &[u8]) -> MemoryConfig {

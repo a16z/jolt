@@ -3,7 +3,10 @@ use jolt_riscv::{JoltInstructionProfile, JoltInstructionRow};
 
 use crate::preprocess::{
     bytecode::BytecodePreprocessing,
-    ram::{bytecode_code_word_intervals, validate_code_word_intervals, RAMPreprocessing},
+    ram::{
+        bytecode_code_word_intervals, compute_max_ram_k, validate_code_word_intervals,
+        RAMPreprocessing,
+    },
     PreprocessingError,
 };
 
@@ -29,6 +32,7 @@ impl JoltProgramPreprocessing {
         max_padded_trace_length: usize,
         profile: JoltInstructionProfile,
     ) -> Result<Self, PreprocessingError> {
+        let _ = compute_max_ram_k(&memory_layout)?;
         let mut ram = RAMPreprocessing::preprocess(memory_init);
         ram.code_word_intervals =
             bytecode_code_word_intervals(&bytecode, memory_layout.get_lowest_address())?;
@@ -226,5 +230,35 @@ mod tests {
         let mut encoded = encoded;
         encoded["ram"]["code_word_intervals"] = serde_json::json!([]);
         assert!(serde_json::from_value::<JoltProgramPreprocessing>(encoded).is_err());
+    }
+}
+
+#[cfg(test)]
+mod admission_tests {
+    use super::JoltProgramPreprocessing;
+    use crate::preprocess::{PreprocessingError, RamDomainError};
+    use common::jolt_device::{MemoryConfig, MemoryLayout, MemoryLayoutError};
+    use jolt_riscv::RV64IMAC_JOLT;
+
+    #[test]
+    fn full_preprocessing_rechecks_layout_admission() {
+        let mut layout = MemoryLayout::new(&MemoryConfig {
+            program_size: Some(1024),
+            ..Default::default()
+        });
+        layout.heap_end = u64::MAX - 6;
+        assert!(matches!(
+            JoltProgramPreprocessing::new(
+                Vec::new(),
+                Vec::new(),
+                layout,
+                0,
+                1 << 16,
+                RV64IMAC_JOLT
+            ),
+            Err(PreprocessingError::RamDomain(RamDomainError::MemoryLayout(
+                MemoryLayoutError::HeapEndTooHigh { .. }
+            )))
+        ));
     }
 }

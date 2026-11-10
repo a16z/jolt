@@ -781,7 +781,8 @@ impl MacroBuilder {
         let max_output_len = attributes.max_output_size as usize;
         let max_untrusted_advice_len = attributes.max_untrusted_advice_size as usize;
         let max_trusted_advice_len = attributes.max_trusted_advice_size as usize;
-        let termination_bit = memory_layout.termination as usize;
+        let panic_word = memory_layout.panic;
+        let termination_word = memory_layout.termination;
 
         let get_input_slice = quote! {
             let __jolt_input_ptr = #input_start as *const u8;
@@ -911,7 +912,7 @@ impl MacroBuilder {
             },
         };
 
-        let panic_fn = self.make_panic(memory_layout.panic);
+        let panic_fn = self.make_panic(panic_word, termination_word);
         let declare_alloc = self.make_allocator();
 
         // Boot code (__jolt_start) is provided by jolt-sdk's runtime boot module.
@@ -933,7 +934,9 @@ impl MacroBuilder {
                 #decode_and_call
                 #handle_return
                 unsafe {
-                    ::core::ptr::write_volatile(#termination_bit as *mut u8, 1);
+                    // Full-word stores canonicalize any flag values left by the guest.
+                    ::core::ptr::write_volatile(#panic_word as *mut u64, 0);
+                    ::core::ptr::write_volatile(#termination_word as *mut u64, 1);
                 }
                 // Never return - loop forever for clean termination
                 // The emulator detects termination via PC stall
@@ -946,15 +949,17 @@ impl MacroBuilder {
         }
     }
 
-    /// Generate `jolt_panic()` function that writes to the panic address.
+    /// Generate `jolt_panic()` with the canonical final panic flag words.
     /// This is called by the runtime's `#[panic_handler]` to signal panics to the prover.
-    fn make_panic(&self, panic_address: u64) -> TokenStream2 {
+    fn make_panic(&self, panic_address: u64, termination_address: u64) -> TokenStream2 {
         quote! {
             #[cfg(feature = "guest")]
             #[no_mangle]
             pub extern "C" fn jolt_panic() {
                 unsafe {
-                    ::core::ptr::write_volatile(#panic_address as *mut u8, 1);
+                    // Abort remains canonical even after a prior termination write.
+                    ::core::ptr::write_volatile(#termination_address as *mut u64, 0);
+                    ::core::ptr::write_volatile(#panic_address as *mut u64, 1);
                 }
             }
         }

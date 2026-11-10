@@ -14,7 +14,7 @@
 #![expect(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use common::constants::REGISTER_COUNT;
-use common::jolt_device::JoltDevice;
+use common::jolt_device::JoltDeviceMemory;
 use jolt_platform::JOLT_ADVICE_WRITE_CALL_ID;
 use jolt_riscv::{JoltInstructionKind, JoltInstructionRow, NormalizedOperands};
 use jolt_tracer_x86::harness::{
@@ -577,7 +577,7 @@ struct RefOutcome {
 
 fn reference_run(instance: &Instance) -> RefOutcome {
     let mut cpu = Cpu::new(Box::new(DummyTerminal {}));
-    cpu.get_mut_mmu().jolt_device = Some(JoltDevice::new(&harness::memory_config()));
+    cpu.get_mut_mmu().jolt_device = Some(JoltDeviceMemory::new(&harness::memory_config()));
     cpu.get_mut_mmu().init_memory(MEM_CAPACITY);
     for (slot, &dword) in instance.scratch.iter().enumerate() {
         let _ = cpu

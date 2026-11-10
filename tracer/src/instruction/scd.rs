@@ -54,6 +54,7 @@ impl RISCVTrace for SCD {
 mod tests {
     use crate::emulator::{cpu::Cpu, default_terminal::DefaultTerminal};
     use crate::instruction::{Instruction, RISCVTrace};
+    use common::jolt_device::JoltDeviceMemory;
 
     const DRAM_BASE: u64 = 0x80000000;
     const TEST_MEM_SIZE: u64 = 1024 * 1024;
@@ -65,7 +66,7 @@ mod tests {
             program_size: Some(1024),
             ..Default::default()
         };
-        cpu.get_mut_mmu().jolt_device = Some(common::jolt_device::JoltDevice::new(&memory_config));
+        cpu.get_mut_mmu().jolt_device = Some(JoltDeviceMemory::new(&memory_config));
         cpu.get_mut_mmu().init_memory(TEST_MEM_SIZE);
         cpu
     }

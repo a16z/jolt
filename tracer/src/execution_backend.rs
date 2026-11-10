@@ -11,7 +11,7 @@ use jolt_program::{execution::FieldEvent, field_inline::FieldInlineTraceData};
 use jolt_riscv::{CircuitFlags, JoltTraceRow};
 use rayon::prelude::*;
 
-use common::jolt_device::JoltDevice;
+use common::jolt_device::{JoltDevice, JoltDeviceMemory};
 
 use crate::emulator::cpu::AdviceTape;
 use crate::emulator::decode_cache::DecodeCache;
@@ -46,7 +46,7 @@ impl TracerBackend {
             return Err(TraceError::MissingElfBytes);
         }
 
-        let (_lazy_trace, cycles, final_memory, device, advice_tape) = crate::trace(
+        let (_lazy_trace, cycles, final_memory, device, advice_tape) = crate::try_trace(
             program.elf_bytes(),
             self.elf_path.as_ref(),
             &inputs.inputs,
@@ -54,11 +54,11 @@ impl TracerBackend {
             &inputs.trusted_advice,
             &inputs.memory_config,
             inputs.advice_tape.map(AdviceTape::from_bytes),
-        );
+        )?;
         Ok(TraceExecution {
             cycles,
             final_memory: MemoryImage {
-                bytes: final_memory.materialized_nonzero_bytes(),
+                bytes: final_memory.final_memory_bytes(),
             },
             device,
             advice_tape: advice_tape.into_bytes(),
@@ -198,7 +198,7 @@ pub struct TracerChunkCheckpoint {
 }
 
 struct WorkerSeed {
-    device: Option<JoltDevice>,
+    device: Option<JoltDeviceMemory>,
     decode: DecodeCache,
     code_word_intervals: Arc<[(usize, usize)]>,
     bytecode: BytecodePreprocessing,
@@ -302,14 +302,14 @@ impl TracerBackend {
             });
         }
 
-        let (advice_tape, final_memory, device) = crate::finish_emulator(pass.into_emulator());
+        let (advice_tape, final_memory, device) = crate::finish_emulator(pass.into_emulator())?;
 
         Ok(ExecutionSummary {
             checkpoints,
             trace_len,
             device,
             final_memory: Some(MemoryImage {
-                bytes: final_memory.materialized_nonzero_bytes(),
+                bytes: final_memory.final_memory_bytes(),
             }),
             advice_tape: Some(advice_tape.into_bytes()),
         })
@@ -574,6 +574,7 @@ mod chunked_tests {
 mod tests {
     use super::*;
     use crate::emulator::elf_analyzer::test_elf::{build_elf64, StrtabOrder};
+    use crate::parallel::TwoPassConfig;
     use common::jolt_device::MemoryConfig;
     use jolt_program::execution::{TraceError, TraceInputs};
 
@@ -584,14 +585,148 @@ mod tests {
     };
 
     #[test]
+    fn flag_amo_history_agrees_in_interpreter_and_parallel_replay() {
+        let exit = crate::test_utils::flag_exit_words(0, 1);
+        let mut words = exit[..2].to_vec();
+        for _ in 0..4 {
+            words.extend([
+                0x0050_0593, // li a1, 5
+                0x00b5_262f, // amoadd.w a2, a1, (a0)
+                0xffb0_0593, // li a1, -5
+                0x00b5_262f,
+                0x0045_0513, // addi a0, a0, 4
+            ]);
+        }
+        words.push(0xff05_0513); // addi a0, a0, -16
+        for _ in 0..2 {
+            words.extend([
+                0x0070_0593,
+                0x00b5_362f,
+                0xff90_0593,
+                0x00b5_362f,
+                0x0085_0513,
+            ]);
+        }
+        words.extend(exit);
+        let elf = build_elf64(&words, &[], StrtabOrder::GnuLd);
+        let program = jolt_program::build_jolt_program(&elf).expect("prepare program");
+        let inputs = TraceInputs {
+            memory_config: MemoryConfig {
+                program_size: Some(elf.len() as u64),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mut backend = TracerBackend::new();
+        let eager = backend
+            .trace(&program, inputs.clone())
+            .expect("trace accepts restored flags");
+        let summary = backend
+            .execute(&program, inputs.clone(), 1)
+            .expect("execute accepts restored flags");
+        let mut replay = Vec::new();
+        for checkpoint in &summary.checkpoints {
+            replay.extend_from_slice(
+                backend
+                    .replay_chunk(checkpoint)
+                    .expect("replay raw flags")
+                    .rows(),
+            );
+        }
+        assert_eq!(replay, eager.trace.rows());
+        assert_eq!(summary.device, eager.device);
+        assert_eq!(summary.final_memory, eager.final_memory);
+        let emulator =
+            crate::create_emulator(&elf, None, &[], &[], &[], &inputs.memory_config, None);
+        let (cycles, finished) = crate::parallel::run_two_pass(
+            emulator,
+            &TwoPassConfig {
+                workers: 2,
+                chunk_rows: 1,
+                capacity_rows: 1024,
+            },
+        );
+        let bytecode = BytecodePreprocessing::preprocess(
+            program.expanded_bytecode.clone(),
+            program.entry_address,
+            program.profile,
+        )
+        .expect("bytecode");
+        assert_eq!(
+            collect_rows(&cycles, &bytecode)
+                .expect("convert parallel rows")
+                .0
+                .rows(),
+            eager.trace.rows()
+        );
+        let (_, final_memory, device) =
+            crate::finish_emulator(finished).expect("finalize parallel flags");
+        assert_eq!(device, eager.device);
+        assert_eq!(
+            Some(MemoryImage {
+                bytes: final_memory.final_memory_bytes()
+            }),
+            eager.final_memory
+        );
+    }
+
+    #[test]
+    fn final_flag_contract_is_checked_by_eager_and_chunked_execution() {
+        for (panic_word, termination_word, expected) in [
+            (0, 1, Some(false)),
+            (1, 0, Some(true)),
+            (0, 0, None),
+            (2, 0, None),
+            (1, 1, None),
+        ] {
+            let words = crate::test_utils::flag_exit_words(panic_word, termination_word);
+            let elf = build_elf64(&words, &[], StrtabOrder::GnuLd);
+            let program = jolt_program::build_jolt_program(&elf).expect("prepare program");
+            let inputs = TraceInputs {
+                memory_config: MemoryConfig {
+                    program_size: Some(elf.len() as u64),
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            let mut backend = TracerBackend::new();
+            let eager = backend.trace(&program, inputs.clone());
+            let chunked = backend.execute(&program, inputs, 1);
+            if let Some(panic) = expected {
+                let eager = eager.expect("canonical flags accepted");
+                let chunked = chunked.expect("canonical flags accepted");
+                assert_eq!(eager.device.panic, panic);
+                assert_eq!(eager.final_memory, chunked.final_memory);
+                let mut replay = Vec::new();
+                for checkpoint in &chunked.checkpoints {
+                    replay.extend_from_slice(
+                        backend
+                            .replay_chunk(checkpoint)
+                            .expect("replay flags")
+                            .rows(),
+                    );
+                }
+                assert_eq!(eager.trace.rows(), replay);
+                let bytes = &eager.final_memory.expect("final memory").bytes;
+                assert!(bytes.contains(&(eager.device.memory_layout.panic, panic_word as u8)));
+                assert!(bytes.contains(&(
+                    eager.device.memory_layout.termination,
+                    termination_word as u8
+                )));
+            } else {
+                assert!(matches!(eager, Err(TraceError::InvalidFlagWords(_))));
+                assert!(matches!(chunked, Err(TraceError::InvalidFlagWords(_))));
+            }
+        }
+    }
+
+    #[test]
     #[expect(clippy::expect_used, reason = "test-only assertions")]
     fn tracer_backend_traces_a_guest_elf_into_jolt_rows() {
         // addi x1, x0, 1 ; addi x2, x1, 2 ; j .
-        let elf = build_elf64(
-            &[0x0010_0093, 0x0020_8113, 0x0000_006f],
-            &[],
-            StrtabOrder::GnuLd,
-        );
+        let mut words = vec![0x0010_0093, 0x0020_8113];
+        words.extend(crate::test_utils::flag_exit_words(0, 1));
+        let elf = build_elf64(&words, &[], StrtabOrder::GnuLd);
         let program = jolt_program::build_jolt_program(&elf).expect("prepare program");
         let inputs = TraceInputs {
             memory_config: MemoryConfig {

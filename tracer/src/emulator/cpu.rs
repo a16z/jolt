@@ -1303,7 +1303,7 @@ impl Cpu {
     /// register file (including virtual registers), the CSR array, clock, wfi,
     /// privilege mode, the LR/SC reservation triple, the advice tape (data and
     /// read position), `executed_instrs`, `trace_len` (row-uniform across
-    /// trace and execute modes), and JoltDevice outputs/panic. Excludes
+    /// trace and execute modes), and JoltDeviceMemory outputs and flag words. Excludes
     /// host-side bookkeeping (markers, call stack) and the dead `f`
     /// registers. Memory is not compared — callers hash it separately.
     pub fn arch_state_diff(&self, other: &Cpu) -> Option<String> {
@@ -1390,8 +1390,8 @@ impl Cpu {
                         b.outputs.len()
                     ));
                 }
-                if a.panic != b.panic {
-                    return Some(format!("jolt_device.panic: {} vs {}", a.panic, b.panic));
+                if a.flags != b.flags {
+                    return Some(format!("jolt_device.flags: {:?} vs {:?}", a.flags, b.flags));
                 }
             }
             (None, None) => {}

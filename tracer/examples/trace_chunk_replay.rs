@@ -118,7 +118,8 @@ fn run_case(guest: &str, input: &[u8], chunk_ticks: usize) -> Result<(usize, usi
         .jolt_device
         .as_ref()
         .ok_or("worker lost its JoltDevice")?;
-    if worker_device.outputs != serial_device.outputs || worker_device.panic != serial_device.panic
+    if worker_device.outputs != serial_device.outputs
+        || worker_device.flags.outcome().map_err(|e| e.to_string())? != serial_device.panic
     {
         return Err("final device outputs/panic diverged".to_string());
     }
