@@ -316,12 +316,6 @@ base_field_suite!(
     0x0728_0005
 );
 base_field_suite!(
-    fp128_prime_a7f7_unreduced,
-    two::Prime128OffsetA7F7,
-    u128::MAX - 0xFFFF_A7F6,
-    0x0728_0006
-);
-base_field_suite!(
     fp128_prime_6a23801f_unreduced,
     two::Prime128Offset6A23801F,
     u128::MAX - 0x6A23_801E,
