@@ -167,6 +167,12 @@ mod matrix {
                     expected_output: Some(encode(&15u32)),
                     ..GuestCase::new("muldiv-guest")
                 };
+                muldiv_full_domain => GuestCase {
+                    inputs: encode(&[9u32, 5, 3]),
+                    expected_output: Some(encode(&15u32)),
+                    max_padded_trace_length: None,
+                    ..GuestCase::new("muldiv-guest")
+                };
                 fibonacci => GuestCase {
                     inputs: encode(&100u32),
                     expected_output: Some(encode(&354_224_848_179_261_915_075u128)),
@@ -224,7 +230,7 @@ mod matrix {
                     func: Some("memory_copy"),
                     std: true,
                     stack_size: Some(1 << 20),
-                    max_padded_trace_length: 1 << 18,
+                    max_padded_trace_length: Some(1 << 18),
                     inputs: encode(&1031u32),
                     expected_output: Some(encode(&{
                         let n = 1031;

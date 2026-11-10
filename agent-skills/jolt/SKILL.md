@@ -222,7 +222,7 @@ Once the proof runs end-to-end, **always offer a performance optimization pass**
 
 Work through these in order:
 
-**1. Tighten `max_trace_length`** — run `guest::analyze_<fn>(<inputs>)`, find the actual cycle count, set `max_trace_length` to the smallest power of 2 above it. Proving time and peak memory are both proportional — a 2× reduction is a 2× speedup.
+**1. Tighten `max_trace_length`** — run `guest::analyze_<fn>(<inputs>)`, find the actual cycle count, set `max_trace_length` to the smallest power of 2 at or above it (at least 256). Proving time and peak memory are both proportional — a 2× reduction is a 2× speedup.
 
 **2. Find the bottleneck** — add `start_cycle_tracking` / `end_cycle_tracking` (see Step 5) around major sections and run `analyze_<fn>` again. Focus on whichever section consumes >50% of cycles.
 
