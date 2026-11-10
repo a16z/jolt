@@ -290,9 +290,14 @@ The first panel port (`ec4f1d62f` / Akita `18448889`) passed the independent
 ring oracle, Metal validation, and small/T27 proofs, but remained isolated:
 the T27 proof took 25.163155083 s (5.333899011 padded MHz), and the separate
 profile recorded 6.9160 s of commitment GPU work. The one-position tile doubles
-barrier frequency relative to the donor. A faithful two-position comparison is
-pending; the slower first port does not establish the donor algorithm's limit.
-Evidence is in `donor-panels-metal/`.
+barrier frequency relative to the donor. The two-position comparison
+(`2949ebb24` / Akita `60399604`) also passed focused checks and full proofs;
+all 32 profiled windows selected the two-position kernel. Its proof took
+25.036913584 s (5.360793676 padded MHz), with 6.5117 s of commitment GPU work.
+This modest improvement remains slower than the current NTT route, which stays
+selected. These observations establish the current comparison, not an
+optimization limit. Evidence is in `donor-panels-metal/` and
+`donor-panels-two-position-metal/`.
 The reported donor 5x speedup was against the older CPU implementation, and
 Markos believed roughly 10x was possible. Its measured throughput is therefore
 a reference, not the target or an optimization ceiling. After each port, use
