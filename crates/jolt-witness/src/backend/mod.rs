@@ -10,6 +10,8 @@ use jolt_program::preprocess::JoltProgramPreprocessing;
 use crate::field_inline::FieldInlineWitnessOracle;
 use crate::{RowSource, Shape, WitnessBundle, WitnessError};
 
+#[cfg(feature = "cuda")]
+pub mod cuda;
 #[cfg(any(test, feature = "test-utils"))]
 pub mod fixed;
 pub mod trace;

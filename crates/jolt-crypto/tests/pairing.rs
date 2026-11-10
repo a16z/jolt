@@ -1,7 +1,37 @@
+use ark_bn254::{Bn254 as ArkBn254, Fq12};
+use ark_ec::{
+    pairing::{MillerLoopOutput, Pairing},
+    CurveGroup,
+};
+use ark_ff::{AdditiveGroup, Field as ArkField};
 use jolt_crypto::{Bn254, Bn254G2, Bn254GT, JoltGroup, PairingGroup};
 use jolt_field::{Field, Fr, Ring};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
+
+#[test]
+fn gt_from_miller_loop_matches_pairing() {
+    let g1 = Bn254::g1_generator();
+    let g2 = Bn254::g2_generator();
+    let miller =
+        ArkBn254::miller_loop(g1.into_inner().into_affine(), g2.into_inner().into_affine());
+    assert_eq!(
+        Bn254GT::from_miller_loop(miller),
+        Some(Bn254::pairing(&g1, &g2))
+    );
+    assert_eq!(
+        Bn254GT::from_miller_loop(MillerLoopOutput(Fq12::ONE)),
+        Some(Bn254GT::identity())
+    );
+}
+
+#[test]
+fn gt_from_miller_loop_rejects_zero() {
+    assert_eq!(
+        Bn254GT::from_miller_loop(MillerLoopOutput(Fq12::ZERO)),
+        None
+    );
+}
 
 #[test]
 fn pairing_bilinearity() {

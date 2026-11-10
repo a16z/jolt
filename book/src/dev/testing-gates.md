@@ -33,6 +33,29 @@ cargo nextest run -p jolt-prover --features prover-fixtures,field-inline,zk -E '
 cargo nextest run -p jolt-prover --features prover-fixtures,field-inline,akita -E 'binary(e2e_matrix)' --cargo-quiet
 ```
 
+With `cuda` enabled, the Dory matrix also runs each guest with CUDA kernels and
+`CudaDoryScheme`, in both clear and ZK builds. The existing optimized cases keep
+their names; CUDA cases appear under `matrix::clear::cuda` or `matrix::zk::cuda`.
+They require a usable CUDA device and fail if none is available. CUDA proofs
+are decoded and verified using the CPU Dory types.
+
+Run the CUDA cases on one GPU, serializing tests to bound device memory usage:
+
+```bash
+CUDA_VISIBLE_DEVICES=0 JOLT_CUDA_GPUS=1 cargo nextest run -p jolt-prover \
+  --features prover-fixtures,cuda --cargo-quiet \
+  -E 'binary(e2e_matrix) and test(::cuda::)' --test-threads 1
+
+# Field-inline acceptance and clear-mode proof equality against reference.
+CUDA_VISIBLE_DEVICES=0 JOLT_CUDA_GPUS=1 cargo nextest run -p jolt-prover \
+  --features prover-fixtures,field-inline,cuda --cargo-quiet \
+  -E '(binary(e2e_matrix) and test(::cuda::)) or (binary(field_inline_e2e) and test(reference_matches_cuda))' \
+  --test-threads 1
+```
+
+Add `zk` to either feature list to run ZK acceptance. Proof equality is checked
+only in clear mode because ZK proofs use fresh blinding randomness.
+
 Add a guest by appending a row to its profile table: the example crate name,
 its entry function when the crate has several, the `stack_size` from its
 `#[jolt::provable]` attribute when it exceeds the 4 KiB default, `std: true`
@@ -40,6 +63,50 @@ when the guest crate enables `jolt`'s `guest-std` feature, postcard-encoded
 inputs that keep the trace under the row's padded bound (2^16 by default),
 and the postcard-encoded output computed natively in the test. Field cases
 that execute field instructions must also set `field_inline_active: true`.
+
+### CUDA CI
+
+`.github/workflows/cuda.yml` runs compilation, Clippy, and documentation checks
+on standard `ubuntu-22.04` runners without a GPU or NVIDIA driver. Its matrix
+covers clear/ZK and ordinary/field-inline configurations for the kernels,
+witness, Dory, and prover crates, including test binaries. The clear job also
+checks isolated serial CUDA libraries.
+
+These jobs install the CUDA 12.4 compiler and NVRTC. `JOLT_CUDA_ARCH=sm_75`
+lets the kernels build script compile every shared `.cu` source without
+detecting a local GPU. Witness `.cu` sources normally compile at runtime;
+`cuda_source_compiles_without_device` invokes their production NVRTC compiler
+without creating a CUDA context. These checks do not execute GPU kernels or
+validate CUDA proofs.
+
+The separate `CUDA (T4)` job is disabled by `if: ${{ false }}`, pending the
+creation of a GitHub-hosted larger GPU runner. The job expects the runner to be
+named `jolt-cuda-t4` and to have the following:
+
+- Linux x64, NVIDIA GPU-Optimized VMI based on Ubuntu 22.04.
+- The single-T4 size: 4 vCPUs, 28 GB host RAM, and 16 GB GPU memory.
+- NVIDIA driver 550.54.15 or newer, compatible with CUDA 12.4.
+
+The runner name supplies the workflow label; it is not a standard label that
+GitHub provisions automatically. For public repositories, the runner group's
+access policy must also allow public repositories. See GitHub's
+[larger-runner setup](https://docs.github.com/en/actions/how-tos/manage-runners/larger-runners/manage-larger-runners)
+and [GPU runner specifications](https://docs.github.com/en/actions/reference/runners/larger-runners).
+The image's installed software is listed in NVIDIA's
+[Azure VMI documentation](https://docs.nvidia.com/ngc/ngc-deploy-public-cloud/ngc-azure/index.html).
+
+When enabled, the GPU job installs the CUDA 12.4 compiler and NVRTC without
+replacing the image's driver, and runs with one visible GPU and poisoned
+scratch buffers. It tests the same crates in all four configurations, including
+prover acceptance and backend equivalence. Tests run serially to limit memory
+use. The CPU reference profiling smoke is excluded; `cuda_profile` verifies
+the CUDA profiling entry point instead.
+
+A final SHA-2-chain profile produces and verifies a proof at scale 18 and
+uploads the profiling artifacts. Manual dispatch permits scales 18, 20, 22,
+or 24; these larger choices are capacity checks and can exceed the runner's
+host or device memory. The default stays below the agreed scale-24 ceiling.
+Two-GPU runs belong to local benchmarking rather than this CI lane.
 
 ## Tamper rejection phases
 

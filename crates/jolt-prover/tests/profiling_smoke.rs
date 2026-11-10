@@ -36,6 +36,8 @@ fn profile_run_emits_conformant_artifacts() {
         scale: Some(13),
         format: OutputFormat::Chrome,
         backend: BackendKind::Reference,
+        #[cfg(all(feature = "cuda", not(feature = "akita")))]
+        gpus: None,
         guest_elf: None,
         input_file: None,
         result_json: None,

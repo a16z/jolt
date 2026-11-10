@@ -13,6 +13,7 @@ workspace = true
 
 [features]
 default = []
+cuda = ["dep:cudarc"]
 test-utils = []
 parallel = ["dep:rayon", "jolt-utils/parallel"]
 field-inline = [
@@ -24,6 +25,7 @@ field-inline = [
 ]
 
 [dependencies]
+cudarc = { workspace = true, optional = true }
 common.workspace = true
 jolt-claims.workspace = true
 jolt-witness-derive.workspace = true
@@ -37,3 +39,4 @@ thiserror.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+proptest.workspace = true

@@ -145,6 +145,26 @@ pub struct DoryHint {
 }
 
 impl DoryHint {
+    /// Construct a hint from externally computed row commitments in Dory row
+    /// order. The caller must supply rows and a blind for the same polynomial
+    /// and setup; this constructor does not recompute or validate them.
+    #[cfg(feature = "cuda")]
+    pub fn from_parts(row_commitments: Vec<Bn254G1>, commit_blind: Fr) -> Self {
+        Self::new(row_commitments, commit_blind)
+    }
+
+    /// The commitment blind, zero for a transparent commitment.
+    #[cfg(feature = "cuda")]
+    pub fn commit_blind(&self) -> Fr {
+        self.commit_blind
+    }
+
+    /// Transfer the ordered rows and blind to the CUDA opening adapter.
+    #[cfg(feature = "cuda")]
+    pub fn into_parts(self) -> (Vec<Bn254G1>, Fr) {
+        (self.row_commitments, self.commit_blind)
+    }
+
     pub(crate) fn new(row_commitments: Vec<Bn254G1>, commit_blind: Fr) -> Self {
         Self {
             row_commitments,

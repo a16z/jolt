@@ -2,7 +2,7 @@
 //!
 //! Acceptance across protocol modes lives in `e2e_matrix.rs`. These tests use
 //! the same guest cases and preparation, and cover distinct field-inline wire
-//! properties: reference/optimized proof equality in clear mode, field commitment
+//! properties: backend proof equality against reference in clear mode, field commitment
 //! presence and binding, and rejection of corrupted BlindFold payloads. Claim and
 //! round-polynomial mutations live in the verifier fixture matrix.
 
@@ -16,23 +16,31 @@ mod support;
 #[cfg(all(
     feature = "prover-fixtures",
     feature = "field-inline",
+    not(feature = "akita")
+))]
+#[path = "support/dory_backend.rs"]
+mod dory_backend;
+
+#[cfg(all(
+    feature = "prover-fixtures",
+    feature = "field-inline",
     not(feature = "zk"),
     not(feature = "akita")
 ))]
-#[expect(
-    clippy::expect_used,
-    clippy::panic,
-    reason = "integration tests should fail loudly"
-)]
+#[expect(clippy::expect_used, reason = "integration tests should fail loudly")]
 mod clear {
     use jolt_dory::DoryScheme;
     use jolt_field::Fr;
+    #[cfg(feature = "cuda")]
+    use jolt_kernels::cuda::CudaDoryScheme;
     use jolt_prover::{JoltBackend, ProverError};
     use jolt_verifier::proof::JoltProofClaims;
     use jolt_verifier::VerifierError;
 
+    use crate::dory_backend::DoryBackend;
     use crate::support::field_inline::dory;
     use crate::support::field_inline::{field_ops, muldiv};
+    use crate::support::GuestCase;
 
     #[test]
     fn noncanonical_limb_advice_cannot_produce_an_accepted_proof() {
@@ -66,7 +74,7 @@ mod clear {
         );
         assert!(prepared.trace.device.panic);
         drop(injection);
-        match dory::try_prove(prepared, JoltBackend::optimized()) {
+        match dory::try_prove(prepared, JoltBackend::<Fr, DoryScheme>::optimized()) {
             Ok((preprocessing, public_io, proof)) => {
                 assert!(dory::verify_full(&preprocessing, &public_io, &proof).is_err());
             }
@@ -79,38 +87,26 @@ mod clear {
         }
     }
 
-    type BackendCase = (&'static str, fn() -> JoltBackend<Fr, DoryScheme>);
-
-    fn backends() -> [BackendCase; 2] {
-        [
-            ("reference", JoltBackend::reference),
-            ("optimized", JoltBackend::optimized),
-        ]
+    /// Clear mode draws nothing outside Fiat-Shamir: a backend must produce
+    /// the reference proof, not just a proof the verifier accepts.
+    fn assert_backend_equivalence(case: &GuestCase, backend: impl DoryBackend) {
+        let (reference_preprocessing, reference_io, reference) =
+            dory::prove(case, JoltBackend::<Fr, DoryScheme>::reference());
+        dory::verify_full(&reference_preprocessing, &reference_io, &reference)
+            .expect("reference proof must verify");
+        let (preprocessing, public_io, proof) = dory::prove(case, backend);
+        assert!(proof.commitments.field_inline.is_some());
+        assert!(matches!(proof.claims, JoltProofClaims::Clear(_)));
+        dory::verify_full(&preprocessing, &public_io, &proof).expect("backend proof must verify");
+        assert!(
+            reference == proof,
+            "backend and reference proofs must be identical wire objects",
+        );
     }
 
-    /// Both backends' proofs must verify AND be equal wire objects — clear
-    /// mode draws nothing outside Fiat-Shamir, so reference/optimized
-    /// divergence anywhere in the composed pipeline shows up here as a proof
-    /// inequality even when both sides individually verify.
     #[test]
     fn field_inline_eqpoly_reference_matches_optimized() {
-        let mut proofs = Vec::new();
-        for (label, backend) in backends() {
-            let (preprocessing, public_io, proof) = dory::prove(&field_ops(), backend());
-            assert!(
-                proof.commitments.field_inline.is_some(),
-                "field-inline proofs must carry the field-inline commitment payload ({label})",
-            );
-            assert!(matches!(proof.claims, JoltProofClaims::Clear(_)));
-            dory::verify_full(&preprocessing, &public_io, &proof).unwrap_or_else(|error| {
-                panic!("modular field-inline proof must verify ({label}): {error}")
-            });
-            proofs.push(proof);
-        }
-        assert!(
-            proofs[0] == proofs[1],
-            "reference and optimized field-inline proofs must be identical wire objects",
-        );
+        assert_backend_equivalence(&field_ops(), JoltBackend::<Fr, DoryScheme>::optimized());
     }
 
     /// The uniform-shape degenerate case: a field-inline guest executing zero
@@ -118,19 +114,19 @@ mod clear {
     /// all-zero `FieldRdInc` commitment and zero field-inline openings.
     #[test]
     fn field_inline_muldiv_reference_matches_optimized() {
-        let mut proofs = Vec::new();
-        for (label, backend) in backends() {
-            let (preprocessing, public_io, proof) = dory::prove(&muldiv(), backend());
-            assert!(proof.commitments.field_inline.is_some());
-            dory::verify_full(&preprocessing, &public_io, &proof).unwrap_or_else(|error| {
-                panic!("field-inactive modular proof must verify ({label}): {error}")
-            });
-            proofs.push(proof);
-        }
-        assert!(
-            proofs[0] == proofs[1],
-            "reference and optimized field-inactive proofs must be identical wire objects",
-        );
+        assert_backend_equivalence(&muldiv(), JoltBackend::<Fr, DoryScheme>::optimized());
+    }
+
+    #[cfg(feature = "cuda")]
+    #[test]
+    fn field_inline_eqpoly_reference_matches_cuda() {
+        assert_backend_equivalence(&field_ops(), JoltBackend::<Fr, CudaDoryScheme>::cuda());
+    }
+
+    #[cfg(feature = "cuda")]
+    #[test]
+    fn field_inline_muldiv_reference_matches_cuda() {
+        assert_backend_equivalence(&muldiv(), JoltBackend::<Fr, CudaDoryScheme>::cuda());
     }
 
     /// The verifier fixture matrix covers claim and round-polynomial mutations;
@@ -138,7 +134,7 @@ mod clear {
     #[test]
     fn field_inline_tampered_commitment_is_rejected() {
         let (preprocessing, public_io, mut proof) =
-            dory::prove(&field_ops(), JoltBackend::optimized());
+            dory::prove(&field_ops(), JoltBackend::<Fr, DoryScheme>::optimized());
         dory::verify_full(&preprocessing, &public_io, &proof).expect("honest proof");
         let replacement = proof.commitments.ram_inc.clone();
         let field_inline = proof
@@ -164,6 +160,7 @@ mod clear {
     reason = "integration tests should fail loudly"
 )]
 mod zk {
+    use jolt_dory::DoryScheme;
     use jolt_field::{Fr, Ring};
     use jolt_prover::JoltBackend;
     use jolt_verifier::proof::JoltProofClaims;
@@ -175,7 +172,7 @@ mod zk {
     fn field_inline_tampered_proofs_are_rejected() {
         support::with_zk_stack(|| {
             let (preprocessing, public_io, proof) =
-                dory::prove(&field_ops(), JoltBackend::optimized());
+                dory::prove(&field_ops(), JoltBackend::<Fr, DoryScheme>::optimized());
             assert!(matches!(proof.claims, JoltProofClaims::Zk { .. }));
             assert!(proof.commitments.field_inline.is_some());
             dory::verify_full(&preprocessing, &public_io, &proof)
@@ -213,7 +210,7 @@ mod zk {
     fn field_inline_muldiv_reference_proof_is_accepted() {
         support::with_zk_stack(|| {
             let (preprocessing, public_io, proof) =
-                dory::prove(&muldiv(), JoltBackend::reference());
+                dory::prove(&muldiv(), JoltBackend::<Fr, DoryScheme>::reference());
             dory::verify_full(&preprocessing, &public_io, &proof)
                 .expect("field-inactive reference ZK proof must verify");
         });

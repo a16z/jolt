@@ -1,0 +1,201 @@
+name: CUDA
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: ["**"]
+    paths-ignore:
+      - "specs/**"
+      - "*.md"
+      - ".claude/**"
+  workflow_dispatch:
+    inputs:
+      profile_scale:
+        description: Log2 trace bound when the GPU job is enabled
+        type: choice
+        default: "18"
+        options: ["18", "20", "22", "24"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref || github.run_id }}
+  cancel-in-progress: true
+
+env:
+  RUSTFLAGS: -D warnings
+  CARGO_TERM_COLOR: always
+  CARGO_BUILD_JOBS: "4"
+  RAYON_NUM_THREADS: "4"
+  JOLT_CUDA_ARCH: sm_75
+
+jobs:
+  build:
+    name: CUDA build (${{ matrix.mode }})
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - mode: clear
+            extra_features: ""
+          - mode: zk
+            extra_features: ",jolt-prover/zk"
+          - mode: field-clear
+            extra_features: ",jolt-prover/field-inline"
+          - mode: field-zk
+            extra_features: ",jolt-prover/field-inline,jolt-prover/zk"
+    env:
+      CUDA_VISIBLE_DEVICES: ""
+      CUDA_FEATURES: jolt-prover/cuda,jolt-prover/profiling,jolt-prover/prover-fixtures,jolt-prover/allocative,jolt-witness/test-utils${{ matrix.extra_features }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install CUDA compiler and NVRTC
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSL https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb -o /tmp/cuda-keyring.deb
+          sudo dpkg -i /tmp/cuda-keyring.deb
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config libssl-dev cuda-nvcc-12-4 cuda-nvrtc-dev-12-4
+          echo "/usr/local/cuda-12.4/bin" >> "$GITHUB_PATH"
+          echo "CUDA_PATH=/usr/local/cuda-12.4" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=/usr/local/cuda-12.4/lib64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" >> "$GITHUB_ENV"
+          /usr/local/cuda-12.4/bin/nvcc --version
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2
+        with:
+          components: clippy,rust-src
+          cache: false
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          shared-key: cuda-build-12.4-sm75-${{ matrix.mode }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Install nextest
+        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2
+        with:
+          tool: nextest
+      - name: Check isolated serial CUDA libraries
+        if: matrix.mode == 'clear'
+        shell: bash
+        run: |
+          set -euo pipefail
+          for package in jolt-kernels jolt-witness jolt-dory; do
+            cargo clippy --locked -p "$package" --no-default-features \
+              --features cuda --lib -- -D warnings
+          done
+      - name: Lint CUDA
+        run: |
+          cargo clippy --locked --all-targets \
+            -p jolt-kernels -p jolt-witness -p jolt-dory -p jolt-prover \
+            --features "$CUDA_FEATURES" -- -D warnings
+      - name: Build CUDA tests without running them
+        run: |
+          cargo nextest run --no-run --locked --cargo-profile ci --cargo-quiet \
+            -p jolt-kernels -p jolt-witness -p jolt-dory -p jolt-prover \
+            --features "$CUDA_FEATURES"
+      - name: Compile witness CUDA sources with NVRTC
+        if: matrix.mode == 'clear'
+        run: |
+          cargo nextest run --locked --cargo-profile ci --cargo-quiet \
+            -p jolt-kernels -p jolt-witness -p jolt-dory -p jolt-prover \
+            --features "$CUDA_FEATURES" \
+            -E 'package(jolt-witness) and test(=backend::cuda::device::tests::cuda_source_compiles_without_device)'
+      - name: Build CUDA documentation
+        run: |
+          cargo doc --locked --no-deps \
+            -p jolt-kernels -p jolt-witness -p jolt-dory -p jolt-prover \
+            --features "$CUDA_FEATURES"
+
+  cuda:
+    name: CUDA (T4)
+    # Remove this condition to enable GPU execution after provisioning the runner.
+    if: ${{ false }}
+    needs: build
+    # Organization-managed GitHub-hosted larger runner; see testing-gates.md.
+    runs-on: jolt-cuda-t4
+    timeout-minutes: 180
+    env:
+      CUDA_VISIBLE_DEVICES: "0"
+      JOLT_CUDA_GPUS: "1"
+      JOLT_CUDA_POISON: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install CUDA compiler and NVRTC
+        shell: bash
+        run: |
+          set -euo pipefail
+          . /etc/os-release
+          test "$ID" = ubuntu
+          test "$VERSION_ID" = 22.04
+          curl -fsSL https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb -o /tmp/cuda-keyring.deb
+          sudo dpkg -i /tmp/cuda-keyring.deb
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config libssl-dev cuda-nvcc-12-4 cuda-nvrtc-dev-12-4
+          echo "/usr/local/cuda-12.4/bin" >> "$GITHUB_PATH"
+          echo "CUDA_PATH=/usr/local/cuda-12.4" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=/usr/local/cuda-12.4/lib64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" >> "$GITHUB_ENV"
+      - name: Record CUDA device and toolchain
+        run: |
+          nvidia-smi
+          nvcc --version
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2
+        with:
+          components: rust-src
+          cache: false
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          shared-key: cuda-12.4-sm75
+          cache-directories: ~/.cache/dory
+      - name: Cache ZeroOS musl toolchain
+        id: cache-zeroos-musl
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ~/.zeroos/musl
+          key: zeroos-musl-toolchain-musl-1.2.3-gcc-9.4.0-Linux-x86_64
+      - name: Install ZeroOS musl toolchain
+        if: steps.cache-zeroos-musl.outputs.cache-hit != 'true'
+        run: |
+          curl -fsSL https://github.com/LayerZero-Labs/ZeroOS/releases/download/musl-toolchain-musl-1.2.3-gcc-9.4.0/zeroos-musl-toolchain-musl-1.2.3-gcc-9.4.0-Linux-x86_64.tar.gz -o /tmp/zeroos-musl.tar.gz
+          mkdir -p ~/.zeroos
+          tar -xzf /tmp/zeroos-musl.tar.gz -C ~/.zeroos
+      - name: Build and install jolt CLI
+        run: cargo install --path . --locked --force --profile ci --target-dir target
+      - name: Install nextest
+        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2
+        with:
+          tool: nextest
+      - name: Test CUDA in both protocol and instruction modes
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="jolt-prover/cuda,jolt-prover/profiling,jolt-prover/prover-fixtures,jolt-prover/allocative,jolt-witness/test-utils"
+          for extra in "" ",jolt-prover/zk" ",jolt-prover/field-inline" ",jolt-prover/field-inline,jolt-prover/zk"; do
+            features="${base}${extra}"
+            echo "::group::CUDA: ${features}"
+            # The CPU reference profiling smoke retains ~18 GiB itself.
+            # cuda_profile checks the same entry point with the CUDA backend.
+            cargo nextest run --locked --cargo-profile ci --cargo-quiet \
+              -p jolt-kernels -p jolt-witness -p jolt-dory -p jolt-prover \
+              --features "$features" -E 'not binary(profiling_smoke)' \
+              --test-threads 1
+            echo "::endgroup::"
+          done
+      - name: Profile and verify on one GPU
+        env:
+          PROFILE_SCALE: ${{ inputs.profile_scale || '18' }}
+        run: |
+          cargo run --locked --profile ci -p jolt-prover --features profiling,cuda -- \
+            profile --name sha2-chain --scale "$PROFILE_SCALE" \
+            --backend cuda --gpus 1 --format chrome
+      - name: Upload CUDA profiles
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: cuda-profiles
+          path: benchmark-runs/
+          if-no-files-found: ignore

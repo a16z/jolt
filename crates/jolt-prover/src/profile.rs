@@ -43,10 +43,12 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use clap::ValueEnum;
+#[cfg(not(feature = "akita"))]
+use common::jolt_device::JoltDevice;
 #[cfg(feature = "akita")]
 use jolt_akita::{AkitaChunkProfile, AkitaField};
 #[cfg(not(feature = "akita"))]
-use jolt_crypto::{Bn254G1, Pedersen};
+use jolt_crypto::{Bn254G1, HomomorphicCommitment, Pedersen};
 #[cfg(not(feature = "akita"))]
 use jolt_dory::DoryScheme;
 #[cfg(not(feature = "akita"))]
@@ -57,6 +59,10 @@ use jolt_host::{GuestElf, JoltProgramSource, Program};
 use jolt_inlines_keccak256 as _;
 use jolt_inlines_secp256k1 as _;
 use jolt_inlines_sha2 as _;
+#[cfg(all(feature = "cuda", not(feature = "akita")))]
+use jolt_kernels::cuda::CudaDoryScheme;
+#[cfg(not(feature = "akita"))]
+use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, ZkOpeningScheme};
 use jolt_profiling::summary::{finalize_trace, ProfileSummary, SummaryContext};
 use jolt_profiling::{
     format_memory_size, report_stage_boundaries, setup_tracing_with_trace_path, PeakMemory,
@@ -71,17 +77,22 @@ type ProofField = Fr;
 #[cfg(feature = "akita")]
 type ProofField = AkitaField;
 #[cfg(not(feature = "akita"))]
-use jolt_transcript::{Keccak, ProverState, VerifierState};
+use jolt_transcript::{Encoding, Keccak, ProverState, VerifierState};
 use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
 #[cfg(not(feature = "akita"))]
 use rayon::ThreadPoolBuilder;
 use tracer::execution_backend::TracerBackend;
 
 use crate::JoltBackend;
+#[cfg(not(feature = "akita"))]
+use crate::JoltProverPreprocessing;
 use crate::JoltSharedPreprocessing;
 use crate::MemoryBudget;
 use crate::ProverConfig;
 use crate::ProverError;
+
+#[cfg(all(feature = "cuda", not(feature = "akita")))]
+mod cuda;
 
 // Empirically measured RV64IMAC cycles per operation. These values keep
 // current benchmark scales comparable with prior results.
@@ -257,6 +268,8 @@ impl OutputFormat {
 pub enum BackendKind {
     Reference,
     Optimized,
+    #[cfg(all(feature = "cuda", not(feature = "akita")))]
+    Cuda,
 }
 
 impl BackendKind {
@@ -268,6 +281,8 @@ impl BackendKind {
         match self {
             Self::Reference => "reference",
             Self::Optimized => "optimized",
+            #[cfg(all(feature = "cuda", not(feature = "akita")))]
+            Self::Cuda => "cuda",
         }
     }
 
@@ -278,6 +293,8 @@ impl BackendKind {
         match self {
             Self::Reference => "",
             Self::Optimized => "_optimized",
+            #[cfg(all(feature = "cuda", not(feature = "akita")))]
+            Self::Cuda => "_cuda",
         }
     }
 }
@@ -318,6 +335,11 @@ pub struct ProfileArgs {
 
     #[clap(long, value_enum, default_value = "reference")]
     pub backend: BackendKind,
+
+    /// Number of visible CUDA devices to use (default: one). Requires --backend cuda.
+    #[cfg(all(feature = "cuda", not(feature = "akita")))]
+    #[clap(long)]
+    pub gpus: Option<NonZeroUsize>,
 
     /// Prebuilt guest ELF; bypasses guest compilation in this process.
     #[clap(long)]
@@ -510,6 +532,8 @@ pub fn run(args: &ProfileArgs) -> ProfileResult<ProfileArtifacts> {
     );
     let scale = args.scale.unwrap_or_else(|| args.name.default_scale());
     validate_scale(scale);
+    #[cfg(all(feature = "cuda", not(feature = "akita")))]
+    args.configure_cuda();
     let trace_name = args.trace_name(scale);
     let _run_lock = RunLock::acquire(&trace_name);
 
@@ -1028,14 +1052,61 @@ fn prove_workload(
     let backend = match backend {
         BackendKind::Reference => JoltBackend::<Fr, DoryScheme>::reference(),
         BackendKind::Optimized => JoltBackend::<Fr, DoryScheme>::optimized(),
+        #[cfg(all(feature = "cuda", not(feature = "akita")))]
+        BackendKind::Cuda => {
+            let preprocessing = JoltProverPreprocessing {
+                verifier: CudaDoryScheme::adopt_verifier_preprocessing(
+                    prover_preprocessing.verifier,
+                )
+                .expect("CUDA verifier preprocessing"),
+                pcs_setup: prover_preprocessing.pcs_setup,
+                committed_program: None,
+            };
+            return Ok(measure_dory_proof(
+                JoltBackend::cuda(),
+                preprocessing,
+                config,
+                witness,
+                public_io,
+                setup_duration,
+                e2e_start,
+            ));
+        }
     };
 
+    Ok(measure_dory_proof(
+        backend,
+        prover_preprocessing,
+        config,
+        witness,
+        public_io,
+        setup_duration,
+        e2e_start,
+    ))
+}
+
+#[cfg(not(feature = "akita"))]
+fn measure_dory_proof<PCS>(
+    backend: JoltBackend<Fr, PCS>,
+    prover_preprocessing: JoltProverPreprocessing<PCS, Pedersen<Bn254G1>>,
+    config: ProverConfig,
+    witness: Arc<TraceBackend>,
+    public_io: JoltDevice,
+    setup_duration: Duration,
+    e2e_start: Instant,
+) -> ProvenRun
+where
+    PCS: CommitmentScheme<Field = Fr>
+        + AdditivelyHomomorphic
+        + ZkOpeningScheme<HidingCommitment = Bn254G1, Blind = Fr>,
+    PCS::Output: Encoding + HomomorphicCommitment<Fr>,
+{
     // --- The measured window: the full modular prove (witness
     // materialization, commitment, all sumcheck stages, joint opening). The
     // `jolt_prover::prove` root span covers exactly this interval; the
     // Instant is the `--format none` no-subscriber baseline.
     let now = Instant::now();
-    let proof = crate::dory::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, ProverState<Keccak>>(
+    let proof = crate::dory::prove::<Fr, PCS, Pedersen<Bn254G1>, ProverState<Keccak>>(
         backend.with_witness(&witness),
         &prover_preprocessing,
         &config,
@@ -1062,7 +1133,7 @@ fn prove_workload(
         .build()
         .expect("single-threaded verifier pool must build");
     let verify = || {
-        jolt_verifier::verify::<Fr, DoryScheme, Pedersen<Bn254G1>, VerifierState<'_, Keccak>>(
+        jolt_verifier::verify::<Fr, PCS, Pedersen<Bn254G1>, VerifierState<'_, Keccak>>(
             &prover_preprocessing.verifier,
             &public_io,
             &proof,
@@ -1075,7 +1146,7 @@ fn prove_workload(
     let verifier_single_threaded = single_threaded_pool
         .install(|| measure_verifier(VerificationMode::SingleThreaded, 1, verify));
 
-    Ok(ProvenRun {
+    ProvenRun {
         duration,
         e2e_duration,
         setup_duration,
@@ -1084,7 +1155,7 @@ fn prove_workload(
         proof_size,
         padded_trace_rows: config.trace_length,
         public_output: public_io.outputs,
-    })
+    }
 }
 
 #[cfg(feature = "akita")]
