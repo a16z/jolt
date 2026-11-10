@@ -1038,7 +1038,7 @@ impl<F: JoltField> TableScan<F> {
             } => {
                 for (&suffix, row) in suffixes
                     .iter()
-                    .zip(accumulators.chunks_exact_mut(CHUNK_SIZE))
+                    .zip(accumulators.as_chunks_mut::<CHUNK_SIZE>().0)
                 {
                     suffix.accumulate(row, chunk, bits, value);
                 }
@@ -1200,7 +1200,9 @@ impl<F: JoltField> PhaseScan<'_, F> {
             let into = suffixes[range_table.index()]
                 .get_or_insert_with(|| vec![F::zero(); range_table.suffixes().len() * CHUNK_SIZE]);
             for (row, suffix) in into
-                .chunks_exact_mut(CHUNK_SIZE)
+                .as_chunks_mut::<CHUNK_SIZE>()
+                .0
+                .iter_mut()
                 .zip(range_table.suffixes())
             {
                 row[0] += match suffix {
@@ -1538,7 +1540,9 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
             .zip(suffixes)
             .filter_map(|(table, sums)| {
                 let polynomials = sums?
-                    .chunks_exact(CHUNK_SIZE)
+                    .as_chunks::<CHUNK_SIZE>()
+                    .0
+                    .iter()
                     .map(|coefficients| Polynomial::new(coefficients.to_vec()))
                     .collect();
                 Some((table, polynomials))
@@ -2069,7 +2073,7 @@ mod tests {
     };
     use jolt_claims::protocols::jolt::relations::instruction::InstructionReadRafInputClaims;
     #[cfg(feature = "akita")]
-    use jolt_field::Prime128OffsetA7F7;
+    use jolt_field::Prime128Offset6A23801F;
     use jolt_field::{Fr, JoltField, Ring};
     use jolt_lookup_tables::{LookupBits, LookupTableKind, XLEN as RISCV_XLEN};
     use jolt_sumcheck::ProveRounds;
@@ -2284,7 +2288,7 @@ mod tests {
         check::<Fr>(16, 4);
         check::<Fr>(20, 4);
         #[cfg(feature = "akita")]
-        check::<Prime128OffsetA7F7>(32, 4);
+        check::<Prime128Offset6A23801F>(32, 4);
     }
 
     /// The sumcheck input claim from first principles:
@@ -2360,7 +2364,7 @@ mod tests {
     ) {
         assert_parity_prefix_field::<Fr>(log_t, num_virtual_ra_polys, seed, exceptional, prefix);
         #[cfg(feature = "akita")]
-        assert_parity_prefix_field::<Prime128OffsetA7F7>(
+        assert_parity_prefix_field::<Prime128Offset6A23801F>(
             log_t,
             num_virtual_ra_polys,
             seed,
@@ -2533,7 +2537,7 @@ mod tests {
         }
         check::<Fr>();
         #[cfg(feature = "akita")]
-        check::<Prime128OffsetA7F7>();
+        check::<Prime128Offset6A23801F>();
     }
 
     #[test]
@@ -2560,7 +2564,7 @@ mod tests {
         }
         check::<Fr>();
         #[cfg(feature = "akita")]
-        check::<Prime128OffsetA7F7>();
+        check::<Prime128Offset6A23801F>();
     }
 
     #[test]
@@ -2613,7 +2617,7 @@ mod tests {
         }
         check::<Fr>();
         #[cfg(feature = "akita")]
-        check::<Prime128OffsetA7F7>();
+        check::<Prime128Offset6A23801F>();
     }
 
     #[test]
@@ -2627,7 +2631,7 @@ mod tests {
         }
         check::<Fr>();
         #[cfg(feature = "akita")]
-        check::<Prime128OffsetA7F7>();
+        check::<Prime128Offset6A23801F>();
     }
 
     #[test]
@@ -2635,7 +2639,7 @@ mod tests {
         for prefix in [6003, 1 << 14] {
             check_repeated_lookup_rows::<Fr>(14, prefix, None);
             #[cfg(feature = "akita")]
-            check_repeated_lookup_rows::<Prime128OffsetA7F7>(14, prefix, None);
+            check_repeated_lookup_rows::<Prime128Offset6A23801F>(14, prefix, None);
         }
     }
 

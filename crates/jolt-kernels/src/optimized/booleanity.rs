@@ -1084,7 +1084,7 @@ mod tests {
     use jolt_claims::protocols::jolt::JoltChallengeId;
     use jolt_claims::{InputClaims, OutputClaims, SumcheckChallenges};
     #[cfg(feature = "akita")]
-    use jolt_field::Prime128OffsetA7F7;
+    use jolt_field::Prime128Offset6A23801F;
     use jolt_field::{Fr, Ring, Zero};
     use jolt_poly::EqPolynomial;
     use jolt_verifier::stages::relations::ConcreteSumcheckChallenges;
@@ -1142,7 +1142,7 @@ mod tests {
     #[cfg(feature = "akita")]
     #[test]
     fn address_masses_include_constant_suffix_at_exceptional_points_akita() {
-        check_address_masses::<Prime128OffsetA7F7>();
+        check_address_masses::<Prime128Offset6A23801F>();
     }
 
     #[expect(clippy::type_complexity)]
@@ -1604,7 +1604,7 @@ mod tests {
 mod categorical_tests {
     use crate::optimized::parity::ExceptionalEq;
     #[cfg(feature = "akita")]
-    use jolt_field::Prime128OffsetA7F7;
+    use jolt_field::Prime128Offset6A23801F;
     use jolt_field::{Fr, JoltField, Ring, Zero};
     use jolt_poly::{BindingOrder, GruenSplitEqPolynomial};
 
@@ -1785,7 +1785,7 @@ mod categorical_tests {
     #[test]
     #[cfg(feature = "akita")]
     fn categorical_booleanity_matches_direct_cubic_akita() {
-        check_categorical_cubics::<Prime128OffsetA7F7>(Prime128OffsetA7F7::zero());
-        check_categorical_cubics::<Prime128OffsetA7F7>(Prime128OffsetA7F7::from_u64(3));
+        check_categorical_cubics::<Prime128Offset6A23801F>(Prime128Offset6A23801F::zero());
+        check_categorical_cubics::<Prime128Offset6A23801F>(Prime128Offset6A23801F::from_u64(3));
     }
 }

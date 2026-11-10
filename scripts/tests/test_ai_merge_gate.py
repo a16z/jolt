@@ -670,7 +670,8 @@ class AiMergeGateTests(unittest.TestCase):
             (f"Review complete.\r\n{valid}\r\n", "success"),
             *((attestation(skill="Independent security review", model=model, effort=effort), "success")
               for model, effort in [("GPT-6 Astra", "max"), ("GPT-6 Astra", "xhigh"),
-                                    ("Claude Opus 5.5", "max"), ("Claude Opus 5.5", "xhigh")]),
+                                    ("Claude Opus 5.5", "max"), ("Claude Opus 5.5", "xhigh"),
+                                    ("Claude Fable 5.2", "max"), ("Claude Fable 5.2", "xhigh")]),
             # Only those exact model and effort spellings count: no aliases, API IDs or case variants.
             (attestation(model="Astra"), "neutral"),
             (attestation(model="gpt-6-astra"), "neutral"),

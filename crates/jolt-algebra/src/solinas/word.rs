@@ -51,7 +51,7 @@ macro_rules! define_solinas_prime {
         pub struct $name<const P: $word>(pub(crate) $word);
 
         impl<const P: $word> $name<P> {
-            pub(crate) const BITS: u32 = <$word>::BITS - P.leading_zeros();
+            pub(crate) const BITS: u32 = P.bit_width();
 
             /// Offset `c = 2^k − P`. Instantiating with a modulus that
             /// violates the Solinas preconditions is a compile-time error.
@@ -352,7 +352,7 @@ macro_rules! define_solinas_prime {
 
             #[inline]
             fn num_bits(&self) -> u32 {
-                <$word>::BITS - self.0.leading_zeros()
+                self.0.bit_width()
             }
         }
 

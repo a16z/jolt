@@ -101,7 +101,12 @@ impl Default for Keccak256 {
 #[inline(always)]
 fn to_bytes(state: [u64; 25]) -> [u8; HASH_LEN] {
     let mut hash = [0u8; HASH_LEN];
-    for (out, lane) in hash.chunks_exact_mut(size_of::<u64>()).zip(state) {
+    for (out, lane) in hash
+        .as_chunks_mut::<{ size_of::<u64>() }>()
+        .0
+        .iter_mut()
+        .zip(state)
+    {
         out.copy_from_slice(&lane.to_le_bytes());
     }
     hash
@@ -115,15 +120,15 @@ fn to_bytes(state: [u64; 25]) -> [u8; HASH_LEN] {
 /// The block stride is a multiple of 8, so alignment is decided once.
 #[inline(always)]
 fn absorb_full_blocks<'a>(state: &mut [u64; 25], input: &'a [u8]) -> &'a [u8] {
-    let mut blocks = input.chunks_exact(RATE_IN_BYTES);
+    let (blocks, remainder) = input.as_chunks::<RATE_IN_BYTES>();
     if (input.as_ptr() as usize).is_multiple_of(8) {
-        for block in &mut blocks {
+        for block in blocks {
             // SAFETY: `block` is `RATE_IN_BYTES` readable bytes at an 8-byte
             // aligned address; `state` is a distinct `[u64; 25]`.
             unsafe { keccak256_absorb_permute(state.as_mut_ptr(), block.as_ptr()) };
         }
     } else {
-        for block in &mut blocks {
+        for block in blocks {
             let mut aligned = [0u64; RATE_IN_U64];
             // SAFETY: `block` and `aligned` are both `RATE_IN_BYTES` long, the
             // copy target is a fresh local, and `aligned` is 8-byte aligned.
@@ -137,7 +142,7 @@ fn absorb_full_blocks<'a>(state: &mut [u64; 25], input: &'a [u8]) -> &'a [u8] {
             }
         }
     }
-    blocks.remainder()
+    remainder
 }
 
 /// Pads the final partial block (`input.len() < RATE_IN_BYTES`) and absorbs it.
