@@ -39,7 +39,7 @@ let JOLT_FP128_MUL_GENERIC_CORRECT = time prove
                 ==> bignum_of_wordlist [read X0 s; read X1 s] =
                     (bignum_of_wordlist [a0; a1] *
                      bignum_of_wordlist [b0; b1]) MOD jolt_fp128_p c))
-          (MAYCHANGE [PC; X0; X1; X4; X5; X6; X7; X8; X9; X10; X11; X12] ,,
+          (MAYCHANGE [PC; X0; X1; X5; X6; X7; X8; X9; X10; X11; X12] ,,
            MAYCHANGE SOME_FLAGS ,, MAYCHANGE [events])`,
   MAP_EVERY X_GEN_TAC
    [`c:num`; `a0:int64`; `a1:int64`; `b0:int64`; `b1:int64`; `pc:num`] THEN
@@ -319,6 +319,15 @@ let JOLT_FP128_MUL_CORRECT = time prove
         read X4 s = word 1780711455` THEN
   CONJ_TAC THENL
    [ARM_SIM_TAC JOLT_FP128_MUL_EXEC [1;2];
+    (* ENSURES_SEQUENCE_TAC gives both halves the corollary frame, which
+       includes X4 for the constant load. The generic theorem keeps X4
+       unchanged, so widen its narrower frame here. *)
+    MATCH_MP_TAC ENSURES_FRAME_SUBSUMED THEN
+    EXISTS_TAC
+     `MAYCHANGE [PC; X0; X1; X5; X6; X7; X8; X9; X10; X11; X12] ,,
+      MAYCHANGE SOME_FLAGS ,, MAYCHANGE [events]` THEN
+    REWRITE_TAC[SOME_FLAGS] THEN
+    CONJ_TAC THENL [SUBSUMED_MAYCHANGE_TAC; ALL_TAC] THEN
     MP_TAC(SPECL
      [`1780711455`; `a0:int64`; `a1:int64`; `b0:int64`; `b1:int64`; `pc:num`]
      JOLT_FP128_MUL_GENERIC_CORRECT) THEN

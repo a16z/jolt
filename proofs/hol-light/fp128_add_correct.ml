@@ -13,7 +13,8 @@
  * 4. JOLT_FP128_ADD_SUBROUTINE_CORRECT adds ret and the calling convention.
  *
  * The input value a is stored in X0:X1, with the low word first. The input b
- * is stored in X2:X3. The first instruction loads C = 2^128 - p into X4.
+ * is stored in X2:X3. The first two instructions (movz, movk) load
+ * C = 2^128 - p into X4.
  * The result is returned in X0:X1. The chapter book/src/how/formal-verification/field-kernels.md
  * explains this structure and the main tactics for new HOL Light readers.
  *)
@@ -24,7 +25,8 @@ needs (Filename.concat (Sys.getenv "JOLT_FP128_PROOF_DIR")
 
 let jolt_fp128_add_object = Sys.getenv "JOLT_FP128_ADD_OBJECT";;
 
-(*** The list includes the constant load, eight arithmetic instructions, and ret.
+(*** The list includes the two-instruction constant load, eight arithmetic
+     instructions, and ret.
      Loading an object with any different instruction word fails here. ***)
 let jolt_fp128_add_mc =
   define_assert_from_elf "jolt_fp128_add_mc" jolt_fp128_add_object
@@ -45,9 +47,11 @@ let jolt_fp128_add_mc =
 let JOLT_FP128_ADD_EXEC = ARM_MK_EXEC_RULE jolt_fp128_add_mc;;
 
 (*** The shared arithmetic body is parameterized by C in X4. This theorem
-     starts immediately after the object fixture's constant-loading
-     instruction, so it applies to every valid Fp128 offset rather than only
-     to the fixture's 6A23801F specialization. ***)
+     starts at pc + 0x8, immediately after the object fixture's two
+     constant-load instructions (movz, movk), so it applies to every valid
+     Fp128 offset rather than only to the fixture's 6A23801F specialization.
+     X4 is outside the frame: the body only reads C, and the inline assembly
+     declares x4 as an input that it does not change. ***)
 let JOLT_FP128_ADD_GENERIC_CORRECT = time prove
  (`!c a0 a1 b0 b1 pc.
       jolt_fp128_valid_offset c
@@ -66,7 +70,7 @@ let JOLT_FP128_ADD_GENERIC_CORRECT = time prove
               ==> bignum_of_wordlist [read X0 s; read X1 s] =
                   (bignum_of_wordlist [a0; a1] +
                    bignum_of_wordlist [b0; b1]) MOD jolt_fp128_p c))
-        (MAYCHANGE [PC; X0; X1; X4; X5; X6; X7; X8; X9] ,,
+        (MAYCHANGE [PC; X0; X1; X5; X6; X7; X8; X9] ,,
          MAYCHANGE SOME_FLAGS ,, MAYCHANGE [events])`,
   MAP_EVERY X_GEN_TAC
    [`c:num`; `a0:int64`; `a1:int64`; `b0:int64`; `b1:int64`; `pc:num`] THEN
@@ -160,6 +164,15 @@ let JOLT_FP128_ADD_CORRECT = time prove
         read X4 s = word 1780711455` THEN
   CONJ_TAC THENL
    [ARM_SIM_TAC JOLT_FP128_ADD_EXEC [1;2];
+    (* ENSURES_SEQUENCE_TAC gives both halves the corollary frame, which
+       includes X4 for the constant load. The generic theorem keeps X4
+       unchanged, so widen its narrower frame here. *)
+    MATCH_MP_TAC ENSURES_FRAME_SUBSUMED THEN
+    EXISTS_TAC
+     `MAYCHANGE [PC; X0; X1; X5; X6; X7; X8; X9] ,,
+      MAYCHANGE SOME_FLAGS ,, MAYCHANGE [events]` THEN
+    REWRITE_TAC[SOME_FLAGS] THEN
+    CONJ_TAC THENL [SUBSUMED_MAYCHANGE_TAC; ALL_TAC] THEN
     MP_TAC(SPECL
      [`1780711455`; `a0:int64`; `a1:int64`; `b0:int64`; `b1:int64`; `pc:num`]
      JOLT_FP128_ADD_GENERIC_CORRECT) THEN

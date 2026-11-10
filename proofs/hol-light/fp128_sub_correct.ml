@@ -13,7 +13,8 @@
  * 4. JOLT_FP128_SUB_SUBROUTINE_CORRECT adds ret and the calling convention.
  *
  * The input value a is stored in X0:X1, with the low word first. The input b
- * is stored in X2:X3. The first instruction loads C = 2^128 - p into X4.
+ * is stored in X2:X3. The first two instructions (movz, movk) load
+ * C = 2^128 - p into X4.
  * The result is returned in X0:X1. The chapter book/src/how/formal-verification/field-kernels.md
  * explains this structure and the main tactics for new HOL Light readers.
  *)
@@ -42,7 +43,9 @@ let jolt_fp128_sub_mc =
 let JOLT_FP128_SUB_EXEC = ARM_MK_EXEC_RULE jolt_fp128_sub_mc;;
 
 (*** Generic theorem for the register-parameterized body. X4 supplies C; the
-     proof starts after the fixture's 6A23801F constant load. ***)
+     proof starts at pc + 0x8, after the fixture's two-instruction 6A23801F
+     constant load. X4 is outside the frame because the inline assembly
+     declares it as an unchanged input. ***)
 let JOLT_FP128_SUB_GENERIC_CORRECT = time prove
  (`!c a0 a1 b0 b1 pc.
       jolt_fp128_valid_offset c
@@ -61,7 +64,7 @@ let JOLT_FP128_SUB_GENERIC_CORRECT = time prove
               ==> bignum_of_wordlist [read X0 s; read X1 s] =
                   (bignum_of_wordlist [a0; a1] + jolt_fp128_p c -
                    bignum_of_wordlist [b0; b1]) MOD jolt_fp128_p c))
-        (MAYCHANGE [PC; X0; X1; X4; X5; X6; X7] ,,
+        (MAYCHANGE [PC; X0; X1; X5; X6; X7] ,,
          MAYCHANGE SOME_FLAGS ,, MAYCHANGE [events])`,
   MAP_EVERY X_GEN_TAC
    [`c:num`; `a0:int64`; `a1:int64`; `b0:int64`; `b1:int64`; `pc:num`] THEN
@@ -155,6 +158,15 @@ let JOLT_FP128_SUB_CORRECT = time prove
         read X4 s = word 1780711455` THEN
   CONJ_TAC THENL
    [ARM_SIM_TAC JOLT_FP128_SUB_EXEC [1;2];
+    (* ENSURES_SEQUENCE_TAC gives both halves the corollary frame, which
+       includes X4 for the constant load. The generic theorem keeps X4
+       unchanged, so widen its narrower frame here. *)
+    MATCH_MP_TAC ENSURES_FRAME_SUBSUMED THEN
+    EXISTS_TAC
+     `MAYCHANGE [PC; X0; X1; X5; X6; X7] ,,
+      MAYCHANGE SOME_FLAGS ,, MAYCHANGE [events]` THEN
+    REWRITE_TAC[SOME_FLAGS] THEN
+    CONJ_TAC THENL [SUBSUMED_MAYCHANGE_TAC; ALL_TAC] THEN
     MP_TAC(SPECL
      [`1780711455`; `a0:int64`; `a1:int64`; `b0:int64`; `b1:int64`; `pc:num`]
      JOLT_FP128_SUB_GENERIC_CORRECT) THEN

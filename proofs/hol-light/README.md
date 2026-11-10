@@ -39,8 +39,11 @@ boundary.
 
 The generic body theorems quantify over `C`, assume the same offset bounds as
 the Rust `Fp128` implementation, and start immediately after the fixture
-object's constant-load instruction with `C` in `x4` or `r8`. They prove the
-canonical result modulo `2^128 - C` for every canonical input. Both public
+object's constant load with `C` in `x4` or `r8`. On AArch64 that load is two
+instructions (`movz`, `movk`); on x86-64 it is one `mov`. They prove the
+canonical result modulo `2^128 - C` for every canonical input. The AArch64
+generic theorems also prove that `x4` still holds `C` when the body ends, which
+the inline assembly relies on because it passes `C` as an unchanged input. Both public
 offsets, 275 and 6A23801F, have machine-checked proofs that they satisfy those
 bounds.
 
