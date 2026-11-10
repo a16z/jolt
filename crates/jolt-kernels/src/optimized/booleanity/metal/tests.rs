@@ -13,7 +13,7 @@ fn compact_booleanity_matches_dense_rounds_and_releases_shared_rows() {
     let gpu = MetalBooleanity::new().unwrap();
     for (bits, log_t, prefix, gamma, cold_tail, exceptional) in [
         (4, 12, 33, 0, false, false),
-        (4, 12, 4093, 13, true, true),
+        (4, 15, 32765, 13, true, true),
         (4, 12, 0, 13, false, false),
         (8, 14, 253, 13, true, true),
     ] {
@@ -81,6 +81,7 @@ fn compact_booleanity_matches_dense_rounds_and_releases_shared_rows() {
             // Exercise q1 while the width-one constant lookup is active,
             // as well as the existing later lazy/dense exceptional round.
             cycle_point[log_t - 1] = AkitaField::zero();
+            cycle_point[log_t - 2] = AkitaField::zero();
             cycle_point[log_t - 3] = AkitaField::zero();
         }
         let scalar = AkitaField::from_u64(7);
@@ -144,7 +145,9 @@ fn compact_booleanity_matches_dense_rounds_and_releases_shared_rows() {
             device: None,
             tail_rows: 32,
             gpu: Arc::clone(&gpu.0),
-            table_policy_cycles: None,
+            // Admit the production width-two table with a large-trace cache
+            // budget while keeping the independent dense domain small.
+            table_policy_cycles: (prefix > 30000).then_some(1 << 21),
             cached_widths: 0,
         };
         let mut claim = None;
@@ -203,6 +206,21 @@ fn compact_booleanity_matches_dense_rounds_and_releases_shared_rows() {
         assert!(saw_device);
         if prefix > 4000 {
             assert!(saw_dense_bind);
+        }
+        if prefix > 30000 {
+            for width in [1, 2, 4, 8] {
+                assert_ne!(
+                    kernel.cached_widths & (1 << width),
+                    0,
+                    "cached width {width}"
+                );
+            }
+        } else {
+            assert_eq!(
+                kernel.cached_widths & (1 << 2),
+                0,
+                "small-domain budget declines width2"
+            );
         }
         assert!(kernel.rows.is_none());
         assert!(
