@@ -265,7 +265,32 @@ timers are not throughput results; TensorOps remains disabled in this branch.
 Evidence is in `tensor-paired/`. Dispatch-boundary counters are unsupported on
 this M5 Max. Encoder-boundary counters are supported, but independent encoders
 can overlap: the corrected diagnostic reports interval union and overlap
-separately. Full Tensor phase attribution with that correction remains pending.
+separately. At Jolt `863256a27` / Akita `3493f130`, the corrected diagnostic
+verified two proofs and matched all 32 windows. Source transformation and
+packing accounted for 72.39% of summed encoder durations, dot products 24.98%,
+inverse transforms 2.30%, and combination 0.33%. These are diagnostic duration
+shares, not production GPU occupancy or throughput. Evidence is in
+`tensor-stage-overlap-timestamps/`. Further Tensor tuning is deferred until
+the donor commitment path has an inclusive comparison.
+
+The donor audit found that the current limb-NTT commitment substantially reuses
+the November 8 reference `cdf52d02`, but does not preserve the principal donor's
+direct radix26 panel algorithm. That panel algorithm fits the frozen workload's
+39 columns, 65,536 positions, rank one and single inner digit. Current source
+ownership and implicit padding require adapter changes, not replacement of its
+arithmetic. The isolated port retains 32-task key sharing and consumes current
+retained selector windows directly. It uses a 10 KiB one-position tile so Metal
+validation fits the device limit; this changes barrier frequency relative to
+the donor's two-position tile and must be measured. The audit also identified
+omitted fused cooperative register rounds and a width-one Booleanity lookup
+table. These ports take priority over further new algorithms. Source crosswalks
+and exact donor references are in `metal-pcs-donor-provenance-crosswalk.json`
+and `donor-sumcheck-crosswalk.json` in the task artifact directory.
+The reported donor 5x speedup was against the older CPU implementation, and
+Markos believed roughly 10x was possible. Its measured throughput is therefore
+a reference, not the target or an optimization ceiling. After each port, use
+the current inclusive profile to improve it further; acceptance remains at
+least 20 MHz, with approximately 40 MHz as the stretch target.
 
 Reuse existing profiler stage labels and `jolt-eval` telemetry objectives for
 prover/stage time where available. Add only measurements needed to identify GPU
@@ -368,6 +393,14 @@ comparisons include run variation and are attribution evidence, not isolated
 causal measurements. Peak RSS was 43.8073 GiB; the proof-exit RSS was 13.1803
 GiB. Artifacts and the frozen binary are under `direct-source-metal/` and
 `direct-source-metal-jolt-prover` in the task artifact directory.
+
+At `b37f2a868` / Akita `978d7060`, direct selector-buffer production verified
+the small proof and the same T27 Fibonacci proof. The untraced observation took
+21.99135675 s, or 6.103203614 padded MHz. Its separate profile reduced source
+packing from 0.831321 to 0.478342 s, while several unchanged CPU families were
+slower. This establishes the packing improvement in those profiles, not a
+full-prover speedup or regression. Evidence and the frozen comparison binary
+are in `direct-selector-metal/` and `direct-selector-metal-jolt-prover`.
 
 The sparse register prototype at `5bd928644` passed its independent oracle,
 Metal validation, and full proofs, but its data transfer cost erased the GPU
