@@ -86,7 +86,7 @@ impl OptimizedRegistersReadWrite {
 
 enum PreparedReadWrite<F: JoltField, E> {
     Cycle {
-        kernel: ReadWriteKernel<F>,
+        kernel: Box<ReadWriteKernel<F>>,
         seed: SeedTransfer<F, E>,
     },
     Address(AddressFirstKernel<F>),
@@ -141,7 +141,7 @@ impl OptimizedRegistersReadWrite {
         session.park(SharedRdIndices::new(rd_indices, cycles));
 
         Ok(PreparedReadWrite::Cycle {
-            kernel: ReadWriteKernel {
+            kernel: Box::new(ReadWriteKernel {
                 dimensions,
                 cycle: None,
                 gruen: GruenSplitEqPolynomial::new(r_cycle, BindingOrder::LowToHigh),
@@ -149,7 +149,7 @@ impl OptimizedRegistersReadWrite {
                 rs1_indices,
                 rs2_indices,
                 challenges: RoundChallenges::new(log_t + log_k),
-            },
+            }),
             seed,
         })
     }
@@ -166,7 +166,7 @@ impl<F: JoltField> PrepareKernel<F, RegistersReadWriteChecking<F>> for Optimized
         match Self::prepare_state(session, witness, inputs, |producer| producer.into_vec())? {
             PreparedReadWrite::Cycle { mut kernel, seed } => {
                 kernel.cycle = Some(seed.into_cycle());
-                Ok(Box::new(kernel))
+                Ok(kernel)
             }
             PreparedReadWrite::Address(kernel) => Ok(Box::new(kernel)),
         }

@@ -128,7 +128,7 @@ impl PrepareKernel<F, RegistersReadWriteChecking<F>> for MetalRegistersReadWrite
                     }
                     .into_cycle(),
                 );
-                return Ok(Box::new(cpu));
+                return Ok(cpu);
             }
             SeedStorage::Device(entries) => entries,
         };
@@ -153,7 +153,7 @@ impl PrepareKernel<F, RegistersReadWriteChecking<F>> for MetalRegistersReadWrite
 
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct MetalRegisterKernel {
-    cpu: ReadWriteKernel<F>,
+    cpu: Box<ReadWriteKernel<F>>,
     #[cfg_attr(feature = "allocative", allocative(skip))]
     device: Option<DeviceCycle>,
     #[cfg_attr(feature = "allocative", allocative(skip))]
