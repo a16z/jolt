@@ -1,5 +1,4 @@
-use super::fallible::try_zeros;
-use super::{EqBudget, EqPolynomial, EqTableError};
+use super::EqPolynomial;
 use crate::{MleError, PointLike, PointRef};
 use jolt_field::Field;
 use std::ops::Mul;
@@ -117,40 +116,38 @@ impl<F: Field> EqPolynomial<F> {
     ///
     /// # Panics
     /// Panics if the domain overflows `usize` or `len` exceeds the domain.
-    #[expect(
-        clippy::expect_used,
-        reason = "infallible API documents invalid prefix panics"
-    )]
     pub fn evals_prefix<P>(r: &P, scale: Option<F>, len: usize) -> Vec<F>
     where
         P: PointLike + ?Sized,
         P::Coord: Send + Sync + Into<F>,
         F: Mul<P::Coord, Output = F>,
     {
-        Self::check_prefix(r, len).expect("invalid equality-table prefix");
+        assert!(
+            len <= Self::domain_len(r.num_vars()),
+            "invalid equality-table prefix"
+        );
         let mut values = F::zeroed_vec(len);
-        Self::fill_prefix(r, scale, &mut values);
+        Self::evals_prefix_into(r, scale, &mut values);
         values
     }
 
-    /// Fallible [`Self::evals_prefix`]; the cap covers exactly `len` elements.
-    #[track_caller]
-    pub fn try_evals_prefix<P>(
-        r: &P,
-        scale: Option<F>,
-        len: usize,
-        budget: EqBudget,
-    ) -> Result<Vec<F>, EqTableError>
+    /// Fills the first `out.len()` equality weights in significance order.
+    /// Callers with their own allocation policy, such as Akita, allocate the buffer.
+    /// This method allocates no table storage.
+    ///
+    /// # Panics
+    /// Panics if `out.len() > 2^r.num_vars()`, or if the domain overflows `usize`.
+    pub fn evals_prefix_into<P>(r: &P, scale: Option<F>, out: &mut [F])
     where
         P: PointLike + ?Sized,
         P::Coord: Send + Sync + Into<F>,
         F: Mul<P::Coord, Output = F>,
     {
-        Self::check_prefix(r, len)?;
-        budget.check::<F>(len, r.num_vars())?;
-        let mut values = try_zeros::<F>(len, r.num_vars())?;
-        Self::fill_prefix(r, scale, &mut values);
-        Ok(values)
+        assert!(
+            out.len() <= Self::domain_len(r.num_vars()),
+            "invalid equality-table prefix"
+        );
+        Self::fill_prefix(r, scale, out);
     }
 
     fn fill_prefix<P>(r: &P, scale: Option<F>, values: &mut [F])

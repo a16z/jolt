@@ -1,31 +1,20 @@
-#![expect(
-    clippy::panic,
-    reason = "test failures and the OOM child must fail loudly"
-)]
-#![expect(clippy::unwrap_used, reason = "asserting valid builder results")]
-
 use jolt_field::{Field, FpExt4, Fr, Prime32Offset99, Ring};
-use jolt_poly::{
-    eq_index, EqBudget, EqPolynomial, EqTableError, PointLike, PointRef, TensorEqTable,
-};
+use jolt_poly::{eq_index, EqPolynomial, PointLike, PointRef, TensorEqTable};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
 
-const UNLIMITED: EqBudget = EqBudget {
-    max_bytes: usize::MAX,
-};
-
 fn check_builders<F: Field, P: PointLike<Coord = F> + ?Sized>(point: &P, scale: F) {
     let n = point.num_vars();
-    let table = EqPolynomial::<F>::try_evals(point, Some(scale), UNLIMITED).unwrap();
+    let table = EqPolynomial::<F>::evals(point, Some(scale));
+    let mut out = vec![F::from_u64(9); table.len()];
+    EqPolynomial::<F>::evals_into(point, Some(scale), &mut out);
+    assert_eq!(out, table);
     for i in [0, table.len() / 3, table.len() - 1] {
         assert_eq!(table[i], scale * eq_index(point, i as u128));
     }
     let mapped = EqPolynomial::<F>::evals_mapped(point, Some(scale), |x| x * x + F::one());
-    let try_mapped =
-        EqPolynomial::<F>::try_evals_mapped(point, Some(scale), |x| x * x + F::one(), UNLIMITED)
-            .unwrap();
-    assert_eq!(mapped, try_mapped);
+    EqPolynomial::<F>::evals_mapped_into(point, Some(scale), |x| x * x + F::one(), &mut out);
+    assert_eq!(out, mapped);
     assert!(mapped
         .iter()
         .zip(&table)
@@ -35,37 +24,29 @@ fn check_builders<F: Field, P: PointLike<Coord = F> + ?Sized>(point: &P, scale: 
             EqPolynomial::<F>::evals_prefix(point, Some(scale), len),
             table[..len]
         );
-        assert_eq!(
-            EqPolynomial::<F>::try_evals_prefix(point, Some(scale), len, UNLIMITED).unwrap(),
-            table[..len]
-        );
+        EqPolynomial::<F>::evals_prefix_into(point, Some(scale), &mut out[..len]);
+        assert_eq!(out[..len], table[..len]);
     }
     if n <= 8 {
         for len in 0..=table.len() {
             assert_eq!(
-                EqPolynomial::<F>::try_prefix_sum(point, len).unwrap() * scale,
+                EqPolynomial::<F>::prefix_sum(point, len) * scale,
                 table[..len].iter().copied().sum::<F>()
             );
         }
         for split in 0..=n {
-            let tensor =
-                TensorEqTable::<F>::try_from_point(point, scale, split, UNLIMITED).unwrap();
+            let tensor = TensorEqTable::<F>::from_point(point, scale, split);
             for (i, value) in table.iter().enumerate() {
-                assert_eq!(tensor.try_evaluate_index(i).unwrap(), *value);
+                assert_eq!(tensor.evaluate_index(i), *value);
             }
-            assert!(matches!(
-                tensor.try_evaluate_index(table.len()),
-                Err(EqTableError::IndexOutOfRange { .. })
-            ));
         }
     }
     for msb in [true, false] {
         let cache = if msb {
-            EqPolynomial::<F>::try_evals_cached_msb(point, Some(scale), UNLIMITED)
+            EqPolynomial::<F>::evals_cached_msb(point, Some(scale))
         } else {
-            EqPolynomial::<F>::try_evals_cached_lsb(point, Some(scale), UNLIMITED)
-        }
-        .unwrap();
+            EqPolynomial::<F>::evals_cached_lsb(point, Some(scale))
+        };
         for (j, values) in cache.iter().enumerate() {
             let view = if msb {
                 point.msb_range(0..j)
@@ -95,101 +76,38 @@ fn builders_obey_equality_and_prefix_identities_in_both_orders() {
     algebraic_contracts::<FpExt4<Prime32Offset99>>();
 }
 
-fn cap_boundary<T>(bytes: usize, build: impl Fn(EqBudget) -> Result<T, EqTableError>) {
-    assert!(build(EqBudget { max_bytes: bytes }).is_ok());
-    assert!(build(EqBudget {
-        max_bytes: bytes + 1
-    })
-    .is_ok());
-    match build(EqBudget {
-        max_bytes: bytes - 1,
-    }) {
-        Err(EqTableError::OverBudget {
-            bytes: actual,
-            max_bytes,
-            at,
-        }) => {
-            assert_eq!(actual, bytes);
-            assert_eq!(max_bytes, bytes - 1);
-            assert!(at.file().ends_with("eq_tables.rs"));
-        }
-        _ => panic!("expected OverBudget"),
-    }
+#[test]
+#[should_panic(expected = "invalid equality-table length")]
+fn evals_into_rejects_short_buffers() {
+    EqPolynomial::<Fr>::evals_into(&[Fr::from_u64(2)], None, &mut []);
 }
 
 #[test]
-fn caps_dimensions_and_query_bounds_are_checked_before_allocating() {
-    let point = [Fr::from_u64(2); 4];
-    let bytes = size_of::<Fr>();
-    cap_boundary(16 * bytes, |b| {
-        EqPolynomial::<Fr>::try_evals(&point, None, b)
-    });
-    cap_boundary(16 * bytes, |b| {
-        EqPolynomial::<Fr>::try_evals_mapped(&point, None, |x| x, b)
-    });
-    cap_boundary(31 * bytes, |b| {
-        EqPolynomial::<Fr>::try_evals_cached_msb(&point, None, b)
-    });
-    cap_boundary(31 * bytes, |b| {
-        EqPolynomial::<Fr>::try_evals_cached_lsb(&point, None, b)
-    });
-    cap_boundary(7 * bytes, |b| {
-        EqPolynomial::<Fr>::try_evals_prefix(&point, None, 7, b)
-    });
-    cap_boundary(8 * bytes, |b| {
-        TensorEqTable::<Fr>::try_from_point(&point, Fr::from_u64(1), 2, b)
-    });
-    let long = [Fr::from_u64(0); usize::BITS as usize];
-    for n in [usize::BITS as usize, usize::BITS as usize - 1] {
-        let point = &long[..n];
-        assert!(matches!(
-            EqPolynomial::<Fr>::try_evals(point, None, UNLIMITED),
-            Err(EqTableError::DimensionOverflow { .. })
-        ));
-        assert!(matches!(
-            EqPolynomial::<Fr>::try_evals_mapped(point, None, |x| x, UNLIMITED),
-            Err(EqTableError::DimensionOverflow { .. })
-        ));
-        assert!(matches!(
-            EqPolynomial::<Fr>::try_evals_cached_msb(point, None, UNLIMITED),
-            Err(EqTableError::DimensionOverflow { .. })
-        ));
-        assert!(matches!(
-            EqPolynomial::<Fr>::try_evals_cached_lsb(point, None, UNLIMITED),
-            Err(EqTableError::DimensionOverflow { .. })
-        ));
-    }
-    assert!(matches!(
-        EqPolynomial::<Fr>::try_prefix_sum(&long, 0),
-        Err(EqTableError::DimensionOverflow { .. })
-    ));
-    assert!(matches!(
-        EqPolynomial::<Fr>::try_evals_prefix(&long, None, 0, UNLIMITED),
-        Err(EqTableError::DimensionOverflow { .. })
-    ));
-    assert!(matches!(
-        TensorEqTable::<Fr>::try_from_point(&long, Fr::from_u64(1), 32, UNLIMITED),
-        Err(EqTableError::DimensionOverflow { .. })
-    ));
-    assert!(matches!(
-        TensorEqTable::<Fr>::try_from_point(&point, Fr::from_u64(1), 5, UNLIMITED),
-        Err(EqTableError::LengthMismatch {
-            expected: 4,
-            got: 5
-        })
-    ));
-    assert!(matches!(
-        EqPolynomial::<Fr>::try_prefix_sum(&point, 17),
-        Err(EqTableError::LengthMismatch {
-            expected: 16,
-            got: 17
-        })
-    ));
-    assert!(matches!(
-        EqPolynomial::<Fr>::try_evals_prefix(&point, None, 17, UNLIMITED),
-        Err(EqTableError::LengthMismatch {
-            expected: 16,
-            got: 17
-        })
-    ));
+#[should_panic(expected = "invalid equality-table length")]
+fn evals_into_rejects_long_buffers() {
+    EqPolynomial::<Fr>::evals_into(&[] as &[Fr], None, &mut [Fr::from_u64(9); 2]);
+}
+
+#[test]
+#[should_panic(expected = "invalid equality-table length")]
+fn mapped_into_rejects_short_buffers() {
+    EqPolynomial::<Fr>::evals_mapped_into(&[Fr::from_u64(2)], None, |x| x, &mut []);
+}
+
+#[test]
+#[should_panic(expected = "invalid equality-table length")]
+fn mapped_into_rejects_long_buffers() {
+    EqPolynomial::<Fr>::evals_mapped_into(&[] as &[Fr], None, |x| x, &mut [Fr::from_u64(9); 2]);
+}
+
+#[test]
+#[should_panic(expected = "invalid equality-table prefix")]
+fn prefix_into_rejects_long_buffers() {
+    EqPolynomial::<Fr>::evals_prefix_into(&[] as &[Fr], None, &mut [Fr::from_u64(9); 2]);
+}
+
+#[test]
+#[should_panic(expected = "index out of bounds")]
+fn tensor_evaluate_index_rejects_out_of_range() {
+    let _ = TensorEqTable::<Fr>::from_point(&[] as &[Fr], Fr::from_u64(1), 0).evaluate_index(1);
 }

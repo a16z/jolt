@@ -1,5 +1,4 @@
 use super::boolean_bits_msb;
-use super::fallible::domain_len;
 use super::EqPolynomial;
 use crate::point::{msb_index, Endianness, PointLike};
 #[cfg(feature = "parallel")]
@@ -45,36 +44,50 @@ impl<F: Field> EqPolynomial<F> {
         P::Coord: Send + Sync + Into<F>,
         F: Mul<P::Coord, Output = F> + SubAssign<F>,
     {
+        let mut values = F::zeroed_vec(Self::domain_len(r.num_vars()));
+        Self::evals_into(r, scaling_factor, &mut values);
+        values
+    }
+
+    /// Fills `out` with `scale * eq(r, x)` in significance order.
+    /// Callers with their own allocation policy, such as Akita, allocate the buffer.
+    /// This method allocates no table storage.
+    ///
+    /// # Panics
+    /// Panics unless `out.len() == 2^r.num_vars()`, or if the domain overflows `usize`.
+    #[inline]
+    pub fn evals_into<P>(r: &P, scale: Option<F>, out: &mut [F])
+    where
+        P: PointLike + ?Sized,
+        P::Coord: Send + Sync + Into<F>,
+        F: Mul<P::Coord, Output = F> + SubAssign<F>,
+    {
+        assert_eq!(
+            out.len(),
+            Self::domain_len(r.num_vars()),
+            "invalid equality-table length"
+        );
+        out[0] = scale.unwrap_or(F::one());
         if r.num_vars() <= SERIAL_MAX_VARS {
-            Self::evals_serial(r, scaling_factor)
+            Self::fill_serial::<_, _, false>(r, out, &|x| x);
         } else {
-            Self::evals_parallel(r, scaling_factor)
+            Self::fill_evals_parallel(r, out);
         }
     }
 
     #[inline]
-    pub(crate) fn fill_evals<P>(r: &P, values: &mut Vec<F>)
-    where
-        P: PointLike + ?Sized,
-        P::Coord: Send + Sync + Into<F>,
-        F: Mul<P::Coord, Output = F>,
-    {
-        let len = r.num_vars().pow2();
-        // try_evals_buffer reserves the full table before a fill is scheduled.
-        debug_assert!(values.capacity() >= len);
-        values.resize(len, values[0]);
-        if r.num_vars() <= SERIAL_MAX_VARS {
-            Self::fill_serial::<_, _, false>(r, values, &|x| x);
-        } else {
-            *values = Self::fill_parallel_coords(r.coords(), P::ENDIANNESS, std::mem::take(values));
-        }
-    }
-
-    /// Computes `map(scale * eq(r, x))`, applying `map` once per output.
     #[expect(
         clippy::expect_used,
         reason = "infallible builder must panic on dimension overflow"
     )]
+    pub(super) fn domain_len(num_vars: usize) -> usize {
+        u32::try_from(num_vars)
+            .ok()
+            .and_then(|bits| 1usize.checked_shl(bits))
+            .expect("equality table capacity overflow")
+    }
+
+    /// Computes `map(scale * eq(r, x))`, applying `map` once per output.
     pub fn evals_mapped<P, G>(r: &P, scaling_factor: Option<F>, map: G) -> Vec<F>
     where
         P: PointLike + ?Sized,
@@ -82,13 +95,35 @@ impl<F: Field> EqPolynomial<F> {
         F: Mul<P::Coord, Output = F>,
         G: Fn(F) -> F + Sync,
     {
-        let len = domain_len(r.num_vars()).expect("equality table capacity overflow");
+        let len = Self::domain_len(r.num_vars());
         let mut values = F::zeroed_vec(len);
-        values[0] = scaling_factor.unwrap_or(F::one());
-        Self::fill_mapped(r, values, &map)
+        Self::evals_mapped_into(r, scaling_factor, map, &mut values);
+        values
     }
 
-    pub(super) fn fill_mapped<P, G>(r: &P, mut values: Vec<F>, map: &G) -> Vec<F>
+    /// Fills `out` with `map(scale * eq(r, x))`, applying `map` once per output.
+    /// Callers with their own allocation policy, such as Akita, allocate the buffer.
+    /// This method allocates no table storage; callback allocations belong to `map`.
+    ///
+    /// # Panics
+    /// Panics unless `out.len() == 2^r.num_vars()`, or if the domain overflows `usize`.
+    pub fn evals_mapped_into<P, G>(r: &P, scale: Option<F>, map: G, out: &mut [F])
+    where
+        P: PointLike + ?Sized,
+        P::Coord: Send + Sync + Into<F>,
+        F: Mul<P::Coord, Output = F>,
+        G: Fn(F) -> F + Sync,
+    {
+        assert_eq!(
+            out.len(),
+            Self::domain_len(r.num_vars()),
+            "invalid equality-table length"
+        );
+        out[0] = scale.unwrap_or(F::one());
+        Self::fill_mapped(r, out, &map);
+    }
+
+    fn fill_mapped<P, G>(r: &P, values: &mut [F], map: &G)
     where
         P: PointLike + ?Sized,
         P::Coord: Send + Sync + Into<F>,
@@ -98,16 +133,15 @@ impl<F: Field> EqPolynomial<F> {
         #[cfg(feature = "parallel")]
         if r.num_vars() >= PARALLEL_SLAB_MIN_VARS && rayon::current_num_threads() > 1 {
             if r.num_vars() <= PARALLEL_SLAB_MAX_VARS {
-                Self::fill_slabs(r, &mut values, map);
+                Self::fill_slabs(r, values, map);
             } else {
                 use rayon::prelude::*;
-                values = Self::fill_parallel_coords(r.coords(), P::ENDIANNESS, values);
+                Self::fill_parallel_coords(r.coords(), P::ENDIANNESS, values);
                 values.par_iter_mut().for_each(|value| *value = map(*value));
             }
-            return values;
+            return;
         }
-        Self::fill_serial::<_, _, true>(r, &mut values, map);
-        values
+        Self::fill_serial::<_, _, true>(r, values, map);
     }
 
     #[cfg(feature = "parallel")]
@@ -215,13 +249,15 @@ impl<F: Field> EqPolynomial<F> {
         )
     }
 
+    #[cfg(test)]
     #[inline]
     pub(crate) fn evals_serial<P: PointLike + ?Sized>(r: &P, scaling_factor: Option<F>) -> Vec<F>
     where
         P::Coord: Send + Sync + Into<F>,
         F: Mul<P::Coord, Output = F> + SubAssign<F>,
     {
-        let mut evals: Vec<F> = vec![scaling_factor.unwrap_or(F::one()); r.num_vars().pow2()];
+        let mut evals = F::zeroed_vec(Self::domain_len(r.num_vars()));
+        evals[0] = scaling_factor.unwrap_or(F::one());
         Self::fill_serial::<_, _, false>(r, &mut evals, &|x| x);
         evals
     }
@@ -257,40 +293,31 @@ impl<F: Field> EqPolynomial<F> {
     ///
     /// Builds radix-four layers from least to most significant coordinates,
     /// using rayon to process the entries within each layer.
-    #[tracing::instrument(skip_all, name = "EqPolynomial::evals_parallel")]
+    #[cfg(test)]
     #[inline]
     pub(crate) fn evals_parallel<P: PointLike + ?Sized>(r: &P, scaling_factor: Option<F>) -> Vec<F>
     where
         P::Coord: Send + Sync + Into<F>,
         F: Mul<P::Coord, Output = F> + SubAssign<F>,
     {
-        Self::evals_parallel_coords(r.coords(), P::ENDIANNESS, scaling_factor)
-    }
-
-    // Sharing coordinate kernels keeps Rayon's closures independent of the view
-    // type. Inlining folds the caller's constant endianness before the entry loops.
-    #[inline(always)]
-    fn evals_parallel_coords<C>(
-        r: &[C],
-        endianness: Endianness,
-        scaling_factor: Option<F>,
-    ) -> Vec<F>
-    where
-        C: Copy + Send + Sync + Into<F>,
-        F: Mul<C, Output = F>,
-    {
-        let final_size = r.len().pow2();
-        let mut evals: Vec<F> = F::zeroed_vec(final_size);
+        let mut evals = F::zeroed_vec(Self::domain_len(r.num_vars()));
         evals[0] = scaling_factor.unwrap_or(F::one());
-        Self::fill_parallel_coords(r, endianness, evals)
+        Self::fill_evals_parallel(r, &mut evals);
+        evals
+    }
+
+    #[tracing::instrument(skip_all, name = "EqPolynomial::evals_parallel")]
+    #[inline]
+    fn fill_evals_parallel<P: PointLike + ?Sized>(r: &P, out: &mut [F])
+    where
+        P::Coord: Send + Sync + Into<F>,
+        F: Mul<P::Coord, Output = F>,
+    {
+        Self::fill_parallel_coords(r.coords(), P::ENDIANNESS, out);
     }
 
     #[inline(always)]
-    pub(super) fn fill_parallel_coords<C>(
-        r: &[C],
-        endianness: Endianness,
-        mut evals: Vec<F>,
-    ) -> Vec<F>
+    fn fill_parallel_coords<C>(r: &[C], endianness: Endianness, evals: &mut [F])
     where
         C: Copy + Send + Sync + Into<F>,
         F: Mul<C, Output = F>,
@@ -370,6 +397,5 @@ impl<F: Field> EqPolynomial<F> {
 
             size *= 2;
         }
-        evals
     }
 }

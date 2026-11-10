@@ -5,8 +5,6 @@ use serde::{Deserialize, Serialize};
 
 mod build;
 mod cached;
-pub(crate) mod fallible;
-pub use fallible::{EqBudget, EqTableError};
 mod scalar;
 use jolt_field::JoltField;
 pub use scalar::{
