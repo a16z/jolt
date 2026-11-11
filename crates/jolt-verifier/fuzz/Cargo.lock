@@ -733,7 +733,6 @@ dependencies = [
  "ark-bn254",
  "ark-ff",
  "jolt-field",
- "rand_core",
  "sha3",
  "shake",
  "spongefish",

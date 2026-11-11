@@ -504,7 +504,6 @@ name = "jolt-transcript"
 version = "0.1.0"
 dependencies = [
  "jolt-field",
- "rand_core",
  "sha3",
  "shake",
  "spongefish",

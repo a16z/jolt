@@ -2,7 +2,6 @@
 
 use rand_core::{CryptoRng, Error, RngCore};
 use spongefish::{DuplexSpongeInit, PrivateRng};
-#[cfg(feature = "prover-coins")]
 use zeroize::Zeroizing;
 
 use crate::Shake128;
@@ -37,7 +36,6 @@ impl<'a> ProverCoins<'a> {
     /// Borrow these coins directly for sequential sampling. Split only when a
     /// sampler must outlive that borrow, such as sampling a large vector in
     /// parallel chunks.
-    #[cfg(feature = "prover-coins")]
     pub fn split(&mut self) -> OwnedCoins {
         let mut seed = Zeroizing::new([0u8; 32]);
         self.fill_bytes(seed.as_mut());
@@ -68,8 +66,8 @@ impl CryptoRng for ProverCoins<'_> {}
 
 /// An owned private SHAKE128 sponge. Preprocessing that has no prover
 /// transcript draws from one, and [`ProverCoins::split`] returns one.
-/// With `prover-coins`, the SHAKE128 state and reader wipe on drop through
-/// `shake/zeroize`.
+/// The SHAKE128 state and reader wipe on drop through `shake/zeroize`, which
+/// `prover-entropy` enables.
 pub struct OwnedCoins(PrivateRng<Shake128>);
 
 impl OwnedCoins {
@@ -77,7 +75,6 @@ impl OwnedCoins {
     ///
     /// # Panics
     /// Panics if the operating system's entropy source fails.
-    #[cfg(feature = "prover-entropy")]
     pub fn from_os_entropy() -> Self {
         Self(PrivateRng::from_os_entropy())
     }
@@ -150,10 +147,8 @@ mod tests {
         let mut prover = ProverState::<Shake128>::init_seeded(&SESSION, &statement, SEED);
         ProverTranscript::mix_entropy(&mut prover, &[3; 32]);
         prover.coins().fill_bytes(&mut [0; 337]);
-        #[cfg(feature = "prover-coins")]
         let mut split = prover.coins().split();
         prover.send(&BytesMsg(b"commitment"));
-        #[cfg(feature = "prover-coins")]
         split.coins().fill_bytes(&mut [0; 337]);
         let challenge = prover.squeeze(32, <[u8]>::to_vec);
         let narg = prover.narg_string();
@@ -164,7 +159,6 @@ mod tests {
         verifier.check_eof().unwrap();
     }
 
-    #[cfg(feature = "prover-coins")]
     #[test]
     fn split_seeds_a_private_sponge_with_the_next_32_bytes() {
         let mut transcript = ProverState::<Shake128>::init_seeded(&SESSION, &0u64, SEED);

@@ -5,9 +5,11 @@ use std::borrow::{Borrow, BorrowMut};
 use std::collections::VecDeque;
 
 use crate::transcript::sealed::Sealed;
+#[cfg(feature = "prover-coins")]
+use crate::ProverCoins;
 use crate::{
-    ChallengeSetSize, FieldTranscript, NargMessage, ProverCoins, ProverInit, ProverTranscript,
-    VerifierInit, VerifierTranscript, TAG_BYTES,
+    ChallengeSetSize, FieldTranscript, NargMessage, ProverInit, ProverTranscript, VerifierInit,
+    VerifierTranscript, TAG_BYTES,
 };
 use spongefish::{
     DuplexSpongeInit, DuplexSpongeInterface, Encoding, FromNarg, VerificationError, VerifierState,
@@ -219,6 +221,7 @@ impl<T: ProverTranscript, F, S: Script<F>> ProverTranscript for ScriptedTranscri
         self.inner.narg_string()
     }
 
+    #[cfg(feature = "prover-coins")]
     fn coins(&mut self) -> ProverCoins<'_> {
         self.inner.coins()
     }
