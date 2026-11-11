@@ -11,7 +11,7 @@
 
 #[cfg(feature = "allocative")]
 use allocative::Allocative;
-use jolt_utils::alloc::ZeroAllocError;
+use jolt_utils::alloc::{ZeroAllocError, ZeroBytesValid};
 use num_traits::{One, Zero};
 use rand_core::RngCore;
 use serde::{de::DeserializeOwned, Serialize};
@@ -284,7 +284,7 @@ pub trait Field: Ring {
 /// The exponent `k` is [`CanonicalEncoding::MODULUS_BITS`]; implementing
 /// this contract lights up the generic machinery bounded on it (extension
 /// towers, packed backends).
-pub trait PseudoMersenne: Field + CanonicalEncoding {
+pub trait PseudoMersenne: Field + CanonicalEncoding + ZeroBytesValid {
     /// Offset `c` in `2^k − c`.
     const OFFSET: u128;
 

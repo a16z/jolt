@@ -112,6 +112,11 @@ name = "eq_evals"
 path = "benches/callgrind/eq_evals.rs"
 harness = false
 
+[[bench]]
+name = "eq_rounds"
+path = "benches/callgrind/eq_rounds.rs"
+harness = false
+
 [[bin]]
 name = "measure-objectives"
 path = "bin/measure_objectives.rs"

@@ -71,7 +71,8 @@ impl Field for NonZeroRepr {
 fn generic_callers<F: Field>(r: &[F]) {
     let point = PointRef::low_to_high(r);
     let table = EqPolynomial::<F>::evals_parallel(&point, None);
-    let tensor = TensorEqTable::<F>::from_point(&point, F::from_u64(1), r.len() / 2);
+    let tensor =
+        TensorEqTable::<F>::new_with_scaling_and_split(&point, F::from_u64(1), r.len() / 2);
     for (i, value) in table.iter().enumerate() {
         assert_eq!(*value, tensor.evaluate_index(i));
     }

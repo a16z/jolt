@@ -13,29 +13,24 @@ pub struct TensorEqTable<F: Field> {
 }
 
 impl<F: Field> TensorEqTable<F> {
-    pub fn new(point: &[F]) -> Self {
+    pub fn new<P: PointLike<Coord = F> + ?Sized>(point: &P) -> Self {
         Self::new_with_scaling(point, F::one())
     }
 
-    pub fn new_with_scaling(point: &[F], scale: F) -> Self {
-        Self::new_with_scaling_and_split(point, scale, point.len() / 2)
+    pub fn new_with_scaling<P: PointLike<Coord = F> + ?Sized>(point: &P, scale: F) -> Self {
+        Self::new_with_scaling_and_split(point, scale, point.num_vars() / 2)
     }
 
-    /// Factors `scale * eq(point, x)` with the first `split` coordinates in the
-    /// outer table. `split` must be at most `point.len()`.
-    pub fn new_with_scaling_and_split(point: &[F], scale: F, split: usize) -> Self {
-        Self::from_point(point, scale, split)
-    }
-
-    /// Factors `scale * eq(point, x)` with `outer_vars` most-significant
-    /// variables outside. Index layout is `(x_out << in_bits) | x_in`.
-    pub fn from_point<P: PointLike<Coord = F> + ?Sized>(
+    /// Factors `scale * eq(point, x)` with `split` most-significant variables
+    /// outside. Index layout is `(x_out << in_bits) | x_in`.
+    /// `split` must be at most `point.num_vars()`.
+    pub fn new_with_scaling_and_split<P: PointLike<Coord = F> + ?Sized>(
         point: &P,
         scale: F,
-        outer_vars: usize,
+        split: usize,
     ) -> Self {
-        let out_point = point.msb_range(0..outer_vars);
-        let in_point = point.msb_range(outer_vars..point.num_vars());
+        let out_point = point.msb_range(0..split);
+        let in_point = point.msb_range(split..point.num_vars());
         if P::ENDIANNESS == HIGH_TO_LOW {
             Self::from_parts(
                 PointRef::high_to_low(out_point.coords()),
