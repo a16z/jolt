@@ -2,11 +2,14 @@ use super::alloc::{Allocate, Budget, EqAlloc, EqTableError, TableInit};
 use jolt_field::Field;
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
+use std::num::NonZeroUsize;
 use std::panic::Location;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-// Only buffers returned by FailAt are registered; Rayon and test-runner allocations
-// are excluded. The failure test runs all registered allocations sequentially.
+// Only buffers returned by FailingPolicy are registered; Rayon and test-runner
+// allocations are excluded. Registration and the call counter are atomic, but the
+// tensor builder allocates its two factors inside `rayon::join`, so their order is
+// unspecified: `FailAt::Nth(1)` may fail either factor.
 static LIVE: [AtomicUsize; 16] = [const { AtomicUsize::new(0) }; 16];
 thread_local! {
     static FAIL_NEXT: Cell<bool> = const { Cell::new(false) };
@@ -52,19 +55,31 @@ unsafe impl GlobalAlloc for TrackingAllocator {
     }
 }
 
+/// Which registered allocations fail.
 #[derive(Clone, Copy)]
-pub(super) struct FailAt<'a> {
+pub(super) enum FailAt {
+    Every,
+    /// The `n`-th allocation, counting from one.
+    Nth(NonZeroUsize),
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct FailingPolicy<'a> {
     pub calls: &'a AtomicUsize,
-    pub target: usize,
+    pub fail: FailAt,
     pub budget: Budget,
 }
-impl FailAt<'_> {
+impl FailingPolicy<'_> {
     pub fn fail_next_allocation() {
         FAIL_NEXT.with(|flag| flag.set(true));
     }
     fn before(self) -> Result<(), EqTableError> {
         let call = self.calls.fetch_add(1, Ordering::SeqCst) + 1;
-        if self.target == 0 || call == self.target {
+        let fails = match self.fail {
+            FailAt::Every => true,
+            FailAt::Nth(n) => call == n.get(),
+        };
+        if fails {
             // Capacity overflow deterministically produces the allocator's real error
             // without asking the OS for memory; it is the injected failure cause.
             let _ = self.budget.storage::<u8>(usize::MAX)?;
@@ -84,10 +99,10 @@ impl FailAt<'_> {
         assert!(LIVE.iter().all(|slot| slot.load(Ordering::SeqCst) == 0));
     }
 }
-impl EqAlloc for FailAt<'_> {
+impl EqAlloc for FailingPolicy<'_> {
     type Error = EqTableError;
 }
-impl Allocate for FailAt<'_> {
+impl Allocate for FailingPolicy<'_> {
     fn reject(self, error: EqTableError) -> <Self as EqAlloc>::Error {
         error
     }

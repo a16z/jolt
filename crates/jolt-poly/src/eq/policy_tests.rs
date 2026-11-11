@@ -1,9 +1,10 @@
 use super::alloc::{Allocate, TableInit};
-use super::failure_policy::FailAt;
+use super::failure_policy::{FailAt, FailingPolicy};
 use crate::{AllocationCause, Budget, EqPolynomial, EqTableError, TensorEqTable};
 use jolt_field::{Fr, Prime128Offset275, Ring};
 use jolt_utils::alloc::ZeroAllocError;
 use std::error::Error;
+use std::num::NonZeroUsize;
 use std::panic::{catch_unwind, set_hook, take_hook, Location, UnwindSafe};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -26,9 +27,9 @@ fn each_owned_allocation_can_fail_without_leaking() {
             };
             for target in 1..=allocations + 1 {
                 calls.store(0, Ordering::SeqCst);
-                let policy = FailAt {
+                let policy = FailingPolicy {
                     calls: &calls,
-                    target,
+                    fail: FailAt::Nth(NonZeroUsize::new(target).unwrap()),
                     budget: UNLIMITED,
                 };
                 let result = match kind {
@@ -47,14 +48,14 @@ fn each_owned_allocation_can_fail_without_leaking() {
                     assert!(result.is_ok());
                     assert_eq!(calls.load(Ordering::SeqCst), allocations);
                 }
-                FailAt::assert_released();
+                FailingPolicy::assert_released();
             }
         }
     }
     // Both tensor admissions must precede even the first factor allocation.
-    let policy = FailAt {
+    let policy = FailingPolicy {
         calls: &calls,
-        target: 1,
+        fail: FailAt::Nth(NonZeroUsize::MIN),
         budget: Budget {
             max_bytes: size_of::<Fr>(),
         },
@@ -66,7 +67,7 @@ fn each_owned_allocation_can_fail_without_leaking() {
     ));
     assert_eq!(calls.load(Ordering::SeqCst), 0);
 
-    let policy = FailAt {
+    let policy = FailingPolicy {
         budget: UNLIMITED,
         ..policy
     };
@@ -92,9 +93,9 @@ fn each_owned_allocation_can_fail_without_leaking() {
     }
     // Arithmetic-only admission of both 1 GiB factors of the 52-variable tensor.
     assert_eq!(size_of::<Prime128Offset275>(), 16);
-    let policy = FailAt {
+    let policy = FailingPolicy {
         budget: Budget { max_bytes: 1 << 30 },
-        target: 0,
+        fail: FailAt::Every,
         ..policy
     };
     assert!(matches!(
@@ -106,7 +107,7 @@ fn each_owned_allocation_can_fail_without_leaking() {
         ),
         Err(EqTableError::AllocationFailed { .. })
     ));
-    FailAt::assert_released();
+    FailingPolicy::assert_released();
 }
 
 #[test]
@@ -152,7 +153,7 @@ fn budget_caps_each_family_in_requested_bytes() {
 
 #[test]
 fn budget_preserves_allocator_error_causes() {
-    FailAt::fail_next_allocation();
+    FailingPolicy::fail_next_allocation();
     let result = UNLIMITED.table::<Fr>(4, TableInit::Zero);
     assert!(matches!(
         result,
@@ -161,7 +162,7 @@ fn budget_preserves_allocator_error_causes() {
             cause: AllocationCause::Zero(ZeroAllocError::AllocFailed { .. })
         })
     ));
-    FailAt::fail_next_allocation();
+    FailingPolicy::fail_next_allocation();
     let result = UNLIMITED.table(4, TableInit::Repeat(Fr::from_u64(1)));
     assert!(matches!(
         result,
@@ -170,7 +171,7 @@ fn budget_preserves_allocator_error_causes() {
             cause: AllocationCause::Reserve(_)
         })
     ));
-    FailAt::fail_next_allocation();
+    FailingPolicy::fail_next_allocation();
     let result = UNLIMITED.storage::<Vec<Fr>>(4);
     assert!(matches!(
         result,
