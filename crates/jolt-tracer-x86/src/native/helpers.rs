@@ -34,6 +34,11 @@ fn fail(state: &mut GuestState, host: &mut HostContext, message: String) -> u64 
 /// device (mirrors `Mmu::load`).
 fn read_guest_byte(state: &GuestState, host: &HostContext, address: u64) -> Result<u8, String> {
     if address >= RAM_START_ADDRESS {
+        if address >= host.device.memory_layout.heap_end {
+            return Err(format!(
+                "Illegal Memory Access: Attempted to read from {address:#X}"
+            ));
+        }
         let offset = address - RAM_START_ADDRESS;
         if offset < state.mem_size {
             // SAFETY: offset bounds-checked against the plane size.
@@ -43,6 +48,11 @@ fn read_guest_byte(state: &GuestState, host: &HostContext, address: u64) -> Resu
     }
     if address > host.device.memory_layout.io_end {
         return Err(format!("I/O overflow: Attempted to read from {address:#X}"));
+    }
+    if address < host.device.memory_layout.get_lowest_address() {
+        return Err(format!(
+            "I/O underflow: Attempted to read from {address:#X}"
+        ));
     }
     Ok(host.device.load(address))
 }

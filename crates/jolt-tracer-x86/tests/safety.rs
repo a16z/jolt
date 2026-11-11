@@ -22,7 +22,7 @@ use jolt_riscv::{
 };
 use jolt_tracer_x86::harness::{
     compile_program, memory_config, run_program, single_row_program, terminal_row, Outcome,
-    TEST_ADDR,
+    SCRATCH_START, TEST_ADDR,
 };
 use jolt_tracer_x86::X86TracerBackend;
 use tracer::instruction::Instruction;
@@ -345,6 +345,38 @@ fn device_load_failures_report_io_overflow() {
             .helper_error
             .expect("host-read error")
             .contains("I/O overflow"));
+    }
+}
+
+#[test]
+fn advice_write_enforces_guest_load_bounds() {
+    let layout = JoltDeviceMemory::new(&memory_config()).memory_layout;
+    let program = single_row_program(row(Kind::VirtualHostIO(VirtualHostIO(())), None, None, 0));
+    for (address, error) in [
+        (layout.get_lowest_address() - 1, Some("I/O underflow")),
+        (layout.heap_end, Some("Illegal Memory Access")),
+        (layout.get_lowest_address(), None),
+        (SCRATCH_START, None),
+    ] {
+        let mut pre = [0u64; REGS];
+        pre[10] = u64::from(JOLT_ADVICE_WRITE_CALL_ID);
+        pre[11] = address;
+        pre[12] = 1;
+        let outcome = run_program(&program, &pre, &[0xab], &[]).expect("run advice write");
+        if let Some(error) = error {
+            assert_eq!(outcome.exit, 4, "address {address:#x}");
+            assert!(outcome
+                .helper_error
+                .expect("advice-write error")
+                .contains(error));
+            assert_eq!(outcome.advice_tape, [] as [u8; 0]);
+        } else {
+            assert_eq!(outcome.exit, 1, "{:?}", outcome.helper_error);
+            assert_eq!(
+                outcome.advice_tape,
+                [if address == SCRATCH_START { 0xab } else { 0 }]
+            );
+        }
     }
 }
 

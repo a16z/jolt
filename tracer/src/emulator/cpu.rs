@@ -1466,7 +1466,10 @@ fn decode_failure(word: u32, address: u64, compressed: bool, e: impl core::fmt::
 
 #[cfg(test)]
 mod test_cpu {
+    use common::jolt_device::{JoltDeviceMemory, MemoryConfig};
+    use jolt_platform::JOLT_ADVICE_WRITE_CALL_ID;
     use std::io::{Result as IoResult, Write};
+    use std::panic::{catch_unwind, AssertUnwindSafe};
     use std::sync::{Arc, Mutex};
 
     use super::*;
@@ -1705,6 +1708,55 @@ mod test_cpu {
         cpu.handle_advice_write(DRAM_BASE, 4).unwrap();
         assert_eq!(cpu.advice_tape.len(), 4);
         assert_eq!(advice_tape_read(&mut cpu, 4), Some(0xefbe_adde));
+    }
+
+    #[test]
+    fn advice_write_enforces_guest_load_bounds() {
+        let config = MemoryConfig {
+            program_size: Some(64),
+            stack_size: 0,
+            heap_size: 64,
+            ..Default::default()
+        };
+        let layout = JoltDeviceMemory::new(&config).memory_layout;
+        let scratch = DRAM_BASE + 32;
+        for (address, error) in [
+            (layout.get_lowest_address() - 1, Some("I/O underflow")),
+            (layout.heap_end, Some("Illegal Memory Access")),
+            (layout.get_lowest_address(), None),
+            (scratch, None),
+        ] {
+            let mut cpu = create_cpu();
+            // Let heap_end reach the MMU check after trace_load reads its word.
+            cpu.mmu.init_memory(layout.get_total_memory_size() + 8);
+            cpu.mmu.jolt_device = Some(JoltDeviceMemory::new(&config));
+            // VirtualHostIO, as in test_run_two_pass_replays_advice_writes.
+            for (i, byte) in 0x0000_205bu32.to_le_bytes().into_iter().enumerate() {
+                cpu.mmu.store_raw(DRAM_BASE + i as u64, byte);
+            }
+            cpu.mmu.store_raw(scratch, 0xab);
+            cpu.update_pc(DRAM_BASE);
+            cpu.x[10] = i64::from(JOLT_ADVICE_WRITE_CALL_ID);
+            cpu.x[11] = address as i64;
+            cpu.x[12] = 1;
+            let result = catch_unwind(AssertUnwindSafe(|| cpu.tick(None)));
+            if let Some(error) = error {
+                let panic = result.expect_err("invalid advice-write buffer must panic");
+                let message = panic
+                    .downcast_ref::<String>()
+                    .map(String::as_str)
+                    .or_else(|| panic.downcast_ref::<&str>().copied())
+                    .expect("panic message");
+                assert!(message.contains(error), "{message}");
+                assert!(cpu.advice_tape.is_empty());
+            } else {
+                result.expect("valid advice-write buffer");
+                assert_eq!(
+                    cpu.advice_tape.data,
+                    [if address == scratch { 0xab } else { 0 }]
+                );
+            }
+        }
     }
 
     #[test]
