@@ -27,6 +27,14 @@ conversion policy and dishonest-advice checks stay in `field_inline_limbs.rs`.
 Clear-mode full-domain cases also cover default cycle-first read/write rounds
 on the optimized and reference backends, and active field-inline operations.
 
+Every mode of both profiles also proves `fibonacci_ring_512`, a fibonacci trace
+padded to 2^18 rows. Akita's default one-hot catalog commits a trace group of
+that size at inner ring dimension 512, while the table cases pad to at most
+2^16 rows and commit at 256, so this case is the only one that reaches the
+dimension-512 trace commitment kernels. Its Akita arm resolves the schedule row
+that its proof selected and asserts that dimension, so the case fails instead
+of silently dropping below it.
+
 ```bash
 cargo nextest run -p jolt-prover --features prover-fixtures -E 'binary(e2e_matrix)' --cargo-quiet
 cargo nextest run -p jolt-prover --features prover-fixtures,zk -E 'binary(e2e_matrix)' --cargo-quiet

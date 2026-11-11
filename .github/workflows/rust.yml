@@ -511,7 +511,8 @@ jobs:
         with:
           tool: nextest
       # e2e_matrix selects field_ops, field_ops_full_domain, field_limbs, and
-      # muldiv for the field-inline profile. Run the full package to retain its specialized
+      # muldiv for the field-inline profile, plus fibonacci_ring_512, which every
+      # profile proves. Run the full package to retain its specialized
       # parity, tamper, and limb-conversion suites alongside matrix acceptance
       # in both Dory modes.
       - name: Run field-inline matrix and specialized suites (clear)
