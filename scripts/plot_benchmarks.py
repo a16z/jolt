@@ -36,8 +36,8 @@ NICE_NAMES = {
 }
 
 
-def load_data(csv_path):
-    """Load benchmark data from CSV file."""
+def load_data(csv_path, backend):
+    """Load benchmark data for one kernel backend from CSV."""
     data = defaultdict(list)
 
     try:
@@ -45,6 +45,9 @@ def load_data(csv_path):
             reader = csv.reader(f)
             for row in reader:
                 if len(row) >= 7 and row[1].isdigit():  # Skip header
+                    row_backend = row[7] if len(row) > 7 and row[7] else 'reference'
+                    if row_backend != backend:
+                        continue
                     name, scale, time, _, _, size, size_comp = row[:7]
                     data[name].append(
                         (int(scale), float(time), int(size), int(size_comp)))
@@ -55,7 +58,7 @@ def load_data(csv_path):
     return dict(data)
 
 
-def create_speed_plot(data, output_path):
+def create_speed_plot(data, output_path, backend):
     """Create prover speed plot (Clock speed in KHz vs Trace length)."""
     fig = go.Figure()
 
@@ -77,7 +80,7 @@ def create_speed_plot(data, output_path):
     labels = [TICK_LABELS.get(n, f"2^{n}") for n in ticks]
 
     fig.update_layout(
-        title="Jolt zkVM Benchmark<br><sub>Hardware: AMD Threadripper PRO 7975WX 32 cores, 768 GB DDR5 RAM</sub>",  # noqa: E501
+        title=f"Jolt zkVM Benchmark ({backend})<br><sub>Hardware: AMD Threadripper PRO 7975WX 32 cores, 768 GB DDR5 RAM</sub>",  # noqa: E501
         xaxis=dict(
             title="Trace length (RISCV64IMAC Cycles)",
             tickmode='array',
@@ -95,7 +98,7 @@ def create_speed_plot(data, output_path):
     print(f"Interactive plot saved to {output_path}")
 
 
-def create_size_plot(data, output_path):
+def create_size_plot(data, output_path, backend):
     """Create proof size plot (compressed/uncompressed)."""
     fig = go.Figure()
 
@@ -139,7 +142,7 @@ def create_size_plot(data, output_path):
     ]
 
     fig.update_layout(
-        title="Jolt zkVM Proof Size",
+        title=f"Jolt zkVM Proof Size ({backend})",
         xaxis=dict(title="Trace length (RISCV64IMAC Cycles)",
                    tickmode='array', tickvals=tick_vals, ticktext=tick_labels,
                    tickangle=45),
@@ -161,6 +164,9 @@ def main():
                              '(written by `jolt-prover benchmark`)')
     parser.add_argument('--output-dir', default='benchmark-runs',
                         help='Directory to save the output plots')
+    parser.add_argument('--backend', choices=['reference', 'optimized'],
+                        default='reference',
+                        help='Kernel backend rows to plot (default: reference)')
     parser.add_argument(
         '--plot-type',
         choices=[
@@ -174,22 +180,22 @@ def main():
 
     os.makedirs(args.output_dir, exist_ok=True)
 
-    data = load_data(args.csv)
+    data = load_data(args.csv, args.backend)
     if not data:
         print(
             "No data found in CSV file. Run `cargo run --release -p jolt-prover "
             "--features profiling -- benchmark` to generate data.")  # noqa: E501
         return
 
-    print(f"Loaded {len(data)} benchmark types from CSV")
+    print(f"Loaded {len(data)} benchmark types from CSV ({args.backend})")
 
     if args.plot_type in ['all', 'speed']:
         create_speed_plot(data, os.path.join(
-            args.output_dir, 'benchmark_plot.html'))
+            args.output_dir, 'benchmark_plot.html'), args.backend)
 
     if args.plot_type in ['all', 'size']:
         create_size_plot(data, os.path.join(
-            args.output_dir, 'proof_size_plot.html'))
+            args.output_dir, 'proof_size_plot.html'), args.backend)
 
 
 if __name__ == '__main__':

@@ -150,14 +150,24 @@ Existing CSVs using the previous header are migrated in place with empty
 values for these new fields. Render them with:
 
 ```bash
-python3 scripts/benchmark_summary.py     # per-scale table
-python3 scripts/benchmark_summary.py --protocol akita \
+python3 scripts/benchmark_summary.py     # per-scale table, reference kernels
+python3 scripts/benchmark_summary.py --backend optimized
+python3 scripts/benchmark_summary.py --protocol akita --backend optimized \
     --metric verifier_single_thread_time_s
-python3 scripts/benchmark_summary.py --protocol akita \
+python3 scripts/benchmark_summary.py --protocol akita --backend optimized \
     --akita-chunk-profile w4r2 --metric prover_time_s
 python3 scripts/plot_benchmarks.py       # speed + proof-size plots
+python3 scripts/plot_benchmarks.py --backend optimized
 python3 scripts/plot_memory_usage.py     # peak memory per run (from summary.json)
 ```
+
+The CSV summary and plots select `--backend reference` by default; pass
+`--backend optimized` for optimized kernel measurements. Both label the
+selected backend and exclude rows from the other kernel implementation.
+CSV rows without a backend column or with an empty backend value are treated
+as reference measurements. For repeated measurements of the same workload,
+scale, and backend, the summary keeps the last non-empty metric value;
+the plots retain all samples.
 
 Mind the machine: the reference backend retains ~18 GiB regardless of scale
 and grows steeply with it — large-scale sweeps on the reference backend are
