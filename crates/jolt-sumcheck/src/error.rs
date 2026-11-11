@@ -258,6 +258,11 @@ pub enum SumcheckError<F: Field> {
     /// support the request, or its rejection pool ran out.
     #[error("transcript rejected a challenge draw")]
     TranscriptRejected,
+
+    /// A kernel asked its split-eq state for a round handle at `round`, and the
+    /// state returned `None` because every one of its rounds is already bound.
+    #[error("round {round}: the equality state has no unbound round")]
+    InvalidEqRoundState { round: usize },
 }
 
 impl<F: Field> From<VerificationError> for SumcheckError<F> {

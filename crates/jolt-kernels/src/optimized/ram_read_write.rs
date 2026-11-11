@@ -12,7 +12,7 @@
 //! - **Gruen split-eq + Dao–Thaler factoring** for the `log_T` cycle rounds:
 //!   cycle-first keeps the eq factor in `O(√T)` tables, and each cubic message is
 //!   reconstructed from the quadratic factor's `[q(0), q_∞]` plus the
-//!   running claim ([`GruenSplitEqPolynomial::gruen_poly_deg_3`]).
+//!   running claim ([`jolt_poly::GruenRound::gruen_poly_deg_3`]).
 //! - **Hint-based quadratic address rounds** on the address-major matrix
 //!   against the bound `val_init` column (`s(1)` recovered from the claim).
 //!
@@ -29,6 +29,7 @@
 //! a constant suffix equal to the final checkpoint; both remain implicit.
 //! Mixed cycle/address schedules are explicitly unsupported.
 
+use crate::optimized::support::eq_round_error;
 use jolt_claims::protocols::jolt::geometry::ram::ram_inc;
 use jolt_claims::protocols::jolt::{
     JoltDerivedId, JoltPolynomialId, JoltVirtualPolynomial, RamReadWritePublic, ReadWriteDimensions,
@@ -119,11 +120,11 @@ impl<F: JoltField> RamReadWriteKernel<F> {
             Phase::Round0 { columns, gruen } => {
                 let matrix = round0_bind(&columns, r);
                 crate::mem::drop_in_background_thread(columns);
-                self.finish_cycle_bind(matrix, gruen, r, round)
+                self.finish_cycle_bind(matrix, gruen, r, round)?
             }
             Phase::Cycle { mut matrix, gruen } => {
                 matrix.bind(r);
-                self.finish_cycle_bind(matrix, gruen, r, round)
+                self.finish_cycle_bind(matrix, gruen, r, round)?
             }
             Phase::Address {
                 mut matrix,
@@ -158,10 +159,11 @@ impl<F: JoltField> RamReadWriteKernel<F> {
                 mut val,
                 mut gruen,
             } => {
+                let gruen_round = gruen.round_mut().ok_or_else(|| eq_round_error(round))?;
                 let _ = ra.bind(r);
                 let _ = val.bind(r);
                 let _ = self.inc.bind(r);
-                gruen.bind(r);
+                gruen_round.bind(r);
                 if round + 1 == self.log_t + self.log_k {
                     Phase::Done {
                         merged_eq: vec![gruen.current_scalar()],
@@ -183,8 +185,11 @@ impl<F: JoltField> RamReadWriteKernel<F> {
         mut gruen: GruenSplitEqPolynomial<F>,
         r: F,
         round: usize,
-    ) -> Phase<F> {
-        gruen.bind(r);
+    ) -> Result<Phase<F>, SumcheckError<F>> {
+        gruen
+            .round_mut()
+            .ok_or_else(|| eq_round_error(round))?
+            .bind(r);
         let _ = self.inc.bind(r);
         let phase = if round + 1 == self.log_t {
             let matrix = matrix.into_address_major();
@@ -201,7 +206,7 @@ impl<F: JoltField> RamReadWriteKernel<F> {
         if round == 0 || round == LATE_PURGE_CYCLE_ROUNDS || round + 1 == self.log_t {
             crate::mem::purge_retained_memory(self.log_t);
         }
-        phase
+        Ok(phase)
     }
 
     fn finish_address(&self, matrix: AddressMajorMatrix<F>, merged_eq: Vec<F>) -> Phase<F> {
@@ -251,8 +256,8 @@ impl<F: JoltField> RamReadWriteKernel<F> {
                 )
             }
             Some(Phase::DenseCycle { ra, val, gruen }) => {
-                // Address binding reduces the mask to one scalar. Reuse its
-                // coefficient through the existing cycle pass; count affects q(0) only.
+                // Address binding reduces the mask to one scalar. Reuse code_increment
+                // through the existing cycle pass; count affects q(0) only.
                 let coefficients = self.batch.bound(self.mask.value(0));
                 let quadratic = gruen.par_fold_out_in_prefix(
                     ra.values.len().div_ceil(2),
@@ -275,31 +280,34 @@ impl<F: JoltField> RamReadWriteKernel<F> {
             }
             _ => return Err(Phase::error()),
         };
-        gruen.checked_cubic(q_0, q_infty, previous_claim, round, || {
-            let e_in = gruen.e_in_current();
-            let e_out = gruen.e_out_current();
-            let in_bits = e_in.len().trailing_zeros() as usize;
-            let in_mask = e_in.len() - 1;
-            let weight = |pair| e_out[pair >> in_bits] * e_in[pair & in_mask];
-            match &self.phase {
-                Some(Phase::Round0 { columns, .. }) => {
-                    round0_q_at_one(columns, weight, &self.inc, self.batch, &self.mask)
+        gruen
+            .round()
+            .ok_or_else(|| eq_round_error(round))?
+            .checked_cubic(q_0, q_infty, previous_claim, round, || {
+                let e_in = gruen.e_in_current();
+                let e_out = gruen.e_out_current();
+                let in_bits = e_in.len().trailing_zeros() as usize;
+                let in_mask = e_in.len() - 1;
+                let weight = |pair| e_out[pair >> in_bits] * e_in[pair & in_mask];
+                match &self.phase {
+                    Some(Phase::Round0 { columns, .. }) => {
+                        round0_q_at_one(columns, weight, &self.inc, self.batch, &self.mask)
+                    }
+                    Some(Phase::Cycle { matrix, .. }) => {
+                        matrix.q_at_one(weight, &self.inc, self.batch, &self.mask)
+                    }
+                    Some(Phase::DenseCycle { ra, val, .. }) => {
+                        let coefficients = self.batch.bound(self.mask.value(0));
+                        (0..ra.values.len().div_ceil(2)).fold(F::zero(), |sum, pair| {
+                            let row = 2 * pair + 1;
+                            sum + weight(pair)
+                                * ra.value(row)
+                                * coefficients.value(val.value(row), self.inc.value(row))
+                        })
+                    }
+                    _ => unreachable!("cycle phase was checked above"),
                 }
-                Some(Phase::Cycle { matrix, .. }) => {
-                    matrix.q_at_one(weight, &self.inc, self.batch, &self.mask)
-                }
-                Some(Phase::DenseCycle { ra, val, .. }) => {
-                    let coefficients = self.batch.bound(self.mask.value(0));
-                    (0..ra.values.len().div_ceil(2)).fold(F::zero(), |sum, pair| {
-                        let row = 2 * pair + 1;
-                        sum + weight(pair)
-                            * ra.value(row)
-                            * coefficients.value(val.value(row), self.inc.value(row))
-                    })
-                }
-                _ => unreachable!("cycle phase was checked above"),
-            }
-        })
+            })
     }
 
     fn address_round_message(

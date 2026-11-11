@@ -1,3 +1,4 @@
+use crate::UnivariatePoly;
 use jolt_field::{Field, Fr, JoltField, Prime128Offset6A23801F, Ring};
 use num_traits::{One, Zero};
 use rand_chacha::ChaCha20Rng;
@@ -25,7 +26,10 @@ fn gruen_prefix_and_suffix_cover_the_remaining_equality_domain() {
                     weights[len..].iter().copied().sum::<Fr>()
                 );
             }
-            split.bind(Fr::from_u64(5 + round as u64));
+            split
+                .round_mut()
+                .unwrap()
+                .bind(Fr::from_u64(5 + round as u64));
         }
     }
 }
@@ -131,7 +135,7 @@ fn gruen_low_to_high_merge_matches_bound_eq() {
 
     let challenges = random_point(point.len(), 509);
     for challenge in challenges {
-        split.bind(challenge);
+        split.round_mut().unwrap().bind(challenge);
         dense.bind_with_order(challenge, BindingOrder::LowToHigh);
         assert_eq!(split.merge(), dense);
     }
@@ -146,7 +150,7 @@ fn gruen_high_to_low_merge_matches_bound_eq() {
 
     let challenges = random_point(point.len(), 709);
     for challenge in challenges {
-        split.bind(challenge);
+        split.round_mut().unwrap().bind(challenge);
         dense.bind_with_order(challenge, BindingOrder::HighToLow);
         assert_eq!(split.merge(), dense);
     }
@@ -169,8 +173,8 @@ fn current_round_variable(
     order: BindingOrder,
 ) -> Fr {
     match order {
-        BindingOrder::LowToHigh => point[split.current_index() - 1],
-        BindingOrder::HighToLow => point[split.current_index()],
+        BindingOrder::LowToHigh => point[split.current_index - 1],
+        BindingOrder::HighToLow => point[split.current_index],
     }
 }
 
@@ -192,6 +196,8 @@ fn gruen_poly_deg_3_equals_hand_built_linear_times_quadratic() {
             let hint = l.evaluate(Fr::zero()) * q.evaluate(Fr::zero())
                 + l.evaluate(Fr::one()) * q.evaluate(Fr::one());
             let s = split
+                .round()
+                .unwrap()
                 .gruen_poly_deg_3(q.coefficients()[0], q.coefficients()[2], hint, || {
                     q.evaluate(Fr::one())
                 })
@@ -213,7 +219,7 @@ fn gruen_poly_deg_3_equals_hand_built_linear_times_quadratic() {
                 );
             }
             hand_scalar *= eq_factor(w, challenge);
-            split.bind(challenge);
+            split.round_mut().unwrap().bind(challenge);
         }
     }
 }
@@ -235,7 +241,7 @@ fn gruen_poly_from_evals_equals_hand_built_linear_times_q() {
             for &challenge in &challenges {
                 let w = current_round_variable(&split, &point, order);
                 hand_scalar *= eq_factor(w, challenge);
-                split.bind(challenge);
+                split.round_mut().unwrap().bind(challenge);
             }
 
             let w = current_round_variable(&split, &point, order);
@@ -249,6 +255,8 @@ fn gruen_poly_from_evals_equals_hand_built_linear_times_q() {
                 + l.evaluate(Fr::one()) * q.evaluate(Fr::one());
 
             let s = split
+                .round()
+                .unwrap()
                 .gruen_poly_from_evals(&q_evals, hint, || q.evaluate(Fr::zero()))
                 .unwrap();
             assert_eq!(s.coefficients().len(), degree + 2, "{order:?} deg {degree}");
@@ -287,7 +295,7 @@ fn exceptional_rounds_match_products<F: JoltField>() {
                             order,
                             Some(F::from_u64(11)),
                         );
-                        split.bind(F::one());
+                        split.round_mut().unwrap().bind(F::one());
                     }
                     let scalar = if zero_prefix || killed_prefix {
                         F::zero()
@@ -306,6 +314,8 @@ fn exceptional_rounds_match_products<F: JoltField>() {
                         let called = Cell::new(false);
                         let polynomial = if degree == 1 {
                             split
+                                .round()
+                                .unwrap()
                                 .gruen_poly_deg_2(q.evaluate(F::one()), hint, || {
                                     called.set(true);
                                     q.evaluate(F::zero())
@@ -317,6 +327,8 @@ fn exceptional_rounds_match_products<F: JoltField>() {
                                 .collect();
                             samples.push(q.coefficients()[degree]);
                             split
+                                .round()
+                                .unwrap()
                                 .gruen_poly_from_evals(&samples, hint, || {
                                     called.set(true);
                                     q.evaluate(F::zero())
@@ -328,8 +340,11 @@ fn exceptional_rounds_match_products<F: JoltField>() {
                             let bad_hint = hint + F::one();
                             if degree == 1 {
                                 assert_eq!(
-                                    split.gruen_poly_deg_2(q.evaluate(F::one()), bad_hint, || q
-                                        .evaluate(F::zero())),
+                                    split.round().unwrap().gruen_poly_deg_2(
+                                        q.evaluate(F::one()),
+                                        bad_hint,
+                                        || q.evaluate(F::zero())
+                                    ),
                                     Err(hint)
                                 );
                             } else {
@@ -338,8 +353,11 @@ fn exceptional_rounds_match_products<F: JoltField>() {
                                     .collect();
                                 samples.push(q.coefficients()[degree]);
                                 assert_eq!(
-                                    split.gruen_poly_from_evals(&samples, bad_hint, || q
-                                        .evaluate(F::zero())),
+                                    split.round().unwrap().gruen_poly_from_evals(
+                                        &samples,
+                                        bad_hint,
+                                        || q.evaluate(F::zero())
+                                    ),
                                     Err(hint)
                                 );
                             }
@@ -352,6 +370,8 @@ fn exceptional_rounds_match_products<F: JoltField>() {
                         if degree == 2 {
                             called.set(false);
                             let cubic = split
+                                .round()
+                                .unwrap()
                                 .gruen_poly_deg_3(
                                     q.coefficients()[0],
                                     q.coefficients()[2],
@@ -367,7 +387,7 @@ fn exceptional_rounds_match_products<F: JoltField>() {
                             assert_eq!(cubic.coefficients(), polynomial.coefficients());
                             if !scalar.is_zero() && l_one.is_zero() {
                                 assert_eq!(
-                                    split.gruen_poly_deg_3(
+                                    split.round().unwrap().gruen_poly_deg_3(
                                         q.coefficients()[0],
                                         q.coefficients()[2],
                                         hint + F::one(),
@@ -380,13 +400,16 @@ fn exceptional_rounds_match_products<F: JoltField>() {
                     }
                     if scalar.is_zero() {
                         assert_eq!(
-                            split.gruen_poly_deg_3(F::one(), F::one(), F::one(), || panic!(
-                                "zero factor must not scan"
-                            )),
+                            split.round().unwrap().gruen_poly_deg_3(
+                                F::one(),
+                                F::one(),
+                                F::one(),
+                                || panic!("zero factor must not scan")
+                            ),
                             Err(F::zero())
                         );
                         assert_eq!(
-                            split.gruen_poly_from_evals(
+                            split.round().unwrap().gruen_poly_from_evals(
                                 &[F::one(), F::one()],
                                 F::one(),
                                 || panic!("zero factor must not scan")
@@ -394,9 +417,12 @@ fn exceptional_rounds_match_products<F: JoltField>() {
                             Err(F::zero())
                         );
                         assert_eq!(
-                            split.gruen_poly_deg_2(F::one(), F::one(), || panic!(
-                                "zero factor must not scan"
-                            )),
+                            split
+                                .round()
+                                .unwrap()
+                                .gruen_poly_deg_2(F::one(), F::one(), || panic!(
+                                    "zero factor must not scan"
+                                )),
                             Err(F::zero())
                         );
                     }
@@ -423,7 +449,7 @@ fn e_out_in_for_window_factors_naive_head_eq_table() {
     let mut split = GruenSplitEqPolynomial::<Fr>::new(&point, BindingOrder::LowToHigh);
 
     for &challenge in &challenges {
-        let current = split.current_index();
+        let current = split.current_index;
         for window in 1..=current {
             let (e_out, e_in) = split.e_out_in_for_window(window);
             let head_len = current - window;
@@ -446,7 +472,7 @@ fn e_out_in_for_window_factors_naive_head_eq_table() {
         }
         let (e_out, e_in) = split.e_out_in_for_window(current + 3);
         assert_eq!((e_out, e_in), (&[Fr::one()][..], &[Fr::one()][..]));
-        split.bind(challenge);
+        split.round_mut().unwrap().bind(challenge);
     }
 }
 
@@ -459,13 +485,13 @@ fn e_active_for_window_reconstructs_naive_eq_table_with_linear_factor() {
 
     for stage in 0..=challenges.len() {
         if stage > 0 {
-            let w = point[split.current_index() - 1];
+            let w = point[split.current_index - 1];
             hand_scalar *= eq_factor(w, challenges[stage - 1]);
-            split.bind(challenges[stage - 1]);
+            split.round_mut().unwrap().bind(challenges[stage - 1]);
         }
-        let current = split.current_index();
+        let current = split.current_index;
         let w_current = point[current - 1];
-        let (lin_0, lin_1) = split.current_linear_evals();
+        let (lin_0, lin_1) = split.round().unwrap().linear_evals();
         assert_eq!(
             (lin_0, lin_1),
             (
@@ -524,15 +550,15 @@ fn new_with_scaling_scales_bound_and_merged_results_by_factor() {
         assert_eq!(scaled.current_scalar(), scaling);
         assert_eq!(scaled.merge(), plain.merge() * scaling);
         for &challenge in &challenges {
-            let (scaled_0, scaled_1) = scaled.current_linear_evals();
-            let (plain_0, plain_1) = plain.current_linear_evals();
+            let (scaled_0, scaled_1) = scaled.round().unwrap().linear_evals();
+            let (plain_0, plain_1) = plain.round().unwrap().linear_evals();
             assert_eq!(
                 (scaled_0, scaled_1),
                 (plain_0 * scaling, plain_1 * scaling),
                 "{order:?}"
             );
-            scaled.bind(challenge);
-            plain.bind(challenge);
+            scaled.round_mut().unwrap().bind(challenge);
+            plain.round_mut().unwrap().bind(challenge);
             assert_eq!(
                 scaled.current_scalar(),
                 plain.current_scalar() * scaling,
@@ -560,7 +586,7 @@ fn gruen_par_fold_out_in_matches_sequential_reference_fold() {
 
         for stage in 0..=challenges.len() {
             if stage > 0 {
-                split.bind(challenges[stage - 1]);
+                split.round_mut().unwrap().bind(challenges[stage - 1]);
             }
             let e_out = split.e_out_current().to_vec();
             let e_in = split.e_in_current().to_vec();
@@ -598,7 +624,7 @@ fn gruen_current_linear_factor_matches_merged_sumcheck_pair() {
         let mut split = GruenSplitEqPolynomial::<Fr>::new(&point, order);
         for (round, challenge) in challenges.into_iter().enumerate() {
             let merged = split.merge();
-            let (linear_0, linear_1) = split.current_linear_evals();
+            let (linear_0, linear_1) = split.round().unwrap().linear_evals();
             for x_out in 0..split.e_out_current_len() {
                 for x_in in 0..split.e_in_current_len() {
                     let row = split.group_index(x_out, x_in);
@@ -623,7 +649,7 @@ fn gruen_current_linear_factor_matches_merged_sumcheck_pair() {
                     );
                 }
             }
-            split.bind(challenge);
+            split.round_mut().unwrap().bind(challenge);
         }
     }
 }
@@ -691,3 +717,9 @@ fn gruen_constructor_obeys_equality_in_both_orders() {
     gruen_constructor_identity::<Prime128Offset6A23801F, HIGH_TO_LOW>();
     gruen_constructor_identity::<Prime128Offset6A23801F, LOW_TO_HIGH>();
 }
+
+#[path = "recovery_tests.rs"]
+mod recovery_tests;
+
+#[path = "field_only_tests.rs"]
+mod field_only_tests;

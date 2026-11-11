@@ -7,8 +7,7 @@ use std::ops::Range;
 
 use jolt_field::{Accumulator, JoltField};
 use jolt_poly::{
-    BindingOrder, EqPolynomial, GruenSplitEqPolynomial, LtPolynomial, Polynomial, TensorEqTable,
-    UnivariatePoly,
+    BindingOrder, EqPolynomial, GruenRound, LtPolynomial, Polynomial, TensorEqTable, UnivariatePoly,
 };
 use jolt_sumcheck::SumcheckError;
 #[cfg(feature = "parallel")]
@@ -623,6 +622,13 @@ pub(crate) fn pin_derived_term_if_derived<F: JoltField, R: ConcreteSumcheck<F>>(
     }
 }
 
+/// The error for a finished equality state: [`jolt_poly::GruenSplitEqPolynomial::round`]
+/// and [`jolt_poly::GruenSplitEqPolynomial::round_mut`] return `None` once every round is
+/// bound.
+pub(crate) fn eq_round_error<F: JoltField>(round: usize) -> SumcheckError<F> {
+    SumcheckError::InvalidEqRoundState { round }
+}
+
 pub(crate) trait GruenRoundMessage<F: JoltField> {
     /// `s(t) = ℓ(t) · q(t)` at `t = 0, 1, …, q_evals.len() − 1`, checked
     /// against `s(0) + s(1) = previous_claim` (the reference tier's round
@@ -667,7 +673,7 @@ pub(crate) trait GruenRoundMessage<F: JoltField> {
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>>;
 }
 
-impl<F: JoltField> GruenRoundMessage<F> for GruenSplitEqPolynomial<F> {
+impl<F: JoltField> GruenRoundMessage<F> for GruenRound<'_, F> {
     fn checked_round_poly(
         &self,
         q_evals: &mut [F],
@@ -675,7 +681,7 @@ impl<F: JoltField> GruenRoundMessage<F> for GruenSplitEqPolynomial<F> {
         round: usize,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
         debug_assert!(q_evals.len() >= 2);
-        let (l_at_0, l_at_1) = self.current_linear_evals();
+        let (l_at_0, l_at_1) = self.linear_evals();
         let l_step = l_at_1 - l_at_0;
         let mut l_eval = l_at_0;
         for q in q_evals.iter_mut() {
