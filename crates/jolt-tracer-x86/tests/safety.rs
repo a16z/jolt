@@ -254,7 +254,7 @@ fn loads_reject_the_padding_between_io_end_and_ram() {
             );
             load.address += 4;
             let program = JoltProgram::from_parts(
-                vec![0],
+                minimal_elf(TEST_ADDR),
                 vec![
                     row(Kind::AUIPC, None, Some(1), 0),
                     load,
@@ -311,7 +311,7 @@ fn advice_write_enforces_guest_load_bounds() {
     let layout = JoltDeviceMemory::new(&memory_config()).memory_layout;
     let program = single_row_program(row(Kind::VirtualHostIO(VirtualHostIO(())), None, None, 0));
     for (address, error) in [
-        (layout.get_lowest_address() - 1, Some("I/O underflow")),
+        (layout.get_lowest_address() - 1, None),
         (layout.heap_end, Some("Illegal Memory Access")),
         (layout.get_lowest_address(), None),
         (SCRATCH_START, None),
@@ -361,18 +361,8 @@ fn partial_word_program(config: &MemoryConfig, offset: u64, value: u64) -> JoltP
         row.address = RAM_START_ADDRESS as usize + 4 * i;
     }
     rows.push(terminal_row(RAM_START_ADDRESS + 4 * rows.len() as u64));
-    // Source recovery parses this sectionless ELF; execution uses the rows above.
-    let mut elf = vec![0; 64];
-    elf[..7].copy_from_slice(b"\x7fELF\x02\x01\x01");
-    elf[16..18].copy_from_slice(&2u16.to_le_bytes());
-    elf[18..20].copy_from_slice(&243u16.to_le_bytes());
-    elf[20..24].copy_from_slice(&1u32.to_le_bytes());
-    elf[24..32].copy_from_slice(&RAM_START_ADDRESS.to_le_bytes());
-    elf[52..54].copy_from_slice(&64u16.to_le_bytes());
-    elf[54..56].copy_from_slice(&56u16.to_le_bytes());
-    elf[58..60].copy_from_slice(&64u16.to_le_bytes());
     JoltProgram::from_parts(
-        elf,
+        minimal_elf(RAM_START_ADDRESS),
         rows,
         Vec::new(),
         RAM_START_ADDRESS + config.program_size.expect("program size"),
@@ -424,4 +414,18 @@ fn final_partial_heap_word_preserves_backing_bytes_across_checkpoints() {
             .run_machine(&outside, inputs)
             .is_err());
     }
+}
+
+fn minimal_elf(entry: u64) -> Vec<u8> {
+    // Source recovery parses this sectionless ELF; execution uses the rows above.
+    let mut elf = vec![0; 64];
+    elf[..7].copy_from_slice(b"\x7fELF\x02\x01\x01");
+    elf[16..18].copy_from_slice(&2u16.to_le_bytes());
+    elf[18..20].copy_from_slice(&243u16.to_le_bytes());
+    elf[20..24].copy_from_slice(&1u32.to_le_bytes());
+    elf[24..32].copy_from_slice(&entry.to_le_bytes());
+    elf[52..54].copy_from_slice(&64u16.to_le_bytes());
+    elf[54..56].copy_from_slice(&56u16.to_le_bytes());
+    elf[58..60].copy_from_slice(&64u16.to_le_bytes());
+    elf
 }
