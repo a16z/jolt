@@ -125,6 +125,7 @@ impl Allocate for Global {
         clippy::panic,
         reason = "Global preserves infallible builders' argument and capacity panics"
     )]
+    #[track_caller]
     fn reject(self, error: EqTableError) -> Infallible {
         panic!("{error}")
     }
@@ -201,19 +202,27 @@ impl Allocate for Budget {
     }
 }
 
+// The panic paths below call `reject` outside closures: `#[track_caller]` does
+// not reach into a closure, so Global would report this file instead.
+#[track_caller]
 pub(crate) fn domain_len<A: EqAlloc>(num_vars: usize, policy: A) -> Result<usize, A::Error> {
-    u32::try_from(num_vars)
+    match u32::try_from(num_vars)
         .ok()
         .and_then(|bits| 1usize.checked_shl(bits))
-        .ok_or_else(|| policy.reject(EqTableError::DimensionOverflow { num_vars }))
+    {
+        Some(len) => Ok(len),
+        None => Err(policy.reject(EqTableError::DimensionOverflow { num_vars })),
+    }
 }
 
 /// Check individual buffers, never the combined size of a multi-buffer family.
+#[track_caller]
 pub(crate) fn check_layout<T, A: EqAlloc>(elements: usize, policy: A) -> Result<(), A::Error> {
-    Layout::array::<T>(elements).map(|_| ()).map_err(|_| {
-        policy.reject(EqTableError::SizeOverflow {
+    if Layout::array::<T>(elements).is_err() {
+        return Err(policy.reject(EqTableError::SizeOverflow {
             elements,
             element_size: size_of::<T>().max(1),
-        })
-    })
+        }));
+    }
+    Ok(())
 }

@@ -4,8 +4,10 @@ use crate::{AllocationCause, Budget, EqPolynomial, EqTableError, TensorEqTable};
 use jolt_field::{Fr, Prime128Offset275, Ring};
 use jolt_utils::alloc::ZeroAllocError;
 use std::error::Error;
-use std::panic::{catch_unwind, Location, UnwindSafe};
+use std::panic::{catch_unwind, set_hook, take_hook, Location, UnwindSafe};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
+use std::thread;
 
 const UNLIMITED: Budget = Budget {
     max_bytes: usize::MAX,
@@ -293,17 +295,28 @@ fn over_budget_states_the_request_and_the_budget() {
     );
 }
 
-fn global_panic_message(build: impl FnOnce() + UnwindSafe) -> String {
-    *catch_unwind(build)
-        .unwrap_err()
-        .downcast::<String>()
-        .unwrap()
+/// Runs `build`, which must panic, and returns the panic's message and file.
+fn global_panic(build: impl FnOnce() + UnwindSafe) -> (String, String) {
+    let file = Arc::new(Mutex::new(None));
+    let record = Arc::clone(&file);
+    let test_thread = thread::current().id();
+    let hook = take_hook();
+    set_hook(Box::new(move |info| {
+        if thread::current().id() == test_thread {
+            *record.lock().unwrap() = info.location().map(|at| at.file().to_owned());
+        }
+    }));
+    let payload = catch_unwind(build);
+    set_hook(hook);
+    let message = *payload.unwrap_err().downcast::<String>().unwrap();
+    let file = file.lock().unwrap().take().unwrap();
+    (message, file)
 }
 
 #[test]
 fn global_panics_with_the_typed_error() {
     let empty: &[Fr] = &[];
-    let cases: [(Box<dyn FnOnce() + UnwindSafe>, EqTableError); 5] = [
+    let cases: [(Box<dyn FnOnce() + UnwindSafe>, EqTableError); 6] = [
         (
             Box::new(|| {
                 let _ = EqPolynomial::<Fr>::prefix_sum(empty, 2);
@@ -347,8 +360,22 @@ fn global_panics_with_the_typed_error() {
                 num_vars: usize::BITS as usize,
             },
         ),
+        (
+            Box::new(|| {
+                let _ =
+                    EqPolynomial::<Fr>::evals(&[Fr::from_u64(2); usize::BITS as usize - 5], None);
+            }),
+            EqTableError::SizeOverflow {
+                elements: 1 << (usize::BITS - 5),
+                element_size: size_of::<Fr>(),
+            },
+        ),
     ];
     for (build, expected) in cases {
-        assert_eq!(global_panic_message(build), expected.to_string());
+        // The panic names this file, not jolt-poly's internals.
+        assert_eq!(
+            global_panic(build),
+            (expected.to_string(), file!().to_owned())
+        );
     }
 }

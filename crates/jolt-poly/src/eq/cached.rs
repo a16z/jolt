@@ -64,6 +64,7 @@ impl<F: Field> EqPolynomial<F> {
         Self::build_cached::<_, _, false>(r, scaling_factor, policy, at)
     }
 
+    #[track_caller]
     fn build_cached<P: PointLike + ?Sized, A: EqAlloc, const MSB: bool>(
         r: &P,
         scaling_factor: Option<F>,
