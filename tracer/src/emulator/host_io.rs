@@ -13,9 +13,9 @@ pub const HOST_STRING_ADDRESS_LIMIT: u64 = 1 << 32;
 
 /// Guest memory as a host call reads it.
 pub trait HostMemory {
-    /// Whether the backend's guest load of the byte at `address` returns
-    /// normally.
-    fn is_host_readable(&self, address: u64) -> bool;
+    /// Whether the backend's guest load returns normally at every address in
+    /// `[start, end)`, for `start < end`.
+    fn is_host_readable(&self, start: u64, end: u64) -> bool;
 
     /// Loads the byte at an address [`HostMemory::is_host_readable`]
     /// accepted.
@@ -43,32 +43,41 @@ impl Display for HostReadError {
     }
 }
 
-/// Reads the guest bytes `[ptr, ptr + len)` for a host call. Loads nothing
-/// and returns an error when the range ends past `address_limit`, when any
-/// byte in it is not readable, or when the buffer cannot be allocated.
+/// Appends the guest bytes `[ptr, ptr + len)` to `out` for a host call.
+/// Loads nothing and leaves `out` unchanged when the range ends past
+/// `address_limit`, when any byte in it is not readable, or when `out`
+/// cannot grow to hold it.
 pub fn read_host_bytes(
     memory: &mut impl HostMemory,
     ptr: u64,
     len: u64,
     address_limit: u64,
-) -> Result<Vec<u8>, HostReadError> {
+    out: &mut Vec<u8>,
+) -> Result<(), HostReadError> {
+    let unreadable = HostReadError::Unreadable { ptr, len };
     let end = ptr
         .checked_add(len)
         .filter(|&end| end <= address_limit)
-        .filter(|&end| (ptr..end).all(|address| memory.is_host_readable(address)))
-        .ok_or(HostReadError::Unreadable { ptr, len })?;
-    let mut bytes = Vec::new();
+        .ok_or(unreadable)?;
+    if len == 0 {
+        return Ok(());
+    }
+    if !memory.is_host_readable(ptr, end) {
+        return Err(unreadable);
+    }
     usize::try_from(len)
         .ok()
-        .and_then(|len| bytes.try_reserve_exact(len).ok())
+        .and_then(|len| out.try_reserve(len).ok())
         .ok_or(HostReadError::Allocation { len })?;
+    let initial_len = out.len();
     for address in ptr..end {
-        let byte = memory
-            .load_host_byte(address)
-            .ok_or(HostReadError::Unreadable { ptr, len })?;
-        bytes.push(byte);
+        let Some(byte) = memory.load_host_byte(address) else {
+            out.truncate(initial_len);
+            return Err(unreadable);
+        };
+        out.push(byte);
     }
-    Ok(bytes)
+    Ok(())
 }
 
 /// The text a print host call appends to its message, by event type, or

@@ -20,7 +20,7 @@ use jolt_platform::{
 use tracer::emulator::host_io::{
     print_terminator, read_host_bytes, write_guest_print, HostMemory, HOST_STRING_ADDRESS_LIMIT,
 };
-use tracer::emulator::mmu::identity_load_succeeds;
+use tracer::emulator::mmu::identity_loads_succeed;
 use tracing::warn;
 
 fn host_context<'a>(state: *mut GuestState) -> (&'a mut GuestState, &'a mut HostContext) {
@@ -36,7 +36,7 @@ fn fail(state: &mut GuestState, host: &mut HostContext, message: String) -> u64 
 }
 
 /// Guest memory as `host_io` reads it. Readability follows the tracer's
-/// [`identity_load_succeeds`], so this backend rejects exactly the host calls
+/// [`identity_loads_succeed`], so this backend rejects exactly the host calls
 /// the interpreter rejects.
 struct HostIoMemory<'a> {
     state: &'a GuestState,
@@ -44,8 +44,8 @@ struct HostIoMemory<'a> {
 }
 
 impl HostMemory for HostIoMemory<'_> {
-    fn is_host_readable(&self, address: u64) -> bool {
-        identity_load_succeeds(Some(self.device), address, |ea| {
+    fn is_host_readable(&self, start: u64, end: u64) -> bool {
+        identity_loads_succeed(Some(self.device), start, end, |ea| {
             ea - RAM_START_ADDRESS < self.state.mem_size
         })
     }
@@ -65,22 +65,20 @@ impl HostMemory for HostIoMemory<'_> {
     }
 }
 
-/// Reads guest bytes for a host call under the tracer's shared rules, logging
-/// a rejected range.
+/// Appends guest bytes for a host call to `out` under the tracer's shared
+/// rules, logging a rejected range.
 fn read_host_call_bytes(
     state: &GuestState,
-    host: &HostContext,
+    device: &JoltDevice,
     ptr: u64,
     len: u64,
     address_limit: u64,
-) -> Option<Vec<u8>> {
-    let mut memory = HostIoMemory {
-        state,
-        device: &host.device,
-    };
-    read_host_bytes(&mut memory, ptr, len, address_limit)
+    out: &mut Vec<u8>,
+) -> bool {
+    let mut memory = HostIoMemory { state, device };
+    read_host_bytes(&mut memory, ptr, len, address_limit, out)
         .inspect_err(|error| warn!("Ignoring host call: {error}"))
-        .ok()
+        .is_ok()
 }
 
 /// `VirtualHostIO`: call id in a0 (x10), args in a1–a3 (x11–x13). No rd
@@ -92,14 +90,16 @@ pub extern "sysv64" fn host_io(state: *mut GuestState) -> u64 {
     let (state, host) = host_context(state);
     let call_id = state.x[10] as u32;
     if call_id == JOLT_ADVICE_WRITE_CALL_ID {
-        let len = state.x[12];
-        if let Some(bytes) = read_host_call_bytes(state, host, state.x[11], len, u64::MAX) {
-            if host.advice_tape.try_reserve(bytes.len()).is_ok() {
-                host.advice_tape.extend_from_slice(&bytes);
-            } else {
-                warn!("Ignoring advice write of {len} bytes: the advice tape cannot grow");
-            }
-        }
+        // Loads straight onto the tape: an advice buffer can be large.
+        let (ptr, len) = (state.x[11], state.x[12]);
+        let _appended = read_host_call_bytes(
+            state,
+            &host.device,
+            ptr,
+            len,
+            u64::MAX,
+            &mut host.advice_tape,
+        );
         return 0;
     }
     let ptr = u64::from(state.x[11] as u32);
@@ -110,7 +110,15 @@ pub extern "sysv64" fn host_io(state: *mut GuestState) -> u64 {
             // The interpreter logs cycle counts; this backend only reads the
             // label, so it rejects and logs the same calls.
             if event == JOLT_CYCLE_MARKER_START || event == JOLT_CYCLE_MARKER_END {
-                let _label = read_host_call_bytes(state, host, ptr, len, HOST_STRING_ADDRESS_LIMIT);
+                let mut label = Vec::new();
+                let _read = read_host_call_bytes(
+                    state,
+                    &host.device,
+                    ptr,
+                    len,
+                    HOST_STRING_ADDRESS_LIMIT,
+                    &mut label,
+                );
             } else {
                 warn!("Ignoring cycle-marker host call with unknown event {event}");
             }
@@ -120,11 +128,17 @@ pub extern "sysv64" fn host_io(state: *mut GuestState) -> u64 {
                 warn!("Ignoring print host call with unknown event type {event}");
                 return 0;
             };
-            let Some(bytes) =
-                read_host_call_bytes(state, host, ptr, len, HOST_STRING_ADDRESS_LIMIT)
-            else {
+            let mut bytes = Vec::new();
+            if !read_host_call_bytes(
+                state,
+                &host.device,
+                ptr,
+                len,
+                HOST_STRING_ADDRESS_LIMIT,
+                &mut bytes,
+            ) {
                 return 0;
-            };
+            }
             if let Err(error) = write_guest_print(&mut std::io::stdout().lock(), &bytes, terminator)
             {
                 warn!("Guest print to stdout failed: {error}");

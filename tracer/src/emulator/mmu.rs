@@ -163,27 +163,42 @@ fn unsupported_peripheral(address: u64) -> Option<&'static str> {
     }
 }
 
-/// Whether a guest load of the byte at effective address `ea` returns
-/// normally when no page walk is involved. `ram_holds(ea)` says whether the
-/// backend's RAM holds `ea`, for `ea >= DRAM_BASE`. Every tracer backend
-/// checks host-call reads with this, so all of them reject the same calls.
-pub fn identity_load_succeeds(
+/// Whether a guest load returns normally, without a page walk, at every
+/// effective address in `[start, end)`, for `start < end`. `ram_holds(ea)`
+/// says whether the backend's RAM holds `ea >= DRAM_BASE`, and must hold at
+/// every RAM address below one it holds at. Every tracer backend checks
+/// host-call reads with this, so all of them reject the same calls.
+pub fn identity_loads_succeed(
+    jolt_device: Option<&JoltDevice>,
+    start: u64,
+    end: u64,
+    ram_holds: impl FnOnce(u64) -> bool,
+) -> bool {
+    // In RAM a load fails exactly at or above the heap end or the end of the
+    // backend's RAM, so a range there loads if its last byte does.
+    (start..end.min(DRAM_BASE)).all(|ea| device_load_succeeds(jolt_device, ea))
+        && (end <= DRAM_BASE || ram_load_succeeds(jolt_device, end - 1, ram_holds))
+}
+
+fn device_load_succeeds(jolt_device: Option<&JoltDevice>, ea: u64) -> bool {
+    let Some(jolt_device) = jolt_device else {
+        return false;
+    };
+    // `Mmu::load` also records the containing doubleword (`trace_load`),
+    // which reads all eight of its bytes from the device.
+    let doubleword = ea & !7;
+    address_fault(jolt_device, ea, false).is_none()
+        && unsupported_peripheral(ea).is_none()
+        && (doubleword..doubleword + 8).all(|a| device_readable(jolt_device, a))
+}
+
+fn ram_load_succeeds(
     jolt_device: Option<&JoltDevice>,
     ea: u64,
     ram_holds: impl FnOnce(u64) -> bool,
 ) -> bool {
-    match jolt_device {
-        Some(jolt_device) if address_fault(jolt_device, ea, false).is_some() => false,
-        _ if ea >= DRAM_BASE => ram_holds(ea),
-        None => false,
-        // `Mmu::load` also records the containing doubleword (`trace_load`),
-        // which reads all eight of its bytes from the device.
-        Some(jolt_device) => {
-            let doubleword = ea & !7;
-            unsupported_peripheral(ea).is_none()
-                && (doubleword..doubleword + 8).all(|a| device_readable(jolt_device, a))
-        }
-    }
+    jolt_device.is_none_or(|jolt_device| address_fault(jolt_device, ea, false).is_none())
+        && ram_holds(ea)
 }
 
 impl Mmu {
@@ -958,16 +973,18 @@ impl Mmu {
 }
 
 impl HostMemory for Mmu {
-    /// Whether [`Mmu::load`] at `address` returns without panicking.
-    fn is_host_readable(&self, address: u64) -> bool {
+    /// Whether [`Mmu::load`] returns without panicking at every address in
+    /// `[start, end)`.
+    fn is_host_readable(&self, start: u64, end: u64) -> bool {
         // A page walk reads page-table entries with the panicking raw loads.
         // Jolt never enables paging.
         matches!(
             self.translation(&MemoryAccessType::Read),
             Translation::Identity
-        ) && identity_load_succeeds(
+        ) && identity_loads_succeed(
             self.jolt_device.as_ref(),
-            self.get_effective_address(address),
+            self.get_effective_address(start),
+            self.get_effective_address(end - 1) + 1,
             |ea| self.memory.validate_address(ea),
         )
     }
@@ -1086,7 +1103,7 @@ mod test_mmu {
     use crate::emulator::cpu::get_privilege_mode;
     use crate::emulator::terminal::DummyTerminal;
     use common::jolt_device::MemoryConfig;
-    use std::panic::{catch_unwind, AssertUnwindSafe};
+    use std::panic::{catch_unwind, set_hook, take_hook, AssertUnwindSafe};
 
     fn setup_mmu() -> Mmu {
         let terminal = Box::new(DummyTerminal::default());
@@ -1107,11 +1124,12 @@ mod test_mmu {
         mmu
     }
 
-    /// `is_host_readable` must hold exactly where `load` returns normally,
-    /// including in the gap between a small I/O region and RAM and under
+    /// `is_host_readable` must hold exactly on the ranges where `load`
+    /// returns normally at every byte, including in the gap between a small I/O region and RAM and under
     /// SV39 in machine mode, where translation is the identity.
     #[test]
-    fn host_readable_addresses_are_exactly_those_load_accepts() {
+    fn host_readable_ranges_are_exactly_those_load_accepts() {
+        const WINDOW: u64 = 16;
         let small_io = MemoryConfig {
             max_input_size: 13,
             max_trusted_advice_size: 3,
@@ -1132,6 +1150,9 @@ mod test_mmu {
         sv39_mmu.update_addressing_mode(AddressingMode::SV39);
         mmus.push(sv39_mmu);
 
+        // Silences the panics `catch_unwind` reports while probing loads.
+        let panic_hook = take_hook();
+        set_hook(Box::new(|_| {}));
         for mut mmu in mmus {
             let mut addresses = vec![
                 0,
@@ -1145,7 +1166,7 @@ mod test_mmu {
                 DRAM_BASE,
                 DRAM_BASE + 63,
                 DRAM_BASE + 64,
-                u64::MAX,
+                u64::MAX - WINDOW - 1,
             ];
             if let Some(device) = mmu.jolt_device.as_ref() {
                 let layout = &device.memory_layout;
@@ -1154,13 +1175,38 @@ mod test_mmu {
                 addresses.extend((layout.io_end - 8)..=(layout.io_end + 8));
                 addresses.extend([layout.heap_end - 1, layout.heap_end]);
             }
-            for address in addresses {
-                let readable = mmu.is_host_readable(address);
-                let loads = catch_unwind(AssertUnwindSafe(|| mmu.load(address)))
-                    .is_ok_and(|result| result.is_ok());
-                assert_eq!(readable, loads, "address {address:#x}");
+            let mut loads = |address: u64| {
+                catch_unwind(AssertUnwindSafe(|| mmu.load(address)))
+                    .is_ok_and(|result| result.is_ok())
+            };
+            // Every range near a boundary, and every range from the start of
+            // RAM up to 128 bytes, is readable exactly when each of its bytes
+            // loads.
+            let mut windows: Vec<(u64, Vec<bool>)> = addresses
+                .into_iter()
+                .map(|address| {
+                    let low = address.saturating_sub(WINDOW);
+                    (low, (low..=address + WINDOW).map(&mut loads).collect())
+                })
+                .collect();
+            windows.push((
+                DRAM_BASE,
+                (DRAM_BASE..DRAM_BASE + 128).map(&mut loads).collect(),
+            ));
+            for (low, byte_loads) in windows {
+                for start in 0..byte_loads.len() {
+                    for end in start + 1..=byte_loads.len() {
+                        let (range_start, range_end) = (low + start as u64, low + end as u64);
+                        assert_eq!(
+                            mmu.is_host_readable(range_start, range_end),
+                            byte_loads[start..end].iter().all(|&loads| loads),
+                            "range [{range_start:#x}, {range_end:#x})"
+                        );
+                    }
+                }
             }
         }
+        set_hook(panic_hook);
     }
 
     #[test]

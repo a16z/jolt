@@ -12,7 +12,7 @@ use crate::instruction::{uncompress_instruction, Cycle, Instruction};
 use crate::utils::virtual_registers::VirtualRegisterAllocator;
 
 use super::host_io::{
-    print_terminator, read_host_bytes, write_guest_print, HOST_STRING_ADDRESS_LIMIT,
+    print_terminator, read_host_bytes, write_guest_print, HostReadError, HOST_STRING_ADDRESS_LIMIT,
 };
 use super::mmu::Mmu;
 use super::terminal::Terminal;
@@ -47,14 +47,6 @@ impl AdviceTape {
     /// Append bytes to the advice tape (called during first emulation pass)
     pub fn write(&mut self, bytes: &[u8]) {
         self.data.extend_from_slice(bytes);
-    }
-
-    /// Like [`AdviceTape::write`], but leaves the tape unchanged instead of
-    /// aborting when it cannot grow to hold `bytes`.
-    fn try_write(&mut self, bytes: &[u8]) -> Result<(), TryReserveError> {
-        self.data.try_reserve(bytes.len())?;
-        self.data.extend_from_slice(bytes);
-        Ok(())
     }
 
     /// Read a specific number of bytes from the advice tape (called during second emulation pass)
@@ -100,7 +92,6 @@ use alloc::{boxed::Box, format, rc::Rc, string::String, vec::Vec};
 use jolt_platform::{JOLT_CYCLE_MARKER_END, JOLT_CYCLE_MARKER_START};
 #[cfg(feature = "field-inline")]
 use jolt_program::field_inline::FieldEncodedValue;
-use std::collections::TryReserveError;
 #[cfg(feature = "std")]
 use std::collections::VecDeque;
 
@@ -1138,8 +1129,7 @@ impl Cpu {
             warn!("Ignoring print host call with unknown event type {event_type}");
             return;
         };
-        let Some(bytes) = self.read_host_bytes(ptr.into(), len.into(), HOST_STRING_ADDRESS_LIMIT)
-        else {
+        let Some(bytes) = self.read_host_message(ptr, len) else {
             return;
         };
         if let Err(error) = write_guest_print(&mut std::io::stdout().lock(), &bytes, terminator) {
@@ -1151,32 +1141,50 @@ impl Cpu {
     /// unreadable range, or one the tape cannot grow to hold, is logged and
     /// appends nothing.
     pub fn handle_advice_write(&mut self, ptr: u64, len: u64) {
-        let Some(bytes) = self.read_host_bytes(ptr, len, u64::MAX) else {
-            return;
-        };
-        if self.advice_tape.try_write(&bytes).is_err() && self.host_io == HostIo::Live {
-            warn!("Ignoring advice write of {len} bytes: the advice tape cannot grow");
+        // Loads straight onto the tape: an advice buffer can be large.
+        let read = read_host_bytes(
+            &mut self.mmu,
+            ptr,
+            len,
+            u64::MAX,
+            &mut self.advice_tape.data,
+        );
+        if let Err(error) = read {
+            self.warn_ignored_host_call(error);
         }
     }
 
     fn read_host_string(&mut self, ptr: u32, len: u32) -> Option<String> {
-        let bytes = self.read_host_bytes(ptr.into(), len.into(), HOST_STRING_ADDRESS_LIMIT)?;
+        let bytes = self.read_host_message(ptr, len)?;
         Some(
             String::from_utf8(bytes)
                 .unwrap_or_else(|error| String::from_utf8_lossy(error.as_bytes()).into_owned()),
         )
     }
 
-    /// [`read_host_bytes`] on this CPU's memory, logging a rejected range in
-    /// live mode.
-    fn read_host_bytes(&mut self, ptr: u64, len: u64, address_limit: u64) -> Option<Vec<u8>> {
-        read_host_bytes(&mut self.mmu, ptr, len, address_limit)
-            .inspect_err(|error| {
-                if self.host_io == HostIo::Live {
-                    warn!("Ignoring host call: {error}");
-                }
-            })
-            .ok()
+    /// Reads a print or cycle-marker string's bytes, logging a rejected range.
+    fn read_host_message(&mut self, ptr: u32, len: u32) -> Option<Vec<u8>> {
+        let mut bytes = Vec::new();
+        let read = read_host_bytes(
+            &mut self.mmu,
+            ptr.into(),
+            len.into(),
+            HOST_STRING_ADDRESS_LIMIT,
+            &mut bytes,
+        );
+        match read {
+            Ok(()) => Some(bytes),
+            Err(error) => {
+                self.warn_ignored_host_call(error);
+                None
+            }
+        }
+    }
+
+    fn warn_ignored_host_call(&self, error: HostReadError) {
+        if self.host_io == HostIo::Live {
+            warn!("Ignoring host call: {error}");
+        }
     }
 
     /// Track a function call (JAL/JALR instruction that saves callsite information)
