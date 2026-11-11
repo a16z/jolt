@@ -6,7 +6,7 @@
 
 use std::alloc::Layout;
 use std::error::Error;
-use std::fmt;
+use std::fmt::{Display, Formatter, Result as FmtResult};
 
 use num_traits::Zero;
 
@@ -23,8 +23,8 @@ pub enum ZeroAllocError {
     AllocFailed { layout: Layout },
 }
 
-impl fmt::Display for ZeroAllocError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl Display for ZeroAllocError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         match self {
             Self::CapacityOverflow => {
                 f.write_str("zeroed allocation size exceeds isize::MAX bytes")
