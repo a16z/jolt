@@ -98,4 +98,4 @@ pub use split_eq::{
 };
 pub use univariate::{UnivariatePoly, UnivariatePolynomial};
 
-pub use eq::alloc::{AllocationCause, Budget, EqAlloc, EqTableError, Global, TableInit};
+pub use eq::alloc::{AllocationCause, Budget, EqAlloc, EqTableError, Global};

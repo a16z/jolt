@@ -1,4 +1,4 @@
-use super::alloc::{check_layout, domain_len, EqAlloc, EqTableError, Global, TableInit};
+use super::alloc::{check_layout, domain_len, EqAlloc, Global, TableInit};
 use super::EqPolynomial;
 use crate::point::PointLike;
 use jolt_field::Field;
@@ -64,6 +64,7 @@ impl<F: Field> EqPolynomial<F> {
         Self::build_cached::<_, _, false>(r, scaling_factor, policy, at)
     }
 
+    #[track_caller]
     fn build_cached<P: PointLike + ?Sized, A: EqAlloc, const MSB: bool>(
         r: &P,
         scaling_factor: Option<F>,
@@ -79,17 +80,15 @@ impl<F: Field> EqPolynomial<F> {
         Self::allocate_cached::<_, _, MSB>(r, scaling_factor, policy)
     }
 
+    #[track_caller]
     pub(crate) fn cached_elements<A: EqAlloc>(
         num_vars: usize,
         policy: A,
     ) -> Result<usize, A::Error> {
         let len = domain_len(num_vars, policy)?;
-        let elements = len.checked_add(len - 1).ok_or_else(|| {
-            policy.reject(EqTableError::SizeOverflow {
-                elements: len,
-                element_size: 2,
-            })
-        })?;
+        // `len` is a power of two that fits in usize, so the level total
+        // `2 * len - 1` fits too.
+        let elements = len + (len - 1);
         check_layout::<F, _>(len, policy)?;
         check_layout::<Vec<F>, _>(num_vars + 1, policy)?;
         Ok(elements)
@@ -116,7 +115,7 @@ impl<F: Field> EqPolynomial<F> {
     }
 
     #[inline]
-    pub(crate) fn fill_cached<P, const MSB: bool>(r: &P, evals: &mut [Vec<F>])
+    fn fill_cached<P, const MSB: bool>(r: &P, evals: &mut [Vec<F>])
     where
         P: PointLike + ?Sized,
         P::Coord: Send + Sync + Into<F>,

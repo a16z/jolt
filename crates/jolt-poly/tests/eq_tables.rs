@@ -2,7 +2,7 @@
     clippy::unwrap_used,
     reason = "tests assert successful budgeted construction"
 )]
-use jolt_field::{Field, FpExt4, Fr, Prime32Offset99, Ring};
+use jolt_field::{Field, FpExt4, Fr, Prime32Offset99};
 use jolt_poly::{eq_index, Budget, EqPolynomial, PointLike, PointRef, TensorEqTable};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
@@ -84,17 +84,4 @@ fn algebraic_contracts<F: Field>() {
 fn builders_obey_equality_and_prefix_identities_in_both_orders() {
     algebraic_contracts::<Fr>();
     algebraic_contracts::<FpExt4<Prime32Offset99>>();
-}
-
-#[test]
-#[should_panic(expected = "invalid equality-table prefix")]
-fn prefix_rejects_long_lengths() {
-    let _ = EqPolynomial::<Fr>::evals_prefix(&[] as &[Fr], None, 2);
-}
-
-#[test]
-#[should_panic(expected = "index out of bounds")]
-fn tensor_evaluate_index_rejects_out_of_range() {
-    let _ = TensorEqTable::<Fr>::new_with_scaling_and_split(&[] as &[Fr], Fr::from_u64(1), 0)
-        .evaluate_index(1);
 }

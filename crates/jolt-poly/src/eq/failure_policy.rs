@@ -1,12 +1,16 @@
-use super::alloc::{sealed::Sealed, Budget, EqAlloc, EqTableError, TableInit};
+use super::alloc::{Allocate, Budget, EqAlloc, EqTableError, TableInit};
 use jolt_field::Field;
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
+use std::num::NonZeroUsize;
 use std::panic::Location;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-// Only buffers returned by FailAt are registered; Rayon and test-runner allocations
-// are excluded. The failure test runs all registered allocations sequentially.
+// Only buffers returned by FailingPolicy are registered; Rayon and test-runner
+// allocations are excluded. Registration and the call counter are atomic, but the
+// tensor builder allocates its two factors, and the Gruen builder its two cached
+// tables, inside `rayon::join`. The order of each pair is unspecified, so a
+// `FailAt::Nth` aimed at one allocation of a pair may fail the other.
 static LIVE: [AtomicUsize; 16] = [const { AtomicUsize::new(0) }; 16];
 thread_local! {
     static FAIL_NEXT: Cell<bool> = const { Cell::new(false) };
@@ -52,20 +56,31 @@ unsafe impl GlobalAlloc for TrackingAllocator {
     }
 }
 
+/// Which registered allocations fail.
 #[derive(Clone, Copy)]
-pub(super) struct FailAt<'a> {
+pub(super) enum FailAt {
+    Every,
+    /// The `n`-th allocation, counting from one.
+    Nth(NonZeroUsize),
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct FailingPolicy<'a> {
     pub calls: &'a AtomicUsize,
-    pub target: usize,
+    pub fail: FailAt,
     pub budget: Budget,
 }
-impl Sealed for FailAt<'_> {}
-impl FailAt<'_> {
+impl FailingPolicy<'_> {
     pub fn fail_next_allocation() {
         FAIL_NEXT.with(|flag| flag.set(true));
     }
     fn before(self) -> Result<(), EqTableError> {
         let call = self.calls.fetch_add(1, Ordering::SeqCst) + 1;
-        if self.target == 0 || call == self.target {
+        let fails = match self.fail {
+            FailAt::Every => true,
+            FailAt::Nth(n) => call == n.get(),
+        };
+        if fails {
             // Capacity overflow deterministically produces the allocator's real error
             // without asking the OS for memory; it is the injected failure cause.
             let _ = self.budget.storage::<u8>(usize::MAX)?;
@@ -85,23 +100,29 @@ impl FailAt<'_> {
         assert!(LIVE.iter().all(|slot| slot.load(Ordering::SeqCst) == 0));
     }
 }
-impl EqAlloc for FailAt<'_> {
+impl EqAlloc for FailingPolicy<'_> {
     type Error = EqTableError;
-    fn reject(self, error: EqTableError) -> EqTableError {
+}
+impl Allocate for FailingPolicy<'_> {
+    fn reject(self, error: EqTableError) -> <Self as EqAlloc>::Error {
         error
     }
     fn admit<F: Field>(
         self,
         elements: usize,
         at: &'static Location<'static>,
-    ) -> Result<(), EqTableError> {
+    ) -> Result<(), <Self as EqAlloc>::Error> {
         self.budget.admit::<F>(elements, at)
     }
-    fn table<F: Field>(self, len: usize, init: TableInit<F>) -> Result<Vec<F>, EqTableError> {
+    fn table<F: Field>(
+        self,
+        len: usize,
+        init: TableInit<F>,
+    ) -> Result<Vec<F>, <Self as EqAlloc>::Error> {
         self.before()?;
         self.budget.table(len, init).map(Self::track)
     }
-    fn storage<T>(self, len: usize) -> Result<Vec<T>, EqTableError> {
+    fn storage<T>(self, len: usize) -> Result<Vec<T>, <Self as EqAlloc>::Error> {
         self.before()?;
         self.budget.storage(len).map(Self::track)
     }

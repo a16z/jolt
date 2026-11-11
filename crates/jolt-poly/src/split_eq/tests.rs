@@ -1,5 +1,5 @@
 use crate::UnivariatePoly;
-use jolt_field::{Field, FpExt4, Fr, JoltField, Prime128Offset6A23801F, Prime32Offset99, Ring};
+use jolt_field::{Field, Fr, JoltField, Prime128Offset6A23801F, Ring};
 use num_traits::{One, Zero};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
@@ -654,7 +654,7 @@ fn gruen_current_linear_factor_matches_merged_sumcheck_pair() {
     }
 }
 
-fn gruen_constructor_identity<F: Field, const E: Endianness>() {
+fn gruen_constructor_identity<F: JoltField, const E: Endianness>() {
     let mut rng = ChaCha20Rng::seed_from_u64(0xe12_6775);
     for n in 0..=20 {
         let coords: Vec<F> = (0..n).map(|_| F::random(&mut rng)).collect();
@@ -698,9 +698,10 @@ fn gruen_constructor_identity<F: Field, const E: Endianness>() {
                             inner[index / outer.len()] * outer[index % outer.len()]
                         }
                     };
+                    // The factors exclude the scale, which lives in `current_scalar`.
                     assert_eq!(
-                        scale * factored,
-                        scale * eq_index(&remaining, index as u128),
+                        factored,
+                        eq_index(&remaining, index as u128),
                         "n={n}, endianness={E}, order={order:?}, index={index}"
                     );
                 }
@@ -713,8 +714,8 @@ fn gruen_constructor_identity<F: Field, const E: Endianness>() {
 fn gruen_constructor_obeys_equality_in_both_orders() {
     gruen_constructor_identity::<Fr, HIGH_TO_LOW>();
     gruen_constructor_identity::<Fr, LOW_TO_HIGH>();
-    gruen_constructor_identity::<FpExt4<Prime32Offset99>, HIGH_TO_LOW>();
-    gruen_constructor_identity::<FpExt4<Prime32Offset99>, LOW_TO_HIGH>();
+    gruen_constructor_identity::<Prime128Offset6A23801F, HIGH_TO_LOW>();
+    gruen_constructor_identity::<Prime128Offset6A23801F, LOW_TO_HIGH>();
 }
 
 #[path = "recovery_tests.rs"]

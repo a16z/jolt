@@ -5,6 +5,8 @@
 //! the OS instead.
 
 use std::alloc::Layout;
+use std::error::Error;
+use std::fmt::{Display, Formatter, Result as FmtResult};
 
 use num_traits::Zero;
 
@@ -20,6 +22,24 @@ pub enum ZeroAllocError {
     CapacityOverflow,
     AllocFailed { layout: Layout },
 }
+
+impl Display for ZeroAllocError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+        match self {
+            Self::CapacityOverflow => {
+                f.write_str("zeroed allocation size exceeds isize::MAX bytes")
+            }
+            Self::AllocFailed { layout } => write!(
+                f,
+                "the allocator could not provide {} zeroed bytes aligned to {}",
+                layout.size(),
+                layout.align()
+            ),
+        }
+    }
+}
+
+impl Error for ZeroAllocError {}
 
 /// Allocates zero elements without requiring a serial initialization pass.
 #[inline]

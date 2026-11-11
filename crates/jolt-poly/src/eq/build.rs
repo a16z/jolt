@@ -9,7 +9,7 @@ use jolt_utils::Math;
 use std::ops::{Mul, SubAssign};
 use std::panic::Location;
 
-pub(super) const SERIAL_MAX_VARS: usize = 16;
+const SERIAL_MAX_VARS: usize = 16;
 
 #[cfg(feature = "parallel")]
 const PARALLEL_SLAB_MIN_VARS: usize = 14;
@@ -283,7 +283,7 @@ impl<F: Field> EqPolynomial<F> {
     }
 
     #[inline(always)]
-    pub(super) fn fill_serial<P, G, const MAPPED: bool>(r: &P, evals: &mut [F], map: &G)
+    fn fill_serial<P, G, const MAPPED: bool>(r: &P, evals: &mut [F], map: &G)
     where
         P: PointLike + ?Sized,
         P::Coord: Send + Sync + Into<F>,
@@ -336,6 +336,8 @@ impl<F: Field> EqPolynomial<F> {
         Self::fill_parallel_coords(r.coords(), P::ENDIANNESS, out);
     }
 
+    // Sharing coordinate kernels keeps Rayon's closures independent of the view
+    // type. Inlining folds the caller's constant endianness before the entry loops.
     #[inline(always)]
     fn fill_parallel_coords<C>(r: &[C], endianness: Endianness, evals: &mut [F])
     where

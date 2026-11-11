@@ -150,9 +150,7 @@ impl<F: Field> GruenSplitEqPolynomial<F> {
             .checked_mul(size_of::<F>())?
             .checked_add(vars.checked_add(1)?.checked_mul(size_of::<Vec<F>>())?)
     }
-}
 
-impl<F: Field> GruenSplitEqPolynomial<F> {
     pub fn current_scalar(&self) -> F {
         self.current_scalar
     }

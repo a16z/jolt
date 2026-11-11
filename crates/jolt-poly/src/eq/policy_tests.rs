@@ -1,12 +1,17 @@
-use super::failure_policy::FailAt;
+use super::alloc::{Allocate, TableInit};
+use super::failure_policy::{FailAt, FailingPolicy};
 use crate::{
-    AllocationCause, BindingOrder, Budget, EqAlloc, EqPolynomial, EqTableError,
-    GruenSplitEqPolynomial, PointRef, TableInit, TensorEqTable,
+    AllocationCause, BindingOrder, Budget, EqPolynomial, EqTableError, GruenSplitEqPolynomial,
+    PointRef, TensorEqTable,
 };
 use jolt_field::{Fr, Prime128Offset275, Ring};
 use jolt_utils::alloc::ZeroAllocError;
-use std::panic::Location;
+use std::error::Error;
+use std::num::NonZeroUsize;
+use std::panic::{catch_unwind, set_hook, take_hook, Location, UnwindSafe};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
+use std::thread;
 
 const UNLIMITED: Budget = Budget {
     max_bytes: usize::MAX,
@@ -26,9 +31,9 @@ fn each_owned_allocation_can_fail_without_leaking() {
             };
             for target in 1..=allocations + 1 {
                 calls.store(0, Ordering::SeqCst);
-                let policy = FailAt {
+                let policy = FailingPolicy {
                     calls: &calls,
-                    target,
+                    fail: FailAt::Nth(NonZeroUsize::new(target).unwrap()),
                     budget: UNLIMITED,
                 };
                 let result = match kind {
@@ -58,14 +63,14 @@ fn each_owned_allocation_can_fail_without_leaking() {
                     assert!(result.is_ok());
                     assert_eq!(calls.load(Ordering::SeqCst), allocations);
                 }
-                FailAt::assert_released();
+                FailingPolicy::assert_released();
             }
         }
     }
     // Both tensor admissions must precede even the first factor allocation.
-    let policy = FailAt {
+    let policy = FailingPolicy {
         calls: &calls,
-        target: 1,
+        fail: FailAt::Nth(NonZeroUsize::MIN),
         budget: Budget {
             max_bytes: size_of::<Fr>(),
         },
@@ -88,7 +93,7 @@ fn each_owned_allocation_can_fail_without_leaking() {
     ));
     assert_eq!(calls.load(Ordering::SeqCst), 0);
 
-    let policy = FailAt {
+    let policy = FailingPolicy {
         budget: UNLIMITED,
         ..policy
     };
@@ -115,8 +120,8 @@ fn each_owned_allocation_can_fail_without_leaking() {
     for order in [BindingOrder::LowToHigh, BindingOrder::HighToLow] {
         for n in [usize::BITS as usize, usize::BITS as usize - 1] {
             calls.store(0, Ordering::SeqCst);
-            let policy = FailAt {
-                target: 0,
+            let policy = FailingPolicy {
+                fail: FailAt::Every,
                 ..policy
             };
             let result = GruenSplitEqPolynomial::from_point_in(
@@ -135,14 +140,14 @@ fn each_owned_allocation_can_fail_without_leaking() {
                 assert!(matches!(result, Err(EqTableError::AllocationFailed { .. })));
                 assert_eq!(calls.load(Ordering::SeqCst), 1);
             }
-            FailAt::assert_released();
+            FailingPolicy::assert_released();
         }
     }
     // Arithmetic-only admission of both 1 GiB factors of the 52-variable tensor.
     assert_eq!(size_of::<Prime128Offset275>(), 16);
-    let policy = FailAt {
+    let policy = FailingPolicy {
         budget: Budget { max_bytes: 1 << 30 },
-        target: 0,
+        fail: FailAt::Every,
         ..policy
     };
     assert!(matches!(
@@ -165,7 +170,7 @@ fn each_owned_allocation_can_fail_without_leaking() {
             Err(EqTableError::AllocationFailed { .. })
         ));
     }
-    FailAt::assert_released();
+    FailingPolicy::assert_released();
 }
 
 #[test]
@@ -211,7 +216,7 @@ fn budget_caps_each_family_in_requested_bytes() {
 
 #[test]
 fn budget_preserves_allocator_error_causes() {
-    FailAt::fail_next_allocation();
+    FailingPolicy::fail_next_allocation();
     let result = UNLIMITED.table::<Fr>(4, TableInit::Zero);
     assert!(matches!(
         result,
@@ -220,7 +225,7 @@ fn budget_preserves_allocator_error_causes() {
             cause: AllocationCause::Zero(ZeroAllocError::AllocFailed { .. })
         })
     ));
-    FailAt::fail_next_allocation();
+    FailingPolicy::fail_next_allocation();
     let result = UNLIMITED.table(4, TableInit::Repeat(Fr::from_u64(1)));
     assert!(matches!(
         result,
@@ -229,7 +234,7 @@ fn budget_preserves_allocator_error_causes() {
             cause: AllocationCause::Reserve(_)
         })
     ));
-    FailAt::fail_next_allocation();
+    FailingPolicy::fail_next_allocation();
     let result = UNLIMITED.storage::<Vec<Fr>>(4);
     assert!(matches!(
         result,
@@ -316,23 +321,127 @@ fn admission_reports_the_external_caller() {
 }
 
 #[test]
-#[should_panic(expected = "assertion failed: start <= len")]
-fn global_prefix_sum_rejects_long_prefix() {
-    let _ = EqPolynomial::<Fr>::prefix_sum(&[] as &[Fr], 2);
+fn allocation_errors_chain_the_allocator_error_once() {
+    let reserve = UNLIMITED.storage::<Fr>(usize::MAX).unwrap_err();
+    let zero = UNLIMITED
+        .table::<Fr>(usize::MAX, TableInit::Zero)
+        .unwrap_err();
+    for (error, allocator_error) in [
+        (
+            &reserve as &dyn Error,
+            Vec::<Fr>::new()
+                .try_reserve_exact(usize::MAX)
+                .unwrap_err()
+                .to_string(),
+        ),
+        (&zero, ZeroAllocError::CapacityOverflow.to_string()),
+    ] {
+        let source = error.source().unwrap();
+        assert_eq!(source.to_string(), allocator_error);
+        assert!(source.source().is_none());
+        assert!(!error.to_string().contains(&allocator_error));
+    }
 }
 
 #[test]
-#[should_panic(
-    expected = "assertion failed: range.start <= range.end && range.end <= self.0.len()"
-)]
-fn global_tensor_rejects_invalid_split() {
-    let _ = TensorEqTable::<Fr>::new_with_scaling_and_split(&[] as &[Fr], Fr::from_u64(1), 1);
+fn over_budget_states_the_request_and_the_budget() {
+    let error =
+        EqPolynomial::<Fr>::evals_in(&[Fr::from_u64(2); 20], None, Budget { max_bytes: 1 << 20 })
+            .unwrap_err();
+    let EqTableError::OverBudget { at, .. } = error else {
+        panic!("expected OverBudget, got {error:?}")
+    };
+    assert_eq!(
+        error.to_string(),
+        format!(
+            "eq table of 1048576 entries needs 33554432 bytes, over the 1048576-byte budget (requested at {at})"
+        )
+    );
+}
+
+/// Runs `build`, which must panic, and returns the panic's message and file.
+fn global_panic(build: impl FnOnce() + UnwindSafe) -> (String, String) {
+    let file = Arc::new(Mutex::new(None));
+    let record = Arc::clone(&file);
+    let test_thread = thread::current().id();
+    let hook = take_hook();
+    set_hook(Box::new(move |info| {
+        if thread::current().id() == test_thread {
+            *record.lock().unwrap() = info.location().map(|at| at.file().to_owned());
+        }
+    }));
+    let payload = catch_unwind(build);
+    set_hook(hook);
+    let message = *payload.unwrap_err().downcast::<String>().unwrap();
+    let file = file.lock().unwrap().take().unwrap();
+    (message, file)
 }
 
 #[test]
-#[should_panic(expected = "equality table capacity overflow")]
-fn global_rejects_dimension_overflow() {
-    let _ = EqPolynomial::<Fr>::evals(&[Fr::from_u64(2); usize::BITS as usize], None);
+fn global_panics_with_the_typed_error() {
+    let empty: &[Fr] = &[];
+    let cases: [(Box<dyn FnOnce() + UnwindSafe>, EqTableError); 6] = [
+        (
+            Box::new(|| {
+                let _ = EqPolynomial::<Fr>::prefix_sum(empty, 2);
+            }),
+            EqTableError::LengthMismatch {
+                expected: 1,
+                got: 2,
+            },
+        ),
+        (
+            Box::new(|| {
+                let _ = EqPolynomial::<Fr>::evals_prefix(empty, None, 2);
+            }),
+            EqTableError::LengthMismatch {
+                expected: 1,
+                got: 2,
+            },
+        ),
+        (
+            Box::new(|| {
+                let _ = TensorEqTable::<Fr>::new_with_scaling_and_split(empty, Fr::from_u64(1), 1);
+            }),
+            EqTableError::InvalidSplit {
+                outer_vars: 1,
+                num_vars: 0,
+            },
+        ),
+        (
+            Box::new(|| {
+                let table =
+                    TensorEqTable::<Fr>::new_with_scaling_and_split(empty, Fr::from_u64(1), 0);
+                let _ = table.evaluate_index(1);
+            }),
+            EqTableError::IndexOutOfRange { index: 1, len: 1 },
+        ),
+        (
+            Box::new(|| {
+                let _ = EqPolynomial::<Fr>::evals(&[Fr::from_u64(2); usize::BITS as usize], None);
+            }),
+            EqTableError::DimensionOverflow {
+                num_vars: usize::BITS as usize,
+            },
+        ),
+        (
+            Box::new(|| {
+                let _ =
+                    EqPolynomial::<Fr>::evals(&[Fr::from_u64(2); usize::BITS as usize - 5], None);
+            }),
+            EqTableError::SizeOverflow {
+                elements: 1 << (usize::BITS - 5),
+                element_size: size_of::<Fr>(),
+            },
+        ),
+    ];
+    for (build, expected) in cases {
+        // The panic names this file, not jolt-poly's internals.
+        assert_eq!(
+            global_panic(build),
+            (expected.to_string(), file!().to_owned())
+        );
+    }
 }
 
 #[test]
@@ -385,8 +494,8 @@ fn gruen_budget_is_per_cache_and_reports_the_constructor_caller() {
             };
             let (line, result) = construct_at_caller!(&point, order, budget);
             assert!(
-                matches!(result, Err(EqTableError::OverBudget { bytes, max_bytes, at })
-                if bytes == elements * size_of::<Fr>() && max_bytes + 1 == bytes && at.line() == line && at.file() == file!())
+                matches!(result, Err(EqTableError::OverBudget { elements: admitted, bytes, max_bytes, at })
+                if admitted == elements && bytes == elements * size_of::<Fr>() && max_bytes + 1 == bytes && at.line() == line && at.file() == file!())
             );
         }
     }
