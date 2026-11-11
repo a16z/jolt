@@ -24,6 +24,9 @@ stay in `zk_e2e.rs` and `akita_e2e.rs`; field-inline parity and tampering
 checks stay in `field_inline_e2e.rs` and `akita_field_inline_e2e.rs`; limb
 conversion policy and dishonest-advice checks stay in `field_inline_limbs.rs`.
 
+Clear-mode full-domain cases also cover default cycle-first read/write rounds
+on the optimized and reference backends, and active field-inline operations.
+
 ```bash
 cargo nextest run -p jolt-prover --features prover-fixtures -E 'binary(e2e_matrix)' --cargo-quiet
 cargo nextest run -p jolt-prover --features prover-fixtures,zk -E 'binary(e2e_matrix)' --cargo-quiet
@@ -39,9 +42,11 @@ Add a guest by appending a row to its profile table: the example crate name,
 its entry function when the crate has several, the `stack_size` from its
 `#[jolt::provable]` attribute when it exceeds the 4 KiB default, `std: true`
 when the guest crate enables `jolt`'s `guest-std` feature, postcard-encoded
-inputs that keep the trace under the row's padded bound (2^16 by default),
-and the postcard-encoded output computed natively in the test. Field cases
-that execute field instructions must also set `field_inline_active: true`.
+inputs that keep the trace within (at most equal to) the row's padded bound
+(2^16 by default), and the postcard-encoded output computed natively in the
+test. Rows with `max_padded_trace_length: None` are filled to their padded
+domain instead. Field cases that execute field instructions must also set
+`field_inline_active: true`.
 
 ## Tamper rejection phases
 

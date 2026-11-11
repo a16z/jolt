@@ -1,7 +1,7 @@
 //! End-to-end acceptance: one guest table per instruction profile, across all modes.
 //!
-//! Every case checks native expected output, proves with the optimized backend,
-//! and verifies through the public verifier API. Field-inline builds select the
+//! Table cases check native expected output, prove with the optimized backend,
+//! and verify through the public verifier API. Field-inline builds select the
 //! active field-ops and field-limbs cases and the inactive muldiv case; ordinary
 //! builds select the general guest table. Specialized suites retain tampering, reference-backend parity,
 //! committed programs, and other mode-specific checks.
@@ -159,6 +159,16 @@ mod matrix {
     }
 
     #[cfg(not(feature = "field-inline"))]
+    fn muldiv_full_domain() -> GuestCase {
+        GuestCase {
+            inputs: encode(&[9u32, 5, 3]),
+            expected_output: Some(encode(&15u32)),
+            max_padded_trace_length: None,
+            ..GuestCase::new("muldiv-guest")
+        }
+    }
+
+    #[cfg(not(feature = "field-inline"))]
     macro_rules! guests {
         ($emit:ident) => {
             $emit! {
@@ -167,12 +177,7 @@ mod matrix {
                     expected_output: Some(encode(&15u32)),
                     ..GuestCase::new("muldiv-guest")
                 };
-                muldiv_full_domain => GuestCase {
-                    inputs: encode(&[9u32, 5, 3]),
-                    expected_output: Some(encode(&15u32)),
-                    max_padded_trace_length: None,
-                    ..GuestCase::new("muldiv-guest")
-                };
+                muldiv_full_domain => super::muldiv_full_domain();
                 fibonacci => GuestCase {
                     inputs: encode(&100u32),
                     expected_output: Some(encode(&354_224_848_179_261_915_075u128)),
@@ -297,6 +302,41 @@ mod matrix {
         #[cfg(not(feature = "field-inline"))]
         use super::*;
         guests!(emit_tests);
+
+        #[cfg(not(feature = "field-inline"))]
+        #[test]
+        fn muldiv_full_domain_cycle_first() {
+            use jolt_prover::JoltBackend;
+
+            super::mode::prove_with_config(
+                &super::muldiv_full_domain(),
+                JoltBackend::optimized(),
+                |_| {},
+            );
+        }
+
+        #[cfg(not(feature = "field-inline"))]
+        #[test]
+        fn muldiv_full_domain_reference() {
+            use jolt_prover::JoltBackend;
+
+            super::mode::prove_with_config(
+                &super::muldiv_full_domain(),
+                JoltBackend::reference(),
+                |_| {},
+            );
+        }
+
+        #[cfg(feature = "field-inline")]
+        #[test]
+        fn field_ops_full_domain() {
+            use crate::support::GuestCase;
+
+            super::mode::prove_and_verify(&GuestCase {
+                max_padded_trace_length: None,
+                ..crate::support::field_inline::field_ops()
+            });
+        }
     }
 
     #[cfg(all(feature = "zk", not(feature = "akita")))]
@@ -335,6 +375,17 @@ mod matrix {
         }
 
         fn prove_case(case: &GuestCase) {
+            prove_with_config(case, JoltBackend::optimized(), |config| {
+                config.rw_config.ram_rw_phase1_num_rounds = 0;
+                config.rw_config.registers_rw_phase1_num_rounds = 0;
+            });
+        }
+
+        pub(super) fn prove_with_config(
+            case: &GuestCase,
+            backend: JoltBackend<Fr, DoryScheme>,
+            configure: impl FnOnce(&mut ProverConfig),
+        ) {
             let prepared = support::prepare(case);
             let mut config = ProverConfig::derive_from_dimensions::<Fr>(
                 prepared.trace.dimensions,
@@ -344,8 +395,7 @@ mod matrix {
                 prepared.preprocessing.max_padded_trace_length,
             )
             .expect("derive config");
-            config.rw_config.ram_rw_phase1_num_rounds = 0;
-            config.rw_config.registers_rw_phase1_num_rounds = 0;
+            configure(&mut config);
             let preprocessing = dory::from_shared(
                 JoltSharedPreprocessing::new(prepared.preprocessing).expect("shared preprocessing"),
             )
@@ -369,7 +419,7 @@ mod matrix {
                 JoltVmWitnessInputs::new(&prepared.program, &program_preprocessing, prepared.trace),
             );
             let proof = dory::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, ProverState<Keccak>>(
-                JoltBackend::optimized().with_witness(&witness),
+                backend.with_witness(&witness),
                 &preprocessing,
                 &config,
                 trusted.as_ref(),
