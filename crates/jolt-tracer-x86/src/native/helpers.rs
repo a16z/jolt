@@ -129,18 +129,57 @@ pub extern "sysv64" fn slow_load_doubleword(state: *mut GuestState, address: u64
         state.exit = ExitReason::FaultOutOfBounds as u64;
         return 0;
     }
+    if address < host.device.memory_layout.get_lowest_address() {
+        return fail(
+            state,
+            host,
+            format!("I/O underflow: Attempted to read from {address:#X}"),
+        );
+    }
     let mut value = 0u64;
     for i in 0..8 {
-        if address + i > host.device.memory_layout.io_end {
-            return fail(
-                state,
-                host,
-                format!("I/O overflow: Attempted to read from {:#X}", address + i),
-            );
-        }
-        value |= (host.device.load(address + i) as u64) << (i * 8);
+        let byte = match read_guest_byte(state, host, address + i) {
+            Ok(byte) => byte,
+            Err(message) => return fail(state, host, message),
+        };
+        value |= (byte as u64) << (i * 8);
     }
     value
+}
+
+/// A generated interval guard sends only aligned, in-bounds protected words here.
+/// Same-value stores leave the plane unchanged and still record the RAM access.
+pub extern "sysv64" fn protected_store_doubleword(
+    state: *mut GuestState,
+    address: u64,
+    value: u64,
+) -> u64 {
+    let (state, host) = host_context(state);
+    let offset = address - RAM_START_ADDRESS;
+    let mut bytes = [0u8; 8];
+    // SAFETY: the generated store admission checked an aligned start below the
+    // logical plane size; MemoryPlane::new rounds its backing to whole words.
+    unsafe {
+        (state.mem_base as *const u8)
+            .add(offset as usize)
+            .copy_to(bytes.as_mut_ptr(), 8);
+    };
+    let old = u64::from_le_bytes(bytes);
+    if old != value {
+        let message = if offset.wrapping_add(7).wrapping_sub(state.canary_offset)
+            < STACK_CANARY_SIZE + 7
+        {
+            format!("Stack overflow: store changes protected doubleword at {address:#X} in stack canary region")
+        } else {
+            format!("Store changes protected doubleword at {address:#x}")
+        };
+        return fail(state, host, message);
+    }
+    if !state.obs_cursor.is_null() && state.obs_cursor < state.obs_end {
+        // SAFETY: the observation cursor points at this row and is in bounds.
+        unsafe { (*state.obs_cursor).ram_pre = old };
+    }
+    0
 }
 
 /// Record the pre-value of a device-region store into the current row's
@@ -159,7 +198,7 @@ fn record_device_store_pre(state: &mut GuestState, host: &HostContext, address: 
     unsafe { (*state.obs_cursor).ram_pre = pre };
 }
 
-/// `Sd`/`VirtualStore*` slow path: device-region, unaligned, stack-canary, or
+/// `Sd`/`VirtualStore*` slow path: device-region, unaligned, or
 /// out-of-bounds addresses. `JoltDeviceMemory::store` also updates the
 /// panic and termination bytes.
 pub extern "sysv64" fn slow_store_doubleword(
@@ -177,27 +216,50 @@ pub extern "sysv64" fn slow_store_doubleword(
     }
     if address >= RAM_START_ADDRESS {
         state.fault_addr = address;
-        let offset = address - RAM_START_ADDRESS;
-        if offset.wrapping_sub(state.canary_offset) < STACK_CANARY_SIZE {
-            // Same condition and wording as `Mmu::assert_effective_address`,
-            // which panics here (spec invariant 7 asymmetry).
-            let stack_size = host.device.memory_layout.stack_size;
-            return fail(
-                state,
-                host,
-                format!(
-                    "Stack overflow: attempted to store {address:#X}, which is in the stack \
-                     canary region. Increase stack_size in MemoryConfig (currently \
-                     {stack_size} bytes)."
-                ),
-            );
-        }
         state.exit = ExitReason::FaultOutOfBounds as u64;
         return 0;
     }
+    if address < host.device.memory_layout.get_lowest_address() {
+        return fail(
+            state,
+            host,
+            format!("I/O underflow: Attempted to write to {address:#X}"),
+        );
+    }
+    if address + 8 > host.device.memory_layout.io_end {
+        return fail(
+            state,
+            host,
+            format!("I/O overflow: Attempted to write to {address:#X}"),
+        );
+    }
     record_device_store_pre(state, host, address);
     for i in 0..8 {
-        host.device.store(address + i, (value >> (i * 8)) as u8);
+        let byte_address = address + i;
+        let byte = (value >> (i * 8)) as u8;
+        if host.device.is_input(byte_address)
+            || host.device.is_trusted_advice(byte_address)
+            || host.device.is_untrusted_advice(byte_address)
+        {
+            if host.device.load(byte_address) != byte {
+                return fail(
+                    state,
+                    host,
+                    format!("Store changes protected doubleword at {address:#x}"),
+                );
+            }
+        } else if host.device.is_output(byte_address)
+            || host.device.is_panic(byte_address)
+            || host.device.is_termination(byte_address)
+        {
+            host.device.store(byte_address, byte);
+        } else {
+            return fail(
+                state,
+                host,
+                format!("Illegal device store: Unknown memory mapping: {byte_address:#X}"),
+            );
+        }
     }
     0
 }
@@ -256,15 +318,14 @@ impl tracer::InlineAdviceContext for GuestAdviceContext<'_> {
         }
         let mut value = 0u64;
         for i in 0..8 {
-            if address + i > self.host.device.memory_layout.io_end {
-                let _ = fail(
-                    self.state,
-                    self.host,
-                    format!("I/O overflow: Attempted to read from {:#X}", address + i),
-                );
-                return None;
-            }
-            value |= (self.host.device.load(address + i) as u64) << (i * 8);
+            let byte = match read_guest_byte(self.state, self.host, address + i) {
+                Ok(byte) => byte,
+                Err(message) => {
+                    let _ = fail(self.state, self.host, message);
+                    return None;
+                }
+            };
+            value |= (byte as u64) << (i * 8);
         }
         Some(value)
     }

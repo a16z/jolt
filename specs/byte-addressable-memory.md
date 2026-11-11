@@ -174,6 +174,13 @@ anywhere pays across every subsystem; (2) additional *rarely-active* RAM-side co
 nearly free; (3) additional *dense* columns (or 8× lane columns active on every memory op) are
 expensive; (4) making the RAM sumchecks somewhat more complex is nearly irrelevant at ~0.6%.
 
+## Tracer memory guards
+
+Tracer admission rejects changed protected words before mutation and permits
+same-value stores at every width. It also rejects loads below `lowest_address`.
+AMOs, successful SC, lazy tracing, parallel replay and native fast stores use
+these guards.
+
 ## Intent
 
 ### Goal

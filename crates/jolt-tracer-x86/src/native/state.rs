@@ -63,9 +63,8 @@ pub struct GuestState {
     pub obs_cursor: *mut Observation,
     /// Record mode: one past the last writable slot.
     pub obs_end: *mut Observation,
-    /// Offset of the stack canary from the start of the RAM plane. Stores to
-    /// `[canary_offset, canary_offset + STACK_CANARY_SIZE)` are stack
-    /// overflows and must fault, as they do in the interpreter.
+    /// Offset of the stack canary from the start of the RAM plane. Generated
+    /// stores preserve every doubleword overlapping the canary byte range.
     pub canary_offset: u64,
 }
 

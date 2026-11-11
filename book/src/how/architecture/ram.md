@@ -53,6 +53,17 @@ RAF evaluation ties `RamAddress` to the one-hot address: on each cycle it must e
 The verifier requires `lowest_address` to be a multiple of 8, so every admissible `RamAddress` is a multiple of 8.
 An access misaligned for its width, such as an `LH` at an odd address or any misaligned `LD`, leaves a low bit set in `RamAddress` and cannot be proven.
 
+## Tracer memory guards
+
+Protected doublewords contain real source instructions, program input, trusted
+advice, untrusted advice or the stack canary
+`[stack_end, stack_end + STACK_CANARY_SIZE)`. The tracers round these extents
+outward to doublewords. Same-value stores remain valid, including byte, halfword
+and word stores into a protected doubleword.
+
+The interpreter, replay tracer and native tracer reject a changed protected
+word before writing it, and reject loads below `lowest_address`.
+
 ## Deviations from the Twist algorithm as described in the paper
 
 Our implementation of the Twist prover algorithm differs from the description given in the Twist and Shout [paper](https://eprint.iacr.org/2025/105) in a couple of ways. One such deviation is [wv virtualization](../twist-shout.md#wv-virtualization). Other, RAM-specific deviations are described below.
