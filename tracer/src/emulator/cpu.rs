@@ -11,6 +11,9 @@ use tracing::{info, warn};
 use crate::instruction::{uncompress_instruction, Cycle, Instruction};
 use crate::utils::virtual_registers::VirtualRegisterAllocator;
 
+use super::host_io::{
+    print_terminator, read_host_bytes, write_guest_print, HOST_STRING_ADDRESS_LIMIT,
+};
 use super::mmu::Mmu;
 use super::terminal::Terminal;
 
@@ -94,21 +97,15 @@ use crate::utils::panic::CallFrame;
 use alloc::collections::VecDeque;
 #[cfg(not(feature = "std"))]
 use alloc::{boxed::Box, format, rc::Rc, string::String, vec::Vec};
-use jolt_platform::{
-    JOLT_CYCLE_MARKER_END, JOLT_CYCLE_MARKER_START, JOLT_PRINT_LINE, JOLT_PRINT_STRING,
-};
+use jolt_platform::{JOLT_CYCLE_MARKER_END, JOLT_CYCLE_MARKER_START};
 #[cfg(feature = "field-inline")]
 use jolt_program::field_inline::FieldEncodedValue;
 use std::collections::TryReserveError;
 #[cfg(feature = "std")]
 use std::collections::VecDeque;
-use std::io::Write;
 
 const CSR_CAPACITY: usize = 4096;
 const MAX_CALL_STACK_DEPTH: usize = 32;
-/// Exclusive end of the addresses a print or cycle-marker string can occupy:
-/// the guest passes those pointers and lengths as `u32`.
-const HOST_STRING_ADDRESS_LIMIT: u64 = 1 << 32;
 
 #[cfg(feature = "field-inline")]
 #[derive(Clone, Debug)]
@@ -1137,33 +1134,15 @@ impl Cpu {
         if self.host_io == HostIo::Replay {
             return;
         }
-        if event_type != JOLT_PRINT_STRING && event_type != JOLT_PRINT_LINE {
+        let Some(terminator) = print_terminator(event_type) else {
             warn!("Ignoring print host call with unknown event type {event_type}");
             return;
-        }
+        };
         let Some(bytes) = self.read_host_bytes(ptr.into(), len.into(), HOST_STRING_ADDRESS_LIMIT)
         else {
             return;
         };
-        // Writes the bytes `print!("{}", String::from_utf8_lossy(&bytes))`
-        // would, without its panic on a stdout error or a second copy.
-        let mut stdout = std::io::stdout().lock();
-        let written = bytes.utf8_chunks().try_for_each(|chunk| {
-            stdout.write_all(chunk.valid().as_bytes())?;
-            if chunk.invalid().is_empty() {
-                Ok(())
-            } else {
-                stdout.write_all("\u{FFFD}".as_bytes())
-            }
-        });
-        let written = written.and_then(|()| {
-            if event_type == JOLT_PRINT_LINE {
-                stdout.write_all(b"\n")
-            } else {
-                Ok(())
-            }
-        });
-        if let Err(error) = written {
+        if let Err(error) = write_guest_print(&mut std::io::stdout().lock(), &bytes, terminator) {
             warn!("Guest print to stdout failed: {error}");
         }
     }
@@ -1188,32 +1167,16 @@ impl Cpu {
         )
     }
 
-    /// Reads the guest bytes `[ptr, ptr + len)` for a host call. Returns
-    /// `None`, before loading anything, when the range ends past
-    /// `address_limit`, when any byte in it is not readable (a load there
-    /// would panic), or when the buffer cannot be allocated.
+    /// [`read_host_bytes`] on this CPU's memory, logging a rejected range in
+    /// live mode.
     fn read_host_bytes(&mut self, ptr: u64, len: u64, address_limit: u64) -> Option<Vec<u8>> {
-        let readable = ptr
-            .checked_add(len)
-            .filter(|&end| end <= address_limit)
-            .filter(|&end| (ptr..end).all(|address| self.mmu.is_host_readable(address)));
-        let mut bytes = Vec::new();
-        let reserved = usize::try_from(len)
+        read_host_bytes(&mut self.mmu, ptr, len, address_limit)
+            .inspect_err(|error| {
+                if self.host_io == HostIo::Live {
+                    warn!("Ignoring host call: {error}");
+                }
+            })
             .ok()
-            .is_some_and(|len| bytes.try_reserve_exact(len).is_ok());
-        let (Some(end), true) = (readable, reserved) else {
-            if self.host_io == HostIo::Live {
-                warn!(
-                    "Ignoring host call: guest range at {ptr:#x} of length {len} is not readable"
-                );
-            }
-            return None;
-        };
-        for address in ptr..end {
-            let (byte, _) = self.mmu.load(address).ok()?;
-            bytes.push(byte);
-        }
-        Some(bytes)
     }
 
     /// Track a function call (JAL/JALR instruction that saves callsite information)
@@ -1541,6 +1504,7 @@ mod test_cpu {
     use crate::emulator::mmu::DRAM_BASE;
     use crate::emulator::terminal::DummyTerminal;
     use common::jolt_device::{JoltDevice, MemoryConfig};
+    use jolt_platform::{JOLT_PRINT_LINE, JOLT_PRINT_STRING};
 
     fn create_cpu() -> Cpu {
         Cpu::new(Box::new(DummyTerminal::default()))

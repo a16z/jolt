@@ -9,6 +9,7 @@ use common::jolt_device::{JoltDevice, MemoryLayout};
 use jolt_riscv::{RamRead, RamWrite};
 
 use super::cpu::{PrivilegeMode, Trap, TrapType};
+use super::host_io::HostMemory;
 use super::terminal::Terminal;
 
 #[derive(Clone, Debug)]
@@ -162,6 +163,29 @@ fn unsupported_peripheral(address: u64) -> Option<&'static str> {
     }
 }
 
+/// Whether a guest load of the byte at effective address `ea` returns
+/// normally when no page walk is involved. `ram_holds(ea)` says whether the
+/// backend's RAM holds `ea`, for `ea >= DRAM_BASE`. Every tracer backend
+/// checks host-call reads with this, so all of them reject the same calls.
+pub fn identity_load_succeeds(
+    jolt_device: Option<&JoltDevice>,
+    ea: u64,
+    ram_holds: impl FnOnce(u64) -> bool,
+) -> bool {
+    match jolt_device {
+        Some(jolt_device) if address_fault(jolt_device, ea, false).is_some() => false,
+        _ if ea >= DRAM_BASE => ram_holds(ea),
+        None => false,
+        // `Mmu::load` also records the containing doubleword (`trace_load`),
+        // which reads all eight of its bytes from the device.
+        Some(jolt_device) => {
+            let doubleword = ea & !7;
+            unsupported_peripheral(ea).is_none()
+                && (doubleword..doubleword + 8).all(|a| device_readable(jolt_device, a))
+        }
+    }
+}
+
 impl Mmu {
     pub fn new(_terminal: Box<dyn Terminal>) -> Self {
         Mmu {
@@ -235,33 +259,6 @@ impl Mmu {
         };
         if let Some(fault) = address_fault(jolt_device, ea, is_write) {
             fault.panic(&jolt_device.memory_layout, ea, is_write);
-        }
-    }
-
-    /// Whether [`Mmu::load`] at `address` returns without panicking. A host
-    /// call (`VirtualHostIO`) checks every byte it reads with this first, so
-    /// a bad guest pointer skips the call instead of aborting the trace.
-    pub(crate) fn is_host_readable(&self, address: u64) -> bool {
-        // A page walk reads page-table entries with the panicking raw loads.
-        // Jolt never enables paging.
-        if !matches!(
-            self.translation(&MemoryAccessType::Read),
-            Translation::Identity
-        ) {
-            return false;
-        }
-        let ea = self.get_effective_address(address);
-        match self.jolt_device.as_ref() {
-            Some(jolt_device) if address_fault(jolt_device, ea, false).is_some() => false,
-            _ if ea >= DRAM_BASE => self.memory.validate_address(ea),
-            None => false,
-            // `load` also records the containing doubleword (`trace_load`),
-            // which reads all eight of its bytes from the device.
-            Some(jolt_device) => {
-                let doubleword = ea & !7;
-                unsupported_peripheral(ea).is_none()
-                    && (doubleword..doubleword + 8).all(|a| device_readable(jolt_device, a))
-            }
         }
     }
 
@@ -957,6 +954,26 @@ impl Mmu {
         self.addressing_mode = state.addressing_mode;
         self.privilege_mode = state.privilege_mode;
         self.mstatus = state.mstatus;
+    }
+}
+
+impl HostMemory for Mmu {
+    /// Whether [`Mmu::load`] at `address` returns without panicking.
+    fn is_host_readable(&self, address: u64) -> bool {
+        // A page walk reads page-table entries with the panicking raw loads.
+        // Jolt never enables paging.
+        matches!(
+            self.translation(&MemoryAccessType::Read),
+            Translation::Identity
+        ) && identity_load_succeeds(
+            self.jolt_device.as_ref(),
+            self.get_effective_address(address),
+            |ea| self.memory.validate_address(ea),
+        )
+    }
+
+    fn load_host_byte(&mut self, address: u64) -> Option<u8> {
+        self.load(address).ok().map(|(byte, _)| byte)
     }
 }
 

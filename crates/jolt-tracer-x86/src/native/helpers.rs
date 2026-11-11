@@ -12,11 +12,16 @@ use common::constants::{RAM_START_ADDRESS, STACK_CANARY_SIZE};
 
 use super::state::{AdviceCompute, ExitReason, GuestState, HostContext};
 
-// jolt-platform host-IO ABI (mirrors tracer/src/emulator/cpu.rs handlers).
+use common::jolt_device::JoltDevice;
 use jolt_platform::{
     JOLT_ADVICE_WRITE_CALL_ID, JOLT_CYCLE_MARKER_END, JOLT_CYCLE_MARKER_START,
-    JOLT_CYCLE_TRACK_CALL_ID, JOLT_PRINT_CALL_ID, JOLT_PRINT_LINE, JOLT_PRINT_STRING,
+    JOLT_CYCLE_TRACK_CALL_ID, JOLT_PRINT_CALL_ID,
 };
+use tracer::emulator::host_io::{
+    print_terminator, read_host_bytes, write_guest_print, HostMemory, HOST_STRING_ADDRESS_LIMIT,
+};
+use tracer::emulator::mmu::identity_load_succeeds;
+use tracing::warn;
 
 fn host_context<'a>(state: *mut GuestState) -> (&'a mut GuestState, &'a mut HostContext) {
     // SAFETY: generated code passes the GuestState it was launched with; its
@@ -30,65 +35,105 @@ fn fail(state: &mut GuestState, host: &mut HostContext, message: String) -> u64 
     0
 }
 
-/// Read one guest byte, routing RAM to the plane and lower addresses to the
-/// device (mirrors `Mmu::load`).
-fn read_guest_byte(state: &GuestState, host: &HostContext, address: u64) -> u8 {
-    if address >= RAM_START_ADDRESS {
-        let offset = address - RAM_START_ADDRESS;
-        if offset < state.mem_size {
-            // SAFETY: offset bounds-checked against the plane size.
-            return unsafe { (state.mem_base as *const u8).add(offset as usize).read() };
-        }
-        return 0;
-    }
-    host.device.load(address)
+/// Guest memory as `host_io` reads it. Readability follows the tracer's
+/// [`identity_load_succeeds`], so this backend rejects exactly the host calls
+/// the interpreter rejects.
+struct HostIoMemory<'a> {
+    state: &'a GuestState,
+    device: &'a JoltDevice,
 }
 
-/// `VirtualHostIO`: call id in a0 (x10), args in a1–a3 (x11–x13).
-/// No rd write, no RAM-access row (matches the interpreter).
-// Guest prints go to stdout by definition (mirrors the interpreter's
-// handle_jolt_print).
-#[expect(clippy::print_stdout)]
+impl HostMemory for HostIoMemory<'_> {
+    fn is_host_readable(&self, address: u64) -> bool {
+        identity_load_succeeds(Some(self.device), address, |ea| {
+            ea - RAM_START_ADDRESS < self.state.mem_size
+        })
+    }
+
+    fn load_host_byte(&mut self, address: u64) -> Option<u8> {
+        if address >= RAM_START_ADDRESS {
+            let offset = address - RAM_START_ADDRESS;
+            // SAFETY: `read_host_bytes` loads only addresses `is_host_readable`
+            // accepted, which bounds `offset` by the plane size.
+            return Some(unsafe {
+                (self.state.mem_base as *const u8)
+                    .add(offset as usize)
+                    .read()
+            });
+        }
+        Some(self.device.load(address))
+    }
+}
+
+/// Reads guest bytes for a host call under the tracer's shared rules, logging
+/// a rejected range.
+fn read_host_call_bytes(
+    state: &GuestState,
+    host: &HostContext,
+    ptr: u64,
+    len: u64,
+    address_limit: u64,
+) -> Option<Vec<u8>> {
+    let mut memory = HostIoMemory {
+        state,
+        device: &host.device,
+    };
+    read_host_bytes(&mut memory, ptr, len, address_limit)
+        .inspect_err(|error| warn!("Ignoring host call: {error}"))
+        .ok()
+}
+
+/// `VirtualHostIO`: call id in a0 (x10), args in a1–a3 (x11–x13). No rd
+/// write, no RAM-access row (matches the interpreter). Like the interpreter's
+/// handlers, it never fails: it logs and ignores an unknown event or an
+/// unreadable range. Both passes run it, so a print or warning appears once
+/// per pass.
 pub extern "sysv64" fn host_io(state: *mut GuestState) -> u64 {
     let (state, host) = host_context(state);
     let call_id = state.x[10] as u32;
     if call_id == JOLT_ADVICE_WRITE_CALL_ID {
-        let ptr = state.x[11];
         let len = state.x[12];
-        for i in 0..len {
-            let byte = read_guest_byte(state, host, ptr.wrapping_add(i));
-            host.advice_tape.push(byte);
+        if let Some(bytes) = read_host_call_bytes(state, host, state.x[11], len, u64::MAX) {
+            if host.advice_tape.try_reserve(bytes.len()).is_ok() {
+                host.advice_tape.extend_from_slice(&bytes);
+            } else {
+                warn!("Ignoring advice write of {len} bytes: the advice tape cannot grow");
+            }
         }
         return 0;
     }
-    let ptr = state.x[11] as u32 as u64;
-    let len = state.x[12] as u32 as usize;
+    let ptr = u64::from(state.x[11] as u32);
+    let len = u64::from(state.x[12] as u32);
     let event = state.x[13] as u32;
     match call_id {
         JOLT_CYCLE_TRACK_CALL_ID => {
-            // Diagnostics only in the interpreter (logged cycle counts);
-            // reproduce the validation, skip the logging.
-            if event != JOLT_CYCLE_MARKER_START && event != JOLT_CYCLE_MARKER_END {
-                return fail(state, host, format!("unknown cycle marker event {event}"));
+            // The interpreter logs cycle counts; this backend only reads the
+            // label, so it rejects and logs the same calls.
+            if event == JOLT_CYCLE_MARKER_START || event == JOLT_CYCLE_MARKER_END {
+                let _label = read_host_call_bytes(state, host, ptr, len, HOST_STRING_ADDRESS_LIMIT);
+            } else {
+                warn!("Ignoring cycle-marker host call with unknown event {event}");
             }
-            0
         }
         JOLT_PRINT_CALL_ID => {
-            let mut bytes = Vec::with_capacity(len);
-            for i in 0..len as u64 {
-                bytes.push(read_guest_byte(state, host, ptr.wrapping_add(i)));
+            let Some(terminator) = print_terminator(event) else {
+                warn!("Ignoring print host call with unknown event type {event}");
+                return 0;
+            };
+            let Some(bytes) =
+                read_host_call_bytes(state, host, ptr, len, HOST_STRING_ADDRESS_LIMIT)
+            else {
+                return 0;
+            };
+            if let Err(error) = write_guest_print(&mut std::io::stdout().lock(), &bytes, terminator)
+            {
+                warn!("Guest print to stdout failed: {error}");
             }
-            let text = String::from_utf8_lossy(&bytes);
-            match event {
-                JOLT_PRINT_STRING => print!("{text}"),
-                JOLT_PRINT_LINE => println!("{text}"),
-                other => return fail(state, host, format!("unknown print event {other}")),
-            }
-            0
         }
-        // Unknown call ids are silently ignored by the interpreter.
-        _ => 0,
+        // The interpreter ignores unknown call ids too.
+        _ => {}
     }
+    0
 }
 
 /// `Ld`/`VirtualLoad*` slow path: device-region, unaligned, or out-of-bounds

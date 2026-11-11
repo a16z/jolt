@@ -13,9 +13,9 @@
 #![cfg(all(target_arch = "x86_64", target_os = "linux"))]
 #![expect(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use common::constants::REGISTER_COUNT;
+use common::constants::{RAM_START_ADDRESS, REGISTER_COUNT};
 use common::jolt_device::JoltDevice;
-use jolt_platform::JOLT_ADVICE_WRITE_CALL_ID;
+use jolt_platform::{JOLT_ADVICE_WRITE_CALL_ID, JOLT_CYCLE_TRACK_CALL_ID, JOLT_PRINT_CALL_ID};
 use jolt_riscv::{JoltInstructionKind, JoltInstructionRow, NormalizedOperands};
 use jolt_tracer_x86::harness::{
     self, run_program, single_row_program, MEM_CAPACITY, SCRATCH_DWORDS, SCRATCH_START, TEST_ADDR,
@@ -460,15 +460,36 @@ fn fence(rng: &mut StdRng) -> Instance {
 
 fn host_io(rng: &mut StdRng) -> Instance {
     let mut i = base_instance(rng, kind_by_name("VirtualHostIO"));
-    // a0 selects the call: unknown ids are no-ops on both sides; advice
-    // writes append guest bytes to the tape on both sides.
-    if rng.gen() {
-        i.pre_regs[10] = JOLT_ADVICE_WRITE_CALL_ID as u64;
-        i.pre_regs[11] = scratch_slot(rng);
-        i.pre_regs[12] = rng.gen_range(0..48);
+    let layout = JoltDevice::new(&harness::memory_config()).memory_layout;
+    // Both backends must append the same advice bytes and finish the row,
+    // whether they run the call or ignore it.
+    let (ptr, len) = match rng.gen_range(0..8) {
+        0..=2 => (scratch_slot(rng), rng.gen_range(0..48)),
+        3 => (layout.input_start, rng.gen_range(1..16)),
+        // Ranges a guest load rejects: past the memory plane, between the
+        // I/O region and RAM, in an emulator peripheral, and wrapping
+        // around the address space or past 4 GiB.
+        4 => (RAM_START_ADDRESS + MEM_CAPACITY - 4, 8),
+        5 => (layout.io_end + 1, 4),
+        6 => (0x1020, 4),
+        _ => *[(u64::MAX - 3, 8), (u64::from(u32::MAX) - 1, 4)]
+            .get(rng.gen_range(0..2))
+            .unwrap(),
+    };
+    i.pre_regs[11] = ptr;
+    i.pre_regs[12] = len;
+    // Events 1 and 2 are the known print and cycle-marker events.
+    i.pre_regs[13] = if rng.gen() {
+        rng.gen_range(1..=2)
     } else {
-        i.pre_regs[10] = rng.gen::<u32>() as u64 | 1 << 33;
-    }
+        u64::from(rng.gen_range(3..=u32::MAX))
+    };
+    i.pre_regs[10] = match rng.gen_range(0..4) {
+        0 => u64::from(JOLT_PRINT_CALL_ID),
+        1 => u64::from(JOLT_CYCLE_TRACK_CALL_ID),
+        2 => u64::from(JOLT_ADVICE_WRITE_CALL_ID),
+        _ => rng.gen::<u32>() as u64 | 1 << 33,
+    };
     i
 }
 
