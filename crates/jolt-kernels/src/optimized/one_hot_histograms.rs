@@ -299,7 +299,7 @@ mod pushforward_tests {
     use super::{pushforwards, FamilySelectors, InstructionCycleRow, InstructionHistogram};
     use crate::optimized::constant_suffix::ConstantSuffix;
     #[cfg(feature = "akita")]
-    use jolt_field::Prime128OffsetA7F7;
+    use jolt_field::Prime128Offset6A23801F;
     use jolt_field::{Accumulator, Fr, JoltField};
     use jolt_poly::EqPolynomial;
     #[cfg(feature = "akita")]
@@ -475,7 +475,7 @@ mod pushforward_tests {
     #[cfg(feature = "akita")]
     #[test]
     fn paired_instruction_marginals_match_direct_buckets_akita() {
-        check_marginals::<Prime128OffsetA7F7>();
+        check_marginals::<Prime128Offset6A23801F>();
     }
 
     #[cfg(feature = "akita")]
@@ -501,7 +501,7 @@ mod pushforward_tests {
     #[cfg(feature = "akita")]
     #[test]
     fn paired_histograms_match_dense_equality_through_pushforwards() {
-        check_paired::<Prime128OffsetA7F7>();
+        check_paired::<Prime128Offset6A23801F>();
     }
 
     #[test]
@@ -511,6 +511,6 @@ mod pushforward_tests {
     #[cfg(feature = "akita")]
     #[test]
     fn tensor_histograms_match_dense_equality_akita() {
-        check::<Prime128OffsetA7F7>();
+        check::<Prime128Offset6A23801F>();
     }
 }

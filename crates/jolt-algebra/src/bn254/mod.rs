@@ -123,7 +123,12 @@ macro_rules! wrap_bn254 {
             }
         }
 
+        // SAFETY: the transparent arkworks Montgomery representation stores
+        // zero as four zero limbs, with only a zero-sized PhantomData marker.
+        unsafe impl jolt_utils::alloc::ZeroBytesValid for $ty {}
+
         impl Field for $ty {
+            zeroed_field_vec!();
             #[inline]
             fn inverse(&self) -> Option<Self> {
                 <$ty as $crate::bn254::InlineArith>::inverse(*self)

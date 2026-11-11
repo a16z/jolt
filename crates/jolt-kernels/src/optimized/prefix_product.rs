@@ -71,11 +71,12 @@ impl<F: JoltField> PrefixColumn<F> {
 }
 
 #[cfg(test)]
+#[expect(clippy::unwrap_used, reason = "test module")]
 mod tests {
     use super::*;
     use jolt_field::Fr;
     #[cfg(feature = "akita")]
-    use jolt_field::Prime128OffsetA7F7;
+    use jolt_field::Prime128Offset6A23801F;
     use jolt_poly::{BindingOrder, EqPolynomial, Polynomial};
 
     fn check<F: JoltField>() {
@@ -128,7 +129,7 @@ mod tests {
                     let _ = right.bind(challenge);
                     dense_left.bind_with_order(challenge, BindingOrder::LowToHigh);
                     dense_right.bind_with_order(challenge, BindingOrder::LowToHigh);
-                    eq.bind(challenge);
+                    eq.round_mut().unwrap().bind(challenge);
                 }
             }
         }
@@ -138,6 +139,6 @@ mod tests {
     fn product_sums_match_dense_multilinears() {
         check::<Fr>();
         #[cfg(feature = "akita")]
-        check::<Prime128OffsetA7F7>();
+        check::<Prime128Offset6A23801F>();
     }
 }
