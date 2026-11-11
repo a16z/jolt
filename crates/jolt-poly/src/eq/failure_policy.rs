@@ -1,4 +1,4 @@
-use super::alloc::{sealed::Sealed, Budget, EqAlloc, EqTableError, TableInit};
+use super::alloc::{Allocate, Budget, EqAlloc, EqTableError, TableInit};
 use jolt_field::Field;
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
@@ -58,7 +58,6 @@ pub(super) struct FailAt<'a> {
     pub target: usize,
     pub budget: Budget,
 }
-impl Sealed for FailAt<'_> {}
 impl FailAt<'_> {
     pub fn fail_next_allocation() {
         FAIL_NEXT.with(|flag| flag.set(true));
@@ -87,21 +86,27 @@ impl FailAt<'_> {
 }
 impl EqAlloc for FailAt<'_> {
     type Error = EqTableError;
-    fn reject(self, error: EqTableError) -> EqTableError {
+}
+impl Allocate for FailAt<'_> {
+    fn reject(self, error: EqTableError) -> <Self as EqAlloc>::Error {
         error
     }
     fn admit<F: Field>(
         self,
         elements: usize,
         at: &'static Location<'static>,
-    ) -> Result<(), EqTableError> {
+    ) -> Result<(), <Self as EqAlloc>::Error> {
         self.budget.admit::<F>(elements, at)
     }
-    fn table<F: Field>(self, len: usize, init: TableInit<F>) -> Result<Vec<F>, EqTableError> {
+    fn table<F: Field>(
+        self,
+        len: usize,
+        init: TableInit<F>,
+    ) -> Result<Vec<F>, <Self as EqAlloc>::Error> {
         self.before()?;
         self.budget.table(len, init).map(Self::track)
     }
-    fn storage<T>(self, len: usize) -> Result<Vec<T>, EqTableError> {
+    fn storage<T>(self, len: usize) -> Result<Vec<T>, <Self as EqAlloc>::Error> {
         self.before()?;
         self.budget.storage(len).map(Self::track)
     }

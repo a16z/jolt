@@ -5,32 +5,51 @@
 use core::convert::Infallible;
 use jolt_field::Field;
 use jolt_utils::alloc::ZeroAllocError;
-use sealed::Sealed;
 use std::{alloc::Layout, collections::TryReserveError, panic::Location};
 use thiserror::Error;
 
-pub(crate) mod sealed {
-    pub trait Sealed {}
+/// Allocation policy for the eq-table builders: [`Global`] or [`Budget`].
+///
+/// Sealed, with no methods callable outside jolt-poly: other crates can only pass
+/// a policy to a builder, which admits each allocation family before allocating.
+#[expect(
+    private_bounds,
+    reason = "Allocate seals EqAlloc and keeps its allocation methods private to jolt-poly"
+)]
+pub trait EqAlloc: Allocate + Copy + Send + Sync {
+    type Error: Send;
 }
 
-/// Sealed allocation behavior; table lengths and storage capacities are guaranteed.
-pub trait EqAlloc: Sealed + Copy + Send + Sync {
-    type Error: Send;
+/// The allocation methods behind [`EqAlloc`]; table lengths and storage
+/// capacities are guaranteed.
+pub(crate) trait Allocate {
     /// Report invalid shape or arguments; `Global` panics and `Budget` returns the error.
-    fn reject(self, error: EqTableError) -> Self::Error;
+    fn reject(self, error: EqTableError) -> <Self as EqAlloc>::Error
+    where
+        Self: EqAlloc;
     /// Admit one family before allocating any of its buffers.
     fn admit<F: Field>(
         self,
         elements: usize,
         at: &'static Location<'static>,
-    ) -> Result<(), Self::Error>;
+    ) -> Result<(), <Self as EqAlloc>::Error>
+    where
+        Self: EqAlloc;
     /// Allocate exactly `len` initialized elements after family admission.
-    fn table<F: Field>(self, len: usize, init: TableInit<F>) -> Result<Vec<F>, Self::Error>;
+    fn table<F: Field>(
+        self,
+        len: usize,
+        init: TableInit<F>,
+    ) -> Result<Vec<F>, <Self as EqAlloc>::Error>
+    where
+        Self: EqAlloc;
     /// Return empty storage with capacity at least `len`.
-    fn storage<T>(self, len: usize) -> Result<Vec<T>, Self::Error>;
+    fn storage<T>(self, len: usize) -> Result<Vec<T>, <Self as EqAlloc>::Error>
+    where
+        Self: EqAlloc;
 }
 
-pub enum TableInit<F> {
+pub(crate) enum TableInit<F> {
     Zero,
     Repeat(F),
 }
@@ -87,9 +106,10 @@ pub enum EqTableError {
     InvalidSplit { outer_vars: usize, num_vars: usize },
 }
 
-impl Sealed for Global {}
 impl EqAlloc for Global {
     type Error = Infallible;
+}
+impl Allocate for Global {
     #[expect(
         clippy::panic,
         reason = "Global preserves infallible builders' argument and capacity panics"
@@ -114,9 +134,10 @@ impl EqAlloc for Global {
     }
 }
 
-impl Sealed for Budget {}
 impl EqAlloc for Budget {
     type Error = EqTableError;
+}
+impl Allocate for Budget {
     fn reject(self, error: EqTableError) -> EqTableError {
         error
     }

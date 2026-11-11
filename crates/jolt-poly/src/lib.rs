@@ -96,4 +96,4 @@ pub use point::{Endianness, Point, PointLike, PointRef, HIGH_TO_LOW, LOW_TO_HIGH
 pub use split_eq::{GruenSplitEqPolynomial, TensorEqTable};
 pub use univariate::{UnivariatePoly, UnivariatePolynomial};
 
-pub use eq::alloc::{AllocationCause, Budget, EqAlloc, EqTableError, Global, TableInit};
+pub use eq::alloc::{AllocationCause, Budget, EqAlloc, EqTableError, Global};

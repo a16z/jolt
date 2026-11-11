@@ -1,7 +1,6 @@
+use super::alloc::{Allocate, TableInit};
 use super::failure_policy::FailAt;
-use crate::{
-    AllocationCause, Budget, EqAlloc, EqPolynomial, EqTableError, TableInit, TensorEqTable,
-};
+use crate::{AllocationCause, Budget, EqPolynomial, EqTableError, TensorEqTable};
 use jolt_field::{Fr, Prime128Offset275, Ring};
 use jolt_utils::alloc::ZeroAllocError;
 use std::panic::Location;
