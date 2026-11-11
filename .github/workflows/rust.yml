@@ -623,40 +623,11 @@ jobs:
       # under this pair.
       - name: Run jolt-kernels with field-inline,akita
         run: cargo nextest run --cargo-profile ci -p jolt-kernels --features field-inline,akita
-      # The Akita field-inline provisioning checks and verifier fixture suite (the modular
-      # Akita prover's eq-MLE proof; legacy-generated akita fixtures pin the
-      # field-inline axis disabled).
-      - name: Run jolt-akita with field-inline
-        run: >-
-          cargo nextest run --cargo-profile ci -p jolt-akita --features field-inline
       # Whiteout's masked opening of one hiding trace group, on jolt-akita's API.
       - name: Run jolt-akita Whiteout opening (zk-prover)
         run: cargo nextest run --cargo-profile ci -p jolt-akita --features zk-prover -E 'test(whiteout)'
       - name: Run jolt-verifier with prover-fixtures,field-inline,akita
         run: cargo nextest run --cargo-profile ci -p jolt-verifier --features prover-fixtures,field-inline,akita --test-threads 1
-
-  # The Akita field-inline provisioning checks and verifier fixture suite (the
-  # modular Akita prover's eq-MLE proof; legacy-generated akita fixtures pin the
-  # field-inline axis disabled). Its own job: it needs no guest toolchain, and
-  # in series with the prover lane above it set that job's critical path.
-  test-akita-field-inline:
-    runs-on: ubuntu-latest
-    name: Test jolt-akita (field-inline)
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: actions-rust-lang/setup-rust-toolchain@a188e68d0fd2bd36ad51dccb2b07ba6e75105f30 # v2
-        with:
-          cache: false
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
-        with:
-          shared-key: release-tests
-          save-if: false
-      - name: Install nextest
-        uses: taiki-e/install-action@682ce6c3c696a4cd5168a05f98e51aa02b877941 # v2
-        with:
-          tool: nextest
-      - name: Run jolt-akita with field-inline
-        run: cargo nextest run --cargo-profile ci -p jolt-akita --features field-inline
 
   # The Akita field-inline provisioning checks and verifier fixture suite (the
   # modular Akita prover's eq-MLE proof; legacy-generated akita fixtures pin the
