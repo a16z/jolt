@@ -9,8 +9,8 @@ use spongefish::instantiations::Keccak;
 use spongefish::{DuplexSpongeInit, VerificationError};
 
 use jolt_transcript::{
-    protocol_tag, prover_transcript, verifier_transcript, Blake2b512, BytesMsg, PoseidonSponge,
-    ProverTranscript, TAG_BYTES,
+    protocol_tag, prover_transcript, verifier_transcript, Blake2b512, BytesMsg, ChallengeSponge,
+    FieldTranscript, PoseidonSponge, ProverTranscript, Transcript, VerifierTranscript, TAG_BYTES,
 };
 
 use crate::invariant::{CheckError, Invariant, InvariantViolation};
@@ -70,15 +70,15 @@ fn arb_scalar(u: &mut Unstructured<'_>) -> ArbitraryResult<JFr> {
 
 fn run_check<H>(input: &Input) -> Result<(), CheckError>
 where
-    H: DuplexSpongeInit<U = u8> + Sync,
+    H: DuplexSpongeInit + ChallengeSponge<JFr> + Sync,
 {
     let mut prover = prover_transcript::<H>(&SESSION, &INSTANCE_DIGEST);
-    let mut prover_challenges: Vec<[u8; 32]> = Vec::new();
+    let mut prover_challenges: Vec<JFr> = Vec::new();
 
-    for op in &input.ops {
+    for (op_idx, op) in input.ops.iter().enumerate() {
         match op {
-            Op::PublicBytes(b) => prover.public_message(&BytesMsg(b.clone())),
-            Op::PublicScalar(f) => prover.public_message(&scalar_bytes(*f)),
+            Op::PublicBytes(b) => prover.append(&BytesMsg(b.clone())),
+            Op::PublicScalar(f) => prover.append(&scalar_bytes(*f)),
             Op::ProverBytes(b) => {
                 prover.send(&BytesMsg(b.clone()));
             }
@@ -86,7 +86,8 @@ where
                 prover.send(&scalar_bytes(*f));
             }
             Op::Challenge => {
-                let c: [u8; 32] = prover.verifier_message();
+                let c = FieldTranscript::<JFr>::challenge(&mut prover)
+                    .map_err(|e| violation("prover challenge", op_idx, e))?;
                 prover_challenges.push(c);
             }
         }
@@ -98,26 +99,25 @@ where
 
     for (op_idx, op) in input.ops.iter().enumerate() {
         match op {
-            Op::PublicBytes(b) => verifier.public_message(&BytesMsg(b.clone())),
-            Op::PublicScalar(f) => verifier.public_message(&scalar_bytes(*f)),
+            Op::PublicBytes(b) => verifier.append(&BytesMsg(b.clone())),
+            Op::PublicScalar(f) => verifier.append(&scalar_bytes(*f)),
             Op::ProverBytes(expected) => {
-                let got: BytesMsg = verifier
-                    .prover_message()
+                let got: BytesMsg = VerifierTranscript::prover_message(&mut verifier)
                     .map_err(|e| violation("prover_message<BytesMsg>", op_idx, e))?;
                 if got.as_slice() != expected.as_slice() {
                     return Err(mismatch("ProverBytes round-trip", op_idx));
                 }
             }
             Op::ProverScalar(expected) => {
-                let got: [u8; 32] = verifier
-                    .prover_message()
+                let got: [u8; 32] = VerifierTranscript::prover_message(&mut verifier)
                     .map_err(|e| violation("prover_message<[u8; 32]>", op_idx, e))?;
                 if got != scalar_bytes(*expected) {
                     return Err(mismatch("ProverScalar round-trip", op_idx));
                 }
             }
             Op::Challenge => {
-                let verifier_c: [u8; 32] = verifier.verifier_message();
+                let verifier_c = FieldTranscript::<JFr>::challenge(&mut verifier)
+                    .map_err(|e| violation("verifier challenge", op_idx, e))?;
                 if verifier_c != prover_challenges[challenge_idx] {
                     return Err(mismatch("Challenge", op_idx));
                 }
@@ -126,8 +126,7 @@ where
         }
     }
 
-    verifier
-        .check_eof()
+    VerifierTranscript::check_eof(verifier)
         .map_err(|e| violation("check_eof", input.ops.len(), e))?;
     Ok(())
 }

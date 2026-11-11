@@ -237,15 +237,20 @@ mod matrix {
                     })),
                     ..GuestCase::new("stdlib-guest")
                 };
-                advice_consumer => GuestCase {
-                    inputs: encode(&12u64),
-                    untrusted_advice: encode(&5u64),
-                    trusted_advice: encode(&7u64),
-                    expected_output: Some(encode(&(7u64 * 3 + 5))),
-                    ..GuestCase::new("advice-consumer-guest")
-                };
+                advice_consumer => advice_consumer_case();
             }
         };
+    }
+
+    #[cfg(not(feature = "field-inline"))]
+    fn advice_consumer_case() -> GuestCase {
+        GuestCase {
+            inputs: encode(&12u64),
+            untrusted_advice: encode(&5u64),
+            trusted_advice: encode(&7u64),
+            expected_output: Some(encode(&(7u64 * 3 + 5))),
+            ..GuestCase::new("advice-consumer-guest")
+        }
     }
 
     /// The limb-conversion conformance guest, importing and reading back `p − 1`
@@ -291,6 +296,12 @@ mod matrix {
         #[cfg(not(feature = "field-inline"))]
         use super::*;
         guests!(emit_tests);
+
+        #[cfg(not(feature = "field-inline"))]
+        #[test]
+        fn poseidon_transcript() {
+            super::mode::prove_and_verify_poseidon(&advice_consumer_case());
+        }
     }
 
     #[cfg(all(feature = "zk", not(feature = "akita")))]
@@ -298,6 +309,12 @@ mod matrix {
         #[cfg(not(feature = "field-inline"))]
         use super::*;
         guests!(emit_tests);
+
+        #[cfg(not(feature = "field-inline"))]
+        #[test]
+        fn poseidon_transcript() {
+            super::mode::prove_and_verify_poseidon(&advice_consumer_case());
+        }
     }
 
     #[cfg(feature = "akita")]
@@ -313,22 +330,45 @@ mod matrix {
         use jolt_dory::DoryScheme;
         use jolt_field::Fr;
         use jolt_prover::{dory, JoltBackend, JoltSharedPreprocessing, ProverConfig};
-        use jolt_transcript::{Keccak, ProverState, VerifierState};
+        use jolt_transcript::{
+            ChallengeSponge, Keccak, PoseidonSponge, ProverInit, ProverState, VerifierInit,
+            VerifierState,
+        };
         use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
 
         use crate::support::{self, GuestCase};
 
         pub fn prove_and_verify(case: &GuestCase) {
+            prove_and_verify_with::<Keccak>(case);
+        }
+
+        /// Poseidon frames each absorb as its own message, so this catches a
+        /// prover and verifier that absorb the same bytes in different splits.
+        pub fn prove_and_verify_poseidon(case: &GuestCase) {
+            prove_and_verify_with::<PoseidonSponge>(case);
+        }
+
+        fn prove_and_verify_with<H>(case: &GuestCase)
+        where
+            H: ChallengeSponge<Fr> + 'static,
+            ProverState<H>: ProverInit,
+            for<'a> VerifierState<'a, H>: VerifierInit<'a>,
+        {
             #[cfg(feature = "zk")]
             {
                 let case = case.clone();
-                support::with_zk_stack(move || prove_case(&case));
+                support::with_zk_stack(move || prove_case::<H>(&case));
             }
             #[cfg(not(feature = "zk"))]
-            prove_case(case);
+            prove_case::<H>(case);
         }
 
-        fn prove_case(case: &GuestCase) {
+        fn prove_case<H>(case: &GuestCase)
+        where
+            H: ChallengeSponge<Fr>,
+            ProverState<H>: ProverInit,
+            for<'a> VerifierState<'a, H>: VerifierInit<'a>,
+        {
             let prepared = support::prepare(case);
             let mut config = ProverConfig::derive_from_dimensions::<Fr>(
                 prepared.trace.dimensions,
@@ -362,7 +402,7 @@ mod matrix {
                 .include_trusted_advice(trusted.is_some()),
                 JoltVmWitnessInputs::new(&prepared.program, &program_preprocessing, prepared.trace),
             );
-            let proof = dory::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, ProverState<Keccak>>(
+            let proof = dory::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, ProverState<H>>(
                 JoltBackend::optimized().with_witness(&witness),
                 &preprocessing,
                 &config,
@@ -370,7 +410,7 @@ mod matrix {
                 &public_io,
             )
             .expect("Dory proof");
-            jolt_verifier::verify::<Fr, DoryScheme, Pedersen<Bn254G1>, VerifierState<'_, Keccak>>(
+            jolt_verifier::verify::<Fr, DoryScheme, Pedersen<Bn254G1>, VerifierState<'_, H>>(
                 &preprocessing.verifier,
                 &public_io,
                 &proof,

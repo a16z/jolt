@@ -67,6 +67,12 @@ class CheckStyleInvariantsTests(unittest.TestCase):
         self.assertIn("use `Kind::ADD`", findings[0][1])
         self.assertEqual(check(["let kind = Kind::ADD;"]), [])
 
+    def test_ignores_precise_capturing_use_bound(self) -> None:
+        self.assertEqual(
+            check_variant_imports(["fn f(&self) -> impl Fn(&mut [Self::Unit]) + use<Self>;"]),
+            [],
+        )
+
     def test_rejects_imported_enum_variant(self) -> None:
         findings = check_variant_imports(["use crate::instruction::Kind::ADD;"])
         self.assertEqual(len(findings), 1)

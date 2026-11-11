@@ -1,10 +1,11 @@
 //! Verifier-only operations on `spongefish::VerifierState`.
 
-use crate::pow::{nonce_word, SpongePow, CHECK_BYTES};
+use crate::codec::{SpongeUnit, Units};
+use crate::pow::SpongePow;
+use crate::transcript::sealed::Sealed as _;
 use crate::{verifier_transcript, Transcript, TAG_BYTES};
 use spongefish::{
-    DuplexSpongeInit, DuplexSpongeInterface, Encoding, FromNarg, Transcript as _,
-    VerificationError, VerifierState,
+    DuplexSpongeInit, DuplexSpongeInterface, Encoding, FromNarg, VerificationError, VerifierState,
 };
 
 /// The verifier's side of a [`Transcript`]: messages read from the NARG
@@ -22,8 +23,9 @@ pub trait VerifierTranscript: Transcript {
     /// For `bits == 0` this does nothing. For `1 <= bits <= MAX_POW_BITS`, it
     /// reads a nonce below `2^(bits + 7)` as canonical LEB128 from the NARG
     /// string and absorbs it as one `u64` little-endian word, then squeezes
-    /// eight bytes and requires the low `bits` bits of their little-endian
-    /// `u64` to be zero.
+    /// the check and requires its low `bits` bits to be zero: eight bytes read
+    /// as a little-endian `u64` on a byte sponge, one element's canonical
+    /// integer on `PoseidonSponge`.
     ///
     /// The step protects the verifier messages drawn after it, up to the next
     /// prover message. The protocol must draw the challenges it protects
@@ -79,7 +81,7 @@ pub trait VerifierInit<'a>: VerifierTranscript + Sized {
     ) -> Self;
 }
 
-impl<'a, H: DuplexSpongeInit<U = u8>> VerifierInit<'a> for VerifierState<'a, H> {
+impl<'a, H: DuplexSpongeInit<U: SpongeUnit>> VerifierInit<'a> for VerifierState<'a, H> {
     fn init(
         session: &[u8; TAG_BYTES],
         statement: &(impl Encoding + ?Sized),
@@ -91,10 +93,10 @@ impl<'a, H: DuplexSpongeInit<U = u8>> VerifierInit<'a> for VerifierState<'a, H> 
 
 impl<H> VerifierTranscript for VerifierState<'_, H>
 where
-    H: DuplexSpongeInterface<U = u8>,
+    H: DuplexSpongeInterface<U: SpongeUnit>,
 {
     fn prover_message<T: Encoding + FromNarg>(&mut self) -> Result<T, VerificationError> {
-        VerifierState::prover_message::<T>(self)
+        VerifierState::prover_message::<Units<T>>(self).map(|units| units.0)
     }
 
     fn check_grind(&mut self, bits: u32) -> Result<(), VerificationError> {
@@ -102,22 +104,22 @@ where
             return Ok(());
         }
         let Some(pow) = SpongePow::new(bits) else {
-            return self.check(|| false);
+            return self.require(false);
         };
         // A truncated, non-canonical or out-of-range nonce fails the read,
         // which poisons the state and absorbs nothing; a failed check poisons
-        // it through `check`. Either way `check_eof` fails afterwards too.
+        // it through `require`. Either way `check_eof` fails afterwards too.
         let _nonce: u64 = VerifierState::prover_message_with(
             self,
             |reader| {
                 pow.read_nonce(|| reader.read::<u8>())?
                     .ok_or(VerificationError)
             },
-            |&nonce| nonce_word(nonce),
+            |&nonce| H::U::encode_word(nonce),
         )?;
         let passes =
-            VerifierState::verifier_message_as(self, CHECK_BYTES, |check| pow.accepts(check));
-        self.check(|| passes)
+            VerifierState::verifier_message_as(self, H::U::CHECK_LEN, |check| pow.accepts(check));
+        self.require(passes)
     }
 
     fn check_eof(self) -> Result<(), VerificationError> {
