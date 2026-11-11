@@ -4,7 +4,8 @@
 //! `verify_clear` core, asserting byte-identical transcript states. This pins
 //! the prove-side engine to the verifier independently of any real stage.
 //! The toy locks run under both Dory and Akita. Clear RV64 stage-1 twins
-//! also check repeatable exits and rejected prefixes on trace-backed witnesses.
+//! also check repeatable exits, rejected prefixes and stopping-row opening
+//! consistency on trace-backed witnesses.
 
 #![expect(clippy::unwrap_used, reason = "test crate")]
 
@@ -982,8 +983,9 @@ mod stopping {
         }
     }
 
+    /// Stage 1 rejects target and CanEnd openings inconsistent with the proved stopping row.
     #[test]
-    fn verifier_rejects_tampered_stopping_target_and_authenticated_flag() {
+    fn stage1_rejects_inconsistent_stopping_row_openings() {
         let witness = witness(MIN_PADDED_TRACE_LENGTH, End::Jal);
         let (mut output, _) = prove(&witness, true).unwrap();
         let honest = output.claims.clone();
