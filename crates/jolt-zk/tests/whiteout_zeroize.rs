@@ -125,18 +125,20 @@ fn gaussian_chunk_seeds_are_zeroed() {
     );
 }
 
-/// The hiding randomness digits. Radix-256 digits are their bytes minus
-/// 128, so their memory is the marker with every top bit flipped.
+/// The hiding randomness digits. Radix-64 digits, the largest base
+/// `sample_box_digits` accepts, are their bytes' low six bits minus 32, so
+/// their memory is the marker with each byte mapped that way.
 #[test]
 fn box_digits_are_zeroed() {
     let _serial = SERIAL.lock().unwrap();
-    let digits = MARKER.map(|byte| byte ^ 0x80);
+    let to_digit = |byte: u8| (byte & 0x3f).wrapping_sub(32);
+    let digits = MARKER.map(to_digit);
     assert_eq!(
         marked_frees(digits, || {
             let mut bytes = vec![0u8; 1024];
             MarkerRng.fill_bytes(&mut bytes);
             for byte in &mut bytes {
-                *byte ^= 0x80;
+                *byte = to_digit(*byte);
             }
             drop(black_box(bytes));
         }),
@@ -144,7 +146,7 @@ fn box_digits_are_zeroed() {
     );
     assert_eq!(
         marked_frees(digits, || drop(
-            sample_box_digits(&mut MarkerRng, 1024, 8).unwrap()
+            sample_box_digits(&mut MarkerRng, 1024, 6).unwrap()
         )),
         0
     );
