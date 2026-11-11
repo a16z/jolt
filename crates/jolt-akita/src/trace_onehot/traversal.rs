@@ -336,7 +336,9 @@ where
             }
             let mut blocks = vec![E::zero(); num_columns * subring_dimension];
             for (column_sums, column_blocks) in sums
-                .chunks_exact(D)
+                .as_chunks::<D>()
+                .0
+                .iter()
                 .zip(blocks.chunks_exact_mut(subring_dimension))
             {
                 for (coefficient, sum) in column_sums.iter().enumerate() {

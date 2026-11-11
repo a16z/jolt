@@ -3,8 +3,8 @@
 The Fp128 proofs cover the register-parameterized scalar addition,
 subtraction, and multiplication bodies for every valid Fp128 offset on
 AArch64 and baseline x86-64. They also prove complete callable objects for
-`Prime128OffsetA7F7`, including the literal constant load and return sequence,
-and the A7F7-specific x86-64 BMI2 and ADX multiplication object. Production
+`Prime128Offset6A23801F`, including the literal constant load and return sequence,
+and the 6A23801F-specific x86-64 BMI2 and ADX multiplication object. Production
 Rust includes the same instruction body files.
 
 The Fp64 proofs cover scalar addition, subtraction, and multiplication for
@@ -39,17 +39,20 @@ boundary.
 
 The generic body theorems quantify over `C`, assume the same offset bounds as
 the Rust `Fp128` implementation, and start immediately after the fixture
-object's constant-load instruction with `C` in `x4` or `r8`. They prove the
-canonical result modulo `2^128 - C` for every canonical input. Both public
-offsets, 275 and A7F7, have machine-checked proofs that they satisfy those
+object's constant load with `C` in `x4` or `r8`. On AArch64 that load is two
+instructions (`movz`, `movk`); on x86-64 it is one `mov`. They prove the
+canonical result modulo `2^128 - C` for every canonical input. The AArch64
+generic theorems also prove that `x4` still holds `C` when the body ends, which
+the inline assembly relies on because it passes `C` as an unchanged input. Both public
+offsets, 275 and 6A23801F, have machine-checked proofs that they satisfy those
 bounds.
 
-The A7F7 corollaries cover complete callable AArch64 and Linux x86-64 witness
+The 6A23801F corollaries cover complete callable AArch64 and Linux x86-64 witness
 functions. The baseline x86-64 bodies copy their internal results to the
 System V return registers `rax:rdx`. The BMI2 and ADX multiplication body
 creates its result directly in those registers. These corollaries prove the
 literal load, result moves where present, `ret` behavior, and an ABI-safe
-frame. A separate certificate proves that the A7F7 modulus is prime.
+frame. A separate certificate proves that the 6A23801F modulus is prime.
 
 The [scalar Fp64 guide](../../book/src/how/formal-verification/field-kernels-fp64.md)
 states the precise Fp64 claim, explains the `2^64 - 59` reduction, and lists
@@ -108,7 +111,7 @@ Use `aarch64` instead of `x86_64` to check the AArch64 path.
 ## Differential fuzzing
 
 The `fp128-asm-differential` target compares assembly with portable arithmetic
-for both public offsets, 275 and A7F7, and a test-only generic offset 173, for
+for both public offsets, 275 and 6A23801F, and a test-only generic offset 173, for
 addition, subtraction, and multiplication. The extra offset ensures the
 register-parameterized path stays independently reachable. On AArch64 it also
 compares the assembly square and fused multiply-add kernels. CI fuzzes the
@@ -169,6 +172,9 @@ outside the present Fp128 machine-proof scope. They retain differential or
 ordinary test coverage as described in the Book chapter.
 
 ## Scalar Fp64 checks
+
+The runners select the Rust toolchain recorded in `fp64-certified-builds.json`.
+An explicit `RUSTUP_TOOLCHAIN` override must match that matrix's compiler identity.
 
 Run the fast Fp64 byte check with
 

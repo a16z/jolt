@@ -74,9 +74,21 @@ pub(crate) fn decode_glv_sign_word(sign: u64) -> Result<bool, Secp256k1Error> {
 /// non-montgomery form.
 /// uses arkworks Fq for host multiplication and division with appropriate conversions
 /// defers to inlines for multiplication and division in guest builds
-#[derive(Clone, PartialEq, Debug)]
+#[derive(Clone, Debug)]
 pub struct Secp256k1Fq {
     e: [u64; 4],
+}
+
+impl PartialEq for Secp256k1Fq {
+    #[inline(always)]
+    fn eq(&self, other: &Self) -> bool {
+        // Compare limbs directly rather than lowering array equality to memcmp.
+        ((self.e[0] ^ other.e[0])
+            | (self.e[1] ^ other.e[1])
+            | (self.e[2] ^ other.e[2])
+            | (self.e[3] ^ other.e[3]))
+            == 0
+    }
 }
 
 impl Secp256k1Fq {
@@ -112,7 +124,7 @@ impl Secp256k1Fq {
     }
     #[inline(always)]
     pub fn is_zero(&self) -> bool {
-        self.e == [0u64; 4]
+        (self.e[0] | self.e[1] | self.e[2] | self.e[3]) == 0
     }
     #[inline(always)]
     pub fn neg(&self) -> Self {
@@ -376,9 +388,21 @@ impl ECField for Secp256k1Fq {
 /// non-montgomery form.
 /// uses arkworks Fr for host multiplication and division with appropriate conversions
 /// defers to inlines for multiplication and division in guest builds
-#[derive(Clone, PartialEq, Debug)]
+#[derive(Clone, Debug)]
 pub struct Secp256k1Fr {
     e: [u64; 4],
+}
+
+impl PartialEq for Secp256k1Fr {
+    #[inline(always)]
+    fn eq(&self, other: &Self) -> bool {
+        // Compare limbs directly rather than lowering array equality to memcmp.
+        ((self.e[0] ^ other.e[0])
+            | (self.e[1] ^ other.e[1])
+            | (self.e[2] ^ other.e[2])
+            | (self.e[3] ^ other.e[3]))
+            == 0
+    }
 }
 
 impl Secp256k1Fr {
@@ -416,7 +440,7 @@ impl Secp256k1Fr {
     }
     #[inline(always)]
     pub fn is_zero(&self) -> bool {
-        self.e == [0u64; 4]
+        (self.e[0] | self.e[1] | self.e[2] | self.e[3]) == 0
     }
     #[inline(always)]
     pub fn neg(&self) -> Self {

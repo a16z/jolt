@@ -19,6 +19,7 @@
 //!   claim. Round polynomials and output claims are
 //!   byte-identical (field arithmetic is exact under any regrouping).
 
+use crate::optimized::support::eq_round_error;
 use jolt_claims::protocols::jolt::geometry::dimensions::committed_address_chunks;
 use jolt_claims::protocols::jolt::relations::ram::RamRaVirtualizationOutputClaims;
 use jolt_claims::protocols::jolt::{JoltDerivedId, RamRaVirtualizationPublic};
@@ -326,6 +327,8 @@ impl<F: JoltField> RamRaVirtualizationKernel<F> {
 
         let q_evals: Vec<F> = block_lanes.into_iter().map(|lane| lane.reduce()).collect();
         self.gruen
+            .round()
+            .ok_or_else(|| eq_round_error(round))?
             .checked_toom(&q_evals, previous_claim, round, || {
                 self.gruen.par_fold_out_in_prefix(
                     prefix_pairs,
@@ -396,13 +399,20 @@ impl<F: JoltField> RamRaVirtualizationKernel<F> {
         );
 
         self.gruen
+            .round()
+            .ok_or_else(|| eq_round_error(round))?
             .checked_round_poly(&mut q_evals, previous_claim, round)
     }
 
-    fn bind(&mut self, challenge: F) {
-        self.gruen.bind(challenge);
+    fn bind(&mut self, challenge: F) -> Result<(), SumcheckError<F>> {
+        let round = self.progress.bound();
+        self.gruen
+            .round_mut()
+            .ok_or_else(|| eq_round_error(round))?
+            .bind(challenge);
         self.folded_ra.bind(challenge);
         self.progress.advance();
+        Ok(())
     }
 }
 
@@ -418,14 +428,13 @@ impl<F: JoltField> ProveRounds<F> for RamRaVirtualizationKernel<F> {
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
         if let Some(challenge) = bind {
-            self.bind(challenge);
+            self.bind(challenge)?;
         }
         self.message(round, previous_claim)
     }
 
     fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {
-        self.bind(bind);
-        Ok(())
+        self.bind(bind)
     }
 }
 

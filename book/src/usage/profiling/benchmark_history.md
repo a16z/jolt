@@ -56,8 +56,11 @@ The dashboard shows the raw PR measurements without bands.
 
 The sticky PR comment links to full results and benchmark history. It lists every
 core-count/trace-ceiling pair with a recorded process exit, even when no change
-exceeds 3%. Its table keeps only larger time or peak-RSS changes and identifies
-each row's physical cores, `2^k` ceiling and measured base/head trace rows.
+exceeds its per-case reporting threshold. Its table keeps a row only when the
+time or peak-RSS change exceeds the larger of 3% and that metric's observed
+envelope, comparing head/base and base/head symmetrically. Missing envelopes use
+3%. Each metric's threshold is shown next to its signed change. Each row
+identifies its physical cores, `2^k` ceiling and measured base/head trace rows.
 If planning refuses a labelled PR, the same sticky comment instead gives the
 reason and links to the planning run. A dependent job in that workflow reads its
 own plan artifact and runs only main's code, using the same comment writer as

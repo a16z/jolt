@@ -3,6 +3,7 @@ use super::{arithmetic, inverse};
 use crate::{CanonicalBytes, CanonicalEncoding, Field, Ring, WithAccumulator};
 #[cfg(feature = "allocative")]
 use allocative::Allocative;
+use jolt_utils::alloc::ZeroBytesValid;
 use rand_core::RngCore;
 use std::fmt::{Display, Formatter, Result as FmtResult};
 
@@ -65,7 +66,12 @@ impl Ring for F128 {
     }
 }
 
+// SAFETY: the stored polynomial coefficients are integers (or F64 integers),
+// and the additive identity has every coefficient and bit equal to zero.
+unsafe impl ZeroBytesValid for F128 {}
+
 impl Field for F128 {
+    zeroed_field_vec!();
     fn inverse(&self) -> Option<Self> {
         inverse(*self)
     }
@@ -115,7 +121,7 @@ impl CanonicalEncoding for F128 {
     }
 
     fn num_bits(&self) -> u32 {
-        u128::BITS - self.0.leading_zeros()
+        self.0.bit_width()
     }
 }
 
