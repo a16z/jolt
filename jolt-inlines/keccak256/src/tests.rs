@@ -83,6 +83,9 @@ mod exec_unit {
 }
 
 mod sequence {
+    use crate::{
+        INLINE_OPCODE, KECCAK256_ABSORB_PERMUTE_FUNCT3, KECCAK256_FUNCT3, KECCAK256_FUNCT7,
+    };
     use tracer::utils::{
         inline_test_harness::InlineTestHarness, virtual_registers::VirtualRegisterAllocator,
     };
@@ -90,13 +93,13 @@ mod sequence {
     #[test]
     fn rows_include_register_resets() {
         for (funct3, expected) in [
-            (crate::KECCAK256_FUNCT3, 3009),
-            (crate::KECCAK256_ABSORB_PERMUTE_FUNCT3, 3043),
+            (KECCAK256_FUNCT3, 3009),
+            (KECCAK256_ABSORB_PERMUTE_FUNCT3, 3043),
         ] {
             let instruction = InlineTestHarness::create_default_instruction(
-                crate::INLINE_OPCODE,
+                INLINE_OPCODE,
                 funct3,
-                crate::KECCAK256_FUNCT7,
+                KECCAK256_FUNCT7,
             );
             let sequence = instruction.inline_sequence(&VirtualRegisterAllocator::default());
             assert_eq!(sequence.len(), expected);
