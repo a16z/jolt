@@ -288,6 +288,88 @@ fn inline_provider_error_releases_rd_zero_temporary() -> Result<(), ExpansionErr
     Ok(())
 }
 
+/// Provider whose rows use the inline's `rd` operand: first as a store base
+/// (a read), or first as a destination and then as a store base.
+struct RdOperandProvider {
+    write_first: bool,
+}
+
+impl InlineExpansionProvider for RdOperandProvider {
+    fn expand_inline(
+        &mut self,
+        instruction: &SourceInstruction,
+        _profile: jolt_riscv::JoltInstructionProfile,
+    ) -> Result<ExpandedInstructionSequence, ExpansionError> {
+        let row = instruction.row();
+        let mut builder = InlineExpansionBuilder::new(*row);
+        let rd = row.operands.rd.ok_or(ExpansionError::MalformedInstruction(
+            "inline row missing rd",
+        ))?;
+        let rs1 = row
+            .operands
+            .rs1
+            .ok_or(ExpansionError::MalformedInstruction(
+                "inline row missing rs1",
+            ))?;
+        if self.write_first {
+            builder.emit_i(Kind::ADDI, rd, rs1, 0);
+        }
+        builder.emit_s(Kind::SD, rd, rs1, 0);
+        builder.finalize()
+    }
+}
+
+#[test]
+fn inline_rd_zero_read_before_write_is_rejected() -> Result<(), ExpansionError> {
+    let input = instruction(SourceInstructionKind::Inline, Some(0), false);
+    let mut allocator = ExpansionAllocator::new();
+    assert!(matches!(
+        expand_instruction_with_provider(
+            &input,
+            &mut allocator,
+            &mut RdOperandProvider { write_first: false },
+            RV64IMAC_JOLT
+        ),
+        Err(ExpansionError::InlineReadsZeroRd { register: 40 })
+    ));
+
+    let register = allocator.allocate()?;
+    assert_eq!(register, 40);
+    allocator.release(register)?;
+    Ok(())
+}
+
+#[test]
+fn inline_rd_zero_read_after_write_is_allowed() -> Result<(), ExpansionError> {
+    let input = instruction(SourceInstructionKind::Inline, Some(0), false);
+    let mut allocator = ExpansionAllocator::new();
+    let expanded = rows(expand_instruction_with_provider(
+        &input,
+        &mut allocator,
+        &mut RdOperandProvider { write_first: true },
+        RV64IMAC_JOLT,
+    )?);
+    assert_eq!(expanded.len(), 2);
+    assert_eq!(expanded[1].instruction_kind, JoltInstructionKind::SD);
+    assert_eq!(expanded[1].operands.rs1, Some(40));
+    Ok(())
+}
+
+#[test]
+fn inline_rd_nonzero_read_is_allowed() -> Result<(), ExpansionError> {
+    let input = instruction(SourceInstructionKind::Inline, Some(5), false);
+    let mut allocator = ExpansionAllocator::new();
+    let expanded = rows(expand_instruction_with_provider(
+        &input,
+        &mut allocator,
+        &mut RdOperandProvider { write_first: false },
+        RV64IMAC_JOLT,
+    )?);
+    assert_eq!(expanded.len(), 1);
+    assert_eq!(expanded[0].operands.rs1, Some(5));
+    Ok(())
+}
+
 #[test]
 fn inline_provider_output_is_validated_and_stamped() {
     struct BadProvider;

@@ -16,7 +16,9 @@ mod tests {
         path::{Path, PathBuf},
     };
 
-    use jolt_program::expand::{expand_instruction_with_provider, ExpansionAllocator};
+    use jolt_program::expand::{
+        expand_instruction_with_provider, ExpansionAllocator, ExpansionError,
+    };
     use jolt_riscv::{
         JoltInstructionRow, NormalizedOperands, SourceInlineKey, SourceInstruction,
         SourceInstructionKind, SourceInstructionRow, RV64IMAC_JOLT_ALL_INLINES,
@@ -37,6 +39,10 @@ mod tests {
         extension: String,
         row_count: usize,
         output_sha256: String,
+        /// The expansion error, when the scenario is rejected (for example
+        /// `rd = x0` for an inline that reads its `rd` operand).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
     }
 
     #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -139,17 +145,25 @@ mod tests {
                 let input = source_instruction(registration, *scenario);
                 let mut provider = TracerInlineExpansionProvider::new();
                 let mut allocator = ExpansionAllocator::new();
-                let expanded = expand_instruction_with_provider(
+                let (row_count, output_sha256, error) = match expand_instruction_with_provider(
                     &input,
                     &mut allocator,
                     &mut provider,
                     RV64IMAC_JOLT_ALL_INLINES,
-                )?;
-                let rows = expanded
-                    .into_iter()
-                    .map(JoltInstructionRow::from)
-                    .collect::<Vec<_>>();
-                let output_sha256 = hex::encode(Sha256::digest(serde_json::to_vec(&rows)?));
+                ) {
+                    Ok(expanded) => {
+                        let rows = expanded
+                            .into_iter()
+                            .map(JoltInstructionRow::from)
+                            .collect::<Vec<_>>();
+                        let output_sha256 = hex::encode(Sha256::digest(serde_json::to_vec(&rows)?));
+                        (rows.len(), output_sha256, None)
+                    }
+                    Err(error @ ExpansionError::InlineReadsZeroRd { .. }) => {
+                        (0, String::new(), Some(error.to_string()))
+                    }
+                    Err(error) => return Err(error.into()),
+                };
                 cases.push(RegisteredInlineExpansionParityCase {
                     name: format!("{}::{}", registration.name, scenario.name),
                     inline_name: registration.name.to_string(),
@@ -157,8 +171,9 @@ mod tests {
                     funct3: registration.funct3 as u8,
                     funct7: registration.funct7 as u8,
                     extension: format!("{:?}", registration.extension),
-                    row_count: rows.len(),
+                    row_count,
                     output_sha256,
+                    error,
                 });
             }
         }
