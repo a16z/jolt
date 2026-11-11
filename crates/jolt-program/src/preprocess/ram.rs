@@ -31,7 +31,9 @@ pub enum RamDomainError {
     HeapBelowLowest { heap_end: u64, lowest_address: u64 },
     #[error("RAM domain size exceeds this platform's addressable usize range")]
     DomainTooLarge,
-    #[error("maximum padded RAM domain of {max_ram_k} words from {lowest_address} exceeds the 64-bit address space")]
+    #[error(
+        "maximum padded RAM domain of {max_ram_k} words from {lowest_address} exceeds the 64-bit address space"
+    )]
     AddressSpaceOverflow {
         lowest_address: u64,
         max_ram_k: usize,
@@ -109,39 +111,10 @@ pub fn code_word_intervals(
     source_extents: impl IntoIterator<Item = (u64, bool)>,
     lowest_address: u64,
 ) -> Result<Vec<(usize, usize)>, PreprocessingError> {
-    if !lowest_address.is_multiple_of(8) {
-        return Err(PreprocessingError::InvalidCodeWordIntervals(
-            "lowest RAM address is not doubleword aligned",
-        ));
-    }
-    let mut intervals = Vec::new();
-    for (address, is_compressed) in source_extents {
-        if address == 0 {
-            continue;
-        }
-        let end = address
-            .checked_add(if is_compressed { 2 } else { 4 })
-            .ok_or(PreprocessingError::InvalidCodeWordIntervals(
-                "source instruction extent overflows",
-            ))?;
-        let offset = address.checked_sub(lowest_address).ok_or(
-            PreprocessingError::InvalidCodeWordIntervals("source instruction is below RAM"),
-        )?;
-        if !address.is_multiple_of(2) {
-            return Err(PreprocessingError::InvalidCodeWordIntervals(
-                "source instruction address is not halfword aligned",
-            ));
-        }
-        let start = usize::try_from(offset / 8).map_err(|_| {
-            PreprocessingError::InvalidCodeWordIntervals("source word exceeds usize range")
-        })?;
-        let end = usize::try_from((end - lowest_address).div_ceil(8)).map_err(|_| {
-            PreprocessingError::InvalidCodeWordIntervals("source word exceeds usize range")
-        })?;
-        intervals.push((start, end));
-    }
+    let mut intervals =
+        source_word_intervals(source_extents, lowest_address)?.collect::<Result<Vec<_>, _>>()?;
     intervals.sort_unstable();
-    let mut merged: Vec<(usize, usize)> = Vec::with_capacity(intervals.len());
+    let mut merged: Vec<(usize, usize)> = Vec::new();
     for (start, end) in intervals {
         if let Some((_, previous_end)) = merged.last_mut() {
             if start <= *previous_end {
@@ -151,7 +124,44 @@ pub fn code_word_intervals(
         }
         merged.push((start, end));
     }
+    merged.shrink_to_fit();
     Ok(merged)
+}
+
+fn source_word_intervals(
+    source_extents: impl IntoIterator<Item = (u64, bool)>,
+    lowest_address: u64,
+) -> Result<impl Iterator<Item = Result<(usize, usize), PreprocessingError>>, PreprocessingError> {
+    if !lowest_address.is_multiple_of(8) {
+        return Err(PreprocessingError::InvalidCodeWordIntervals(
+            "lowest RAM address is not doubleword aligned",
+        ));
+    }
+    Ok(source_extents
+        .into_iter()
+        .filter(|&(address, _)| address != 0)
+        .map(move |(address, is_compressed)| {
+            let end = address
+                .checked_add(if is_compressed { 2 } else { 4 })
+                .ok_or(PreprocessingError::InvalidCodeWordIntervals(
+                    "source instruction extent overflows",
+                ))?;
+            let offset = address.checked_sub(lowest_address).ok_or(
+                PreprocessingError::InvalidCodeWordIntervals("source instruction is below RAM"),
+            )?;
+            if !address.is_multiple_of(2) {
+                return Err(PreprocessingError::InvalidCodeWordIntervals(
+                    "source instruction address is not halfword aligned",
+                ));
+            }
+            let start = usize::try_from(offset / 8).map_err(|_| {
+                PreprocessingError::InvalidCodeWordIntervals("source word exceeds usize range")
+            })?;
+            let end = usize::try_from((end - lowest_address).div_ceil(8)).map_err(|_| {
+                PreprocessingError::InvalidCodeWordIntervals("source word exceeds usize range")
+            })?;
+            Ok((start, end))
+        }))
 }
 
 /// Expansion metadata retains the source length on the final row only.
@@ -160,13 +170,64 @@ pub fn bytecode_code_word_intervals(
     bytecode: &[JoltInstructionRow],
     lowest_address: u64,
 ) -> Result<Vec<(usize, usize)>, PreprocessingError> {
-    code_word_intervals(
-        bytecode
-            .iter()
-            .filter(|row| row.virtual_sequence_remaining.unwrap_or(0) == 0)
-            .map(|row| (row.address as u64, row.is_compressed)),
-        lowest_address,
-    )
+    code_word_intervals(bytecode_source_extents(bytecode), lowest_address)
+}
+
+fn bytecode_source_extents(
+    bytecode: &[JoltInstructionRow],
+) -> impl Iterator<Item = (u64, bool)> + '_ {
+    bytecode
+        .iter()
+        .filter(|row| row.virtual_sequence_remaining.unwrap_or(0) == 0)
+        .map(|row| (row.address as u64, row.is_compressed))
+}
+
+pub(super) fn validate_bytecode_code_word_intervals(
+    intervals: &[(usize, usize)],
+    bytecode: &[JoltInstructionRow],
+    memory_layout: &MemoryLayout,
+) -> Result<(), PreprocessingError> {
+    validate_code_word_intervals(intervals, memory_layout)?;
+    let lowest_address = memory_layout.get_lowest_address();
+    let extents = source_word_intervals(bytecode_source_extents(bytecode), lowest_address)?;
+    let mut expected = intervals.iter().copied();
+    let mut merged: Option<(usize, usize)> = None;
+    let mut previous_start = None;
+    let mut matches = true;
+    for extent in extents {
+        let (start, end) = extent?;
+        // BytecodePCMapper::try_new checks expansion runs but does not enforce
+        // address order. Only unordered word extents need the sorting fallback.
+        if previous_start.is_some_and(|previous| start < previous) {
+            return if intervals == bytecode_code_word_intervals(bytecode, lowest_address)? {
+                Ok(())
+            } else {
+                Err(PreprocessingError::InvalidCodeWordIntervals(
+                    "protected words do not match decoded source extents",
+                ))
+            };
+        }
+        previous_start = Some(start);
+        match merged.as_mut() {
+            Some((_, previous_end)) if start <= *previous_end => {
+                *previous_end = (*previous_end).max(end);
+            }
+            _ => {
+                if let Some(interval) = merged.replace((start, end)) {
+                    matches &= expected.next() == Some(interval);
+                }
+            }
+        }
+    }
+    if let Some(interval) = merged {
+        matches &= expected.next() == Some(interval);
+    }
+    if !matches || expected.next().is_some() {
+        return Err(PreprocessingError::InvalidCodeWordIntervals(
+            "protected words do not match decoded source extents",
+        ));
+    }
+    Ok(())
 }
 
 /// Membership in an admitted canonical interval list, without a RAM-sized mask.

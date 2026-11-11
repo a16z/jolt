@@ -4,8 +4,8 @@ use jolt_riscv::{JoltInstructionProfile, JoltInstructionRow};
 use crate::preprocess::{
     bytecode::BytecodePreprocessing,
     ram::{
-        bytecode_code_word_intervals, compute_max_ram_k, validate_code_word_intervals,
-        RAMPreprocessing,
+        bytecode_code_word_intervals, compute_max_ram_k, validate_bytecode_code_word_intervals,
+        validate_code_word_intervals, RAMPreprocessing,
     },
     PreprocessingError,
 };
@@ -46,17 +46,11 @@ impl JoltProgramPreprocessing {
     }
 
     pub fn validate_code_word_intervals(&self) -> Result<(), PreprocessingError> {
-        validate_code_word_intervals(&self.ram.code_word_intervals, &self.memory_layout)?;
-        let expected = bytecode_code_word_intervals(
+        validate_bytecode_code_word_intervals(
+            &self.ram.code_word_intervals,
             &self.bytecode.bytecode,
-            self.memory_layout.get_lowest_address(),
-        )?;
-        if self.ram.code_word_intervals != expected {
-            return Err(PreprocessingError::InvalidCodeWordIntervals(
-                "protected words do not match decoded source extents",
-            ));
-        }
-        Ok(())
+            &self.memory_layout,
+        )
     }
 
     /// Bytes the bytecode table, its PC map and the RAM program image hold on
@@ -217,6 +211,15 @@ mod tests {
             bad.ram.code_word_intervals = intervals;
             assert!(bad.validate_code_word_intervals().is_err());
         }
+    }
+
+    #[test]
+    fn protection_coverage_accepts_unordered_sources_and_rejects_missing_words() {
+        let mut program = preprocessing();
+        program.bytecode.bytecode.swap(1, 4);
+        assert_eq!(program.validate_code_word_intervals(), Ok(()));
+        let _ = program.ram.code_word_intervals.remove(0);
+        assert!(program.validate_code_word_intervals().is_err());
     }
 
     #[cfg(feature = "serialization")]
