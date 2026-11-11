@@ -104,16 +104,3 @@ fn zero_budget_rejects_the_smallest_table() {
         ));
     }
 }
-
-#[test]
-#[should_panic(expected = "invalid equality-table prefix")]
-fn prefix_rejects_long_lengths() {
-    let _ = EqPolynomial::<Fr>::evals_prefix(&[] as &[Fr], None, 2);
-}
-
-#[test]
-#[should_panic(expected = "index out of bounds")]
-fn tensor_evaluate_index_rejects_out_of_range() {
-    let _ = TensorEqTable::<Fr>::new_with_scaling_and_split(&[] as &[Fr], Fr::from_u64(1), 0)
-        .evaluate_index(1);
-}

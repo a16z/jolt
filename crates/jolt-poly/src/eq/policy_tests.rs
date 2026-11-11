@@ -3,7 +3,8 @@ use super::failure_policy::FailAt;
 use crate::{AllocationCause, Budget, EqPolynomial, EqTableError, TensorEqTable};
 use jolt_field::{Fr, Prime128Offset275, Ring};
 use jolt_utils::alloc::ZeroAllocError;
-use std::panic::Location;
+use std::error::Error;
+use std::panic::{catch_unwind, Location, UnwindSafe};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 const UNLIMITED: Budget = Budget {
@@ -254,21 +255,100 @@ fn admission_reports_the_external_caller() {
 }
 
 #[test]
-#[should_panic(expected = "assertion failed: start <= len")]
-fn global_prefix_sum_rejects_long_prefix() {
-    let _ = EqPolynomial::<Fr>::prefix_sum(&[] as &[Fr], 2);
+fn allocation_errors_chain_the_allocator_error_once() {
+    let reserve = UNLIMITED.storage::<Fr>(usize::MAX).unwrap_err();
+    let zero = UNLIMITED
+        .table::<Fr>(usize::MAX, TableInit::Zero)
+        .unwrap_err();
+    for (error, allocator_error) in [
+        (
+            &reserve as &dyn Error,
+            Vec::<Fr>::new()
+                .try_reserve_exact(usize::MAX)
+                .unwrap_err()
+                .to_string(),
+        ),
+        (&zero, ZeroAllocError::CapacityOverflow.to_string()),
+    ] {
+        let source = error.source().unwrap();
+        assert_eq!(source.to_string(), allocator_error);
+        assert!(source.source().is_none());
+        assert!(!error.to_string().contains(&allocator_error));
+    }
 }
 
 #[test]
-#[should_panic(
-    expected = "assertion failed: range.start <= range.end && range.end <= self.0.len()"
-)]
-fn global_tensor_rejects_invalid_split() {
-    let _ = TensorEqTable::<Fr>::new_with_scaling_and_split(&[] as &[Fr], Fr::from_u64(1), 1);
+fn over_budget_states_the_request_and_the_budget() {
+    let error =
+        EqPolynomial::<Fr>::evals_in(&[Fr::from_u64(2); 20], None, Budget { max_bytes: 1 << 20 })
+            .unwrap_err();
+    let EqTableError::OverBudget { at, .. } = error else {
+        panic!("expected OverBudget, got {error:?}")
+    };
+    assert_eq!(
+        error.to_string(),
+        format!(
+            "eq table of 1048576 entries needs 33554432 bytes, over the 1048576-byte budget (requested at {at})"
+        )
+    );
+}
+
+fn global_panic_message(build: impl FnOnce() + UnwindSafe) -> String {
+    *catch_unwind(build)
+        .unwrap_err()
+        .downcast::<String>()
+        .unwrap()
 }
 
 #[test]
-#[should_panic(expected = "equality table capacity overflow")]
-fn global_rejects_dimension_overflow() {
-    let _ = EqPolynomial::<Fr>::evals(&[Fr::from_u64(2); usize::BITS as usize], None);
+fn global_panics_with_the_typed_error() {
+    let empty: &[Fr] = &[];
+    let cases: [(Box<dyn FnOnce() + UnwindSafe>, EqTableError); 5] = [
+        (
+            Box::new(|| {
+                let _ = EqPolynomial::<Fr>::prefix_sum(empty, 2);
+            }),
+            EqTableError::LengthMismatch {
+                expected: 1,
+                got: 2,
+            },
+        ),
+        (
+            Box::new(|| {
+                let _ = EqPolynomial::<Fr>::evals_prefix(empty, None, 2);
+            }),
+            EqTableError::LengthMismatch {
+                expected: 1,
+                got: 2,
+            },
+        ),
+        (
+            Box::new(|| {
+                let _ = TensorEqTable::<Fr>::new_with_scaling_and_split(empty, Fr::from_u64(1), 1);
+            }),
+            EqTableError::InvalidSplit {
+                outer_vars: 1,
+                num_vars: 0,
+            },
+        ),
+        (
+            Box::new(|| {
+                let table =
+                    TensorEqTable::<Fr>::new_with_scaling_and_split(empty, Fr::from_u64(1), 0);
+                let _ = table.evaluate_index(1);
+            }),
+            EqTableError::IndexOutOfRange { index: 1, len: 1 },
+        ),
+        (
+            Box::new(|| {
+                let _ = EqPolynomial::<Fr>::evals(&[Fr::from_u64(2); usize::BITS as usize], None);
+            }),
+            EqTableError::DimensionOverflow {
+                num_vars: usize::BITS as usize,
+            },
+        ),
+    ];
+    for (build, expected) in cases {
+        assert_eq!(global_panic_message(build), expected.to_string());
+    }
 }

@@ -69,40 +69,51 @@ pub struct Budget {
     pub max_bytes: usize,
 }
 
+/// The allocator's own error, displayed and chained unchanged.
 #[derive(Debug, Error)]
 pub enum AllocationCause {
-    #[error("{0}")]
+    #[error(transparent)]
     Reserve(#[from] TryReserveError),
-    #[error("zero allocation failed: {0:?}")]
+    #[error(transparent)]
     Zero(ZeroAllocError),
 }
 
 #[derive(Debug, Error)]
 pub enum EqTableError {
-    #[error("equality table capacity overflow ({num_vars} variables)")]
+    #[error("eq table over {num_vars} variables has more entries than usize can count")]
     DimensionOverflow { num_vars: usize },
-    #[error("equality table capacity overflow ({elements} elements of {element_size} bytes)")]
+    #[error(
+        "eq table of {elements} entries of {element_size} bytes each is too large to allocate"
+    )]
     SizeOverflow {
         elements: usize,
         element_size: usize,
     },
-    #[error("equality table requests {bytes} bytes, exceeding {max_bytes} at {at}")]
+    /// `elements` counts every buffer the budget admits together: all levels of
+    /// a cached table, or one tensor factor.
+    #[error(
+        "eq table of {elements} entries needs {bytes} bytes, over the {max_bytes}-byte budget (requested at {at})"
+    )]
     OverBudget {
+        elements: usize,
         bytes: usize,
         max_bytes: usize,
         at: &'static Location<'static>,
     },
-    #[error("equality table allocation of {elements} elements failed: {cause}")]
+    /// The allocator's error is the [`source`](std::error::Error::source).
+    #[error("allocating {elements} elements of eq-table storage failed")]
     AllocationFailed {
         elements: usize,
         #[source]
         cause: AllocationCause,
     },
-    #[error("invalid equality-table prefix (assertion failed: start <= len): expected at most {expected}, got {got}")]
+    #[error("eq-table prefix length {got} exceeds the table's {expected} entries")]
     LengthMismatch { expected: usize, got: usize },
-    #[error("index out of bounds: the len is {len} but the index is {index}")]
+    #[error("index {index} is outside the eq table's {len} entries")]
     IndexOutOfRange { index: usize, len: usize },
-    #[error("assertion failed: range.start <= range.end && range.end <= self.0.len() (split {outer_vars}, variables {num_vars})")]
+    #[error(
+        "tensor split of {outer_vars} outer variables exceeds the point's {num_vars} variables"
+    )]
     InvalidSplit { outer_vars: usize, num_vars: usize },
 }
 
@@ -155,6 +166,7 @@ impl Allocate for Budget {
             })?;
         if bytes > self.max_bytes {
             return Err(EqTableError::OverBudget {
+                elements,
                 bytes,
                 max_bytes: self.max_bytes,
                 at,
