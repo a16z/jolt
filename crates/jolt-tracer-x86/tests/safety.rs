@@ -11,10 +11,12 @@
 
 use common::constants::{RAM_START_ADDRESS, STACK_CANARY_SIZE};
 use common::jolt_device::{JoltDevice, JoltDeviceMemory, MemoryConfig};
+use jolt_platform::{JOLT_ADVICE_WRITE_CALL_ID, JOLT_PRINT_CALL_ID, JOLT_PRINT_STRING};
 use jolt_program::execution::{
     ChunkedExecutionBackend, ExecutionBackend, JoltProgram, TraceError, TraceInputs,
 };
 use jolt_program::expand::{expand_instruction, ExpansionAllocator};
+use jolt_riscv::instructions::VirtualHostIO;
 use jolt_riscv::{
     JoltInstructionKind as Kind, JoltInstructionRow, NormalizedOperands, RV64IMAC_JOLT,
 };
@@ -261,6 +263,88 @@ fn slow_load_rejects_addresses_below_the_lowest_mapped_word() {
             .helper_error
             .expect("low-load error")
             .contains("I/O underflow"));
+    }
+}
+
+#[test]
+fn loads_reject_the_padding_between_io_end_and_ram() {
+    let config = MemoryConfig {
+        max_input_size: 24,
+        max_output_size: 0,
+        max_trusted_advice_size: 0,
+        max_untrusted_advice_size: 0,
+        ..memory_config()
+    };
+    let layout = JoltDeviceMemory::new(&config).memory_layout;
+    assert_eq!(layout.io_end, RAM_START_ADDRESS - 24);
+    for kind in [
+        Kind::LD,
+        Kind::VirtualLoadB,
+        Kind::VirtualLoadH,
+        Kind::VirtualLoadW,
+    ] {
+        for (address, accepted) in [
+            (layout.io_end - 8, true),
+            (layout.io_end, false),
+            (layout.io_end + 8, false),
+        ] {
+            let mut load = row(
+                kind,
+                Some(1),
+                Some(2),
+                i128::from(address) - i128::from(TEST_ADDR),
+            );
+            load.address += 4;
+            let program = JoltProgram::from_parts(
+                Vec::new(),
+                vec![
+                    row(Kind::AUIPC, None, Some(1), 0),
+                    load,
+                    terminal_row(TEST_ADDR + 8),
+                ],
+                Vec::new(),
+                RAM_START_ADDRESS + 1024,
+                TEST_ADDR,
+            );
+            let inputs = TraceInputs::new(Vec::new(), Vec::new(), Vec::new(), config);
+            let result = X86TracerBackend::new().run_machine(&program, inputs);
+            if accepted {
+                let _ = result.expect("load of the final I/O word");
+            } else {
+                assert!(matches!(
+                    result,
+                    Err(TraceError::Backend("host helper reported an error"))
+                ));
+            }
+        }
+    }
+}
+
+#[test]
+fn device_load_failures_report_io_overflow() {
+    let layout = JoltDeviceMemory::new(&memory_config()).memory_layout;
+    let mut pre = [0u64; REGS];
+    pre[1] = layout.io_end + 8;
+    let program = single_row_program(row(Kind::LD, Some(1), Some(2), 0));
+    let load = run_program(&program, &pre, &[], &[]).expect("run overflowing load");
+    assert_eq!(load.exit, 4);
+    assert!(load
+        .helper_error
+        .expect("load error")
+        .contains("I/O overflow"));
+
+    let program = single_row_program(row(Kind::VirtualHostIO(VirtualHostIO(())), None, None, 0));
+    for call in [JOLT_ADVICE_WRITE_CALL_ID, JOLT_PRINT_CALL_ID] {
+        pre[10] = u64::from(call);
+        pre[11] = layout.io_end + 8;
+        pre[12] = 1;
+        pre[13] = u64::from(JOLT_PRINT_STRING);
+        let read = run_program(&program, &pre, &[], &[]).expect("run overflowing host read");
+        assert_eq!(read.exit, 4);
+        assert!(read
+            .helper_error
+            .expect("host-read error")
+            .contains("I/O overflow"));
     }
 }
 

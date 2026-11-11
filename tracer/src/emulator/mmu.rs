@@ -1676,6 +1676,26 @@ mod test_mmu {
     }
 
     #[test]
+    #[should_panic(expected = "I/O overflow")]
+    fn loads_reject_the_padding_between_io_end_and_ram() {
+        let mut mmu = setup_mmu();
+        let config = MemoryConfig {
+            max_input_size: 24,
+            max_output_size: 0,
+            max_trusted_advice_size: 0,
+            max_untrusted_advice_size: 0,
+            program_size: Some(1024),
+            ..Default::default()
+        };
+        let device = JoltDeviceMemory::new(&config);
+        let io_end = device.memory_layout.io_end;
+        assert_eq!(io_end, RAM_START_ADDRESS - 24);
+        mmu.jolt_device = Some(device);
+        assert_eq!(mmu.load_doubleword(io_end - 8).unwrap().0, 0);
+        let _ = mmu.load_doubleword(io_end + 8);
+    }
+
+    #[test]
     #[should_panic(expected = "must be >= DRAM_BASE")]
     fn setup_bytecode_rejects_device_addresses() {
         let mut mmu = setup_mmu();

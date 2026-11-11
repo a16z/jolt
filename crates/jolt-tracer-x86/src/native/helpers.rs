@@ -32,16 +32,19 @@ fn fail(state: &mut GuestState, host: &mut HostContext, message: String) -> u64 
 
 /// Read one guest byte, routing RAM to the plane and lower addresses to the
 /// device (mirrors `Mmu::load`).
-fn read_guest_byte(state: &GuestState, host: &HostContext, address: u64) -> u8 {
+fn read_guest_byte(state: &GuestState, host: &HostContext, address: u64) -> Result<u8, String> {
     if address >= RAM_START_ADDRESS {
         let offset = address - RAM_START_ADDRESS;
         if offset < state.mem_size {
             // SAFETY: offset bounds-checked against the plane size.
-            return unsafe { (state.mem_base as *const u8).add(offset as usize).read() };
+            return Ok(unsafe { (state.mem_base as *const u8).add(offset as usize).read() });
         }
-        return 0;
+        return Ok(0);
     }
-    host.device.load(address)
+    if address > host.device.memory_layout.io_end {
+        return Err(format!("I/O overflow: Attempted to read from {address:#X}"));
+    }
+    Ok(host.device.load(address))
 }
 
 /// `VirtualHostIO`: call id in a0 (x10), args in a1–a3 (x11–x13).
@@ -56,7 +59,10 @@ pub extern "sysv64" fn host_io(state: *mut GuestState) -> u64 {
         let ptr = state.x[11];
         let len = state.x[12];
         for i in 0..len {
-            let byte = read_guest_byte(state, host, ptr.wrapping_add(i));
+            let byte = match read_guest_byte(state, host, ptr.wrapping_add(i)) {
+                Ok(byte) => byte,
+                Err(message) => return fail(state, host, message),
+            };
             host.advice_tape.push(byte);
         }
         return 0;
@@ -76,7 +82,10 @@ pub extern "sysv64" fn host_io(state: *mut GuestState) -> u64 {
         JOLT_PRINT_CALL_ID => {
             let mut bytes = Vec::with_capacity(len);
             for i in 0..len as u64 {
-                bytes.push(read_guest_byte(state, host, ptr.wrapping_add(i)));
+                match read_guest_byte(state, host, ptr.wrapping_add(i)) {
+                    Ok(byte) => bytes.push(byte),
+                    Err(message) => return fail(state, host, message),
+                }
             }
             let text = String::from_utf8_lossy(&bytes);
             match event {
@@ -119,7 +128,11 @@ pub extern "sysv64" fn slow_load_doubleword(state: *mut GuestState, address: u64
     }
     let mut value = 0u64;
     for i in 0..8 {
-        value |= (host.device.load(address + i) as u64) << (i * 8);
+        let byte = match read_guest_byte(state, host, address + i) {
+            Ok(byte) => byte,
+            Err(message) => return fail(state, host, message),
+        };
+        value |= (byte as u64) << (i * 8);
     }
     value
 }
@@ -266,7 +279,7 @@ pub extern "sysv64" fn assert_failed(state: *mut GuestState, code: u64, value: u
 /// plane instead of the interpreter's `Cpu`.
 struct GuestAdviceContext<'a> {
     state: &'a mut GuestState,
-    host: &'a HostContext,
+    host: &'a mut HostContext,
 }
 
 impl tracer::InlineAdviceContext for GuestAdviceContext<'_> {
@@ -295,7 +308,14 @@ impl tracer::InlineAdviceContext for GuestAdviceContext<'_> {
         }
         let mut value = 0u64;
         for i in 0..8 {
-            value |= (self.host.device.load(address + i) as u64) << (i * 8);
+            let byte = match read_guest_byte(self.state, self.host, address + i) {
+                Ok(byte) => byte,
+                Err(message) => {
+                    let _ = fail(self.state, self.host, message);
+                    return None;
+                }
+            };
+            value |= (byte as u64) << (i * 8);
         }
         Some(value)
     }
@@ -383,6 +403,9 @@ pub extern "sysv64" fn advice_compute(state: *mut GuestState, job_index: u64) ->
                 let mut context = GuestAdviceContext { state, host };
                 build(operands, &mut context)
             };
+            if state.exit != ExitReason::Running as u64 {
+                return 0;
+            }
             // Advice faults (invalid guest pointer in an operand register) are
             // surfaced as helper errors here — this backend has an error
             // channel, unlike the reference tracer, which panics.
