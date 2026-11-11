@@ -99,7 +99,7 @@ mod tests {
 
     #[test]
     fn guest_prints_match_lossy_utf8_formatting() {
-        let message = b"ok \xff\xfe caf\xc3\xa9 \xe2\x82";
+        let message = b"ok \xff\xfe \xc3\xa9t\xc3\xa9 \xe2\x82";
         for terminator in ["", "\n"] {
             let mut out = Vec::new();
             write_guest_print(&mut out, message, terminator).unwrap();
