@@ -1,6 +1,10 @@
 //! Rules every tracer backend applies to a guest's host calls
-//! (`VirtualHostIO`). A host call never aborts the trace: a call this module
-//! rejects is logged and ignored, and every backend rejects the same calls.
+//! (`VirtualHostIO`). A call this module rejects is logged and ignored, and
+//! every backend rejects the same calls. Buffers whose size the guest
+//! chooses are reserved fallibly. Out of host memory, a host call can still
+//! abort in the bookkeeping of each guest load (the checkpoint and
+//! sparse-memory maps in `MemoryData::access_u64`), as the guest's own loads
+//! do, and in the `tracing` subscriber.
 
 use core::fmt::{Display, Formatter, Result as FmtResult};
 use std::io::{Result as IoResult, Write};
@@ -80,6 +84,37 @@ pub fn read_host_bytes(
     Ok(())
 }
 
+/// `String::from_utf8_lossy(&bytes).into_owned()`, but returns an error
+/// instead of aborting when the string with its replacement characters
+/// cannot be allocated.
+pub fn lossy_host_string(bytes: Vec<u8>) -> Result<String, HostReadError> {
+    let bytes = match String::from_utf8(bytes) {
+        Ok(string) => return Ok(string),
+        Err(error) => error.into_bytes(),
+    };
+    let replacement = '\u{FFFD}';
+    let len: usize = bytes
+        .utf8_chunks()
+        .map(|chunk| {
+            let replaced = !chunk.invalid().is_empty();
+            chunk.valid().len() + usize::from(replaced) * replacement.len_utf8()
+        })
+        .sum();
+    let mut string = String::new();
+    string
+        .try_reserve_exact(len)
+        .map_err(|_| HostReadError::Allocation {
+            len: u64::try_from(len).unwrap_or(u64::MAX),
+        })?;
+    for chunk in bytes.utf8_chunks() {
+        string.push_str(chunk.valid());
+        if !chunk.invalid().is_empty() {
+            string.push(replacement);
+        }
+    }
+    Ok(string)
+}
+
 /// The text a print host call appends to its message, by event type, or
 /// `None` for an unknown event type.
 pub fn print_terminator(event_type: u32) -> Option<&'static str> {
@@ -114,6 +149,18 @@ mod tests {
             write_guest_print(&mut out, message, terminator).unwrap();
             let expected = format!("{}{terminator}", String::from_utf8_lossy(message));
             assert_eq!(out, expected.into_bytes());
+        }
+    }
+
+    #[test]
+    fn host_strings_match_lossy_utf8_conversion() {
+        for message in [
+            &b"ok \xff\xfe \xc3\xa9t\xc3\xa9 \xe2\x82"[..],
+            b"valid",
+            b"",
+        ] {
+            let expected = String::from_utf8_lossy(message).into_owned();
+            assert_eq!(lossy_host_string(message.to_vec()).unwrap(), expected);
         }
     }
 }

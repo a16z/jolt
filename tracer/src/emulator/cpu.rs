@@ -12,7 +12,8 @@ use crate::instruction::{uncompress_instruction, Cycle, Instruction};
 use crate::utils::virtual_registers::VirtualRegisterAllocator;
 
 use super::host_io::{
-    print_terminator, read_host_bytes, write_guest_print, HostReadError, HOST_STRING_ADDRESS_LIMIT,
+    lossy_host_string, print_terminator, read_host_bytes, write_guest_print, HostReadError,
+    HOST_STRING_ADDRESS_LIMIT,
 };
 use super::mmu::Mmu;
 use super::terminal::Terminal;
@@ -1086,6 +1087,10 @@ impl Cpu {
                 let Some(label) = self.read_host_string(ptr, len) else {
                     return;
                 };
+                if self.active_markers.try_reserve(1).is_err() {
+                    warn!("Ignoring cycle-marker host call: cannot allocate marker '{label}'");
+                    return;
+                }
                 let marker = ActiveMarker {
                     start_instrs: self.executed_instrs,
                     start_trace_len: self.trace_len,
@@ -1156,10 +1161,13 @@ impl Cpu {
 
     fn read_host_string(&mut self, ptr: u32, len: u32) -> Option<String> {
         let bytes = self.read_host_message(ptr, len)?;
-        Some(
-            String::from_utf8(bytes)
-                .unwrap_or_else(|error| String::from_utf8_lossy(error.as_bytes()).into_owned()),
-        )
+        match lossy_host_string(bytes) {
+            Ok(label) => Some(label),
+            Err(error) => {
+                self.warn_ignored_host_call(error);
+                None
+            }
+        }
     }
 
     /// Reads a print or cycle-marker string's bytes, logging a rejected range.
