@@ -1220,7 +1220,7 @@ impl Cpu {
             // Pass 1 owns termination; workers replay counted ticks.
             stalled: _,
             csr,
-            // Memory image, JoltDevice and decode cache are captured by the
+            // Memory image, JoltDeviceMemory and decode cache are captured by the
             // checkpoint layer (see `parallel::ChunkCheckpoint`).
             mmu: _,
             reservation,
@@ -1268,7 +1268,7 @@ impl Cpu {
     }
 
     /// Install captured chunk state into this (worker) CPU. Counterpart of
-    /// [`Cpu::capture_chunk_state`]; the memory image, JoltDevice outputs and
+    /// [`Cpu::capture_chunk_state`]; the memory image, JoltDeviceMemory outputs and
     /// decode cache are installed by the checkpoint layer.
     pub(crate) fn install_chunk_state(&mut self, state: &ChunkCpuState) {
         debug_assert!(
@@ -1711,55 +1711,6 @@ mod test_cpu {
     }
 
     #[test]
-    fn advice_write_enforces_guest_load_bounds() {
-        let config = MemoryConfig {
-            program_size: Some(64),
-            stack_size: 0,
-            heap_size: 64,
-            ..Default::default()
-        };
-        let layout = JoltDeviceMemory::new(&config).memory_layout;
-        let scratch = DRAM_BASE + 32;
-        for (address, error) in [
-            (layout.get_lowest_address() - 1, Some("I/O underflow")),
-            (layout.heap_end, Some("Illegal Memory Access")),
-            (layout.get_lowest_address(), None),
-            (scratch, None),
-        ] {
-            let mut cpu = create_cpu();
-            // Let heap_end reach the MMU check after trace_load reads its word.
-            cpu.mmu.init_memory(layout.get_total_memory_size() + 8);
-            cpu.mmu.jolt_device = Some(JoltDeviceMemory::new(&config));
-            // VirtualHostIO, as in test_run_two_pass_replays_advice_writes.
-            for (i, byte) in 0x0000_205bu32.to_le_bytes().into_iter().enumerate() {
-                cpu.mmu.store_raw(DRAM_BASE + i as u64, byte);
-            }
-            cpu.mmu.store_raw(scratch, 0xab);
-            cpu.update_pc(DRAM_BASE);
-            cpu.x[10] = i64::from(JOLT_ADVICE_WRITE_CALL_ID);
-            cpu.x[11] = address as i64;
-            cpu.x[12] = 1;
-            let result = catch_unwind(AssertUnwindSafe(|| cpu.tick(None)));
-            if let Some(error) = error {
-                let panic = result.expect_err("invalid advice-write buffer must panic");
-                let message = panic
-                    .downcast_ref::<String>()
-                    .map(String::as_str)
-                    .or_else(|| panic.downcast_ref::<&str>().copied())
-                    .expect("panic message");
-                assert!(message.contains(error), "{message}");
-                assert!(cpu.advice_tape.is_empty());
-            } else {
-                result.expect("valid advice-write buffer");
-                assert_eq!(
-                    cpu.advice_tape.data,
-                    [if address == scratch { 0xab } else { 0 }]
-                );
-            }
-        }
-    }
-
-    #[test]
     fn reservation_covers_follows_the_lr_sc_width_rules() {
         let mut cpu = create_cpu();
         let addr = DRAM_BASE + 64;
@@ -1896,5 +1847,53 @@ mod test_cpu {
             logs.contains("Marker with label 'span' is already active"),
             "{logs}"
         );
+    }
+    #[test]
+    fn advice_write_enforces_guest_load_bounds() {
+        let config = MemoryConfig {
+            program_size: Some(64),
+            stack_size: 0,
+            heap_size: 64,
+            ..Default::default()
+        };
+        let layout = JoltDeviceMemory::new(&config).memory_layout;
+        let scratch = DRAM_BASE + 32;
+        for (address, error) in [
+            (layout.get_lowest_address() - 1, Some("I/O underflow")),
+            (layout.heap_end, Some("Illegal Memory Access")),
+            (layout.get_lowest_address(), None),
+            (scratch, None),
+        ] {
+            let mut cpu = create_cpu();
+            // Let heap_end reach the MMU check after trace_load reads its word.
+            cpu.mmu.init_memory(layout.get_total_memory_size() + 8);
+            cpu.mmu.jolt_device = Some(JoltDeviceMemory::new(&config));
+            // VirtualHostIO, as in test_run_two_pass_replays_advice_writes.
+            for (i, byte) in 0x0000_205bu32.to_le_bytes().into_iter().enumerate() {
+                cpu.mmu.store_raw(DRAM_BASE + i as u64, byte);
+            }
+            cpu.mmu.store_raw(scratch, 0xab);
+            cpu.update_pc(DRAM_BASE);
+            cpu.x[10] = i64::from(JOLT_ADVICE_WRITE_CALL_ID);
+            cpu.x[11] = address as i64;
+            cpu.x[12] = 1;
+            let result = catch_unwind(AssertUnwindSafe(|| cpu.tick(None)));
+            if let Some(error) = error {
+                let panic = result.expect_err("invalid advice-write buffer must panic");
+                let message = panic
+                    .downcast_ref::<String>()
+                    .map(String::as_str)
+                    .or_else(|| panic.downcast_ref::<&str>().copied())
+                    .expect("panic message");
+                assert!(message.contains(error), "{message}");
+                assert!(cpu.advice_tape.is_empty());
+            } else {
+                result.expect("valid advice-write buffer");
+                assert_eq!(
+                    cpu.advice_tape.data,
+                    [if address == scratch { 0xab } else { 0 }]
+                );
+            }
+        }
     }
 }

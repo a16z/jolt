@@ -423,7 +423,7 @@ fn load_or_generate_fixture(
 fn fixture_path(kind: VerifierFixtureKind) -> PathBuf {
     let filename = format!("{}.jvcf", kind.fixture_name());
     if cfg!(feature = "zk") {
-        jolt_host::default_target_dir()
+        env::temp_dir()
             .join("jolt-verifier-fixtures")
             .join(filename)
     } else {
