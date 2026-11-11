@@ -33,9 +33,11 @@ impl<'state, F: Field> GruenRound<'state, F> {
         PreparedLinearRecovery::new(at_zero, at_one)
     }
 
-    /// Computes the cubic `s = l*q` from `q(0)`, its leading coefficient,
-    /// and the sumcheck hint. The missing endpoint is evaluated only when
-    /// `l(1)` vanishes. An error carries the actual endpoint sum.
+    /// Computes the cubic `s = l*q` from `q(0)`, `q`'s quadratic coefficient,
+    /// and the hint `s(0) + s(1)`. A nonzero `l(1)` recovers `q(1)` through
+    /// [`PreparedLinearRecovery::gruen_poly_deg_3`], which this method returns
+    /// unchanged. Only when `l(1)` vanishes is `q_at_one` evaluated, and then
+    /// the hint is checked. An error carries the actual endpoint sum.
     pub fn gruen_poly_deg_3(
         &self,
         q_constant: F,
@@ -43,35 +45,23 @@ impl<'state, F: Field> GruenRound<'state, F> {
         s_0_plus_s_1: F,
         q_at_one: impl FnOnce() -> F,
     ) -> Result<UnivariatePoly<F>, F> {
-        let (eq_eval_0, eq_eval_1) = self.linear_evals();
         if self.state.current_scalar.is_zero() {
             return Self::zero_round(4, s_0_plus_s_1);
         }
-        let eq_m = eq_eval_1 - eq_eval_0;
-        let eq_eval_2 = eq_eval_1 + eq_m;
-        let eq_eval_3 = eq_eval_2 + eq_m;
-        let cubic_eval_0 = eq_eval_0 * q_constant;
-        let cubic_eval_1 = s_0_plus_s_1 - cubic_eval_0;
-        let quadratic_eval_1 = if let Some(inverse) = eq_eval_1.inverse() {
-            cubic_eval_1 * inverse
-        } else {
-            let endpoint = q_at_one();
-            let actual = cubic_eval_0 + eq_eval_1 * endpoint;
-            if actual != s_0_plus_s_1 {
-                return Err(actual);
-            }
-            endpoint
-        };
-        let e_times_2 = q_quadratic_coeff + q_quadratic_coeff;
-        let quadratic_eval_2 = quadratic_eval_1 + quadratic_eval_1 - q_constant + e_times_2;
-        let quadratic_eval_3 =
-            quadratic_eval_2 + quadratic_eval_1 - q_constant + e_times_2 + e_times_2;
-        Ok(UnivariatePoly::interpolate_over_integers(&[
-            cubic_eval_0,
-            cubic_eval_1,
-            eq_eval_2 * quadratic_eval_2,
-            eq_eval_3 * quadratic_eval_3,
-        ]))
+        if let Some(recovery) = self.prepare_linear_q_recovery() {
+            return Ok(recovery.gruen_poly_deg_3(q_constant, q_quadratic_coeff, s_0_plus_s_1));
+        }
+        let (at_zero, at_one) = self.linear_evals();
+        let actual = at_zero * q_constant;
+        if actual != s_0_plus_s_1 {
+            return Err(actual);
+        }
+        let q_linear = q_at_one() - q_constant - q_quadratic_coeff;
+        Ok(mul_linear(
+            &[q_constant, q_linear, q_quadratic_coeff],
+            at_zero,
+            at_one - at_zero,
+        ))
     }
 
     /// Toom samples are `q(1)..q(d-1), q`'s leading coefficient, with `d>=2`.

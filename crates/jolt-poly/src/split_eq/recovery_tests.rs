@@ -74,7 +74,7 @@ fn recovery_identities<F: Field>() {
                             .gruen_poly_from_coeffs_except_linear(&[F::zero(); 2], F::zero());
                         assert_eq!(untrimmed.coefficients(), &[F::zero(); 4]);
                         let zero = prepared.gruen_poly_deg_3(F::zero(), F::zero(), F::zero());
-                        assert_eq!(zero.coefficients(), &[F::zero()]);
+                        assert_eq!(zero.coefficients(), &[F::zero(); 4]);
                     } else {
                         assert!(l1.is_zero());
                         saw_zero_at_one = true;

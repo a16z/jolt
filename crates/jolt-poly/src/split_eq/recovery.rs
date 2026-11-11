@@ -5,6 +5,12 @@ use std::marker::PhantomData;
 /// Recovery for one round, borrowing its split equality state so it cannot advance.
 /// Private fields certify an invertible `l(1)`. The caller remains responsible for
 /// the consistency of the supplied coefficients and claim.
+///
+/// Every method returns `s = l*q` with one more coefficient than `q` and keeps
+/// trailing zeros, so a degree-3 message always has four coefficients, as
+/// [`GruenRound::gruen_poly_deg_3`](super::GruenRound::gruen_poly_deg_3) does
+/// for every round. The sumcheck prover trims the batched round polynomial
+/// before it reaches the transcript.
 #[derive(Clone, Copy)]
 pub struct PreparedLinearRecovery<'a, F: Field> {
     at_zero: F,
@@ -29,7 +35,6 @@ impl<F: Field> PreparedLinearRecovery<'_, F> {
 
     /// Recovers `q`'s linear coefficient from `s(0) + s(1) = claim`, then returns
     /// `s = l*q`. The input is `[q_0, q_2, ..., q_d]`; empty input gives `[0]`.
-    /// Retains trailing zero coefficients.
     pub fn gruen_poly_from_coeffs_except_linear(
         self,
         coefficients: &[F],
@@ -50,12 +55,10 @@ impl<F: Field> PreparedLinearRecovery<'_, F> {
     }
 
     /// Recovers the linear coefficient of `q(X) = constant + linear*X + quadratic*X²`
-    /// from `s(0) + s(1) = claim`. Returns `s = l*q` with trailing zeros trimmed.
+    /// from `s(0) + s(1) = claim`, then returns `s = l*q`.
     pub fn gruen_poly_deg_3(self, constant: F, quadratic: F, claim: F) -> UnivariatePoly<F> {
         let linear = self.linear_term(constant, constant + quadratic, claim);
-        let mut polynomial = mul_linear(&[constant, linear, quadratic], self.at_zero, self.slope);
-        polynomial.trim_trailing_zeros();
-        polynomial
+        mul_linear(&[constant, linear, quadratic], self.at_zero, self.slope)
     }
 }
 
