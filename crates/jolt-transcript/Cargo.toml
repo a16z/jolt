@@ -26,8 +26,15 @@ default = ["transcript-keccak"]
 prover-grinding = ["spongefish/yolocrypto"]
 # OS-seeded prover initialization; verifier consumers leave this disabled.
 prover-entropy = ["spongefish/getrandom", "dep:getrandom_v04"]
-# Owned child streams for prover calls that also borrow the transcript.
-prover-streams = ["dep:chacha20", "dep:zeroize"]
+# Owned child streams for prover calls that also borrow the transcript, and
+# wipe-on-drop for the private sponge state. Verifier builds leave it off, so
+# their spongefish and SHAKE dependencies keep the same features.
+prover-coins = [
+  "dep:chacha20",
+  "dep:zeroize",
+  "spongefish/zeroize",
+  "shake/zeroize",
+]
 solinas = ["jolt-field/solinas"]
 binary = ["jolt-field/binary"]
 bn254 = ["dep:ark-bn254", "dep:ark-ff", "jolt-field/bn254"]
@@ -51,8 +58,8 @@ jolt-inlines-blake2 = { workspace = true, optional = true }
 ark-bn254 = { workspace = true, optional = true }
 ark-ff = { workspace = true, optional = true }
 light-poseidon = { workspace = true, optional = true }
-spongefish = { workspace = true, features = ["zeroize"] }
-shake = { workspace = true, features = ["zeroize"] }
+spongefish.workspace = true
+shake.workspace = true
 rand_core.workspace = true
 chacha20 = { workspace = true, optional = true }
 zeroize = { workspace = true, optional = true }

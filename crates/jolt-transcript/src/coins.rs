@@ -1,12 +1,12 @@
 //! Private prover randomness, independent of the public transcript sponge.
 
-#[cfg(feature = "prover-streams")]
+#[cfg(feature = "prover-coins")]
 use chacha20::rand_core::{Rng, SeedableRng};
-#[cfg(feature = "prover-streams")]
+#[cfg(feature = "prover-coins")]
 use chacha20::ChaCha20Rng;
 use rand_core::{CryptoRng, Error, RngCore};
 use spongefish::{DuplexSpongeInit, PrivateRng};
-#[cfg(feature = "prover-streams")]
+#[cfg(feature = "prover-coins")]
 use zeroize::Zeroizing;
 
 use crate::Shake128;
@@ -34,7 +34,7 @@ impl<'a> ProverCoins<'a> {
     /// subsequent parent draws. The stream does not borrow the transcript.
     /// Security additionally relies on ChaCha20 as a pseudorandom generator.
     /// ChaCha20's `zeroize` feature wipes its key and buffered output on drop.
-    #[cfg(feature = "prover-streams")]
+    #[cfg(feature = "prover-coins")]
     pub fn child(&mut self) -> ChildCoins {
         let mut seed = Zeroizing::new([0u8; 32]);
         self.fill_bytes(seed.as_mut());
@@ -64,7 +64,8 @@ impl RngCore for ProverCoins<'_> {
 impl CryptoRng for ProverCoins<'_> {}
 
 /// Private randomness for preprocessing that has no prover transcript.
-/// The SHAKE128 state and reader wipe on drop through `shake/zeroize`.
+/// With `prover-coins`, the SHAKE128 state and reader wipe on drop through
+/// `shake/zeroize`.
 pub struct OwnedCoins(PrivateRng<Shake128>);
 
 impl OwnedCoins {
@@ -89,11 +90,11 @@ impl OwnedCoins {
 }
 
 /// An owned ChaCha20 stream keyed by a fresh draw from private prover coins.
-/// Available only with `prover-streams`; wipes its state on drop.
-#[cfg(feature = "prover-streams")]
+/// Available only with `prover-coins`; wipes its state on drop.
+#[cfg(feature = "prover-coins")]
 pub struct ChildCoins(ChaCha20Rng);
 
-#[cfg(feature = "prover-streams")]
+#[cfg(feature = "prover-coins")]
 impl RngCore for ChildCoins {
     fn next_u32(&mut self) -> u32 {
         self.0.next_u32()
@@ -113,7 +114,7 @@ impl RngCore for ChildCoins {
     }
 }
 
-#[cfg(feature = "prover-streams")]
+#[cfg(feature = "prover-coins")]
 impl CryptoRng for ChildCoins {}
 
 #[cfg(test)]
@@ -136,7 +137,7 @@ mod tests {
         assert_send::<ProverCoins<'_>>();
         assert_send::<OwnedCoins>();
         assert_rng::<ProverCoins<'_>>();
-        #[cfg(feature = "prover-streams")]
+        #[cfg(feature = "prover-coins")]
         {
             use zeroize::ZeroizeOnDrop;
             fn assert_wipes<T: ZeroizeOnDrop>() {}
@@ -181,10 +182,10 @@ mod tests {
         let mut prover = ProverState::<Shake128>::init_seeded(&SESSION, &statement, SEED);
         ProverTranscript::mix_entropy(&mut prover, &[3; 32]);
         prover.coins().fill_bytes(&mut [0; 337]);
-        #[cfg(feature = "prover-streams")]
+        #[cfg(feature = "prover-coins")]
         let mut child = prover.coins().child();
         prover.send(&BytesMsg(b"commitment"));
-        #[cfg(feature = "prover-streams")]
+        #[cfg(feature = "prover-coins")]
         child.fill_bytes(&mut [0; 337]);
         let challenge = prover.squeeze(32, <[u8]>::to_vec);
         let narg = prover.narg_string();
@@ -195,7 +196,7 @@ mod tests {
         verifier.check_eof().unwrap();
     }
 
-    #[cfg(feature = "prover-streams")]
+    #[cfg(feature = "prover-coins")]
     #[test]
     fn child_uses_the_next_32_bytes_as_a_chacha20_key() {
         let mut transcript = ProverState::<Shake128>::init_seeded(&SESSION, &0u64, SEED);
