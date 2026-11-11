@@ -1002,11 +1002,9 @@ mod tests {
 
     #[test]
     fn code_preserving_stores_agree_in_eager_lazy_and_parallel_replay() {
-        let elf = build_elf64(
-            &[0x0000_0097, 0x0000_b103, 0x0020_b023, 0x0000_006f],
-            &[],
-            StrtabOrder::GnuLd,
-        );
+        let mut words = vec![0x0000_0097, 0x0000_b103, 0x0020_b023];
+        words.extend(crate::test_utils::flag_exit_words(0, 1));
+        let elf = build_elf64(&words, &[], StrtabOrder::GnuLd);
         let config = tiny_guest_config(&elf);
         let (lazy, eager, _, _, _) = trace(&elf, None, &[], &[], &[], &config, None);
         assert_eq!(lazy.collect::<Vec<_>>(), eager);

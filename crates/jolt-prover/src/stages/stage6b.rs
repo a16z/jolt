@@ -282,7 +282,7 @@ mod field_inline_round_trip {
         let mode = ProofMode::<Pedersen<Bn254G1>>::new(None).unwrap();
         let config = test_prover_config();
         let public_io = test_public_io();
-        let checked = test_checked_inputs();
+        let checked = test_checked_inputs(context.code_word_intervals());
 
         let mut prover_state =
             prover_transcript::<Keccak>(&jolt_transcript::protocol_tag(label), b"");
@@ -571,7 +571,7 @@ mod field_inline_zk {
         let mode = ProofMode::<Pedersen<Bn254G1>>::new(Some(&setup)).unwrap();
         let config = test_prover_config();
         let public_io = test_public_io();
-        let checked = test_checked_inputs();
+        let checked = test_checked_inputs(context.code_word_intervals());
         let preprocessing = addi_only_preprocessing();
 
         let mut transcript = prover_transcript::<Keccak>(

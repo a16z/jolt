@@ -4,8 +4,8 @@
 //! (the same discipline as `jolt_witness::testing::with_sample_backend`), so
 //! the composed R1CS eq rows are satisfied and the stage sumchecks' hard
 //! self-checks hold — including the stage-4 register-file and RAM value
-//! checks (consistent register reads, and the termination store the witness
-//! plane's device-derived final RAM state demands). Two profiles: an
+//! checks (consistent register reads, and the termination store matching the
+//! explicit final RAM image). Two profiles: an
 //! ADDI-only trace (a field-inline guest executing zero field-inline instructions —
 //! every field-inline column is zero), and a field arithmetic trace (two field loads and
 //! a multiply, the stage-0 fixture's rows) whose decoded field-inline instruction
@@ -29,7 +29,7 @@ use jolt_field::Fr;
 use jolt_kernels::{
     CommitWitness, KernelError, ProofSession, WitnessCommitRequest, WitnessCommitment,
 };
-use jolt_program::execution::{FieldEvent, JoltProgram, TraceData, TraceOutput};
+use jolt_program::execution::{FieldEvent, JoltProgram, MemoryImage, TraceData, TraceOutput};
 use jolt_program::field_inline::{
     FieldEncodedValue, FieldInlineTraceData, FieldRegisterRead, FieldRegisterWrite,
 };
@@ -129,7 +129,14 @@ pub(crate) fn field_inline_backend(
         JoltVmWitnessInputs::new(
             &program,
             &preprocessing,
-            TraceOutput::new(data, test_public_io(), None, None),
+            TraceOutput::new(
+                data,
+                test_public_io(),
+                Some(MemoryImage {
+                    bytes: vec![(test_memory_layout().termination, 1)],
+                }),
+                None,
+            ),
         ),
     )
 }
@@ -171,10 +178,9 @@ fn halt_jal_row(offset: usize, rd: u8) -> JoltTraceRow {
     .unwrap()
 }
 
-/// The guest termination convention, hand-crafted: the witness plane's final
-/// RAM state unconditionally carries `termination = 1` (a real guest writes
-/// it before halting), so any trace that must satisfy the stage-4 RAM value
-/// check needs a matching increment. Two rows: `ADDI x6, x0, 1` (a consistent
+/// The guest termination convention, hand-crafted: the final memory image in
+/// `field_inline_backend` carries `termination = 1`, matching these stores.
+/// Two rows: `ADDI x6, x0, 1` (a consistent
 /// register write of the stored value), then `SD x6, termination(x0)` (store
 /// flag on, `RamAddress = rs1 + imm = termination`, `RamWriteValue = rs2`).
 fn termination_store_rows(offset: usize) -> [JoltTraceRow; 2] {
@@ -409,7 +415,7 @@ pub(crate) fn addi_only_preprocessing() -> JoltProverPreprocessing<DoryScheme, P
 /// The stage-4+ recipes' checked-inputs carrier for the fixture traces,
 /// mirroring what shape validation derives for a field-inline proof at this scale
 /// (no advice, no precommitted objects, full program).
-pub(crate) fn test_checked_inputs() -> CheckedInputs {
+pub(crate) fn test_checked_inputs(code_word_intervals: &[(usize, usize)]) -> CheckedInputs {
     CheckedInputs {
         public_io: test_public_io(),
         zk: cfg!(feature = "zk"),
@@ -417,10 +423,7 @@ pub(crate) fn test_checked_inputs() -> CheckedInputs {
         ram_K: 1 << RAM_LOG_K,
         entry_address: ENTRY,
         preprocessing_digest: [0u8; 32],
-        code_word_intervals: fixture_program_preprocessing(field_arithmetic_program().0)
-            .ram
-            .code_word_intervals
-            .clone(),
+        code_word_intervals: code_word_intervals.to_vec(),
         untrusted_advice_commitment_present: false,
         trusted_advice_commitment_present: false,
         vc_capacity: cfg!(feature = "zk").then_some(MAX_BLINDFOLD_GENERATORS),
