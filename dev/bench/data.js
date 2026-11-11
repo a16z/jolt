@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794431216127,
+  "lastUpdate": 1794438495614,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -242506,6 +242506,270 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 889108,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "qvd@andrew.cmu.edu",
+            "name": "Quang Dao",
+            "username": "quangvdao"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c70d9593e380b45d75330bb084dcc76102cc7d25",
+          "message": "fix(tracer): make VirtualHostIO host calls never panic (#2410)\n\n* fix(tracer): make VirtualHostIO host calls total\n\nThe tracer panicked inside a host call on an unknown cycle-marker event,\non an unknown print event type, and when a print, cycle-marker or advice\npointer named memory that a guest load would reject (outside the Jolt\nmemory layout, an emulator peripheral, past the end of memory, or a\nrange that overflows). Host calls now log a warning and ignore such\ncalls. Valid calls perform the same loads and produce the same output.\n\nMmu::is_host_readable reports whether Mmu::load returns normally at an\naddress. It shares one address-fault classifier with the guest-load\nasserts, whose panic messages are unchanged.\n\n* fix(tracer): address review of total host calls\n\n- Reserve the host-call read buffer and advice-tape growth fallibly and\n  ignore the call when allocation fails, instead of aborting.\n- Write guest prints to stdout with fallible writes and log a failure;\n  print! panics on a stdout error. The bytes written are unchanged.\n- Reject print and cycle-marker ranges that end past 4 GiB, the address\n  space their u32 pointers name, instead of reading above it.\n- Share one translation decision between translate_address and\n  is_host_readable, so identity translation under SV39 in machine mode\n  stays readable.\n- Tests: assert the unknown-event warnings, that a rejected range\n  records no memory reads, and the 4 GiB boundary with RAM on both sides.\n\n* style(tracer): write the replacement character as a literal\n\ncheck_style_invariants rejects the qualified char::REPLACEMENT_CHARACTER.\n\n* fix(tracer-x86): apply the interpreter's host-call rules\n\nMove the host-call read, print and readability rules into\ntracer::emulator::host_io and mmu::identity_load_succeeds, use them from\nthe interpreter, and switch the native x86 host_io helper to them. The\nx86 helper now logs and ignores an unknown event or an unreadable range\ninstead of failing the run or reading missing bytes as zero.\n\nExtend the VirtualHostIO differential test with print and cycle-marker\ncalls, unknown events, and ranges both backends must reject.\n\n* test(tracer-x86): check native print output; import host_io names\n\nCapture the native backend's stdout to check that it prints readable\nmessages exactly and prints nothing for unknown events or rejected\nranges. Import the formatting and print-event names in host_io as the\nstyle checker requires, and describe the top-of-u32 differential case\nas the out-of-plane range it is.\n\n* chore(jolt-eval): lock tracing for the x86 tracer in the fuzz workspace\n\njolt-tracer-x86 now depends on tracing, and the jolt-eval fuzz build\nruns with --locked.\n\n* test(tracer): use a word typos accepts in the lossy print test\n\n* perf(tracer): check host-call ranges once and load advice onto the tape\n\nHost-call reads checked every byte for readability before loading it,\nthen copied advice from a scratch buffer onto the tape. Within RAM a load\nfails exactly at or past a fixed bound, so identity_loads_succeed now\nchecks a RAM range by its last byte and keeps the per-byte check only\nbelow RAM. read_host_bytes appends to the caller's buffer, so an advice\nwrite loads straight onto the tape.\n\nThe readability test now compares every range near each boundary, and\nevery range from the start of RAM, against loading each of its bytes.\n\n* fix(tracer): reserve cycle-marker labels and entries fallibly\n\nConverting a cycle-marker label with invalid UTF-8 and inserting a\nmarker into the active-marker table allocated infallibly after the\nchecked read. Both now reserve first and ignore the call on failure.\nThe host_io module doc now names the allocations that can still abort\nwhen the host is out of memory: guest-load bookkeeping and tracing.",
+          "timestamp": "2026-11-11T15:14:04-07:00",
+          "tree_id": "0062f7e4f857b6a1bf1f3e1f48b935a8292fef01",
+          "url": "https://github.com/a16z/jolt/commit/c70d9593e380b45d75330bb084dcc76102cc7d25"
+        },
+        "date": 1794438488856,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 2.5663,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 898764,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.1286,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 463428,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 463876,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 463644,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.568,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 463200,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-mem",
+            "value": 896848,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 1.2458,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 463324,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 3.3525,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 463524,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 3.7377,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 128500,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.3436,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 902984,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.4354,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 463292,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.3221,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 463540,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 17.2754,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 463168,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 3.7943,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 463840,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 24.4064,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 700608,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 12.9936,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 609116,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 51.8983,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 639148,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.369,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 463896,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.4615,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 463348,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 12.8995,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 897868,
             "unit": "KB",
             "extra": ""
           }
