@@ -304,17 +304,23 @@ where
                 .as_ref()
                 .ok_or(SumcheckError::MissingRoundMessage { member: item.index })?;
             // Kernels may sample a phase's polynomial at more points than its
-            // degree needs, leaving zero leading coefficients.
-            let poly_degree = poly
-                .coefficients()
+            // degree needs, leaving zero leading coefficients. Visit every
+            // coefficient above the bound, zeros included, so the scan's
+            // length depends only on public sizes; only invalid kernel output
+            // takes the error branch.
+            let coefficients = poly.coefficients();
+            let excess = coefficients
                 .iter()
-                .rposition(|coefficient| !coefficient.is_zero())
-                .unwrap_or(0);
-            if poly_degree > degree {
+                .skip(degree.saturating_add(1))
+                .fold(false, |excess, coefficient| excess | !coefficient.is_zero());
+            if excess {
                 return Err(SumcheckError::RoundDegreeBoundExceeded {
                     round,
                     member: item.index,
-                    got: poly_degree,
+                    got: coefficients
+                        .iter()
+                        .rposition(|coefficient| !coefficient.is_zero())
+                        .unwrap_or(0),
                     max: degree,
                 });
             }

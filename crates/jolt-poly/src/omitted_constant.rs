@@ -1,3 +1,4 @@
+use crate::{eval_round_wire, WireFormat};
 use jolt_field::Field;
 use serde::{Deserialize, Serialize};
 
@@ -53,7 +54,12 @@ impl<F: Field> OmittedConstantPoly<F> {
     /// Returns `q(point)`, with `q0` recovered by
     /// [`constant_from_claim`](Self::constant_from_claim).
     pub fn evaluate_from_claim(&self, claim: F, tau: F, point: F) -> F {
-        self.constant_from_claim(claim, tau) + self.evaluate_nonconstant_terms(point)
+        eval_round_wire(
+            WireFormat::EqFactored { tau },
+            &self.coefficients,
+            claim,
+            point,
+        )
     }
 
     /// Returns `q(point) - q0` using Horner's method.
