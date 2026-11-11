@@ -5,11 +5,11 @@
 //!
 //! # Setting
 //!
-//! The protocol prime [`crate::Prime128OffsetA7F7`] is pseudo-Mersenne, so
+//! The protocol prime [`crate::Prime128Offset6A23801F`] is pseudo-Mersenne, so
 //! `p − 1` is not a power of two; each is instead chosen so it carries
 //! a large **smooth factor** — a product of small primes:
 //!
-//! - `p = 2^128 − 2^32 + 22_537`: smooth order `17_496 = 2³ · 3⁷`
+//! - `p = 2^128 − 1_780_711_455`: smooth order `337_500_000 = 2⁵ · 3³ · 5⁸`
 //!
 //! FFT domain sizes are divisors of that smooth order; there is no
 //! power-of-two NTT to fall back on. The primary use case is FFT-based
@@ -60,7 +60,7 @@
 //! FFT — see [`SmoothDomain::coset_forward`]
 //! and [`SmoothDomain::rs_extend_batch`].
 
-use crate::{AlgebraError, CanonicalEncoding, Field, Prime128OffsetA7F7, PseudoMersenne};
+use crate::{AlgebraError, CanonicalEncoding, Field, Prime128Offset6A23801F, PseudoMersenne};
 use std::fmt::Debug;
 
 /// Field with a precomputed primitive root of a supported smooth subgroup.
@@ -75,14 +75,10 @@ pub trait SmoothFftField: Field + CanonicalEncoding + PseudoMersenne {
     const SMOOTH_OMEGA: u128;
 }
 
-impl SmoothFftField for Prime128OffsetA7F7 {
-    const SMOOTH_SUBGROUP_ORDER: usize = 17_496;
-    /// `g ^ ((p − 1) / 17_496)` where `g` is the smallest primitive root
-    /// found by `find_primitive_nth_root` (note: `g = 2` is a quadratic
-    /// residue mod `p` and therefore *not* a primitive root, so the
-    /// scanner falls through to the next candidate). Verified by
-    /// `prime_a7f7_tests::smooth_omega_matches_search` below.
-    const SMOOTH_OMEGA: u128 = 0x4e9f_650b_7003_d201_9945_e1da_c47c_8b18;
+impl SmoothFftField for Prime128Offset6A23801F {
+    const SMOOTH_SUBGROUP_ORDER: usize = 337_500_000;
+    /// Primitive root of order `2^5 * 3^3 * 5^8`, checked by the algebraic tests below.
+    const SMOOTH_OMEGA: u128 = 0x42e2_bddd_f9d0_2211_91f7_d7dc_1549_8d96;
 }
 
 /// Compute `base^exp` by repeated squaring.
@@ -831,9 +827,7 @@ pub fn primitive_nth_root<F: SmoothFftField>(n: usize) -> Result<F, AlgebraError
 /// bases.
 ///
 /// Verifies primitivity against every distinct prime factor of `n`, so
-/// it remains correct when a base lands in a strict subgroup (e.g.
-/// `g = 2` is a quadratic residue modulo `Prime128OffsetA7F7`, so
-/// `2^{(p−1)/n}` has order `n/2`).
+/// it remains correct when a base lands in a strict subgroup.
 ///
 /// Used by per-prime tests as a drift guard on
 /// [`SmoothFftField::SMOOTH_OMEGA`]; production code should call
@@ -1000,15 +994,13 @@ mod test_support {
 
 #[cfg(test)]
 #[expect(clippy::expect_used, clippy::unwrap_used, reason = "test code")]
-mod prime_a7f7_tests {
-    //! `Prime128OffsetA7F7` (`p = 2^128 - 2^32 + 22537`) has smooth
-    //! multiplicative subgroup of order `2^3 * 3^7 = 17_496`, with a pure
-    //! radix-3 substructure of order `3^7 = 2_187`. Sizes are drawn from
-    //! the `{2, 3}` lattice instead of `{2, 3, 5, 7}`.
+mod prime_6a23801f_tests {
+    //! Production-field FFTs over divisors of `2^5 * 3^3 * 5^8`.
     use super::test_support::*;
     use super::*;
+    use crate::Fp128;
 
-    type F = Prime128OffsetA7F7;
+    type F = Prime128Offset6A23801F;
 
     /// Cross-implementation check: the radix-3 GPU NTT in
     /// `gpu_bench/primeB_roots.hpp` bakes
@@ -1023,11 +1015,13 @@ mod prime_a7f7_tests {
     /// cross-impl correctness.
     #[test]
     fn gpu_omega_2187_is_primitive_in_rust_field() {
+        // The GPU prime-B vectors use an auxiliary modulus, not the protocol field.
+        type GpuPrimeB = Fp128<{ u128::MAX - 0xffff_a7f6 }>;
         // Limbs from `gpu_bench/primeB_roots.hpp` OMEGA_2187, packed
         // little-endian into a u128.
         const GPU_OMEGA_2187: u128 = 0x44E6_6EEC_31E7_36A6_A030_9253_219B_CCCD;
-        let omega =
-            F::from_u128_checked(GPU_OMEGA_2187).expect("GPU OMEGA_2187 must lie in [0, p_B)");
+        let omega = GpuPrimeB::from_u128_checked(GPU_OMEGA_2187)
+            .expect("GPU OMEGA_2187 must lie in [0, p_B)");
         let factors = distinct_prime_factors(2187);
         assert!(
             is_primitive_nth_root(omega, 2187, &factors),
@@ -1037,7 +1031,8 @@ mod prime_a7f7_tests {
         // The GPU also bakes OMEGA_3 = OMEGA_2187^729 (a primitive cube
         // root). Cross-check that limb table too.
         const GPU_OMEGA_3: u128 = 0x66F1_B0EE_0E4A_40F7_0F69_0C7F_0F66_39DD;
-        let omega3 = F::from_u128_checked(GPU_OMEGA_3).expect("GPU OMEGA_3 must lie in [0, p_B)");
+        let omega3 =
+            GpuPrimeB::from_u128_checked(GPU_OMEGA_3).expect("GPU OMEGA_3 must lie in [0, p_B)");
         assert_eq!(field_pow(omega, 729), omega3, "OMEGA_3 != OMEGA_2187^729");
         assert!(
             is_primitive_nth_root(omega3, 3, &distinct_prime_factors(3)),
@@ -1045,7 +1040,7 @@ mod prime_a7f7_tests {
         );
     }
 
-    /// Drift guard for the production A7F7 smooth-subgroup constants.
+    /// Drift guard for the production 6A23801F smooth-subgroup constants.
     #[test]
     fn smooth_omega_matches_search() {
         let p_minus_1 = u128::MAX - F::OFFSET;
@@ -1065,7 +1060,7 @@ mod prime_a7f7_tests {
     #[test]
     fn primitive_nth_root_has_correct_order_for_every_divisor() {
         for &n in &[
-            2, 3, 6, 8, 9, 18, 24, 27, 54, 81, 162, 243, 486, 729, 1458, 2187, 4374, 8748, 17496,
+            2, 3, 6, 8, 9, 18, 24, 27, 54, 75, 150, 225, 450, 675, 1350, 3375, 6750, 13500, 27000,
         ] {
             if F::SMOOTH_SUBGROUP_ORDER % n != 0 {
                 continue;
@@ -1081,12 +1076,12 @@ mod prime_a7f7_tests {
 
     #[test]
     fn small_fft_matches_naive_dft() {
-        assert_fft_matches_naive_dft::<F>(&[2, 3, 6, 8, 9, 18, 24, 27, 54, 81, 162, 243, 486, 729]);
+        assert_fft_matches_naive_dft::<F>(&[2, 3, 6, 8, 9, 18, 24, 27, 54, 75, 150, 225, 450, 675]);
     }
 
     #[test]
     fn reusable_workspace_matches_allocating_transforms() {
-        for n in [2, 3, 6, 9, 18, 27, 54, 162, 243] {
+        for n in [2, 3, 6, 9, 18, 27, 54, 150, 225] {
             let domain = SmoothDomain::new(primitive_nth_root::<F>(n).unwrap(), n).unwrap();
             let input = (0..n)
                 .map(|i| F::from_u128_checked((i * i + 1) as u128).unwrap())
@@ -1111,23 +1106,22 @@ mod prime_a7f7_tests {
     }
 
     #[test]
-    fn forward_inverse_roundtrip_243() {
-        assert_forward_inverse_roundtrip::<F>(243);
+    fn forward_inverse_roundtrip_225() {
+        assert_forward_inverse_roundtrip::<F>(225);
     }
 
     #[test]
-    fn forward_inverse_roundtrip_1458() {
-        assert_forward_inverse_roundtrip::<F>(1458);
+    fn forward_inverse_roundtrip_1350() {
+        assert_forward_inverse_roundtrip::<F>(1350);
     }
 
     #[test]
-    fn forward_inverse_roundtrip_2187() {
-        assert_forward_inverse_roundtrip::<F>(2187);
+    fn forward_inverse_roundtrip_3375() {
+        assert_forward_inverse_roundtrip::<F>(3375);
     }
 
     #[test]
     fn rs_extend_consistency() {
-        // k = 243 (= 3^5), blowup = 9 (= 3^2), n = 3^7 = 2_187 | 17_496.
-        assert_rs_extend_consistency::<F>(243, 9);
+        assert_rs_extend_consistency::<F>(225, 5);
     }
 }

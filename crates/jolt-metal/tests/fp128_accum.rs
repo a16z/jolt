@@ -369,8 +369,8 @@ mod gpu {
     }
 
     #[test]
-    fn fp128_a7f7_accumulators_match_jolt_algebra() {
-        accumulators::<Prime128Offset6A23801F>("fp128_a7f7_accumulators_match_jolt_algebra", 3);
+    fn fp128_6a23801f_accumulators_match_jolt_algebra() {
+        accumulators::<Prime128Offset6A23801F>("fp128_6a23801f_accumulators_match_jolt_algebra", 3);
     }
 
     #[test]

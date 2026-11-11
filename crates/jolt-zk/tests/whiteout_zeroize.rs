@@ -14,7 +14,7 @@ use std::hint::black_box;
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
 use std::sync::Mutex;
 
-use jolt_algebra::{CanonicalEncoding, CyclotomicRing, Prime128OffsetA7F7};
+use jolt_algebra::{CanonicalEncoding, CyclotomicRing, Prime128Offset6A23801F};
 use jolt_crypto::lattice::{
     derive_public_matrix_prefix, sample_box_digits, PublicMatrixSeed, CHALLENGE_RING_DIM,
 };
@@ -23,7 +23,7 @@ use jolt_zk::masking::PadLayout;
 use jolt_zk::whiteout::{LatticePadCommitment, PadPlacement};
 use rand_core::{CryptoRng, Error, RngCore};
 
-type F = Prime128OffsetA7F7;
+type F = Prime128Offset6A23801F;
 
 /// Little-endian, top byte below `0xff` so that it is a canonical element
 /// of `F` whose in-memory limbs are these bytes.

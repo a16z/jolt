@@ -2,7 +2,7 @@
 
 #![expect(clippy::unwrap_used, reason = "tests unwrap well-formed inputs")]
 
-use jolt_algebra::Prime128OffsetA7F7;
+use jolt_algebra::Prime128Offset6A23801F;
 use jolt_crypto::lattice::required_randomness_columns;
 use jolt_zk::whiteout::{
     binding_collision_radius, Segment, SegmentMask, SegmentRole, SegmentShape, SegmentTable,
@@ -39,7 +39,8 @@ const INNER_DIGITS_PER_RANK: [usize; 2] = [2_688, 3_072];
 /// `whiteout-sigma.md` §1.5.
 fn randomness_len(extra: usize) -> usize {
     let columns =
-        required_randomness_columns::<Prime128OffsetA7F7>(RANK * 256, extra, 256, 4, 8).unwrap();
+        required_randomness_columns::<Prime128Offset6A23801F>(RANK * 256, extra, 256, 4, 8)
+            .unwrap();
     columns * 4
 }
 

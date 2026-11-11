@@ -1,3 +1,4 @@
+use akita_params::SetupMode;
 use std::{collections::BTreeMap, fmt, io::Cursor, sync::Arc, sync::OnceLock};
 
 #[cfg(feature = "parallel")]
@@ -914,6 +915,7 @@ impl AkitaVerifierSetup {
                         scheme.schedules().clone(),
                         prepared.selection(),
                         Some(prepared.terminal_cache()?),
+                        SetupMode::Check,
                     )
                     .map_err(invalid_setup)
                 })?;

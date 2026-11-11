@@ -577,7 +577,7 @@ mod sampled_family_tests {
 #[expect(clippy::unwrap_used, reason = "test code")]
 mod signed_evaluation_tests {
     use super::*;
-    use jolt_algebra::Prime128OffsetA7F7 as F;
+    use jolt_algebra::Prime128Offset6A23801F as F;
     #[test]
     fn sampled_signed_batches_match_the_sparse_polynomial() {
         let config = SparseChallengeConfig {
@@ -612,7 +612,7 @@ mod signed_evaluation_tests {
 #[expect(clippy::indexing_slicing, clippy::unwrap_used, reason = "test code")]
 mod embedding_view_tests {
     use super::*;
-    use jolt_algebra::Prime128OffsetA7F7 as F;
+    use jolt_algebra::Prime128Offset6A23801F as F;
     #[test]
     fn checked_embeddings_are_lazy_composable_and_preserve_public_values() {
         let config = SparseChallengeConfig {

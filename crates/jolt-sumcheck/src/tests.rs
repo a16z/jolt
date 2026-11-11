@@ -7,7 +7,7 @@
     reason = "tests may panic on assertion failures, index directly, and match errors with catch-all arms"
 )]
 
-use jolt_algebra::{Field, Fr, Prime128OffsetA7F7, Prime32Offset99, Ring};
+use jolt_algebra::{Field, Fr, Prime128Offset6A23801F, Prime32Offset99, Ring};
 use jolt_crypto::{Bn254, Bn254G1, JoltGroup, Pedersen, PedersenSetup, VectorCommitment};
 use jolt_poly::{CompressedPoly, UnivariatePoly};
 use jolt_transcript::{

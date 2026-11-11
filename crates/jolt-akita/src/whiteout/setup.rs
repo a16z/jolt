@@ -1,4 +1,5 @@
 use super::*;
+use akita_params::SetupMode;
 
 /// Finite row state prepared at construction or trusted-payload attachment.
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
@@ -140,6 +141,7 @@ impl PreparedWhiteout {
                     catalog.scheme.schedules().clone(),
                     selection,
                     cache,
+                    SetupMode::Check,
                 )?);
                 let row = WhiteoutRow {
                     verifier,

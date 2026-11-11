@@ -1,5 +1,6 @@
 use super::*;
 use crate::schedules::emit::RESPONSE_NUM_VARS;
+use akita_params::SetupMode;
 
 /// The response rows a setup holds before any proof, audited when its
 /// catalog is: its persisted response set, which fixes every row, or else
@@ -282,6 +283,7 @@ impl PreparedResponse {
             row.scheme.schedules().clone(),
             selection,
             cache,
+            SetupMode::Check,
         )?;
         Ok(Self {
             verifier: AkitaResponseVerifier::from_verifier(verifier)?,

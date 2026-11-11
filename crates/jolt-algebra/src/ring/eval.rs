@@ -119,9 +119,9 @@ where
 #[expect(clippy::unwrap_used, reason = "test code")]
 mod tests {
     use super::*;
-    use crate::{CanonicalEncoding, One, Prime128OffsetA7F7, Zero};
+    use crate::{CanonicalEncoding, One, Prime128Offset6A23801F, Zero};
 
-    type F = Prime128OffsetA7F7;
+    type F = Prime128Offset6A23801F;
     const D: usize = 64;
 
     fn sample(seed: u128) -> CyclotomicRing<F, D> {

@@ -1,5 +1,5 @@
 #![expect(clippy::expect_used, clippy::unwrap_used, reason = "test code")]
-use crate::{Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59, Ring};
+use crate::{Prime128Offset6A23801F, Prime32Offset99, Prime64Offset59, Ring};
 
 use super::convert::RADIX_SUM_PLANES;
 use super::lut::{balanced_limbs, CenteredMontReducer};
@@ -156,7 +156,7 @@ fn field_residues_match_centered_reduction() {
     }
     check::<Prime32Offset99>();
     check::<Prime64Offset59>();
-    check::<Prime128OffsetA7F7>();
+    check::<Prime128Offset6A23801F>();
 }
 
 #[test]
@@ -542,7 +542,7 @@ fn i32_crt_mat_vec_with_i16_tail_matches_schoolbook() {
 /// Constant-time i32 lift and reconstruction against schoolbook field
 /// arithmetic, with full-range field entries and inputs at the i32 extremes.
 fn assert_ct_i32_mat_vec_matches_field_schoolbook<const D: usize>() {
-    type F = Prime128OffsetA7F7;
+    type F = Prime128Offset6A23801F;
     let (num_rows, num_cols) = (2, 3);
     let params = CrtNttParamSet::<i32, Q128_NUM_PRIMES, D>::new(q128_primes());
     let matrix = (0..num_rows * num_cols)
@@ -595,7 +595,7 @@ fn ct_i32_mat_vec_matches_field_schoolbook() {
 /// both signs and the largest operands, summed at radix `2^32`.
 #[test]
 fn radix_sum_matches_field_arithmetic() {
-    type F = Prime128OffsetA7F7;
+    type F = Prime128Offset6A23801F;
     const D: usize = 64;
     let params = CrtNttParamSet::<i32, Q128_NUM_PRIMES, D>::new(q128_primes());
     let mut state = 0x243f_6a88_85a3_08d3_u128;

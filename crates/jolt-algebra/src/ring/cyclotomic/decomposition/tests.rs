@@ -1,7 +1,8 @@
 #![expect(clippy::expect_used, reason = "test code")]
 use super::*;
 use crate::{
-    Fp64, Prime128Offset275, Prime128OffsetA7F7, Prime32Offset99, Prime40Offset195, Prime64Offset59,
+    Fp64, Prime128Offset275, Prime128Offset6A23801F, Prime32Offset99, Prime40Offset195,
+    Prime64Offset59,
 };
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -361,12 +362,12 @@ fn decompose_small_signed_matches_field_all_accepted_shapes() {
     check_small_signed_decompose::<Prime40Offset195>();
     check_small_signed_decompose::<Prime64Offset59>();
     check_small_signed_decompose::<Prime128Offset275>();
-    check_small_signed_decompose::<Prime128OffsetA7F7>();
+    check_small_signed_decompose::<Prime128Offset6A23801F>();
 }
 
 #[test]
 fn add_bias_decomposition_matches_exact_recurrence_fp128() {
-    check_field_against_exact_recurrence::<Prime128OffsetA7F7>(0xa7f7);
+    check_field_against_exact_recurrence::<Prime128Offset6A23801F>(0xa7f7);
     check_field_against_exact_recurrence::<Prime128Offset275>(0x275);
 }
 

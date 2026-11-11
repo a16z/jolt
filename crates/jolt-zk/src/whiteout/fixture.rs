@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use jolt_algebra::{
     balanced_decompose_coefficients_pow2_i8_into, ring::cyclotomic::BalancedDecomposePow2Params,
-    CyclotomicRing, Field, JoltField, One, Prime128OffsetA7F7, Ring, Zero,
+    CyclotomicRing, Field, JoltField, One, Prime128Offset6A23801F, Ring, Zero,
 };
 use jolt_crypto::lattice::{
     derive_public_matrix_prefix, sample_box_digits, MatrixShape, MatrixView, PreparedMatrix,
@@ -36,7 +36,7 @@ use crate::masking::{
     ResidualRelation, ResidualVar,
 };
 
-pub type F = Prime128OffsetA7F7;
+pub type F = Prime128Offset6A23801F;
 pub(crate) const BASE_PADS: usize = 5;
 pub(crate) const PAD_RANK: usize = 2;
 pub(crate) const PAD_RANDOMNESS_COLUMNS: usize = 2;

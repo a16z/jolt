@@ -1082,7 +1082,7 @@ pub(crate) mod testing {
 mod tests {
     use crate::optimized::parity::ExceptionalEq;
     #[cfg(feature = "akita")]
-    use jolt_algebra::Prime128OffsetA7F7;
+    use jolt_algebra::Prime128Offset6A23801F;
     use jolt_algebra::{Fr, Ring, Zero};
     use jolt_claims::protocols::jolt::JoltChallengeId;
     use jolt_claims::{InputClaims, OutputClaims, SumcheckChallenges};

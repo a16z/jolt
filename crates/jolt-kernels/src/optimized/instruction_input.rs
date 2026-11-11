@@ -668,7 +668,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     #[cfg(feature = "akita")]
-    use jolt_algebra::Prime128OffsetA7F7;
+    use jolt_algebra::Prime128Offset6A23801F;
     use jolt_algebra::{Fr, JoltField};
     use jolt_claims::protocols::jolt::geometry::instruction::{
         imm, left_operand_is_pc, left_operand_is_rs1, rd_write_value, right_operand_is_imm,

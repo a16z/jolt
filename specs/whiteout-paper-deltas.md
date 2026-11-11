@@ -1212,7 +1212,7 @@ product count at T = 2^24 has not been measured.
 zero-knowledge, rejection sampling and fold overflow. The response proof's
 challenge rounds (`04_protocol.tex:339-506`) have no stated total.
 
-**Ledger.** Over `F_q`, `q ≈ 2^128` (A7F7), at `ν = ⌈log₂|e|⌉`, `m` batched
+**Ledger.** Over `F_q`, `q ≈ 2^128` (6A23801F), at `ν = ⌈log₂|e|⌉`, `m` batched
 rows and `n_×` product pairs. Each round's error is the probability that a
 false statement survives it; computational binding of the Akita commitment
 and Akita's own opening error are separate.

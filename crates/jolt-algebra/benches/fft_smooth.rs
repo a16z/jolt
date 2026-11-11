@@ -5,7 +5,7 @@ use jolt_algebra::fft::{field_pow, primitive_nth_root, rs_extend_fft, SmoothDoma
 use std::hint::black_box;
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
-use jolt_algebra::Prime128OffsetA7F7;
+use jolt_algebra::Prime128Offset6A23801F;
 use jolt_algebra::{Field, One, Zero};
 use rand::{rngs::StdRng, SeedableRng};
 
@@ -16,13 +16,13 @@ use rayon::prelude::*;
 #[cfg(feature = "parallel")]
 use std::fmt::Debug;
 
-type F = Prime128OffsetA7F7;
+type F = Prime128Offset6A23801F;
 
 fn bench_forward(c: &mut Criterion) {
     let mut group = c.benchmark_group("fft_forward");
 
-    // Prime128OffsetA7F7: smooth subgroup `17_496 = 2³·3⁷`.
-    for &n in &[243, 729, 1458, 2187, 4374, 8748, 17496] {
+    // Prime128Offset6A23801F: smooth subgroup `337_500_000 = 2⁵·3³·5⁸`.
+    for &n in &[225, 675, 1350, 3375, 6750, 13500, 27000] {
         if F::SMOOTH_SUBGROUP_ORDER % n != 0 {
             continue;
         }
@@ -31,7 +31,7 @@ fn bench_forward(c: &mut Criterion) {
         let mut rng = StdRng::seed_from_u64(0xff00 + n as u64);
         let input: Vec<F> = (0..n).map(|_| Field::random(&mut rng)).collect();
 
-        let label = format!("A7F7/N={n}");
+        let label = format!("6A23801F/N={n}");
         let _ = group.bench_with_input(BenchmarkId::from_parameter(&label), &label, |b, _| {
             b.iter(|| black_box(domain.forward(black_box(&input)).unwrap()));
         });
@@ -43,7 +43,7 @@ fn bench_forward(c: &mut Criterion) {
 fn bench_inverse(c: &mut Criterion) {
     let mut group = c.benchmark_group("fft_inverse");
 
-    for &n in &[243, 729, 1458, 2187, 4374, 8748, 17496] {
+    for &n in &[225, 675, 1350, 3375, 6750, 13500, 27000] {
         if F::SMOOTH_SUBGROUP_ORDER % n != 0 {
             continue;
         }
@@ -64,7 +64,7 @@ fn bench_inverse(c: &mut Criterion) {
 fn bench_rs_extend(c: &mut Criterion) {
     let mut group = c.benchmark_group("fft_rs_extend");
 
-    for &(k, blowup) in &[(243, 3), (243, 6), (729, 3), (1458, 3)] {
+    for &(k, blowup) in &[(225, 3), (225, 6), (625, 5), (1250, 3)] {
         let n = k * blowup;
         if F::SMOOTH_SUBGROUP_ORDER % n != 0 {
             continue;
@@ -87,7 +87,7 @@ fn bench_rs_extend(c: &mut Criterion) {
 }
 
 fn bench_rs_expand_256_to_1024(c: &mut Criterion) {
-    let domain_size = 1458usize;
+    let domain_size = 1350usize;
     let k = 256usize;
     let omega = primitive_nth_root::<F>(domain_size).unwrap();
     let domain = SmoothDomain::new(omega, domain_size).unwrap();
@@ -95,7 +95,7 @@ fn bench_rs_expand_256_to_1024(c: &mut Criterion) {
     let mut rng = StdRng::seed_from_u64(0xff03);
     let base_evals: Vec<F> = (0..k).map(|_| Field::random(&mut rng)).collect();
 
-    // Zero-pad the 256 evaluations to the 1458-point domain and IFFT to
+    // Zero-pad the 256 evaluations to the 1350-point domain and IFFT to
     // get a coefficient vector. This is a synthetic benchmark payload, not
     // a true RS interpolation (the zero-padding does not correspond to
     // evaluations at the remaining domain points).
@@ -103,7 +103,7 @@ fn bench_rs_expand_256_to_1024(c: &mut Criterion) {
     padded_evals[..k].copy_from_slice(&base_evals);
     let coeffs = domain.inverse(&padded_evals).unwrap();
 
-    let _ = c.bench_function("fft_rs_expand/256_to_1024_via_1458", |b| {
+    let _ = c.bench_function("fft_rs_expand/256_to_1024_via_1350", |b| {
         b.iter(|| {
             let all_evals = domain.coset_forward(black_box(&coeffs), F::one()).unwrap();
             let _ = black_box(&all_evals[k..k + 1024]);
@@ -149,15 +149,13 @@ fn run_rs_expand_256_par<Fld>(
 
 #[cfg(feature = "parallel")]
 fn bench_rs_expand_256_to_1024_par(c: &mut Criterion) {
-    // Prime128OffsetA7F7: smooth subgroup of order `2³·3⁷ = 17_496`.
-    // There is no 1470-divisor; the closest analogue to `2·3·5·7² = 1470`
-    // that still covers the 256+1024 RS-extend budget is `1458 = 2·3⁶`.
+    // Prime128Offset6A23801F: smooth subgroup of order `2⁵·3³·5⁸ = 337_500_000`.
     {
-        let domain_size = 1458usize;
+        let domain_size = 1350usize;
         let omega = primitive_nth_root::<F>(domain_size).unwrap();
         run_rs_expand_256_par::<F>(
             c,
-            "fft_rs_expand/256_to_1024_via_1458_x32768_par_A7F7",
+            "fft_rs_expand/256_to_1024_via_1350_x32768_par_6A23801F",
             omega,
             domain_size,
             0xff05,

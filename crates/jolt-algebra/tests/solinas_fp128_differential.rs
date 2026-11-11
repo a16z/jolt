@@ -419,8 +419,8 @@ fn five_limb_reduction_extreme_offsets_match_long_division() {
 /// sign and magnitude edges.
 #[test]
 fn lift_ct_and_lift_biased_match_the_residue() {
-    type F = two::Prime128OffsetA7F7;
-    let p = u128::MAX - 0xFFFF_A7F6;
+    type F = two::Prime128Offset6A23801F;
+    let p = u128::MAX - 0x6A23_801E;
     let mut rng = rng();
     let edges = [0, 1, -1, i64::MAX, i64::MIN + 1, 1 << 40, -(1 << 40)];
     for x in edges

@@ -641,7 +641,7 @@ mod tests {
     #![expect(clippy::unwrap_used, reason = "tests unwrap successful PCS operations")]
 
     use super::*;
-    use jolt_algebra::Ring;
+    use jolt_algebra::{Field, Ring};
     use jolt_crypto::{Pedersen, VectorCommitment};
     use jolt_poly::Polynomial;
     use jolt_transcript::{prover_transcript, Blake2b512};

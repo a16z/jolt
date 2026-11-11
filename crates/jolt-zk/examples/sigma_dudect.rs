@@ -42,14 +42,14 @@ use std::ops::Range;
 use std::process::ExitCode;
 use std::time::Instant;
 
-use jolt_algebra::{CyclotomicRing, Prime128OffsetA7F7, Ring};
+use jolt_algebra::{CyclotomicRing, Prime128Offset6A23801F, Ring};
 use jolt_crypto::challenge::sample_challenge_ct_counted;
 use jolt_zk::whiteout::diagnostics::{with_dit, AttemptHarness, RING};
 use jolt_zk::whiteout::DenseChallenge;
 use rand_chacha::ChaCha20Rng;
 use rand_core::{RngCore, SeedableRng};
 
-type F = Prime128OffsetA7F7;
+type F = Prime128Offset6A23801F;
 const CHUNK: usize = 1_000;
 const THRESHOLD: f64 = 4.5;
 const CROPS: usize = 10;

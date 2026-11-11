@@ -621,7 +621,7 @@ mod garner_tests {
     use crate::ntt::ifma52::IFMA52_PRIMES;
     use crate::ntt::tables::{I16_TAIL_PRIME, I32_RAW_PRIMES};
     use crate::Field;
-    use crate::{Prime128OffsetA7F7, Prime32Offset99};
+    use crate::{Prime128Offset6A23801F, Prime32Offset99};
 
     /// Checks range and `sum_k d_k prod_{j<k} p_j == r_i (mod p_i)` for all i.
     fn mixed_radix<const K: usize>(garner: &GarnerData<K>, residues: [i64; K]) -> [i64; K] {
@@ -679,7 +679,7 @@ mod garner_tests {
             });
             assert_mixed_radix(&garner, residues);
             let digits = mixed_radix(&garner, residues);
-            assert_field_lift::<Prime128OffsetA7F7, K>(&garner, &digits);
+            assert_field_lift::<Prime128Offset6A23801F, K>(&garner, &digits);
             assert_field_lift::<Prime32Offset99, K>(&garner, &digits);
         }
     }

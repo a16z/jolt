@@ -325,7 +325,7 @@ impl SparseChallengeConfig {
 mod entropy_tests {
     use super::*;
     use jolt_algebra::{
-        pseudo_mersenne_modulus, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59,
+        pseudo_mersenne_modulus, Prime128Offset6A23801F, Prime32Offset99, Prime64Offset59,
         PseudoMersenne,
     };
 
@@ -413,7 +413,7 @@ mod entropy_tests {
     fn production_primes_and_challenges_meet_ls18_shortness() {
         assert_ls18_short_difference_bound::<Prime32Offset99>(2);
         assert_ls18_short_difference_bound::<Prime64Offset59>(2);
-        assert_ls18_short_difference_bound::<Prime128OffsetA7F7>(4);
+        assert_ls18_short_difference_bound::<Prime128Offset6A23801F>(4);
     }
 
     #[test]

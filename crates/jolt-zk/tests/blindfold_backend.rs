@@ -2,7 +2,7 @@
 //! Σ_x a(x)·b(x) = C closed by a·b at the output point, plus a residual
 //! evaluation y = a(r) + b(r) inside a hiding evaluation commitment.
 
-#![cfg(feature = "prover")]
+#![cfg(all(feature = "prover", feature = "blindfold"))]
 #![expect(
     clippy::unwrap_used,
     clippy::indexing_slicing,
@@ -10,7 +10,7 @@
 )]
 
 use jolt_algebra::{Field, Fr, Ring};
-use jolt_claims::{opening, FactoredExpr, Source};
+use jolt_claim_expr::{opening, FactoredExpr, Source};
 use jolt_crypto::{Bn254, Bn254G1, JoltGroup, Pedersen, PedersenSetup, VectorCommitment};
 use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::{receive_masked_rounds, DegreeSchedule, RoundWire, SumcheckRecorder};

@@ -204,8 +204,11 @@ mod gpu {
     }
 
     #[test]
-    fn fp128_a7f7_matches_jolt_algebra() {
-        conformance::<Prime128Offset6A23801F>("fp128_a7f7_matches_jolt_algebra", 0xf128_a7f7);
+    fn fp128_6a23801f_matches_jolt_algebra() {
+        conformance::<Prime128Offset6A23801F>(
+            "fp128_6a23801f_matches_jolt_algebra",
+            0xf128_6a23801f,
+        );
     }
 
     #[test]

@@ -147,7 +147,7 @@ mod tests {
         q128_primes, I16_TAIL_PRIME, Q128_NUM_PRIMES, Q32_NUM_PRIMES, Q32_PRIMES, Q64_NUM_PRIMES,
         Q64_PRIMES,
     };
-    use crate::{Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
+    use crate::{Prime128Offset6A23801F, Prime32Offset99, Prime64Offset59};
 
     fn assert_split_i16_matvec<F, const K: usize, const D: usize>(
         wide_params: CrtNttParamSet<i32, K, D>,
@@ -221,12 +221,12 @@ mod tests {
         assert_split_i16_matvec::<Prime64Offset59, Q64_NUM_PRIMES, 128>(CrtNttParamSet::new(
             Q64_PRIMES,
         ));
-        assert_split_i16_matvec::<Prime128OffsetA7F7, Q128_NUM_PRIMES, 64>(CrtNttParamSet::new(
-            q128_primes(),
-        ));
-        assert_split_i16_matvec::<Prime128OffsetA7F7, Q128_NUM_PRIMES, 128>(CrtNttParamSet::new(
-            q128_primes(),
-        ));
+        assert_split_i16_matvec::<Prime128Offset6A23801F, Q128_NUM_PRIMES, 64>(
+            CrtNttParamSet::new(q128_primes()),
+        );
+        assert_split_i16_matvec::<Prime128Offset6A23801F, Q128_NUM_PRIMES, 128>(
+            CrtNttParamSet::new(q128_primes()),
+        );
     }
 
     #[test]

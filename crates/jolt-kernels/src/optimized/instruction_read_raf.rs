@@ -2069,7 +2069,7 @@ mod tests {
     use std::sync::Arc;
 
     #[cfg(feature = "akita")]
-    use jolt_algebra::Prime128OffsetA7F7;
+    use jolt_algebra::Prime128Offset6A23801F;
     use jolt_algebra::{Fr, JoltField, Ring};
     use jolt_claims::protocols::jolt::geometry::instruction::{
         InstructionReadRafDimensions, CANONICAL_INSTRUCTION_ADDRESS,

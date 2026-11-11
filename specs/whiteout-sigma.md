@@ -54,8 +54,7 @@ W4 builds the lattice half of `jolt-zk` and the primitives it needs.
 
 ## 0. Notation and the private vector
 
-`R = F[X]/(X^64 + 1)` with `F = Prime128OffsetA7F7` and `q = 2^128 − 2^32 +
-22537`. R is the challenge ring of §2.1, with d = 64.
+`R = F[X]/(X^64 + 1)` with `F = Prime128Offset6A23801F` and `q = 2^128 − 1780711455`. R is the challenge ring of §2.1, with d = 64.
 
 `jolt-zk::whiteout` holds the private vector **s** of Def. `wo:def:residual` as
 an ordered list of **segments**:

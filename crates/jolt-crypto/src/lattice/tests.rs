@@ -1,7 +1,7 @@
 #![expect(clippy::indexing_slicing, clippy::unwrap_used, reason = "test code")]
 
 use jolt_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
-use jolt_algebra::{CanonicalBytes, CyclotomicRing, Field, One, Prime128OffsetA7F7, Ring};
+use jolt_algebra::{CanonicalBytes, CyclotomicRing, Field, One, Prime128Offset6A23801F, Ring};
 use rand_chacha::rand_core::{RngCore, SeedableRng};
 use rand_chacha::ChaCha20Rng;
 use shake::digest::{ExtendableOutput, Update, XofReader};
@@ -11,7 +11,7 @@ use std::sync::Arc;
 use super::*;
 use crate::CryptoError;
 
-type F = Prime128OffsetA7F7;
+type F = Prime128Offset6A23801F;
 
 fn stream(len: usize, seed: u8) -> Vec<F> {
     derive_public_matrix_prefix::<F>(len, &PublicMatrixSeed::shake256_paged_v1([seed; 32])).unwrap()
