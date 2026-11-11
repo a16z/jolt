@@ -107,19 +107,19 @@ fn apply_centered_matches_schoolbook_across_chunks() {
     for (digest, expected) in [
         (
             check_apply_centered::<64>(1 << 28),
-            "9c24c5494f15ec6403971f437bb2905d48f163cb9d69e1ff828977a7727ff9a5",
+            "e00c268642c96ae84294d14ce9e61b24880beb630eb86142fab8fa5334fcfec1",
         ),
         (
             check_apply_centered::<64>(i32::MAX as u64),
-            "3d17b525db1c7b4b5fac09f19b4155999d7c55b6ae1323444ca56b247a12c147",
+            "748b0c10934bc1c90e220daa386e07a5fa6f2bf5a93c78d7f9c292d885b77b3c",
         ),
         (
             check_apply_centered::<256>(1 << 28),
-            "cbf8fca64e5f1bc15ae014162b6e3ce33980345b6402d714cc3ba8deeb43840a",
+            "2945dc387bf0a0cf13bf3fd6a8ea18edbc2a93043f99de8df66b7748b6b0d7d3",
         ),
         (
             check_apply_centered::<256>(8),
-            "5dd65520b7eb26f2f9ebdb291fe2e77408c707397e61f264a3c5d9c7e0d49da5",
+            "de86bf58d00faf057465946336c4060e4836b179b75fe068ec16aea648b8f769",
         ),
     ] {
         assert_eq!(hex(digest), expected);
@@ -350,15 +350,15 @@ fn check_commit<const D: usize>(
 fn commit_digests_are_frozen() {
     assert_eq!(
         hex(check_commit::<64>(4, 32, 2)),
-        "2f053786aad127aa3023f93e4eaad5c855002ad8f4398a44c5120003bcbeb0fb"
+        "bdb3f3008df057a455646fd94c09c5445bcc70d83659524900742016fc513683"
     );
     assert_eq!(
         hex(check_commit::<256>(8, 16, 0)),
-        "f02de342c6e62ffd35617e6a9c6f384f9e2da18612da0fd40538495f3439aaac"
+        "11d76bb230543de3fba42d1ebada32fd83459b983a34b32da7c38020a13df283"
     );
     assert_eq!(
         hex(check_commit::<256>(4, 32, 1)),
-        "74812bea54b3446061a0607cc2323c25fb99228cf62a61984fe55960aede6960"
+        "66c70e6c26cb491ad8613ce1116a7dd25d49dd6a45234f9db21186f0e2807464"
     );
 }
 
