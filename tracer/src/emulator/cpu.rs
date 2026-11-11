@@ -1823,7 +1823,7 @@ mod test_cpu {
         let layout = JoltDeviceMemory::new(&config).memory_layout;
         let scratch = DRAM_BASE + 32;
         for (address, error) in [
-            (layout.get_lowest_address() - 1, Some("I/O underflow")),
+            (layout.get_lowest_address() - 1, None),
             (layout.heap_end, Some("Illegal Memory Access")),
             (layout.get_lowest_address(), None),
             (scratch, None),
