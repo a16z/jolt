@@ -21,7 +21,7 @@ fn recovery_identities<F: Field>() {
     ] {
         for order in [BindingOrder::LowToHigh, BindingOrder::HighToLow] {
             for scale in [F::one(), F::zero()] {
-                let mut split = GruenSplitEqPolynomial::from_point(
+                let mut split = GruenSplitEqPolynomial::new_with_scaling(
                     &PointRef::low_to_high(&coords),
                     order,
                     Some(scale),
@@ -107,7 +107,7 @@ fn little_endian_gruen_tables_reconstruct_full_eq_at_every_round() {
     for n in 1..=20 {
         let tau: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
         let mut full = EqPolynomial::evals(&PointRef::low_to_high(&tau), None);
-        let mut split = GruenSplitEqPolynomial::from_point(
+        let mut split = GruenSplitEqPolynomial::new_with_scaling(
             &PointRef::low_to_high(&tau),
             BindingOrder::LowToHigh,
             None,
@@ -167,7 +167,8 @@ fn finished_states_equal_empty_at_the_final_scalar() {
             for scale in [Fr::one(), Fr::zero(), Fr::from_u64(7)] {
                 for coordinate in [Fr::zero(), Fr::from_u64(3)] {
                     let point = vec![coordinate; n];
-                    let mut state = GruenSplitEqPolynomial::from_point(&point, order, Some(scale));
+                    let mut state =
+                        GruenSplitEqPolynomial::new_with_scaling(&point, order, Some(scale));
                     for _ in 0..n {
                         state.round_mut().unwrap().bind(Fr::one());
                     }
@@ -175,7 +176,7 @@ fn finished_states_equal_empty_at_the_final_scalar() {
                     assert_eq!(state.current_scalar(), expected_scalar);
                     let scalar = state.current_scalar();
                     let empty =
-                        GruenSplitEqPolynomial::from_point(&[] as &[Fr], order, Some(scalar));
+                        GruenSplitEqPolynomial::new_with_scaling(&[] as &[Fr], order, Some(scalar));
                     for finished in [&state, &empty] {
                         assert_eq!(finished.remaining_rounds(), 0);
                         assert_eq!(finished.current_scalar(), scalar);
@@ -217,7 +218,7 @@ fn generic_callers<F: Field>() {
     let point = [F::one(); 3];
     let mut s = GruenSplitEqPolynomial::new(&point, BindingOrder::LowToHigh);
     let _ = GruenSplitEqPolynomial::new_with_scaling(&point, BindingOrder::LowToHigh, None);
-    let _ = GruenSplitEqPolynomial::from_point(&point, BindingOrder::LowToHigh, None);
+    let _ = GruenSplitEqPolynomial::new_with_scaling(&point, BindingOrder::LowToHigh, None);
     let _ = s.current_scalar();
     let _ = s.remaining_rounds();
     let _ = s.round().unwrap().coordinate();

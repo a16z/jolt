@@ -326,7 +326,7 @@ fn global_prefix_sum_rejects_long_prefix() {
     expected = "assertion failed: range.start <= range.end && range.end <= self.0.len()"
 )]
 fn global_tensor_rejects_invalid_split() {
-    let _ = TensorEqTable::<Fr>::from_point(&[] as &[Fr], Fr::from_u64(1), 1);
+    let _ = TensorEqTable::<Fr>::new_with_scaling_and_split(&[] as &[Fr], Fr::from_u64(1), 1);
 }
 
 #[test]

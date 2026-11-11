@@ -45,28 +45,13 @@ pub struct GruenRoundMut<'state, F: Field> {
 
 impl<F: Field> GruenSplitEqPolynomial<F> {
     #[track_caller]
-    pub fn new(point: &[F], binding_order: BindingOrder) -> Self {
-        match Self::from_point_in(point, binding_order, None, Global) {
-            Ok(v) => v,
-            Err(never) => match never {},
-        }
-    }
-
-    #[track_caller]
-    pub fn new_with_scaling(
-        point: &[F],
-        binding_order: BindingOrder,
-        scaling_factor: Option<F>,
-    ) -> Self {
-        match Self::from_point_in(point, binding_order, scaling_factor, Global) {
-            Ok(v) => v,
-            Err(never) => match never {},
-        }
+    pub fn new<P: PointLike<Coord = F> + ?Sized>(point: &P, binding_order: BindingOrder) -> Self {
+        Self::new_with_scaling(point, binding_order, None)
     }
 
     /// Builds tables in significance order and stores one MSB-first point copy.
     #[track_caller]
-    pub fn from_point<P: PointLike<Coord = F> + ?Sized>(
+    pub fn new_with_scaling<P: PointLike<Coord = F> + ?Sized>(
         point: &P,
         binding_order: BindingOrder,
         scaling_factor: Option<F>,

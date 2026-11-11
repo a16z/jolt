@@ -145,7 +145,11 @@ fn bench_eq_field<F: Field>(c: &mut Criterion, field: &str) {
         });
         group.bench_function(BenchmarkId::new("tensor", n), |bench| {
             bench.iter(|| {
-                TensorEqTable::<F>::from_point(std::hint::black_box(&r), F::from_u64(1), n / 2)
+                TensorEqTable::<F>::new_with_scaling_and_split(
+                    std::hint::black_box(&r),
+                    F::from_u64(1),
+                    n / 2,
+                )
             });
         });
     }

@@ -16,40 +16,25 @@ pub struct TensorEqTable<F: Field> {
 
 impl<F: Field> TensorEqTable<F> {
     #[track_caller]
-    pub fn new(point: &[F]) -> Self {
-        match Self::from_point_in(point, F::one(), point.len() / 2, Global) {
-            Ok(v) => v,
-            Err(never) => match never {},
-        }
+    pub fn new<P: PointLike<Coord = F> + ?Sized>(point: &P) -> Self {
+        Self::new_with_scaling(point, F::one())
     }
 
     #[track_caller]
-    pub fn new_with_scaling(point: &[F], scale: F) -> Self {
-        match Self::from_point_in(point, scale, point.len() / 2, Global) {
-            Ok(v) => v,
-            Err(never) => match never {},
-        }
+    pub fn new_with_scaling<P: PointLike<Coord = F> + ?Sized>(point: &P, scale: F) -> Self {
+        Self::new_with_scaling_and_split(point, scale, point.num_vars() / 2)
     }
 
-    /// Factors `scale * eq(point, x)` with the first `split` coordinates in the
-    /// outer table. `split` must be at most `point.len()`.
+    /// Factors `scale * eq(point, x)` with `split` most-significant variables
+    /// outside. Index layout is `(x_out << in_bits) | x_in`.
+    /// `split` must be at most `point.num_vars()`.
     #[track_caller]
-    pub fn new_with_scaling_and_split(point: &[F], scale: F, split: usize) -> Self {
-        match Self::from_point_in(point, scale, split, Global) {
-            Ok(v) => v,
-            Err(never) => match never {},
-        }
-    }
-
-    /// Factors `scale * eq(point, x)` with `outer_vars` most-significant
-    /// variables outside. Index layout is `(x_out << in_bits) | x_in`.
-    #[track_caller]
-    pub fn from_point<P: PointLike<Coord = F> + ?Sized>(
+    pub fn new_with_scaling_and_split<P: PointLike<Coord = F> + ?Sized>(
         point: &P,
         scale: F,
-        outer_vars: usize,
+        split: usize,
     ) -> Self {
-        match Self::from_point_in(point, scale, outer_vars, Global) {
+        match Self::from_point_in(point, scale, split, Global) {
             Ok(v) => v,
             Err(never) => match never {},
         }
