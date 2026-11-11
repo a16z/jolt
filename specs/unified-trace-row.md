@@ -310,14 +310,16 @@ backward over the canonical trailing suffix of the collected vector.
 `from_parts` uses that same suffix scan and also retains the final field
 event's cycle. There is no full trace conversion or normalization copy.
 
-`ProverConfig::derive` now consumes `&[JoltTraceRow]`; callers supply
-`proof_rows()`. Its minimum domain is unchanged; it pads to the smallest power
-of two holding the proof rows, with no reserved final no-op row. Its last-row Jump precondition (`ProverError::TraceDoesNotEndInJump`)
-also depends on that prefix: `rows()` can end in canonical padding and would
-reject an honest trace. Witness and field construction validate the same retained
-`proof_len` against the cycle domain, and random-access proof consumers use
-that same prefix. This shared bound prevents padding from changing proof
-shape near a power-of-two boundary while keeping full analysis content.
+`ProverConfig::derive_from_dimensions` consumes `ExecutionDimensions`
+summarizing the `proof_rows()` prefix. It pads to the smallest power of two
+holding the proof rows, subject to the protocol minimum, with no reserved
+final no-op row. Its last-row Jump precondition
+(`ProverError::TraceDoesNotEndInJump`) also depends on that prefix: summarizing
+`rows()` can include canonical padding and reject an honest trace. Witness and
+field construction validate the same retained `proof_len` against the cycle
+domain, and random-access proof consumers use that same prefix. This shared
+bound prevents padding from changing proof shape near a power-of-two boundary
+while keeping full analysis content.
 
 Sources: [aggregate](../crates/jolt-program/src/execution/trace/data.rs),
 [execution output](../crates/jolt-program/src/execution/trace.rs),

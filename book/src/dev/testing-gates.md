@@ -4,13 +4,13 @@
 
 `crates/jolt-prover/tests/e2e_matrix.rs` holds one guest table per instruction
 profile. The ordinary profile has eleven cases: muldiv, fibonacci, memory-ops,
-stdlib, memory-copy, sha2, sha3 through both its unaligned and aligned entry points,
-advice-consumer, btreemap, and muldiv-full-domain. The last one extends muldiv's
-execution with its own terminal stall until it fills its padded trace domain,
-and bakes that domain in as the maximum, so the proof has no padding row. Enabling `field-inline` selects `field_ops`,
-`field_limbs`, and `muldiv`, covering active field operations, the SDK's
-checked limb conversions, and an ordinary guest proved under the field-inline
-protocol with no field activity.
+stdlib, memory-copy, sha2, sha3 through both its unaligned and aligned entry
+points, advice-consumer, btreemap, and muldiv-full-domain. The last one extends
+muldiv's execution with its own terminal stall until it fills its padded trace
+domain, and bakes that domain in as the maximum, so the proof has no padding
+row. Enabling `field-inline` selects `field_ops`, `field_limbs`, and `muldiv`,
+covering active field operations, the SDK's checked limb conversions, and an
+ordinary guest proved under the field-inline protocol with no field activity.
 
 The shared runner checks each guest's output against a natively computed
 value, its panic status, trace bound, and field activity, then proves it with
