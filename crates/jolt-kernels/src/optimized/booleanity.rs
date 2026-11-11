@@ -43,7 +43,7 @@
 //!   deferred-reduction lanes at every level (per-row products, per-block
 //!   `e_in` folds, cross-block `e_out` folds); the cubic is reconstructed
 //!   from `s(0)+s(1) = previous_claim` via
-//!   [`GruenSplitEqPolynomial::gruen_poly_deg_3`]. The stage-6a
+//!   [`jolt_poly::GruenRound::gruen_poly_deg_3`]. The stage-6a
 //!   `eq(r_address, reference_address)` scalar rides in the split-eq
 //!   scaling factor, mirroring the reference's `EqAddressCycle` derived
 //!   table exactly.
@@ -56,6 +56,7 @@
 //! Cross-stage carry: both prepares share the packed stage-5 rows through
 //! `SharedInstructionRows`, whose docs own the carry protocol.
 
+use crate::optimized::support::eq_round_error;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -471,10 +472,15 @@ struct OptimizedBooleanityCycleKernel<F: JoltField> {
 }
 
 impl<F: JoltField> OptimizedBooleanityCycleKernel<F> {
-    fn bind(&mut self, challenge: F) {
-        self.eq.bind(challenge);
+    fn bind(&mut self, challenge: F) -> Result<(), SumcheckError<F>> {
+        let round = self.progress.bound();
+        self.eq
+            .round_mut()
+            .ok_or_else(|| eq_round_error(round))?
+            .bind(challenge);
         self.tables.bind(challenge);
         self.progress.advance();
+        Ok(())
     }
 }
 
@@ -627,47 +633,41 @@ impl<'a, F: JoltField, S: ChunkIndexSource, const TRIANGULAR: bool>
                 a
             },
         );
-        eq.checked_cubic(
-            lanes[0].reduce() + tail_mass,
-            lanes[1].reduce(),
-            claim,
-            round,
-            || {
-                tail_mass
-                    + eq.par_fold_out_in_prefix(
-                        prefix_pairs,
-                        F::zero,
-                        |sum, row, _, weight| {
-                            let value = self.products.iter().enumerate().fold(
-                                F::zero(),
-                                |value, (family, (constants, _))| {
-                                    value + constants[self.state(family, 2 * row + 1)]
-                                },
-                            );
-                            *sum += weight * value;
-                        },
-                        |_, weight, sum| weight * sum,
-                        |a, b| a + b,
-                    )
-            },
-        )
+        eq.round()
+            .ok_or_else(|| eq_round_error(round))?
+            .checked_cubic(
+                lanes[0].reduce() + tail_mass,
+                lanes[1].reduce(),
+                claim,
+                round,
+                || {
+                    tail_mass
+                        + eq.par_fold_out_in_prefix(
+                            prefix_pairs,
+                            F::zero,
+                            |sum, row, _, weight| {
+                                let value = self.products.iter().enumerate().fold(
+                                    F::zero(),
+                                    |value, (family, (constants, _))| {
+                                        value + constants[self.state(family, 2 * row + 1)]
+                                    },
+                                );
+                                *sum += weight * value;
+                            },
+                            |_, weight, sum| weight * sum,
+                            |a, b| a + b,
+                        )
+                },
+            )
     }
 }
 
-impl<F: JoltField> ProveRounds<F> for OptimizedBooleanityCycleKernel<F> {
-    fn num_rounds(&self) -> usize {
-        self.progress.total()
-    }
-
-    fn prove_round(
-        &mut self,
-        bind: Option<F>,
+impl<F: JoltField> OptimizedBooleanityCycleKernel<F> {
+    fn message(
+        &self,
         round: usize,
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
-        if let Some(challenge) = bind {
-            self.bind(challenge);
-        }
         let prefix_pairs = self.tables.prefix_len().div_ceil(2);
         let tail = self
             .tables
@@ -778,44 +778,71 @@ impl<F: JoltField> ProveRounds<F> for OptimizedBooleanityCycleKernel<F> {
                 a
             },
         );
-        self.eq.checked_cubic(
-            block_lanes[0].reduce() + tail_mass,
-            block_lanes[1].reduce(),
-            previous_claim,
-            round,
-            || {
-                tail_mass
-                    + self.eq.par_fold_out_in_prefix(
-                        prefix_pairs,
-                        || {
-                            (
-                                vec![(F::zero(), F::zero()); num_polys],
-                                F::Accumulator::default(),
-                            )
-                        },
-                        |(pairs, sum), row, _, weight| {
-                            if let Some(paired) = &paired {
-                                paired.gather(row, pairs);
-                            } else {
-                                tables.lo_hi_all(row, pairs);
-                            }
-                            let mut value = F::Accumulator::default();
-                            for ((_, hi), rho) in pairs.iter().zip(gamma_powers).take(active_polys)
-                            {
-                                value.fmadd(*hi, *hi - *rho);
-                            }
-                            sum.fmadd(weight, value.reduce());
-                        },
-                        |_, weight, (_, sum)| weight * sum.reduce(),
-                        |a, b| a + b,
-                    )
-            },
-        )
+        self.eq
+            .round()
+            .ok_or_else(|| eq_round_error(round))?
+            .checked_cubic(
+                block_lanes[0].reduce() + tail_mass,
+                block_lanes[1].reduce(),
+                previous_claim,
+                round,
+                || {
+                    tail_mass
+                        + self.eq.par_fold_out_in_prefix(
+                            prefix_pairs,
+                            || {
+                                (
+                                    vec![(F::zero(), F::zero()); num_polys],
+                                    F::Accumulator::default(),
+                                )
+                            },
+                            |(pairs, sum), row, _, weight| {
+                                if let Some(paired) = &paired {
+                                    paired.gather(row, pairs);
+                                } else {
+                                    tables.lo_hi_all(row, pairs);
+                                }
+                                let mut value = F::Accumulator::default();
+                                for ((_, hi), rho) in
+                                    pairs.iter().zip(gamma_powers).take(active_polys)
+                                {
+                                    value.fmadd(*hi, *hi - *rho);
+                                }
+                                sum.fmadd(weight, value.reduce());
+                            },
+                            |_, weight, (_, sum)| weight * sum.reduce(),
+                            |a, b| a + b,
+                        )
+                },
+            )
+    }
+}
+
+impl<F: JoltField> ProveRounds<F> for OptimizedBooleanityCycleKernel<F> {
+    fn num_rounds(&self) -> usize {
+        self.progress.total()
+    }
+
+    fn prove_round(
+        &mut self,
+        bind: Option<F>,
+        round: usize,
+        previous_claim: F,
+    ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
+        self.progress.validate_round(round, bind.is_some())?;
+        if let Some(challenge) = bind {
+            self.bind(challenge)?;
+        }
+        let message = self.message(round, previous_claim);
+        if message.is_ok() {
+            self.progress.record_message();
+        }
+        message
     }
 
     fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {
-        self.bind(bind);
-        Ok(())
+        self.progress.validate_finish()?;
+        self.bind(bind)
     }
 }
 
@@ -1769,7 +1796,7 @@ mod categorical_tests {
                         column.truncate(column.len() / 2);
                     }
                     lazy.bind(bind);
-                    eq.bind(bind);
+                    eq.round_mut().unwrap().bind(bind);
                     prefix *= bit * bind + (F::one() - bit) * (F::one() - bind);
                 }
             }

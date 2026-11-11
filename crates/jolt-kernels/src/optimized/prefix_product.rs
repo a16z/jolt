@@ -128,7 +128,7 @@ mod tests {
                     let _ = right.bind(challenge);
                     dense_left.bind_with_order(challenge, BindingOrder::LowToHigh);
                     dense_right.bind_with_order(challenge, BindingOrder::LowToHigh);
-                    eq.bind(challenge);
+                    assert!(eq.round_mut().map(|round| round.bind(challenge)).is_some());
                 }
             }
         }

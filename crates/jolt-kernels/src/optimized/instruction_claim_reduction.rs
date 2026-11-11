@@ -4,6 +4,7 @@
 //! Gruen factoring avoids a dense eq table. One split-eq row walk recovers
 //! the five output claims at the bound point.
 
+use crate::optimized::support::eq_round_error;
 use jolt_claims::protocols::jolt::relations::claim_reductions::instruction::InstructionClaimReductionOutputClaims;
 use jolt_claims::protocols::jolt::{InstructionClaimReductionPublic, JoltDerivedId};
 use jolt_field::{Accumulator, JoltField};
@@ -334,14 +335,21 @@ impl<F: JoltField> OptimizedInstructionClaimReductionKernel<F> {
             *value += tail_mass;
         }
         self.gruen
+            .round()
+            .ok_or_else(|| eq_round_error(round))?
             .checked_round_poly(&mut q_evals, previous_claim, round)
     }
 
-    fn bind(&mut self, challenge: F) {
-        self.gruen.bind(challenge);
+    fn bind(&mut self, challenge: F) -> Result<(), SumcheckError<F>> {
+        let round = self.progress.bound();
+        self.gruen
+            .round_mut()
+            .ok_or_else(|| eq_round_error(round))?
+            .bind(challenge);
         let _ = self.combined.bind(challenge);
         self.bound_challenges.push(challenge);
         self.progress.advance();
+        Ok(())
     }
 }
 
@@ -356,15 +364,20 @@ impl<F: JoltField> ProveRounds<F> for OptimizedInstructionClaimReductionKernel<F
         round: usize,
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
+        self.progress.validate_round(round, bind.is_some())?;
         if let Some(challenge) = bind {
-            self.bind(challenge);
+            self.bind(challenge)?;
         }
-        self.message(round, previous_claim)
+        let message = self.message(round, previous_claim);
+        if message.is_ok() {
+            self.progress.record_message();
+        }
+        message
     }
 
     fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {
-        self.bind(bind);
-        Ok(())
+        self.progress.validate_finish()?;
+        self.bind(bind)
     }
 }
 

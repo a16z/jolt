@@ -44,7 +44,10 @@ fn setup_gruen(order: BindingOrder) -> (GruenSplitEqPolynomial<Fr>, Vec<Fr>) {
 fn bench_gruen_bind(input: (GruenSplitEqPolynomial<Fr>, Vec<Fr>)) -> GruenSplitEqPolynomial<Fr> {
     let (mut eq, challenges) = input;
     for challenge in challenges {
-        eq.bind(black_box(challenge));
+        let Some(round) = eq.round_mut() else {
+            return black_box(eq);
+        };
+        round.bind(black_box(challenge));
     }
     black_box(eq)
 }
@@ -57,10 +60,14 @@ fn bench_gruen_deg_2(input: (GruenSplitEqPolynomial<Fr>, Vec<Fr>)) -> GruenSplit
     let q_zero = Fr::from_u64(2);
     let q_one = Fr::from_u64(5);
     for challenge in challenges {
-        let (l_zero, l_one) = eq.current_linear_evals();
+        let Some(round) = eq.round_mut() else {
+            return black_box(eq);
+        };
+        let view = round.round();
+        let (l_zero, l_one) = view.linear_evals();
         let hint = l_zero * q_zero + l_one * q_one;
-        black_box(eq.gruen_poly_deg_2(q_one, hint, || q_zero)).expect("consistent round hint");
-        eq.bind(black_box(challenge));
+        black_box(view.gruen_poly_deg_2(q_one, hint, || q_zero)).expect("consistent round hint");
+        round.bind(black_box(challenge));
     }
     black_box(eq)
 }
@@ -73,11 +80,15 @@ fn bench_gruen_deg_3(input: (GruenSplitEqPolynomial<Fr>, Vec<Fr>)) -> GruenSplit
     let q_zero = Fr::from_u64(2);
     let q_one = Fr::from_u64(10);
     for challenge in challenges {
-        let (l_zero, l_one) = eq.current_linear_evals();
+        let Some(round) = eq.round_mut() else {
+            return black_box(eq);
+        };
+        let view = round.round();
+        let (l_zero, l_one) = view.linear_evals();
         let hint = l_zero * q_zero + l_one * q_one;
-        black_box(eq.gruen_poly_deg_3(q_zero, Fr::from_u64(5), hint, || q_one))
+        black_box(view.gruen_poly_deg_3(q_zero, Fr::from_u64(5), hint, || q_one))
             .expect("consistent round hint");
-        eq.bind(black_box(challenge));
+        round.bind(black_box(challenge));
     }
     black_box(eq)
 }
@@ -90,11 +101,15 @@ fn bench_gruen_toom(input: (GruenSplitEqPolynomial<Fr>, Vec<Fr>)) -> GruenSplitE
     let q_zero = Fr::from_u64(2);
     let q_one = Fr::from_u64(10);
     for challenge in challenges {
-        let (l_zero, l_one) = eq.current_linear_evals();
+        let Some(round) = eq.round_mut() else {
+            return black_box(eq);
+        };
+        let view = round.round();
+        let (l_zero, l_one) = view.linear_evals();
         let hint = l_zero * q_zero + l_one * q_one;
-        black_box(eq.gruen_poly_from_evals(&[q_one, Fr::from_u64(5)], hint, || q_zero))
+        black_box(view.gruen_poly_from_evals(&[q_one, Fr::from_u64(5)], hint, || q_zero))
             .expect("consistent round hint");
-        eq.bind(black_box(challenge));
+        round.bind(black_box(challenge));
     }
     black_box(eq)
 }

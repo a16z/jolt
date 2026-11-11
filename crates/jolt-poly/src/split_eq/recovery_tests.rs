@@ -4,7 +4,6 @@ use jolt_field::{Field, FpExt4, Fr, Prime128Offset275, Prime32Offset99, Ring};
 use num_traits::{One, Zero};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
-use std::panic::{catch_unwind, AssertUnwindSafe};
 
 #[test]
 fn prepared_recovery_obeys_round_products_and_claims() {
@@ -28,9 +27,12 @@ fn recovery_identities<F: Field>() {
                     Some(scale),
                 );
                 for round in 0..coords.len() {
-                    let (l0, l1) = split.current_linear_evals();
-                    assert_eq!(split.prepare_linear_q_recovery().is_some(), !l1.is_zero());
-                    if let Some(prepared) = split.prepare_linear_q_recovery() {
+                    let (l0, l1) = split.round().unwrap().linear_evals();
+                    assert_eq!(
+                        split.round().unwrap().prepare_linear_q_recovery().is_some(),
+                        !l1.is_zero()
+                    );
+                    if let Some(prepared) = split.round().unwrap().prepare_linear_q_recovery() {
                         for degree in 1..=4 {
                             let coefficients: Vec<F> = (0..=degree)
                                 .map(|i| F::from_u64(3 + i as u64 * 4))
@@ -80,7 +82,7 @@ fn recovery_identities<F: Field>() {
                     }
                     let q =
                         UnivariatePoly::new(vec![F::from_u64(5), F::from_u64(9), F::from_u64(4)]);
-                    let s = split.gruen_mul(q.coefficients());
+                    let s = split.round().unwrap().gruen_mul(q.coefficients());
                     for x in 0..10 {
                         let x = F::from_u64(x);
                         assert_eq!(
@@ -88,7 +90,10 @@ fn recovery_identities<F: Field>() {
                             (l0 * (F::one() - x) + l1 * x) * q.evaluate(x)
                         );
                     }
-                    split.bind(F::from_u64(round as u64 + 11));
+                    split
+                        .round_mut()
+                        .unwrap()
+                        .bind(F::from_u64(round as u64 + 11));
                 }
             }
         }
@@ -109,8 +114,8 @@ fn little_endian_gruen_tables_reconstruct_full_eq_at_every_round() {
         );
         for (round, &coordinate) in tau.iter().enumerate() {
             let (inner, outer) = split.remaining_tables_after(0).unwrap();
-            let (l0, l1) = split.current_linear_evals();
-            assert_eq!(split.current_coordinate(), coordinate);
+            let (l0, l1) = split.round().unwrap().linear_evals();
+            assert_eq!(split.round().unwrap().coordinate(), coordinate);
             for j in 0..full.len() / 2 {
                 let remaining = inner[j % inner.len()] * outer[j / inner.len()];
                 assert_eq!(l0 * remaining, full[2 * j], "n={n}, round={round}, j={j}");
@@ -125,7 +130,7 @@ fn little_endian_gruen_tables_reconstruct_full_eq_at_every_round() {
                 full[j] = full[2 * j] + r * (full[2 * j + 1] - full[2 * j]);
             }
             full.truncate(full.len() / 2);
-            split.bind(r);
+            split.round_mut().unwrap().bind(r);
         }
         assert_eq!(split.current_scalar(), full[0]);
     }
@@ -145,11 +150,11 @@ fn remaining_tables_after_matches_bound_tables_in_both_orders() {
                         state.remaining_tables_after(binds),
                         Some((future.e_in_current(), future.e_out_current()))
                     );
-                    future.bind(Fr::random(&mut rng));
+                    future.round_mut().unwrap().bind(Fr::random(&mut rng));
                 }
                 assert!(state.remaining_tables_after(n - round).is_none());
                 assert!(state.remaining_tables_after(usize::MAX).is_none());
-                state.bind(Fr::random(&mut rng));
+                state.round_mut().unwrap().bind(Fr::random(&mut rng));
             }
         }
     }
@@ -164,7 +169,7 @@ fn finished_states_equal_empty_at_the_final_scalar() {
                     let point = vec![coordinate; n];
                     let mut state = GruenSplitEqPolynomial::from_point(&point, order, Some(scale));
                     for _ in 0..n {
-                        state.bind(Fr::one());
+                        state.round_mut().unwrap().bind(Fr::one());
                     }
                     let expected_scalar = (0..n).fold(scale, |product, _| product * coordinate);
                     assert_eq!(state.current_scalar(), expected_scalar);
@@ -181,22 +186,8 @@ fn finished_states_equal_empty_at_the_final_scalar() {
                             assert!(finished.remaining_tables_after(binds).is_none());
                         }
                         let mut copy = finished.clone();
-                        macro_rules! panics {
-                            ($call:expr) => {
-                                assert!(catch_unwind(AssertUnwindSafe(|| {
-                                    let _round_result = $call;
-                                }))
-                                .is_err());
-                            };
-                        }
-                        panics!(copy.current_coordinate());
-                        panics!(copy.current_linear_evals());
-                        panics!(copy.prepare_linear_q_recovery());
-                        panics!(copy.gruen_mul(&[]));
-                        panics!(copy.gruen_poly_deg_2(Fr::one(), Fr::zero(), Fr::zero));
-                        panics!(copy.gruen_poly_deg_3(Fr::one(), Fr::one(), Fr::zero(), Fr::zero));
-                        panics!(copy.gruen_poly_from_evals(&[Fr::one(); 2], Fr::zero(), Fr::zero));
-                        panics!(copy.bind(Fr::one()));
+                        assert!(copy.round().is_none());
+                        assert!(copy.round_mut().is_none());
                         assert_eq!(&copy, finished);
                     }
                 }
@@ -205,41 +196,22 @@ fn finished_states_equal_empty_at_the_final_scalar() {
     }
 }
 
-macro_rules! exhausted_panics {
-    ($name:ident, $state:ident, $call:expr) => {
-        #[test]
-        #[should_panic(expected = "index out of bounds")]
-        fn $name() {
-            let mut $state = GruenSplitEqPolynomial::<Fr>::new_with_scaling(
-                &[],
-                BindingOrder::LowToHigh,
-                Some(Fr::zero()),
-            );
-            let _ = &mut $state;
-            let _round_result = $call;
+#[test]
+fn finished_round_handles_are_absent_in_both_orders() {
+    for n in 0..=20 {
+        for order in [BindingOrder::LowToHigh, BindingOrder::HighToLow] {
+            let mut state = GruenSplitEqPolynomial::<Fr>::new(&vec![Fr::one(); n], order);
+            for remaining in (1..=n).rev() {
+                assert_eq!(state.remaining_rounds(), remaining);
+                let handle = state.round_mut().unwrap();
+                assert_eq!(handle.round().coordinate(), Fr::one());
+                handle.bind(Fr::one());
+            }
+            assert!(state.round().is_none());
+            assert!(state.round_mut().is_none());
         }
-    };
+    }
 }
-exhausted_panics!(finished_coordinate_panics, s, s.current_coordinate());
-exhausted_panics!(finished_linear_evals_panics, s, s.current_linear_evals());
-exhausted_panics!(finished_recovery_panics, s, s.prepare_linear_q_recovery());
-exhausted_panics!(finished_mul_panics, s, s.gruen_mul(&[]));
-exhausted_panics!(
-    finished_degree_2_panics,
-    s,
-    s.gruen_poly_deg_2(Fr::zero(), Fr::zero(), Fr::zero)
-);
-exhausted_panics!(
-    finished_degree_3_panics,
-    s,
-    s.gruen_poly_deg_3(Fr::zero(), Fr::zero(), Fr::zero(), Fr::zero)
-);
-exhausted_panics!(
-    finished_evals_panics,
-    s,
-    s.gruen_poly_from_evals(&[Fr::one(); 2], Fr::zero(), Fr::zero)
-);
-exhausted_panics!(finished_bind_panics, s, s.bind(Fr::one()));
 
 fn generic_callers<F: Field>() {
     let point = [F::one(); 3];
@@ -247,20 +219,27 @@ fn generic_callers<F: Field>() {
     let _ = GruenSplitEqPolynomial::new_with_scaling(&point, BindingOrder::LowToHigh, None);
     let _ = GruenSplitEqPolynomial::from_point(&point, BindingOrder::LowToHigh, None);
     let _ = s.current_scalar();
-    let _ = s.current_index();
     let _ = s.remaining_rounds();
-    let _ = s.current_coordinate();
-    let _ = s.current_linear_evals();
+    let _ = s.round().unwrap().coordinate();
+    let _ = s.round().unwrap().linear_evals();
     let _ = s.remaining_tables_after(0);
-    let prepared = s.prepare_linear_q_recovery().unwrap();
+    let prepared = s.round().unwrap().prepare_linear_q_recovery().unwrap();
     let _ = prepared.gruen_poly_deg_3(F::zero(), F::zero(), F::zero());
     let _ = prepared.gruen_poly_from_coeffs_except_linear(&[], F::zero());
-    let _ = s.gruen_mul(&[]);
-    let _ = s.gruen_poly_deg_2(F::zero(), F::zero(), F::zero).unwrap();
+    let _ = s.round().unwrap().gruen_mul(&[]);
     let _ = s
+        .round()
+        .unwrap()
+        .gruen_poly_deg_2(F::zero(), F::zero(), F::zero)
+        .unwrap();
+    let _ = s
+        .round()
+        .unwrap()
         .gruen_poly_deg_3(F::zero(), F::zero(), F::zero(), F::zero)
         .unwrap();
     let _ = s
+        .round()
+        .unwrap()
         .gruen_poly_from_evals(&[F::zero(); 2], F::zero(), F::zero)
         .unwrap();
     let _ = s.merge();
@@ -281,8 +260,8 @@ fn generic_callers<F: Field>() {
         |_, w, a| w * a,
         |a, b| a + b,
     );
-    s.bind(F::one());
-    s.bind(F::one());
+    s.round_mut().unwrap().bind(F::one());
+    s.round_mut().unwrap().bind(F::one());
 }
 
 #[test]

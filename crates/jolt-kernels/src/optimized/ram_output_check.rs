@@ -27,6 +27,7 @@
 //! the zeros literally — matching the reference tier — and the engine's
 //! batched-polynomial trim reproduces the wire bytes.
 
+use crate::optimized::support::eq_round_error;
 use jolt_claims::protocols::jolt::geometry::ram::ram_val_final;
 use jolt_claims::protocols::jolt::{JoltDerivedId, RamOutputCheckPublic};
 use jolt_field::JoltField;
@@ -151,15 +152,22 @@ impl<F: JoltField> OutputCheckKernel<F> {
         );
 
         self.gruen
+            .round()
+            .ok_or_else(|| eq_round_error(round))?
             .checked_round_poly(&mut q_evals, previous_claim, round)
     }
 
-    fn bind(&mut self, challenge: F) {
-        self.gruen.bind(challenge);
+    fn bind(&mut self, challenge: F) -> Result<(), SumcheckError<F>> {
+        let round = self.progress.bound();
+        self.gruen
+            .round_mut()
+            .ok_or_else(|| eq_round_error(round))?
+            .bind(challenge);
         for table in [&mut self.io_mask, &mut self.val_io, &mut self.val_final] {
             table.bind_low_to_high_reusing_scratch(challenge, &mut self.bind_scratch);
         }
         self.progress.advance();
+        Ok(())
     }
 }
 
@@ -174,15 +182,20 @@ impl<F: JoltField> ProveRounds<F> for OutputCheckKernel<F> {
         round: usize,
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
+        self.progress.validate_round(round, bind.is_some())?;
         if let Some(challenge) = bind {
-            self.bind(challenge);
+            self.bind(challenge)?;
         }
-        self.message(round, previous_claim)
+        let message = self.message(round, previous_claim);
+        if message.is_ok() {
+            self.progress.record_message();
+        }
+        message
     }
 
     fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {
-        self.bind(bind);
-        Ok(())
+        self.progress.validate_finish()?;
+        self.bind(bind)
     }
 }
 

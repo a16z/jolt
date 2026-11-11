@@ -12,7 +12,7 @@
 //! - **Gruen split-eq + Dao–Thaler factoring** for the `log_T` cycle rounds:
 //!   cycle-first keeps the eq factor in `O(√T)` tables, and each cubic message is
 //!   reconstructed from the quadratic factor's `[q(0), q_∞]` plus the
-//!   running claim ([`GruenSplitEqPolynomial::gruen_poly_deg_3`]).
+//!   running claim ([`jolt_poly::GruenRound::gruen_poly_deg_3`]).
 //! - **Hint-based quadratic address rounds** on the address-major matrix
 //!   against the bound `val_init` column (`s(1)` recovered from the claim).
 //!
@@ -29,6 +29,7 @@
 //! a constant suffix equal to the final checkpoint; both remain implicit.
 //! Mixed cycle/address schedules are explicitly unsupported.
 
+use crate::optimized::support::eq_round_error;
 use jolt_claims::protocols::jolt::geometry::ram::ram_inc;
 use jolt_claims::protocols::jolt::{
     JoltDerivedId, JoltPolynomialId, JoltVirtualPolynomial, RamReadWritePublic, ReadWriteDimensions,
@@ -52,7 +53,7 @@ use super::rw_matrix::{
     round0_bind, round0_bind_bytes, round0_q_at_one, round0_quadratic_coefficients, val_slope_term,
     AddressMajorMatrix, CycleMajorMatrix,
 };
-use super::support::{map_indices, pin_derived_term_if_derived, GruenRoundMessage};
+use super::support::{map_indices, pin_derived_term_if_derived, GruenRoundMessage, RoundProgress};
 use super::OptimizedBackend;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -94,6 +95,7 @@ enum Phase<F: JoltField> {
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(crate) struct RamReadWriteKernel<F: JoltField> {
     phase: Option<Phase<F>>,
+    progress: RoundProgress,
     inc: PrefixColumn<F>,
     val_init: Polynomial<F>,
     #[cfg_attr(feature = "allocative", allocative(skip))]
@@ -114,15 +116,26 @@ const LATE_PURGE_CYCLE_ROUNDS: usize = 6;
 
 impl<F: JoltField> RamReadWriteKernel<F> {
     fn ingest(&mut self, r: F, round: usize) -> Result<(), SumcheckError<F>> {
+        match self.phase.as_ref().ok_or_else(|| eq_round_error(round))? {
+            Phase::Round0 { gruen, .. }
+            | Phase::Cycle { gruen, .. }
+            | Phase::DenseCycle { gruen, .. }
+                if gruen.remaining_rounds() == 0 =>
+            {
+                return Err(eq_round_error(round))
+            }
+            Phase::Done { .. } => return Err(eq_round_error(round)),
+            _ => {}
+        }
         self.phase = Some(match self.phase.take().ok_or_else(Phase::error)? {
             Phase::Round0 { columns, gruen } => {
                 let matrix = round0_bind(&columns, r);
                 crate::mem::drop_in_background_thread(columns);
-                self.finish_cycle_bind(matrix, gruen, r, round)
+                self.finish_cycle_bind(matrix, gruen, r, round)?
             }
             Phase::Cycle { mut matrix, gruen } => {
                 matrix.bind(r);
-                self.finish_cycle_bind(matrix, gruen, r, round)
+                self.finish_cycle_bind(matrix, gruen, r, round)?
             }
             Phase::Address {
                 mut matrix,
@@ -154,10 +167,11 @@ impl<F: JoltField> RamReadWriteKernel<F> {
                 mut val,
                 mut gruen,
             } => {
+                let gruen_round = gruen.round_mut().ok_or_else(|| eq_round_error(round))?;
                 let _ = ra.bind(r);
                 let _ = val.bind(r);
                 let _ = self.inc.bind(r);
-                gruen.bind(r);
+                gruen_round.bind(r);
                 if round + 1 == self.log_t + self.log_k {
                     Phase::Done {
                         merged_eq: vec![gruen.current_scalar()],
@@ -170,6 +184,7 @@ impl<F: JoltField> RamReadWriteKernel<F> {
             }
             Phase::Done { .. } => return Err(Phase::error()),
         });
+        self.progress.advance();
         Ok(())
     }
 
@@ -179,8 +194,11 @@ impl<F: JoltField> RamReadWriteKernel<F> {
         mut gruen: GruenSplitEqPolynomial<F>,
         r: F,
         round: usize,
-    ) -> Phase<F> {
-        gruen.bind(r);
+    ) -> Result<Phase<F>, SumcheckError<F>> {
+        gruen
+            .round_mut()
+            .ok_or_else(|| eq_round_error(round))?
+            .bind(r);
         let _ = self.inc.bind(r);
         let phase = if round + 1 == self.log_t {
             let matrix = matrix.into_address_major();
@@ -197,7 +215,7 @@ impl<F: JoltField> RamReadWriteKernel<F> {
         if round == 0 || round == LATE_PURGE_CYCLE_ROUNDS || round + 1 == self.log_t {
             crate::mem::purge_retained_memory(self.log_t);
         }
-        phase
+        Ok(phase)
     }
 
     fn finish_address(&self, matrix: AddressMajorMatrix<F>, merged_eq: Vec<F>) -> Phase<F> {
@@ -267,28 +285,32 @@ impl<F: JoltField> RamReadWriteKernel<F> {
             }
             _ => return Err(Phase::error()),
         };
-        gruen.checked_cubic(q_0, q_infty, previous_claim, round, || {
-            let e_in = gruen.e_in_current();
-            let e_out = gruen.e_out_current();
-            let in_bits = e_in.len().trailing_zeros() as usize;
-            let in_mask = e_in.len() - 1;
-            let weight = |pair| e_out[pair >> in_bits] * e_in[pair & in_mask];
-            match &self.phase {
-                Some(Phase::Round0 { columns, .. }) => {
-                    round0_q_at_one(columns, weight, &self.inc, self.gamma)
+        gruen
+            .round()
+            .ok_or_else(|| eq_round_error(round))?
+            .checked_cubic(q_0, q_infty, previous_claim, round, || {
+                let e_in = gruen.e_in_current();
+                let e_out = gruen.e_out_current();
+                let in_bits = e_in.len().trailing_zeros() as usize;
+                let in_mask = e_in.len() - 1;
+                let weight = |pair| e_out[pair >> in_bits] * e_in[pair & in_mask];
+                match &self.phase {
+                    Some(Phase::Round0 { columns, .. }) => {
+                        round0_q_at_one(columns, weight, &self.inc, self.gamma)
+                    }
+                    Some(Phase::Cycle { matrix, .. }) => {
+                        matrix.q_at_one(weight, &self.inc, self.gamma)
+                    }
+                    Some(Phase::DenseCycle { ra, val, .. }) => (0..ra.values.len().div_ceil(2))
+                        .fold(F::zero(), |sum, pair| {
+                            let row = 2 * pair + 1;
+                            sum + weight(pair)
+                                * ra.value(row)
+                                * val_slope_term(val.value(row), self.inc.value(row), self.gamma)
+                        }),
+                    _ => unreachable!("cycle phase was checked above"),
                 }
-                Some(Phase::Cycle { matrix, .. }) => matrix.q_at_one(weight, &self.inc, self.gamma),
-                Some(Phase::DenseCycle { ra, val, .. }) => {
-                    (0..ra.values.len().div_ceil(2)).fold(F::zero(), |sum, pair| {
-                        let row = 2 * pair + 1;
-                        sum + weight(pair)
-                            * ra.value(row)
-                            * val_slope_term(val.value(row), self.inc.value(row), self.gamma)
-                    })
-                }
-                _ => unreachable!("cycle phase was checked above"),
-            }
-        })
+            })
     }
 
     fn address_round_message(
@@ -316,21 +338,29 @@ impl<F: JoltField> ProveRounds<F> for RamReadWriteKernel<F> {
         round: usize,
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
+        self.progress.validate_round(round, bind.is_some())?;
         if let Some(challenge) = bind {
             self.ingest(challenge, round - 1)?;
         }
-        match &self.phase {
-            Some(Phase::Round0 { .. } | Phase::Cycle { .. } | Phase::DenseCycle { .. }) => {
-                self.cycle_round_message(round, previous_claim)
+        let message = {
+            match &self.phase {
+                Some(Phase::Round0 { .. } | Phase::Cycle { .. } | Phase::DenseCycle { .. }) => {
+                    self.cycle_round_message(round, previous_claim)
+                }
+                Some(Phase::Address { .. } | Phase::AddressFirst { .. }) => {
+                    self.address_round_message(previous_claim)
+                }
+                Some(Phase::Done { .. }) | None => Err(Phase::error()),
             }
-            Some(Phase::Address { .. } | Phase::AddressFirst { .. }) => {
-                self.address_round_message(previous_claim)
-            }
-            Some(Phase::Done { .. }) | None => Err(Phase::error()),
+        };
+        if message.is_ok() {
+            self.progress.record_message();
         }
+        message
     }
 
     fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {
+        self.progress.validate_finish()?;
         self.ingest(bind, self.num_rounds() - 1)
     }
 }
@@ -447,6 +477,7 @@ impl<F: JoltField> PrepareKernel<F, RamReadWriteChecking<F>> for OptimizedBacken
         };
         Ok(Box::new(RamReadWriteKernel {
             phase: Some(phase),
+            progress: RoundProgress::new(log_t + log_k),
             inc,
             val_init,
             gamma: inputs.challenges.gamma,
@@ -569,6 +600,72 @@ mod tests {
     use super::*;
     use crate::optimized::parity::ExceptionalEq;
     use crate::ReferenceBackend;
+
+    #[test]
+    fn dense_cycle_rejections_preserve_the_next_valid_round() {
+        for log_t in [1, 3] {
+            let point = random_scalars(log_t, 13);
+            let ra = random_scalars(1 << log_t, 19);
+            let val = random_scalars(1 << log_t, 23);
+            let inc = random_scalars(1 << log_t, 29);
+            let gamma = Fr::from_u64(31);
+            let make = || RamReadWriteKernel {
+                phase: Some(Phase::DenseCycle {
+                    ra: PrefixColumn {
+                        values: ra.clone(),
+                        tail: [Fr::from_u64(0); 2],
+                    },
+                    val: PrefixColumn {
+                        values: val.clone(),
+                        tail: [Fr::from_u64(0); 2],
+                    },
+                    gruen: GruenSplitEqPolynomial::new(&point, BindingOrder::LowToHigh),
+                }),
+                progress: RoundProgress::new(log_t),
+                inc: PrefixColumn {
+                    values: inc.clone(),
+                    tail: [Fr::from_u64(0); 2],
+                },
+                val_init: Polynomial::new(vec![Fr::from_u64(0)]),
+                gamma,
+                log_t,
+                log_k: 0,
+            };
+            let claim = EqPolynomial::<Fr>::evals(&point, None)
+                .iter()
+                .enumerate()
+                .fold(Fr::from_u64(0), |sum, (i, &weight)| {
+                    sum + weight * ra[i] * (val[i] + gamma * (val[i] + inc[i]))
+                });
+            let mut exercised = make();
+            let mut control = make();
+            crate::optimized::parity::exercise_eq_sequence(
+                &mut exercised,
+                &mut control,
+                claim,
+                &random_scalars(log_t, 37),
+            );
+            assert_eq!(exercised.inc.values, control.inc.values);
+            match (exercised.phase, control.phase) {
+                (
+                    Some(Phase::Done {
+                        merged_eq: a,
+                        final_ra: b,
+                        final_val: c,
+                    }),
+                    Some(Phase::Done {
+                        merged_eq: x,
+                        final_ra: y,
+                        final_val: z,
+                    }),
+                ) => assert_eq!((a, b, c), (x, y, z)),
+                phases => assert!(matches!(
+                    phases,
+                    (Some(Phase::Done { .. }), Some(Phase::Done { .. }))
+                )),
+            }
+        }
+    }
 
     fn dense_input_claim(
         witness: &dyn JoltWitnessPlane<Fr>,

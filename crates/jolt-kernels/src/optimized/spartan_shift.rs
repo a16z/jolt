@@ -759,6 +759,7 @@ mod tests {
                 &SpartanShiftChallenges { gamma },
                 input_claim,
                 &round_challenges,
+                false,
             );
         });
     }

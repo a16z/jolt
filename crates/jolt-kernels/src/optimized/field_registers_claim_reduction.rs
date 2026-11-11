@@ -21,6 +21,7 @@
 //!   come from one split-eq walk over the retained per-cycle value triples
 //!   (the sibling kernels' post-hoc extraction pattern).
 
+use crate::optimized::support::eq_round_error;
 use jolt_claims::protocols::field_inline::{
     FieldInlineChallengeId, FieldInlineDerivedId, FieldRegistersClaimReductionChallenge,
     FieldRegistersClaimReductionPublic,
@@ -179,7 +180,12 @@ impl<F: JoltField> FieldClaimReductionKernel<F> {
         )
     }
 
-    fn bind(&mut self, r: F) {
+    fn bind(&mut self, r: F) -> Result<(), SumcheckError<F>> {
+        let round = self.challenges.bound();
+        let gruen_round = self
+            .gruen
+            .round_mut()
+            .ok_or_else(|| eq_round_error(round))?;
         bind_sparse_entries_in_place(&mut self.cells, |even, odd| {
             let (row, lo, hi) = match (even, odd) {
                 (Some(lo), Some(hi)) => (lo.row / 2, lo.value, hi.value),
@@ -192,8 +198,9 @@ impl<F: JoltField> FieldClaimReductionKernel<F> {
                 value: lo + r * (hi - lo),
             }
         });
-        self.gruen.bind(r);
+        gruen_round.bind(r);
         self.challenges.push(r);
+        Ok(())
     }
 
     fn claimed_values(&self) -> [F; 3] {
@@ -239,18 +246,27 @@ impl<F: JoltField> ProveRounds<F> for FieldClaimReductionKernel<F> {
         round: usize,
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
+        self.challenges.validate_round(round, bind.is_some())?;
         if let Some(challenge) = bind {
-            self.bind(challenge);
+            self.bind(challenge)?;
         }
-        self.gruen
-            .checked_linear(self.q_endpoint(true), previous_claim, round, || {
-                self.q_endpoint(false)
-            })
+        let message = {
+            self.gruen
+                .round()
+                .ok_or_else(|| eq_round_error(round))?
+                .checked_linear(self.q_endpoint(true), previous_claim, round, || {
+                    self.q_endpoint(false)
+                })
+        };
+        if message.is_ok() {
+            self.challenges.record_message();
+        }
+        message
     }
 
     fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {
-        self.bind(bind);
-        Ok(())
+        self.challenges.validate_finish()?;
+        self.bind(bind)
     }
 }
 
@@ -392,6 +408,7 @@ mod tests {
                 &challenges,
                 claim,
                 &round_challenges,
+                true,
             );
         });
     }

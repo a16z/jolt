@@ -74,7 +74,16 @@ impl<F: Field> EqPolynomial<F> {
         P::Coord: Send + Sync + Into<F>,
         F: Mul<P::Coord, Output = F>,
     {
-        let len = domain_len(r.num_vars(), policy)?;
+        let elements = Self::cached_elements(r.num_vars(), policy)?;
+        policy.admit::<F>(elements, at)?;
+        Self::allocate_cached::<_, _, MSB>(r, scaling_factor, policy)
+    }
+
+    pub(crate) fn cached_elements<A: EqAlloc>(
+        num_vars: usize,
+        policy: A,
+    ) -> Result<usize, A::Error> {
+        let len = domain_len(num_vars, policy)?;
         let elements = len.checked_add(len - 1).ok_or_else(|| {
             policy.reject(EqTableError::SizeOverflow {
                 elements: len,
@@ -82,8 +91,19 @@ impl<F: Field> EqPolynomial<F> {
             })
         })?;
         check_layout::<F, _>(len, policy)?;
-        check_layout::<Vec<F>, _>(r.num_vars() + 1, policy)?;
-        policy.admit::<F>(elements, at)?;
+        check_layout::<Vec<F>, _>(num_vars + 1, policy)?;
+        Ok(elements)
+    }
+
+    pub(crate) fn allocate_cached<P: PointLike + ?Sized, A: EqAlloc, const MSB: bool>(
+        r: &P,
+        scaling_factor: Option<F>,
+        policy: A,
+    ) -> Result<Vec<Vec<F>>, A::Error>
+    where
+        P::Coord: Send + Sync + Into<F>,
+        F: Mul<P::Coord, Output = F>,
+    {
         let mut evals = policy.storage(r.num_vars() + 1)?;
         for i in 0..=r.num_vars() {
             evals.push(policy.table(

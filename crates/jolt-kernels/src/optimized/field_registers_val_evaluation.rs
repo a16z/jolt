@@ -327,6 +327,7 @@ mod tests {
                 &challenges,
                 claim,
                 &round_challenges,
+                false,
             );
         });
     }

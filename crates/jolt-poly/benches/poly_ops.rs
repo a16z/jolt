@@ -226,19 +226,22 @@ fn bench_gruen(c: &mut Criterion) {
                     || split.clone(),
                     |mut state| {
                         for &challenge in &challenges {
-                            state.bind(std::hint::black_box(challenge));
+                            if let Some(round) = state.round_mut() {
+                                round.bind(std::hint::black_box(challenge));
+                            }
                         }
                         state
                     },
                     BatchSize::SmallInput,
                 );
             });
+            let Some(round) = split.round() else { continue };
             let q = UnivariatePoly::new(vec![Fr::from_u64(3), Fr::from_u64(7), Fr::from_u64(2)]);
-            let (l0, l1) = split.current_linear_evals();
+            let (l0, l1) = round.linear_evals();
             let hint = l0 * q.evaluate(Fr::from_u64(0)) + l1 * q.evaluate(Fr::from_u64(1));
             group.bench_function(BenchmarkId::new("degree_3", &label), |bench| {
                 bench.iter(|| {
-                    split.gruen_poly_deg_3(
+                    round.gruen_poly_deg_3(
                         std::hint::black_box(Fr::from_u64(3)),
                         Fr::from_u64(2),
                         hint,
@@ -248,7 +251,7 @@ fn bench_gruen(c: &mut Criterion) {
             });
             group.bench_function(BenchmarkId::new("from_evals", &label), |bench| {
                 bench.iter(|| {
-                    split.gruen_poly_from_evals(
+                    round.gruen_poly_from_evals(
                         std::hint::black_box(&[q.evaluate(Fr::from_u64(1)), Fr::from_u64(2)]),
                         hint,
                         || q.evaluate(Fr::from_u64(0)),
@@ -257,7 +260,7 @@ fn bench_gruen(c: &mut Criterion) {
             });
             group.bench_function(BenchmarkId::new("degree_2", &label), |bench| {
                 bench.iter(|| {
-                    split.gruen_poly_deg_2(std::hint::black_box(Fr::from_u64(7)), hint, || {
+                    round.gruen_poly_deg_2(std::hint::black_box(Fr::from_u64(7)), hint, || {
                         Fr::from_u64(3)
                     })
                 });

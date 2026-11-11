@@ -10,6 +10,7 @@
 //! Only extension nodes are computed from the witness; the supplied claims
 //! fill the base nodes when the first-round polynomial is assembled.
 
+use crate::optimized::support::eq_round_error;
 #[cfg(feature = "field-inline")]
 use jolt_claims::protocols::composed::ComposedOpeningId;
 #[cfg(feature = "field-inline")]
@@ -662,16 +663,22 @@ impl<F: JoltField> ProductRemainderKernel<F> {
         })
     }
 
-    fn bind(&mut self, challenge: F) {
+    fn bind(&mut self, challenge: F) -> Result<(), SumcheckError<F>> {
+        let round = self.challenges.bound();
+        let gruen_round = self
+            .split_eq
+            .round_mut()
+            .ok_or_else(|| eq_round_error(round))?;
         let shrunk = self.left.bind(challenge);
         let _ = self.right.bind(challenge);
         if shrunk && !self.purged {
             self.purged = true;
             crate::mem::purge_retained_memory(self.challenges.total());
         }
-        self.split_eq.bind(challenge);
+        gruen_round.bind(challenge);
         self.challenges.push(challenge);
         self.pending_endpoints = None;
+        Ok(())
     }
 
     fn cycle_weights(&self) -> PrefixCycleWeights<F> {
@@ -755,22 +762,29 @@ impl<F: JoltField> ProveRounds<F> for ProductRemainderKernel<F> {
         round: usize,
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
+        self.challenges.validate_round(round, bind.is_some())?;
         if let Some(challenge) = bind {
-            self.bind(challenge);
+            self.bind(challenge)?;
         }
-        let (q_zero, q_infinity) = match self.pending_endpoints.take() {
-            Some(endpoints) => endpoints,
-            None => self.left.product_endpoints(&self.right, &self.split_eq),
-        };
-        self.split_eq
-            .checked_cubic(q_zero, q_infinity, previous_claim, round, || {
+        let message = {
+            let gruen_round = self.split_eq.round().ok_or_else(|| eq_round_error(round))?;
+            let (q_zero, q_infinity) = match self.pending_endpoints.take() {
+                Some(endpoints) => endpoints,
+                None => self.left.product_endpoints(&self.right, &self.split_eq),
+            };
+            gruen_round.checked_cubic(q_zero, q_infinity, previous_claim, round, || {
                 self.left.product_at_one(&self.right, &self.split_eq)
             })
+        };
+        if message.is_ok() {
+            self.challenges.record_message();
+        }
+        message
     }
 
     fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {
-        self.bind(bind);
-        Ok(())
+        self.challenges.validate_finish()?;
+        self.bind(bind)
     }
 }
 
@@ -1255,8 +1269,19 @@ mod tests {
         let mut bind = None;
         let mut previous = input_claim;
         for (round, &challenge) in challenges.iter().enumerate() {
+            crate::optimized::parity::reject_bad_eq_rounds(
+                optimized_kernel.as_mut(),
+                round,
+                previous,
+            );
             let reference_round = reference_kernel.prove_round(bind, round, previous).unwrap();
             let optimized_round = optimized_kernel.prove_round(bind, round, previous).unwrap();
+            crate::optimized::parity::reject_repeated_eq_round(
+                optimized_kernel.as_mut(),
+                bind,
+                round,
+                previous,
+            );
             assert_eq!(
                 optimized_round, reference_round,
                 "product round {round} polynomial, log_t = {log_t}"
@@ -1267,6 +1292,11 @@ mod tests {
         let last = *challenges.last().unwrap();
         reference_kernel.finish_rounds(last).unwrap();
         optimized_kernel.finish_rounds(last).unwrap();
+        crate::optimized::parity::reject_finished_eq_calls(
+            optimized_kernel.as_mut(),
+            last,
+            previous,
+        );
 
         let reference_outputs = reference_kernel.output_claims(&claims).unwrap();
         let optimized_outputs = optimized_kernel.output_claims(&claims).unwrap();
@@ -1484,8 +1514,19 @@ mod tests {
             let mut bind = None;
             let mut previous = input_claim;
             for (round, &challenge) in challenges.iter().enumerate() {
+                crate::optimized::parity::reject_bad_eq_rounds(
+                    optimized_kernel.as_mut(),
+                    round,
+                    previous,
+                );
                 let reference_round = reference_kernel.prove_round(bind, round, previous).unwrap();
                 let optimized_round = optimized_kernel.prove_round(bind, round, previous).unwrap();
+                crate::optimized::parity::reject_repeated_eq_round(
+                    optimized_kernel.as_mut(),
+                    bind,
+                    round,
+                    previous,
+                );
                 assert_eq!(optimized_round, reference_round, "round {round}");
                 previous = reference_round.evaluate(challenge);
                 bind = Some(challenge);
@@ -1493,6 +1534,11 @@ mod tests {
             let last = *challenges.last().unwrap();
             reference_kernel.finish_rounds(last).unwrap();
             optimized_kernel.finish_rounds(last).unwrap();
+            crate::optimized::parity::reject_finished_eq_calls(
+                optimized_kernel.as_mut(),
+                last,
+                previous,
+            );
             assert_eq!(
                 optimized_kernel.output_claims(&claims).unwrap(),
                 reference_kernel.output_claims(&claims).unwrap()

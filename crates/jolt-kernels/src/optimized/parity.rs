@@ -12,7 +12,7 @@
 #[cfg(not(feature = "akita"))]
 use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, JoltPolynomialId};
 use jolt_field::{Fr, JoltField, Ring};
-use jolt_sumcheck::SumcheckError;
+use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::ConcreteSumcheck;
 #[cfg(not(feature = "akita"))]
 use jolt_witness::JoltWitnessOracle;
@@ -133,4 +133,82 @@ pub(crate) fn run_lockstep<F: JoltField, R>(
     let last = *challenges.last().expect("at least one round");
     reference.finish_rounds(last).expect("reference finish");
     optimized.finish_rounds(last).expect("optimized finish");
+}
+
+pub(crate) fn reject_bad_eq_rounds<F: JoltField>(
+    kernel: &mut dyn ProveRounds<F>,
+    round: usize,
+    claim: F,
+) {
+    let challenge = F::from_u64(7);
+    let total = kernel.num_rounds();
+    assert_invalid_eq(kernel.prove_round(Some(challenge), total, claim), total);
+    if round + 1 < total {
+        let bind = (round > 0).then_some(challenge);
+        assert_invalid_eq(kernel.prove_round(bind, round + 1, claim), round + 1);
+    }
+    let wrong_bind = if round == 0 { Some(challenge) } else { None };
+    assert_invalid_eq(kernel.prove_round(wrong_bind, round, claim), round);
+    if round > 0 {
+        assert_invalid_eq(
+            kernel.prove_round(Some(challenge), round - 1, claim),
+            round - 1,
+        );
+    }
+    assert_invalid_eq(kernel.finish_rounds(challenge), total);
+}
+
+pub(crate) fn reject_repeated_eq_round<F: JoltField>(
+    kernel: &mut dyn ProveRounds<F>,
+    bind: Option<F>,
+    round: usize,
+    claim: F,
+) {
+    assert_invalid_eq(kernel.prove_round(bind, round, claim), round);
+}
+
+pub(crate) fn reject_finished_eq_calls<F: JoltField>(
+    kernel: &mut dyn ProveRounds<F>,
+    challenge: F,
+    claim: F,
+) {
+    let total = kernel.num_rounds();
+    assert_invalid_eq(kernel.finish_rounds(challenge), total);
+    assert_invalid_eq(kernel.prove_round(None, total, claim), total);
+    assert_invalid_eq(kernel.prove_round(Some(challenge), 0, claim), 0);
+}
+
+fn assert_invalid_eq<F: JoltField, T>(result: Result<T, SumcheckError<F>>, round: usize) {
+    assert!(
+        matches!(result, Err(SumcheckError::InvalidEqRoundState { round: got, .. }) if got == round)
+    );
+}
+
+pub(crate) fn exercise_eq_sequence<F: JoltField>(
+    exercised: &mut dyn ProveRounds<F>,
+    control: &mut dyn ProveRounds<F>,
+    mut claim: F,
+    challenges: &[F],
+) {
+    assert_eq!(exercised.num_rounds(), challenges.len());
+    for (round, &challenge) in challenges.iter().enumerate() {
+        let bind = round.checked_sub(1).map(|previous| challenges[previous]);
+        reject_bad_eq_rounds(exercised, round, claim);
+        let mut actual = exercised
+            .prove_round(bind, round, claim)
+            .expect("next valid call after rejections");
+        let mut expected = control
+            .prove_round(bind, round, claim)
+            .expect("untouched control");
+        reject_repeated_eq_round(exercised, bind, round, claim);
+        actual.trim_trailing_zeros();
+        expected.trim_trailing_zeros();
+        assert_eq!(actual, expected);
+        claim = expected.evaluate(challenge);
+    }
+    if let Some(&challenge) = challenges.last() {
+        exercised.finish_rounds(challenge).expect("valid finish");
+        control.finish_rounds(challenge).expect("control finish");
+        reject_finished_eq_calls(exercised, challenge, claim);
+    }
 }

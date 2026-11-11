@@ -1,3 +1,5 @@
+mod round_state;
+pub(crate) use round_state::{eq_round_error, RoundChallenges, RoundProgress};
 mod product_sum;
 mod repeat_cache;
 pub(crate) use product_sum::{LowDegreeProductSum, TailFactorProducts};
@@ -7,8 +9,7 @@ use std::ops::Range;
 
 use jolt_field::{Accumulator, JoltField};
 use jolt_poly::{
-    BindingOrder, EqPolynomial, GruenSplitEqPolynomial, LtPolynomial, Polynomial, TensorEqTable,
-    UnivariatePoly,
+    BindingOrder, EqPolynomial, GruenRound, LtPolynomial, Polynomial, TensorEqTable, UnivariatePoly,
 };
 use jolt_sumcheck::SumcheckError;
 #[cfg(feature = "parallel")]
@@ -26,44 +27,6 @@ use jolt_witness::{
 use rayon::prelude::*;
 
 use crate::SumcheckKernelError;
-
-/// A kernel's bound-round count against its total — the one home of the
-/// "claims only after every round is bound" invariant.
-#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
-pub(crate) struct RoundProgress {
-    bound: usize,
-    total: usize,
-}
-
-impl RoundProgress {
-    pub(crate) fn new(total: usize) -> Self {
-        Self { bound: 0, total }
-    }
-
-    /// Total rounds — the kernel's `ProveRounds::num_rounds`.
-    pub(crate) fn total(&self) -> usize {
-        self.total
-    }
-
-    pub(crate) fn bound(&self) -> usize {
-        self.bound
-    }
-
-    pub(crate) fn advance(&mut self) {
-        self.bound += 1;
-    }
-
-    /// Gate for every output-claim / derived-table entry point.
-    pub(crate) fn require_complete<F: JoltField>(&self) -> Result<(), SumcheckKernelError<F>> {
-        if self.bound == self.total {
-            Ok(())
-        } else {
-            Err(SumcheckKernelError::NotFullyBound {
-                remaining: self.total - self.bound,
-            })
-        }
-    }
-}
 
 /// The streaming chunk of [`collect_rows`]: large enough that the per-chunk
 /// rayon extraction dispatch amortizes (the stock bundle pass uses 2^12-row
@@ -531,54 +494,6 @@ pub(crate) fn fallible_collect_bytes<T>(len: usize) -> Option<usize> {
     len.checked_mul(5 * size_of::<T>() + size_of::<Vec<T>>() + 2 * size_of::<usize>())
 }
 
-/// The drawn challenges of a kernel's bound rounds, tracked against the
-/// round total — one authority for both the challenge history and the
-/// bound-rounds invariant. Kernels that never revisit their challenges use
-/// [`RoundProgress`] instead.
-#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
-pub(crate) struct RoundChallenges<F> {
-    challenges: Vec<F>,
-    total: usize,
-}
-
-impl<F: JoltField> RoundChallenges<F> {
-    pub(crate) fn new(total: usize) -> Self {
-        Self {
-            challenges: Vec::with_capacity(total),
-            total,
-        }
-    }
-
-    /// Total rounds — the kernel's `ProveRounds::num_rounds`.
-    pub(crate) fn total(&self) -> usize {
-        self.total
-    }
-
-    pub(crate) fn bound(&self) -> usize {
-        self.challenges.len()
-    }
-
-    pub(crate) fn push(&mut self, challenge: F) {
-        self.challenges.push(challenge);
-    }
-
-    /// The challenges bound so far, in binding order.
-    pub(crate) fn as_slice(&self) -> &[F] {
-        &self.challenges
-    }
-
-    /// Gate for every output-claim / derived-table entry point.
-    pub(crate) fn require_complete(&self) -> Result<(), SumcheckKernelError<F>> {
-        if self.challenges.len() == self.total {
-            Ok(())
-        } else {
-            Err(SumcheckKernelError::NotFullyBound {
-                remaining: self.total - self.challenges.len(),
-            })
-        }
-    }
-}
-
 /// Pin a kernel-maintained derived value (typically its fully bound split-eq
 /// scalar) against the verifier's own `derive_output_term` — the optimized
 /// tier's drift detector for tables it never materializes, mirroring the
@@ -667,7 +582,7 @@ pub(crate) trait GruenRoundMessage<F: JoltField> {
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>>;
 }
 
-impl<F: JoltField> GruenRoundMessage<F> for GruenSplitEqPolynomial<F> {
+impl<F: JoltField> GruenRoundMessage<F> for GruenRound<'_, F> {
     fn checked_round_poly(
         &self,
         q_evals: &mut [F],
@@ -675,7 +590,7 @@ impl<F: JoltField> GruenRoundMessage<F> for GruenSplitEqPolynomial<F> {
         round: usize,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
         debug_assert!(q_evals.len() >= 2);
-        let (l_at_0, l_at_1) = self.current_linear_evals();
+        let (l_at_0, l_at_1) = self.linear_evals();
         let l_step = l_at_1 - l_at_0;
         let mut l_eval = l_at_0;
         for q in q_evals.iter_mut() {
