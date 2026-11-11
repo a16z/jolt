@@ -112,7 +112,8 @@ impl SumcheckVerifier {
     /// [`verify_compressed`](Self::verify_compressed) with each round bounded
     /// by its own degree in `degrees`: round `j`'s polynomial must have degree
     /// at most `degrees.degrees()[j]`, and its proof of work is priced at that
-    /// degree.
+    /// degree. A schedule with a zero-degree round, or a degree whose
+    /// coefficient count overflows, is rejected before any round.
     #[tracing::instrument(skip_all, name = "SumcheckVerifier::verify_compressed_scheduled")]
     pub fn verify_compressed_scheduled<F, T>(
         claimed_sum: F,
@@ -125,6 +126,7 @@ impl SumcheckVerifier {
         F: Field + Encoding,
         T: FieldTranscript<F>,
     {
+        degrees.validate()?;
         if proof.round_polynomials.len() != degrees.num_rounds() {
             return Err(SumcheckError::WrongNumberOfRounds {
                 expected: degrees.num_rounds(),
