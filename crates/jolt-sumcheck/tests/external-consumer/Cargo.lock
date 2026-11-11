@@ -107,6 +107,7 @@ name = "jolt-algebra"
 version = "0.1.0"
 dependencies = [
  "cc",
+ "jolt-utils",
  "num-traits",
  "rand_core",
  "serde",

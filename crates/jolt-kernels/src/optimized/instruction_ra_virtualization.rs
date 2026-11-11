@@ -34,6 +34,7 @@
 //! the fully-bound Gruen scalar must equal `derive_output_term(EqCycle)`,
 //! exactly as the naive tier's bound `EqCycle` table is checked.
 
+use crate::optimized::support::eq_round_error;
 mod categorical;
 
 use std::sync::Arc;
@@ -205,7 +206,7 @@ impl<F: JoltField> OptimizedInstructionRaVirtualizationKernel<F> {
     /// `[1, …, N−1, ∞]` with deferred-reduction accumulation at every level
     /// (per-row product lanes, per-block `e_in` folds, cross-block `e_out`
     /// folds), `q(0)` is recovered from `s(0) + s(1) = previous_claim`, and
-    /// [`GruenSplitEqPolynomial::gruen_poly_from_evals`] recomposes the
+    /// [`jolt_poly::GruenRound::gruen_poly_from_evals`] recomposes the
     /// unique degree-`(N+1)` coefficient vector.
     fn message(
         &self,
@@ -328,6 +329,8 @@ impl<F: JoltField> OptimizedInstructionRaVirtualizationKernel<F> {
             *value += tail_mass;
         }
         self.gruen
+            .round()
+            .ok_or_else(|| eq_round_error(round))?
             .checked_toom(&q_evals, previous_claim, round, || {
                 tail_mass
                     + self.gruen.par_fold_out_in_prefix(
@@ -409,13 +412,20 @@ impl<F: JoltField> OptimizedInstructionRaVirtualizationKernel<F> {
         }
 
         self.gruen
+            .round()
+            .ok_or_else(|| eq_round_error(round))?
             .checked_round_poly(&mut q_evals, previous_claim, round)
     }
 
-    fn bind(&mut self, challenge: F) {
-        self.gruen.bind(challenge);
+    fn bind(&mut self, challenge: F) -> Result<(), SumcheckError<F>> {
+        let round = self.progress.bound();
+        self.gruen
+            .round_mut()
+            .ok_or_else(|| eq_round_error(round))?
+            .bind(challenge);
         self.folded_ra.bind(challenge);
         self.progress.advance();
+        Ok(())
     }
 }
 
@@ -431,14 +441,13 @@ impl<F: JoltField> ProveRounds<F> for OptimizedInstructionRaVirtualizationKernel
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
         if let Some(challenge) = bind {
-            self.bind(challenge);
+            self.bind(challenge)?;
         }
         self.message(round, previous_claim)
     }
 
     fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {
-        self.bind(bind);
-        Ok(())
+        self.bind(bind)
     }
 }
 

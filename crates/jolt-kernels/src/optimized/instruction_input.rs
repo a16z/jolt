@@ -8,6 +8,7 @@
 //! contributes its summed equality weight. The bound eq scalar is checked
 //! against the verifier.
 
+use crate::optimized::support::eq_round_error;
 mod flags;
 use flags::PackedFlags;
 
@@ -382,26 +383,29 @@ impl<F: JoltField> OptimizedInstructionInputKernel<F> {
             |a, b| [a[0] + b[0], a[1] + b[1]],
         );
         let suffix = self.gruen.suffix_weight(pairs) * self.operand_product(&self.tail);
-        self.gruen.checked_cubic(
-            coefficients[0] + suffix,
-            coefficients[1],
-            previous_claim,
-            round,
-            || {
-                // Exceptional equality challenges require q(1) explicitly.
-                suffix
-                    + self.gruen.par_fold_out_in_prefix(
-                        pairs,
-                        F::Accumulator::default,
-                        |sum, row, _x_in, e_in| {
-                            let values = core::array::from_fn(|i| pair_at(i, row).1);
-                            sum.fmadd(e_in, self.operand_product(&values));
-                        },
-                        |_x_out, e_out, sum| e_out * sum.reduce(),
-                        |a, b| a + b,
-                    )
-            },
-        )
+        self.gruen
+            .round()
+            .ok_or_else(|| eq_round_error(round))?
+            .checked_cubic(
+                coefficients[0] + suffix,
+                coefficients[1],
+                previous_claim,
+                round,
+                || {
+                    // Exceptional equality challenges require q(1) explicitly.
+                    suffix
+                        + self.gruen.par_fold_out_in_prefix(
+                            pairs,
+                            F::Accumulator::default,
+                            |sum, row, _x_in, e_in| {
+                                let values = core::array::from_fn(|i| pair_at(i, row).1);
+                                sum.fmadd(e_in, self.operand_product(&values));
+                            },
+                            |_x_out, e_out, sum| e_out * sum.reduce(),
+                            |a, b| a + b,
+                        )
+                },
+            )
     }
 
     fn message(
@@ -411,13 +415,14 @@ impl<F: JoltField> OptimizedInstructionInputKernel<F> {
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
         match &self.state {
             InputState::Native(rows) => {
+                let gruen_round = self.gruen.round().ok_or_else(|| eq_round_error(round))?;
                 let suffix = self.gruen.suffix_weight(self.prefix_len.div_ceil(2))
                     * self.operand_product(&self.tail);
-                if self.gruen.current_linear_evals().1.is_zero() {
+                if gruen_round.linear_evals().1.is_zero() {
                     let [q_zero, q_leading, q_one] = self
                         .native_q_terms::<3>(rows)
                         .map_err(row_extraction_error)?;
-                    self.gruen.checked_cubic(
+                    gruen_round.checked_cubic(
                         q_zero + suffix,
                         q_leading,
                         previous_claim,
@@ -429,7 +434,7 @@ impl<F: JoltField> OptimizedInstructionInputKernel<F> {
                         .native_q_terms::<2>(rows)
                         .map_err(row_extraction_error)?;
                     // The nonzero equality factor recovers q(1) from the claim.
-                    self.gruen.checked_cubic(
+                    gruen_round.checked_cubic(
                         q_zero + suffix,
                         q_leading,
                         previous_claim,
@@ -532,7 +537,11 @@ impl<F: JoltField> OptimizedInstructionInputKernel<F> {
     }
 
     fn bind(&mut self, challenge: F) -> Result<(), SumcheckError<F>> {
-        self.gruen.bind(challenge);
+        let round = self.progress.bound();
+        self.gruen
+            .round_mut()
+            .ok_or_else(|| eq_round_error(round))?
+            .bind(challenge);
         match &mut self.state {
             InputState::Native(rows) => {
                 self.state = Self::materialize_half(
@@ -676,7 +685,7 @@ mod tests {
     };
     use jolt_claims::protocols::jolt::{InstructionInputPublic, JoltDerivedId, TraceDimensions};
     #[cfg(feature = "akita")]
-    use jolt_field::Prime128OffsetA7F7;
+    use jolt_field::Prime128Offset6A23801F;
     use jolt_field::{Fr, JoltField};
     use jolt_poly::{BindingOrder, Polynomial};
     use jolt_sumcheck::ProveRounds;
@@ -901,7 +910,7 @@ mod tests {
             for prefix in [0, 1, 2, 15, 16, 17, size - 1, size] {
                 for exceptional in [false, true] {
                     for gamma in [0, 1, 0xDADA_CAFE] {
-                        assert_parity_field::<Prime128OffsetA7F7>(
+                        assert_parity_field::<Prime128Offset6A23801F>(
                             log_t,
                             717,
                             prefix,

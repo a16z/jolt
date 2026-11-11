@@ -23,8 +23,8 @@ The motivation is twofold:
 
 | Invariant | Targets | Description |
 |---|---|---|
-| `split_eq_bind_low_high` | Test, Fuzz, RedTeam | `GruenSplitEqPolynomial::bind` (LowToHigh) matches `DensePolynomial::bound_poly_var_bot` |
-| `split_eq_bind_high_low` | Test, Fuzz | `GruenSplitEqPolynomial::bind` (HighToLow) matches `DensePolynomial::bound_poly_var_top` |
+| `split_eq_bind_low_high` | Test, Fuzz, RedTeam | `GruenRoundMut::bind` (LowToHigh) matches `Polynomial::bind_with_order` at every round |
+| `split_eq_bind_high_low` | Test, Fuzz | `GruenRoundMut::bind` (HighToLow) matches `Polynomial::bind_with_order` at every round |
 | `soundness` | RedTeam | For any deterministic guest program + input, only one (output, panic) pair is accepted by the verifier |
 
 ## Built-in objectives

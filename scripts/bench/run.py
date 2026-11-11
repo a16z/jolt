@@ -6,6 +6,7 @@ import ast
 import contextlib
 import datetime as dt
 import fcntl
+from fractions import Fraction
 import hashlib
 import json
 import math
@@ -883,8 +884,16 @@ def render_comment(result, out):
         time_values = f"{base['e2e_s']:.6f} / {head['e2e_s']:.6f} | {changes['e2e_s']}"
         rss_values = f"{base['peak_rss_bytes']:.0f} / {head['peak_rss_bytes']:.0f} | {changes['peak_rss_bytes']}"
         lines.append(f"{label} {time_values} | {basis['e2e_s']} | {rss_values} | {basis['peak_rss_bytes']} |")
-        if any(ratio is not None and not 0.97 <= ratio <= 1.03 for ratio in ratios.values()):
-            notable_rows.append(f'{label} {time_values} | {rss_values} |')
+        thresholds = {key: max(3.0, calibrated[key]['threshold_pct'])
+                      if calibrated else 3.0 for key in base}
+        if any(base[key] and Fraction(str(max(base[key], head[key]))) >
+               Fraction(str(min(base[key], head[key]))) * (1 + Fraction(str(thresholds[key])) / 100)
+               for key in base):
+            threshold_labels = {key: f'{thresholds[key]:.2f}%' +
+                                (' (no observed envelope)' if not calibrated else '')
+                                for key in base}
+            notable_rows.append(f"{label} {time_values} | {threshold_labels['e2e_s']} | "
+                                f"{rss_values} | {threshold_labels['peak_rss_bytes']} |")
         rows, binaries, guests = [], [], []
         for leg in ('base', 'head'):
             rows.append('; '.join(f'{raw},{padded}' for raw, padded in sorted({

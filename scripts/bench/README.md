@@ -171,7 +171,8 @@ queue timing and do not change the cost of a still-current tip.
 A PR based on a skipped tip retains its medians and signed changes. If there is
 no other unexpired exact-base reference, its check is neutral with reference
 unavailable; the sticky comment still lists executed sizes and qualifying
-changes. A reference from a matching nightly or bootstrap can still apply.
+changes using a 3% threshold marked as having no observed envelope. A reference
+from a matching nightly or bootstrap can still apply.
 
 ### Historical PR interval
 
@@ -554,8 +555,16 @@ unavailable; there is no source-equivalence exception registry.
 The schema-1 `benchmark-results.json` contains the expected `cases`, each with all
 raw warmup and measured `samples`. A successful sample is `complete`, exit code
 zero, and has all numeric metrics. Failed, incomplete, unsupported, and missing
-points are explicit, with reasons and null metrics. Non-executed workflows emit
-a `disabled` result and no dispatch request. The CI artifact keeps
+points are explicit, with reasons and null metrics. Non-executed plans emit
+a `disabled` or `unsupported` result and no dispatch request. For a labelled PR,
+the planning workflow's dependent refusal job reads its own plan artifact and
+updates the same sticky PR comment with the refusal reason and a planning-run
+link. The refusal job checks out only main's code and reuses ingest's comment
+writer. Before posting, it rereads the PR and skips a refusal for a superseded
+head. This path executes no PR code and creates no target job or App check.
+Unlabelled PRs whose planning job was skipped, and plans admitted for execution,
+produce no refusal comment. The PR trigger is filtered to bases named `main`;
+the planner also rejects a non-main base if such a request reaches it. The CI artifact keeps
 raw sample logs, embedded manifests, compiler flags, toolchain and lockfile
 hashes, binary/guest hashes, CPU topology, and host settings. It excludes the
 runtime URS cache and local build payloads. For main/nightly, the separate
@@ -572,10 +581,17 @@ before any result complete the App check directly.
 The comment shows the base and head medians for end-to-end time and peak RSS,
 with signed percentage changes computed as `100 * (head_median / base_median - 1)`.
 Each row identifies its physical cores, `2^k` trace ceiling and measured base/head
-trace rows. The sticky PR comment shows only rows with more than 3% time or
-peak-RSS change and retains the full-results and benchmark-history links. It
-always lists the distinct core-count/ceiling pairs with a recorded process exit,
-including when no row changes; planned cases without an exit are not listed as run.
+trace rows. The sticky PR comment shows a row only when the time or peak-RSS
+change exceeds its per-case reporting threshold: the larger of 3% and that
+metric's observed envelope. Selection uses
+`100 * (max(head/base, base/head) - 1) > threshold`, so
+increases and decreases use the same scale as the envelope. Each metric's
+threshold is shown next to its signed change; a missing envelope uses 3%, marked
+`no observed envelope`. These observed envelopes do not establish statistical
+significance. The comment links to the full results and benchmark history.
+The comment always lists the distinct core-count/ceiling pairs
+with a recorded process exit, including when no row changes; planned cases
+without an exit are not listed as run.
 Only the configured measured repetitions contribute; warmups are excluded.
 Missing repetitions, failed processes and zero denominators remain unavailable
 comparisons. Proof sizes remain in the raw samples.
@@ -726,8 +742,15 @@ token is needed.
 The hosted planner reads the current PR and all issue-event pages. It requires
 an open same-repository PR into main, its current `benchmark` label application,
 and an applier whose current API `role_name` is `maintain` or `admin`, not merely
-`write`. It resolves and pins the current main base, submitted head and merge
-parents. Replays older than the label application are refused. Later pushes
+`write`. It pins the submitted head and GitHub's merge commit. That commit must
+have exactly two parents: a commit on main's fetched first-parent history, then
+the submitted head. GitHub's merge ref can lag main; the comparison uses its
+actual first parent as the base, not a newer unmerged main revision. Calibration
+references match this exact base and expire after 48 hours. If that older base
+has no matching reference, measurements still run with an unavailable reference.
+When GitHub reports `mergeable: false`, planning instead refuses with a request
+to resolve conflicts with main. Unknown (`null`) mergeability does not block planning.
+Replays older than the label application are refused. Later pushes
 remain admitted while the same label application stays current.
 
 The App repeats admission when enqueueing and immediately before submitting.
@@ -870,11 +893,17 @@ reference-unavailable reason; executor failures remain failures. Published
 bootstrap acceptance then requires bands for every configured PR probe case.
 PR-tier ingests create or update one sticky `github-actions[bot]` comment linking
 the full table in the ingest attempt's job summary and the history dashboard.
-Only cells with more than 3% change in either time or peak RSS are listed, using
-the check summary's values and rounding, independently of the noise references.
+Only cells exceeding the larger of 3% and their per-metric observed envelope in
+either time or peak RSS are listed. Selection compares head/base and base/head
+symmetrically, while the values and signed changes retain the check summary's
+rounding. Each listed metric shows its reporting threshold; missing envelopes
+use 3% and are marked `no observed envelope`. The full table remains in the
+linked results.
 Validated failed or partial PR results replace the comment with
 a comparison-unavailable message. A failed ingest leaves the previous comment
 unchanged. Comment-posting errors do not fail ingest or the benchmark check.
+The shared writer does not serialize find-then-create across concurrent jobs;
+simultaneous first publications can still create duplicate sticky comments.
 Executor failures before a result and failed ingests leave no history record;
 their App check or hosted workflow failure is the visible outcome.
 
