@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794394146937,
+  "lastUpdate": 1794403681968,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -241714,6 +241714,270 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 889108,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "qvd@andrew.cmu.edu",
+            "name": "Quang Dao",
+            "username": "quangvdao"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "0a0bbb1cc9c1e7a180e9a98c78df0e773b833272",
+          "message": "feat(jolt-poly): eq-table allocation policy with Global and Budget (#2401)\n\n* feat(jolt-poly): endianness-generic eq builders over PointLike, Field bounds\n\n* feat(jolt-poly): fallible capped builders, mapped and prefix tables\n\n* feat(jolt-poly): add fallible Gruen construction\n\n* chore: record the jolt-utils edge in nested lockfiles\n\n* fix(jolt-poly): check tensor domains and benchmark builders\n\n* perf(jolt-poly): fill fallible eq tables in parallel after reserving\n\n* test(jolt-poly): count allocations on every thread\n\n* bench(jolt-eval): callgrind cases for little-endian eq, Gruen bind and tensor fold\n\n* bench(jolt-eval): cover Gruen round recovery in callgrind gate\n\n* refactor(jolt-poly): replace the try_* eq builders with buffer-filling kernels\n\n* feat(jolt-poly): eq-table allocation policy with Global and Budget\n\n* style(jolt-poly): import Sealed by its short name\n\n* fix(jolt-poly): one point meaning per eq constructor, wire extension zeroed allocation, split the eq Callgrind target\n\n* fix(jolt-eval): count the tensor fold on the benchmark thread; tighten ext SAFETY comments, drop a redundant test, fix split-module doc paths\n\n* bench(eq_rounds): keep bench closures out of the Callgrind toggle\n\nClosures defined inside a benchmark function name generic instantiations\n(Rayon's bridge helper, the Gruen round builders) after the iai wrapper\nmodule, so those symbols also match the default toggle and switch\ncollection off for part of the measured work. Define those closures in\nhelpers outside the benchmark functions.\n\n* bench(jolt-poly): cut the new eq builder cases to six\n\nThe eq_construction target and the 147-case eq_builders group repeated\neq_orders cases and pushed the bench-crates job past its 90-minute limit.\nKeep evals_budget at 14, 17 and 20 variables, mapped at 16 and 20, and one\nprefix case at 20, all on Fr with the eq_orders/Fr/le points.\n\n* fix(jolt-poly): keep EqAlloc's allocation methods private to the crate\n\nOther crates could call Budget::table and Budget::storage, which allocate\nany size without checking max_bytes. Move reject, admit, table and storage\nto the crate-private supertrait Allocate. EqAlloc keeps only its Error type,\nso other crates can name Global and Budget and pass them to the builders,\nbut cannot call the methods, even through a generic bound. TableInit leaves\nthe public API. An integration test checks that a zero budget rejects the\none-entry table through every public builder.\n\n* fix(jolt-poly): state eq-table errors in plain words and chain causes once\n\nEqTableError's messages copied Rust panic and assertion text, which named a\nprivate field and read as an internal failure under Budget. Each message\nnow states the condition, and OverBudget also reports the admitted element\ncount. AllocationFailed prints only its own message and returns the\nallocator error as its source; AllocationCause is transparent, and\nZeroAllocError gains Display and Error so the chain no longer ends early.\n\nTests now compare Global's panic message with the expected variant instead\nof pinned substrings, check the error chain's structure, and pin one\nOverBudget message.\n\n* fix(jolt-poly): drop the cached builder's unreachable overflow check\n\ndomain_len returns a power of two that fits in usize, so the level total\n2 * len - 1 cannot overflow. The removed branch also reported a made-up\nelement size of 2.\n\n* fix(jolt-poly): report the caller's location from Global's panics\n\nGlobal::reject lacked #[track_caller], so every argument panic pointed at\nalloc.rs and the attribute on the Global aliases had no effect. Add it to\nreject, domain_len, check_layout and build_cached, and call reject outside\nclosures, which #[track_caller] does not reach. The Global panic test now\nchecks that each panic names the calling file, and covers the layout\noverflow path.\n\n* test(jolt-poly): name the failing allocation with a typed FailAt\n\nThe test policy read target == 0 as \"fail every allocation\", a value\nsentinel that a later test could read as \"never fail\". FailAt::Every and\nFailAt::Nth(NonZeroUsize) now select the failures, carried by the renamed\nFailingPolicy. The policy's comment no longer claims the registered\nallocations run one after another: the tensor builder allocates its two\nfactors inside rayon::join, in unspecified order.\n\n* fix(jolt-poly): keep GruenSplitEqPolynomial bounded by JoltField\n\nWidening the struct and constructors to Field served only a test over\nFpExt4, and left a type whose other methods still need JoltField. Restore\nmain's bound; E-J3 relaxes it with its own justification. The constructor\ntest now runs over the JoltField Prime128Offset6A23801F instead of FpExt4,\nand compares the factor tables with eq_index directly: the tables exclude\nthe scale, so multiplying both sides by a zero scale checked nothing.\n\n* refactor(jolt-poly): narrow eq kernel visibility to the file that uses it\n\nSERIAL_MAX_VARS, fill_serial and fill_cached are now private to build.rs\nand cached.rs, so no other module can call fill_serial without the out[0]\nseeding that fill_evals performs. Restore E-J1's comment on why\nfill_parallel_coords takes coordinates and an endianness instead of the\npoint view.\n\n* style(jolt-utils): import the fmt names ZeroAllocError's Display uses\n\nThe style invariant checker asks for nominal imports on added lines.\n\n* test(jolt-poly): drop the zero-budget integration test that repeats the unit test\n\nbudget_caps_each_family_in_requested_bytes already checks the same six\nbuilders for OverBudget, and a compile-time seal is not something this\ntest can observe.",
+          "timestamp": "2026-11-11T05:16:53-07:00",
+          "tree_id": "2279163191612b7be77d936165e8f0c43629aefc",
+          "url": "https://github.com/a16z/jolt/commit/0a0bbb1cc9c1e7a180e9a98c78df0e773b833272"
+        },
+        "date": 1794403674032,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 4.3294,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 887592,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.6845,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 463100,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 463672,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 463092,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.8462,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 463208,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-mem",
+            "value": 888208,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 1.8844,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 463136,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 4.8557,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 463328,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 4.8266,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 130808,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.9583,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 889112,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.6564,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 463304,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.488,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 464012,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 25.9284,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 463428,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 6.0773,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 463448,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 36.9872,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 699224,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 18.7039,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 609264,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 73.5566,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 642380,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.8574,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 463528,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 2.1416,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 463280,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 18.198,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 888152,
             "unit": "KB",
             "extra": ""
           }
