@@ -2,6 +2,7 @@ use super::inverse;
 use crate::{CanonicalBytes, CanonicalEncoding, Field, NaiveAccumulator, Ring, WithAccumulator};
 #[cfg(feature = "allocative")]
 use allocative::Allocative;
+use jolt_utils::alloc::ZeroBytesValid;
 use rand_core::RngCore;
 use std::fmt::{Display, Formatter, Result as FmtResult};
 
@@ -79,7 +80,12 @@ impl Ring for F8 {
     }
 }
 
+// SAFETY: the stored polynomial coefficients are integers (or F64 integers),
+// and the additive identity has every coefficient and bit equal to zero.
+unsafe impl ZeroBytesValid for F8 {}
+
 impl Field for F8 {
+    zeroed_field_vec!();
     fn inverse(&self) -> Option<Self> {
         inverse(*self)
     }

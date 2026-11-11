@@ -27,7 +27,7 @@ use crate::optimized::streaming::{
     dense_crossover, gruen_pair_pass, task_ranges, PairHalves, DENSE_TABLE_CAP, VISIT_ROWS,
 };
 use crate::optimized::support::{
-    try_par_sum_vecs, BundleStore, GruenRoundMessage, RoundChallenges,
+    eq_round_error, try_par_sum_vecs, BundleStore, GruenRoundMessage, RoundChallenges,
 };
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -265,10 +265,11 @@ impl<F: JoltField> StreamingInstructionInputKernel<F> {
             let q_terms = streamed.round_pass(None).map_err(row_extraction_error)?;
             (q_terms, None)
         };
-        let poly =
-            streamed
-                .gruen
-                .checked_cubic(q_terms[0], q_terms[1], previous_claim, round, || q_terms[2])?;
+        let poly = streamed
+            .gruen
+            .round()
+            .ok_or_else(|| eq_round_error(round))?
+            .checked_cubic(q_terms[0], q_terms[1], previous_claim, round, || q_terms[2])?;
         if let Some(tables) = tables {
             let prefix_len = tables[0].len();
             let tail = core::array::from_fn(|i| tables[i][prefix_len - 1]);
@@ -287,7 +288,12 @@ impl<F: JoltField> StreamingInstructionInputKernel<F> {
     fn bind(&mut self, challenge: F) -> Result<(), SumcheckError<F>> {
         match &mut self.phase {
             Phase::Streamed(streamed) => {
-                streamed.gruen.bind(challenge);
+                let round = streamed.challenges.bound();
+                streamed
+                    .gruen
+                    .round_mut()
+                    .ok_or_else(|| eq_round_error(round))?
+                    .bind(challenge);
                 streamed.challenges.push(challenge);
                 Ok(())
             }
