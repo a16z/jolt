@@ -4198,6 +4198,7 @@ dependencies = [
 name = "jolt-zk"
 version = "0.1.0"
 dependencies = [
+ "jolt-claim-expr",
  "jolt-claims",
  "jolt-crypto",
  "jolt-field",
@@ -4211,6 +4212,7 @@ dependencies = [
  "rayon",
  "serde",
  "thiserror 2.0.21",
+ "zeroize",
 ]
 
 [[package]]
