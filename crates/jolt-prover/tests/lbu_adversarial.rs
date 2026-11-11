@@ -25,7 +25,7 @@ mod adversarial {
     use std::path::PathBuf;
     use std::sync::Arc;
     #[cfg(not(feature = "zk"))]
-    use std::thread;
+    use std::thread::Builder;
     use std::{env, fs};
 
     use common::jolt_device::JoltDevice;
@@ -39,7 +39,9 @@ mod adversarial {
     use jolt_program::preprocess::JoltProgramPreprocessing;
     use jolt_prover::dory::DoryProverPreprocessing;
     use jolt_prover::{dory, JoltBackend, JoltSharedPreprocessing, ProverConfig, ProverError};
-    use jolt_riscv::{JoltInstructionKind as Kind, JoltTraceRow};
+    use jolt_riscv::{
+        JoltInstructionKind as Kind, JoltInstructionRow, JoltTraceRow, RegisterState,
+    };
     use jolt_transcript::{Keccak, ProverState, VerifierState};
     use jolt_verifier::proof::JoltProof;
     use jolt_verifier::{JoltVerifierPreprocessing, VerifierError};
@@ -47,6 +49,8 @@ mod adversarial {
         ChunkVisitor, JoltVmWitnessConfig, JoltVmWitnessInputs, JoltWitnessOracle, ProgramSource,
         RandomAccessRows, RowSource, Shape, TraceBackend, WitnessError,
     };
+    use serde::de::DeserializeOwned;
+    use serde::Serialize;
 
     #[cfg(feature = "zk")]
     use crate::support::with_zk_stack as wide_stack;
@@ -123,7 +127,7 @@ mod adversarial {
     fn edit_row(
         rows: &mut [JoltTraceRow],
         index: usize,
-        edit: impl FnOnce(&mut jolt_riscv::JoltInstructionRow, &mut jolt_riscv::RegisterState),
+        edit: impl FnOnce(&mut JoltInstructionRow, &mut RegisterState),
     ) {
         let row = rows.get_mut(index).expect("row in trace");
         let mut instruction = row.instruction();
@@ -147,7 +151,7 @@ mod adversarial {
         let (word, base) = (row.rs1_value(), row.rs2_value());
         let imm = i64::try_from(row.imm()).expect("LBU immediate fits");
         let offset = base.wrapping_add_signed(imm);
-        let write = |registers: &mut jolt_riscv::RegisterState, value: u64| {
+        let write = |registers: &mut RegisterState, value: u64| {
             registers
                 .rd
                 .as_mut()
@@ -296,11 +300,11 @@ mod adversarial {
         )
     }
 
-    fn encode<T: serde::Serialize>(value: &T) -> Vec<u8> {
+    fn encode<T: Serialize>(value: &T) -> Vec<u8> {
         bincode::serde::encode_to_vec(value, bincode::config::standard()).expect("encode")
     }
 
-    fn decode<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> T {
+    fn decode<T: DeserializeOwned>(bytes: &[u8]) -> T {
         let (value, consumed) =
             bincode::serde::decode_from_slice(bytes, bincode::config::standard()).expect("decode");
         assert_eq!(consumed, bytes.len(), "trailing bytes");
@@ -320,7 +324,7 @@ mod adversarial {
     /// Proving recurses deeply; run on a wide stack as the ZK suites do.
     #[cfg(not(feature = "zk"))]
     fn wide_stack(body: impl FnOnce() + Send + 'static) {
-        thread::Builder::new()
+        Builder::new()
             .stack_size(128 * 1024 * 1024)
             .spawn(body)
             .expect("spawn test thread")
