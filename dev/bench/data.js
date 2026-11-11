@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794403681968,
+  "lastUpdate": 1794424813871,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -241978,6 +241978,270 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 888152,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "8365992+moodlezoup@users.noreply.github.com",
+            "name": "Michael Zhu",
+            "username": "moodlezoup"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "a68a6b229f2b25bbe98804dbebeb5c2a2bbbc804",
+          "message": "fix(prover): prove traces that exactly fill their padded domain (#2407)\n\n* fix(prover): prove traces that exactly fill their padded domain\n\nThe honest prover reserved a final no-op row, padding to\nmax(next_pow2(T + 1), MIN), and refused when that exceeded\nmax_padded_trace_length. The verifier accepts any power-of-two trace\nlength up to that maximum, so for T == 2^floor(log2 max) a prover that\nskipped the padding row was accepted where the honest prover refused.\nThis is the \"No Maximum-Length Trace\" assumption in the Jolt-QED\nformalization.\n\nPad to max(next_pow2(T), MIN) instead. At T - 1 the no-wraparound shift\nalready gives a final jump no-op successor values, so no row needs to be\nreserved. ShouldJump now treats a missing successor as a no-op, the same\nway NextIsNoop, NextPc and NextUnexpandedPc already do, and the\noptimized Spartan-outer bundle calls that extractor instead of keeping\nits own copy of the rule.\n\nThe verifier, claims, transcript and wire format are unchanged. Proofs\nare byte-identical unless the executed length is a power of two at or\nabove MIN.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* fix: address trace-bound review feedback\n\n* fix(prover): accept full-domain traces in the bench and cover more full-domain configurations\n\n* test(claims): pin the last-row rule and run field_ops_full_domain in every mode\n\nAdd R1CS witness tests for the last row of a trace that fills its padded\ndomain, where every shifted Next* column is 0 and NextIsNoop is 1. A final\nj . stall passes; a final jump that still sets ShouldJump fails row 14; ADD\nand LD fail row 16; a taken BEQ fails row 15 and an untaken one row 16; an\nunfinished virtual sequence fails row 16, and row 17 on its own. The e2e\ntests only show that honest full-domain proofs succeed, so these tests catch\na future change to EqPlusOne wraparound or to the row-16 guard.\n\nMove field_ops_full_domain into the field-inline guest list so it runs under\nAkita and ZK as well as in clear mode.\n\n* docs(skill): state the padded-length floor; narrow a lint expectation\n\nagent-skills/jolt/SKILL.md now says in the parameter table and the error\ntable that max_trace_length is the smallest power of 2 at or above the\ncycle count and at least 256 on Dory or 4096 on Akita, matching the\ntightening step later in the file.\n\nThe clippy::expect_used expectation in ProverTimeObjective::setup now covers\nonly the padded_trace_length call instead of the whole function.\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>\nCo-authored-by: Quang Dao <qvd@andrew.cmu.edu>",
+          "timestamp": "2026-11-11T11:22:43-07:00",
+          "tree_id": "c537e36770151cce6687626e75acf74ad9b03792",
+          "url": "https://github.com/a16z/jolt/commit/a68a6b229f2b25bbe98804dbebeb5c2a2bbbc804"
+        },
+        "date": 1794424806757,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 3.0944,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 891172,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.3607,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 463836,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 463736,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 463396,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.6848,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 463376,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-mem",
+            "value": 887832,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 1.5118,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 463672,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 3.9343,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 463472,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 3.9378,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 129940,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.5929,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 890768,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.5306,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 463792,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.3875,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 463656,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 20.7994,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 463284,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 4.8444,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 463432,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 29.9256,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 700532,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 14.9494,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 616532,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 59.3706,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 639348,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.495,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 463880,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.7254,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 463480,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 14.7474,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 892340,
             "unit": "KB",
             "extra": ""
           }
