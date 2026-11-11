@@ -367,7 +367,7 @@ fn decompose_small_signed_matches_field_all_accepted_shapes() {
 
 #[test]
 fn add_bias_decomposition_matches_exact_recurrence_fp128() {
-    check_field_against_exact_recurrence::<Prime128Offset6A23801F>(0xa7f7);
+    check_field_against_exact_recurrence::<Prime128Offset6A23801F>(0x6a23_801f);
     check_field_against_exact_recurrence::<Prime128Offset275>(0x275);
 }
 
