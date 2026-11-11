@@ -156,7 +156,7 @@ impl<F: Field> ClaimDomain<F> for ClearDomain {
     }
 }
 
-#[cfg(all(test, feature = "solinas"))]
+#[cfg(test)]
 mod tests {
     use jolt_field::{Prime128Offset275 as Fp, Ring};
 

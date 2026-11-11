@@ -36,7 +36,7 @@ use crate::error::SumcheckError;
 use crate::pow::grind_round;
 use crate::proof::{ClearSumcheckProof, SumcheckProof};
 use crate::recorder::SumcheckRecorder;
-use crate::round_proof::RoundMessage;
+use crate::round_proof::{excess_degree, RoundMessage};
 
 /// One batch member's prove-side round interface, consumed by
 /// [`prove_batch`]'s round loop. Object-safe on purpose: a stage's members are
@@ -303,18 +303,11 @@ where
                 .message
                 .as_ref()
                 .ok_or(SumcheckError::MissingRoundMessage { member: item.index })?;
-            // Kernels may sample a phase's polynomial at more points than its
-            // degree needs, leaving zero leading coefficients.
-            let poly_degree = poly
-                .coefficients()
-                .iter()
-                .rposition(|coefficient| !coefficient.is_zero())
-                .unwrap_or(0);
-            if poly_degree > degree {
+            if let Some(got) = excess_degree(poly.coefficients(), degree) {
                 return Err(SumcheckError::RoundDegreeBoundExceeded {
                     round,
                     member: item.index,
-                    got: poly_degree,
+                    got,
                     max: degree,
                 });
             }

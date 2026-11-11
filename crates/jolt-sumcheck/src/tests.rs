@@ -2038,6 +2038,37 @@ fn scheduled_verify_rejects_a_round_above_its_degree() {
     ));
 }
 
+/// A schedule with a zero-degree round is rejected up front, naming the
+/// round, before any round reaches the transcript.
+#[test]
+fn scheduled_verify_rejects_a_zero_degree_schedule() {
+    let proof = CompressedSumcheckProof {
+        round_polynomials: vec![CompressedPoly::new(vec![F::from_u64(1)]); 2],
+        pow_nonces: Vec::new(),
+    };
+    let mut transcript =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"scheduled-degree"), b"");
+    let mut untouched =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"scheduled-degree"), b"");
+    assert!(matches!(
+        SumcheckVerifier::verify_compressed_scheduled(
+            F::from_u64(0),
+            &DegreeSchedule::uniform(2, 0),
+            &proof,
+            BooleanHypercube,
+            &mut transcript,
+        ),
+        Err(SumcheckError::ZeroBatchDegree {
+            max_num_vars: 2,
+            round: 0
+        })
+    ));
+    assert_eq!(
+        transcript.verifier_message::<[u8; 32]>(),
+        untouched.verifier_message::<[u8; 32]>()
+    );
+}
+
 /// A member whose round polynomial exceeds its round's scheduled degree is
 /// rejected before the round reaches the transcript.
 #[test]
