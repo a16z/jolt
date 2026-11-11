@@ -22,12 +22,35 @@ use crate::constants::{
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MemoryLayoutError {
     ZeroAddress,
-    AddressBelowLowest { address: u64, lowest_address: u64 },
+    AddressBelowLowest {
+        address: u64,
+        lowest_address: u64,
+    },
     MissingProgramSize,
-    SizeOverflow { region: &'static str },
-    InvalidTrustedAdviceSize { size: u64 },
-    InvalidUntrustedAdviceSize { size: u64 },
-    IoRegionTooLarge { padded_bytes: u64 },
+    SizeOverflow {
+        region: &'static str,
+    },
+    InvalidTrustedAdviceSize {
+        size: u64,
+    },
+    InvalidUntrustedAdviceSize {
+        size: u64,
+    },
+    IoRegionTooLarge {
+        padded_bytes: u64,
+    },
+    HeapEndTooHigh {
+        heap_end: u64,
+    },
+    HeapBelowLowest {
+        heap_end: u64,
+        lowest_address: u64,
+    },
+    RamDomainTooLarge,
+    RamAddressSpaceOverflow {
+        lowest_address: u64,
+        max_ram_k: usize,
+    },
 }
 
 impl Display for MemoryLayoutError {
@@ -50,6 +73,19 @@ impl Display for MemoryLayoutError {
             Self::InvalidUntrustedAdviceSize { size } => write!(
                 f,
                 "Untrusted advice size must be a power of two (got {size})"
+            ),
+            Self::HeapBelowLowest { heap_end, lowest_address } => write!(
+                f,
+                "memory layout heap end {heap_end} is below lowest mapped address {lowest_address}"
+            ),
+            Self::RamDomainTooLarge => write!(f, "RAM domain size exceeds this platform's addressable usize range"),
+            Self::RamAddressSpaceOverflow { lowest_address, max_ram_k } => write!(
+                f,
+                "maximum padded RAM domain of {max_ram_k} words from {lowest_address} exceeds the 64-bit address space"
+            ),
+            Self::HeapEndTooHigh { heap_end } => write!(
+                f,
+                "heap end {heap_end} leaves fewer than eight bytes before the end of the address space"
             ),
             Self::IoRegionTooLarge { padded_bytes } => write!(
                 f,
@@ -508,7 +544,7 @@ impl MemoryLayout {
             .checked_add(heap_size)
             .ok_or(MemoryLayoutError::SizeOverflow { region: "heap" })?;
 
-        Ok(Self {
+        let layout = Self {
             program_size,
             max_trusted_advice_size,
             trusted_advice_start,
@@ -529,7 +565,47 @@ impl MemoryLayout {
             panic,
             termination,
             io_end,
-        })
+        };
+        let _ = layout.max_ram_k()?;
+        Ok(layout)
+    }
+
+    /// Ensures an access beginning below `heap_end` has eight-byte headroom.
+    /// Admission repeats this check for layouts decoded from verifier keys.
+    fn validate_heap_end(&self) -> Result<(), MemoryLayoutError> {
+        if self.heap_end > u64::MAX - 7 {
+            return Err(MemoryLayoutError::HeapEndTooHigh {
+                heap_end: self.heap_end,
+            });
+        }
+        Ok(())
+    }
+
+    /// Computes and admits the maximum padded RAM domain for this layout.
+    /// Both construction and verifier-key admission use this sizing law.
+    pub fn max_ram_k(&self) -> Result<usize, MemoryLayoutError> {
+        self.validate_heap_end()?;
+        let lowest_address = self.get_lowest_address();
+        let total_bytes = self.heap_end.checked_sub(lowest_address).ok_or(
+            MemoryLayoutError::HeapBelowLowest {
+                heap_end: self.heap_end,
+                lowest_address,
+            },
+        )?;
+        // Count a partial last word because the tracer admits starts below heap_end.
+        let total_words = usize::try_from(total_bytes.div_ceil(8))
+            .map_err(|_| MemoryLayoutError::RamDomainTooLarge)?;
+        let max_ram_k = total_words
+            .checked_next_power_of_two()
+            .ok_or(MemoryLayoutError::RamDomainTooLarge)?;
+        // Check the admitted maximum, even when a proof selects a smaller domain.
+        if u128::from(lowest_address) + 8 * max_ram_k as u128 > (1u128 << 64) {
+            return Err(MemoryLayoutError::RamAddressSpaceOverflow {
+                lowest_address,
+                max_ram_k,
+            });
+        }
+        Ok(max_ram_k)
     }
 
     pub fn get_lowest_address(&self) -> u64 {
@@ -590,6 +666,55 @@ mod tests {
             }),
             Err(MemoryLayoutError::IoRegionTooLarge {
                 padded_bytes: 1 << 31
+            })
+        );
+    }
+
+    #[test]
+    fn checked_layout_requires_eight_byte_heap_headroom() {
+        let config = MemoryConfig {
+            program_size: Some((u64::MAX - 7) - RAM_START_ADDRESS - STACK_CANARY_SIZE),
+            stack_size: 0,
+            heap_size: 0,
+            ..Default::default()
+        };
+        let layout = MemoryLayout {
+            heap_end: u64::MAX - 7,
+            ..MemoryLayout::default()
+        };
+        assert_eq!(layout.validate_heap_end(), Ok(()));
+        assert_eq!(
+            MemoryLayout::try_new(&MemoryConfig {
+                program_size: config.program_size.map(|size| size + 1),
+                ..config
+            }),
+            Err(MemoryLayoutError::HeapEndTooHigh {
+                heap_end: u64::MAX - 6
+            })
+        );
+    }
+
+    #[test]
+    fn checked_layout_checks_the_maximum_padded_ram_extent() {
+        let mut config = MemoryConfig {
+            program_size: Some(1024),
+            stack_size: 0,
+            heap_size: 0,
+            ..Default::default()
+        };
+        let lowest_address = MemoryLayout::try_new(&config).unwrap().get_lowest_address();
+        config.program_size =
+            Some(lowest_address + (1u64 << 63) - RAM_START_ADDRESS - STACK_CANARY_SIZE);
+        assert_eq!(
+            MemoryLayout::try_new(&config).unwrap().max_ram_k(),
+            Ok(1usize << 60)
+        );
+        config.program_size = config.program_size.map(|size| size + 1);
+        assert_eq!(
+            MemoryLayout::try_new(&config),
+            Err(MemoryLayoutError::RamAddressSpaceOverflow {
+                lowest_address,
+                max_ram_k: 1usize << 61,
             })
         );
     }
