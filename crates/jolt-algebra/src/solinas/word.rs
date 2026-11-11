@@ -258,7 +258,11 @@ macro_rules! define_solinas_prime {
             }
         }
 
+        // SAFETY: the transparent integer representation stores zero as zero.
+        unsafe impl<const P: $word> jolt_utils::alloc::ZeroBytesValid for $name<P> {}
+
         impl<const P: $word> Field for $name<P> {
+            zeroed_field_vec!();
             #[inline(always)]
             fn inverse(&self) -> Option<Self> {
                 let inv = self.inv_or_zero();

@@ -3,7 +3,9 @@
 use crate::codec::NargMessage;
 #[cfg(feature = "prover-grinding")]
 use crate::pow::{nonce_word, Leb128, SpongePow, CHECK_BYTES};
-use crate::{prover_transcript, ProverState as JoltProverState, Transcript, TAG_BYTES};
+#[cfg(feature = "prover-entropy")]
+use crate::{prover_transcript, ProverState as JoltProverState};
+use crate::{Transcript, TAG_BYTES};
 #[cfg(feature = "prover-grinding")]
 use spongefish::VerificationError;
 use spongefish::{DuplexSpongeInit, DuplexSpongeInterface, Encoding, ProverState};
@@ -95,12 +97,13 @@ pub trait ProverTranscript: Transcript {
 
 /// A prover transcript that a prover builds itself, bound to the same
 /// instance its verifier binds: from the session and the public statement, as
-/// [`prover_transcript`] does.
+/// `prover_transcript` does under the `prover-entropy` feature.
 pub trait ProverInit: ProverTranscript + Sized {
     /// The transcript bound to `session` and `statement`.
     fn init(session: &[u8; TAG_BYTES], statement: &(impl Encoding + ?Sized)) -> Self;
 }
 
+#[cfg(feature = "prover-entropy")]
 impl<H> ProverInit for JoltProverState<H>
 where
     H: DuplexSpongeInit<U = u8>,
