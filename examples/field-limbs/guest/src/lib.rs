@@ -39,7 +39,7 @@ fn check_limb_conversions(value: Option<[u64; 6]>, readout_width: Option<u8>) ->
 #[cfg(feature = "scalar-bn254")]
 use jolt_field::Fr as Scalar;
 #[cfg(feature = "scalar-fp128")]
-use jolt_field::Prime128OffsetA7F7 as Scalar;
+use jolt_field::Prime128Offset6A23801F as Scalar;
 
 /// Whether `a * b` is zero, multiplied through the scalar type's `*`, which
 /// runs one field-inline multiplication and reads the product out as advice
