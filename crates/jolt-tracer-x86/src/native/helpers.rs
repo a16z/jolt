@@ -133,14 +133,15 @@ pub extern "sysv64" fn code_store_doubleword(
 ) -> u64 {
     let (state, host) = host_context(state);
     let offset = address - RAM_START_ADDRESS;
+    let mut bytes = [0u8; 8];
     // SAFETY: the generated store admission checked alignment and plane bounds
     // before comparing the address with the canonical public code intervals.
-    let old = unsafe {
+    unsafe {
         (state.mem_base as *const u8)
             .add(offset as usize)
-            .cast::<u64>()
-            .read()
+            .copy_to(bytes.as_mut_ptr(), 8);
     };
+    let old = u64::from_le_bytes(bytes);
     if old != value {
         return fail(
             state,
