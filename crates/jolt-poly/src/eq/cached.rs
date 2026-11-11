@@ -94,7 +94,7 @@ impl<F: Field> EqPolynomial<F> {
     }
 
     #[inline]
-    pub(crate) fn fill_cached<P, const MSB: bool>(r: &P, evals: &mut [Vec<F>])
+    fn fill_cached<P, const MSB: bool>(r: &P, evals: &mut [Vec<F>])
     where
         P: PointLike + ?Sized,
         P::Coord: Send + Sync + Into<F>,
