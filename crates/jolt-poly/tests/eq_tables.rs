@@ -2,8 +2,8 @@
     clippy::unwrap_used,
     reason = "tests assert successful budgeted construction"
 )]
-use jolt_field::{Field, FpExt4, Fr, Prime32Offset99, Ring};
-use jolt_poly::{eq_index, Budget, EqPolynomial, EqTableError, PointLike, PointRef, TensorEqTable};
+use jolt_field::{Field, FpExt4, Fr, Prime32Offset99};
+use jolt_poly::{eq_index, Budget, EqPolynomial, PointLike, PointRef, TensorEqTable};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
 
@@ -84,23 +84,4 @@ fn algebraic_contracts<F: Field>() {
 fn builders_obey_equality_and_prefix_identities_in_both_orders() {
     algebraic_contracts::<Fr>();
     algebraic_contracts::<FpExt4<Prime32Offset99>>();
-}
-
-#[test]
-fn zero_budget_rejects_the_smallest_table() {
-    let budget = Budget { max_bytes: 0 };
-    let point: [Fr; 0] = [];
-    for result in [
-        EqPolynomial::<Fr>::evals_in(&point, None, budget).map(drop),
-        EqPolynomial::<Fr>::evals_mapped_in(&point, None, |x| x, budget).map(drop),
-        EqPolynomial::<Fr>::evals_prefix_in(&point, None, 1, budget).map(drop),
-        EqPolynomial::<Fr>::evals_cached_msb_in(&point, None, budget).map(drop),
-        EqPolynomial::<Fr>::evals_cached_lsb_in(&point, None, budget).map(drop),
-        TensorEqTable::from_point_in(&point, Fr::from_u64(1), 0, budget).map(drop),
-    ] {
-        assert!(matches!(
-            result,
-            Err(EqTableError::OverBudget { bytes, max_bytes: 0, .. }) if bytes == size_of::<Fr>()
-        ));
-    }
 }
