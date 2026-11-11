@@ -36,7 +36,7 @@ use crate::error::SumcheckError;
 use crate::pow::grind_round;
 use crate::proof::{ClearSumcheckProof, SumcheckProof};
 use crate::recorder::SumcheckRecorder;
-use crate::round_proof::RoundMessage;
+use crate::round_proof::{excess_degree, RoundMessage};
 
 /// One batch member's prove-side round interface, consumed by
 /// [`prove_batch`]'s round loop. Object-safe on purpose: a stage's members are
@@ -303,24 +303,11 @@ where
                 .message
                 .as_ref()
                 .ok_or(SumcheckError::MissingRoundMessage { member: item.index })?;
-            // Kernels may sample a phase's polynomial at more points than its
-            // degree needs, leaving zero leading coefficients. Visit every
-            // coefficient above the bound, zeros included, so the scan's
-            // length depends only on public sizes; only invalid kernel output
-            // takes the error branch.
-            let coefficients = poly.coefficients();
-            let excess = coefficients
-                .iter()
-                .skip(degree.saturating_add(1))
-                .fold(false, |excess, coefficient| excess | !coefficient.is_zero());
-            if excess {
+            if let Some(got) = excess_degree(poly.coefficients(), degree) {
                 return Err(SumcheckError::RoundDegreeBoundExceeded {
                     round,
                     member: item.index,
-                    got: coefficients
-                        .iter()
-                        .rposition(|coefficient| !coefficient.is_zero())
-                        .unwrap_or(0),
+                    got,
                     max: degree,
                 });
             }
@@ -419,7 +406,7 @@ pub struct ProvedUniskipCommitted<F: Field, C> {
 /// Self-check the uni-skip round polynomial against the verifier's round
 /// checks before anything reaches the transcript: degree bound and
 /// centered-integer-domain round sum.
-fn check_uniskip_round<F: Field + Encoding>(
+pub fn check_uniskip_round<F: Field + Encoding>(
     round_poly: &UnivariatePoly<F>,
     input_claim: F,
     degree: usize,

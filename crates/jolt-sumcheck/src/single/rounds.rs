@@ -1,4 +1,5 @@
 use super::{ProveRounds, SingleInstance, SumcheckError};
+use crate::round_proof::excess_degree;
 use jolt_field::Field;
 use jolt_poly::UnivariatePoly;
 
@@ -92,16 +93,9 @@ impl<E: Field> SingleInstance<E> {
         match output {
             ProverRound::Full(poly) => {
                 let coefficients = poly.coefficients();
-                let width = self.degree + 1;
-                // Visit every excess coefficient, including zeros. Length is
-                // public; only invalid kernel output takes the error branch.
-                let excess = coefficients
-                    .iter()
-                    .skip(width)
-                    .fold(false, |acc, c| acc | !c.is_zero());
-                if excess {
+                if let Some(got) = excess_degree(coefficients, self.degree) {
                     return Err(SumcheckError::DegreeBoundExceeded {
-                        got: coefficients.len() - 1,
+                        got,
                         max: self.degree,
                     });
                 }

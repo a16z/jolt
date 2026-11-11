@@ -1,3 +1,5 @@
+use std::error::Error;
+
 use crate::single::SumcheckShape;
 use jolt_field::Field;
 use jolt_transcript::VerificationError;
@@ -5,6 +7,11 @@ use jolt_transcript::VerificationError;
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum SumcheckError<F: Field> {
+    /// The masked channel failed: a truncated proof or an exhausted pad
+    /// schedule.
+    #[error("masked channel: {0}")]
+    PrivateChannel(#[source] Box<dyn Error + Send + Sync + 'static>),
+
     /// Round check failed: the domain sum did not match the expected value
     /// carried forward from the previous round.
     #[error("round {round}: expected sum {expected}, got {actual}")]
