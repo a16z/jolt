@@ -32,9 +32,18 @@ use crate::Transcript;
 pub trait PrivateChannel {
     /// Absorbs `values`, in order, as one private message.
     fn append_private<F: Field + Encoding>(&mut self, values: &[F]);
+
+    /// Binds a claim the verifier can already derive from earlier messages.
+    /// A clear transcript absorbs it as a public value; a masked channel
+    /// binds nothing, since the masked messages it derives from already do.
+    ///
+    /// The claim must be a function of values already absorbed: under a
+    /// masked channel this call adds nothing to the transcript.
+    fn bind_derived<F: Field + Encoding>(&mut self, claim: &F);
 }
 
-/// Clear mode: a private message is a public message of the same values.
+/// Clear mode: a private message is a public message of the same values,
+/// and a derived claim is a public value.
 ///
 /// [`append_private`](PrivateChannel::append_private) absorbs one
 /// [`append_values`](Transcript::append_values) message. For values whose
@@ -47,5 +56,9 @@ pub trait PrivateChannel {
 impl<T: Transcript + ?Sized> PrivateChannel for T {
     fn append_private<F: Field + Encoding>(&mut self, values: &[F]) {
         self.append_values(values);
+    }
+
+    fn bind_derived<F: Field + Encoding>(&mut self, claim: &F) {
+        self.append_values(std::slice::from_ref(claim));
     }
 }

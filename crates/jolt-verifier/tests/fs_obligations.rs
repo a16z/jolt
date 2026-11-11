@@ -596,6 +596,7 @@ fn is_absorb_method(name: &str) -> bool {
             | "append_private"
             | "append_to_transcript"
             | "append_values"
+            | "bind_derived"
             | "check_public_grind"
     )
 }
