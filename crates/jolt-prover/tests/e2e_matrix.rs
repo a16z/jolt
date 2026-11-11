@@ -275,11 +275,22 @@ mod matrix {
         }
     }
 
+    /// The field-ops guest with no fixed padded bound: the harness repeats the
+    /// final `j .` stall until the trace fills its padded domain exactly.
+    #[cfg(feature = "field-inline")]
+    fn field_ops_full_domain() -> GuestCase {
+        GuestCase {
+            max_padded_trace_length: None,
+            ..crate::support::field_inline::field_ops()
+        }
+    }
+
     #[cfg(feature = "field-inline")]
     macro_rules! guests {
         ($emit:ident) => {
             $emit! {
                 field_ops => crate::support::field_inline::field_ops();
+                field_ops_full_domain => super::field_ops_full_domain();
                 field_limbs => super::field_limbs();
                 muldiv => crate::support::field_inline::muldiv();
             }
@@ -325,17 +336,6 @@ mod matrix {
                 JoltBackend::reference(),
                 |_| {},
             );
-        }
-
-        #[cfg(feature = "field-inline")]
-        #[test]
-        fn field_ops_full_domain() {
-            use crate::support::GuestCase;
-
-            super::mode::prove_and_verify(&GuestCase {
-                max_padded_trace_length: None,
-                ..crate::support::field_inline::field_ops()
-            });
         }
     }
 

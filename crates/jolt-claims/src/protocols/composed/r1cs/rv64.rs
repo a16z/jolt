@@ -1211,4 +1211,92 @@ mod execution_witness_tests {
         w[V_NEXT_UNEXPANDED_PC] = Fr::from_u64(0x8000_0050 + 4);
         assert_eq!(check(&w), Err(MUST_START_SEQUENCE_FROM_BEGINNING));
     }
+
+    /// Places `witness` on the last row of a trace that fills its padded
+    /// domain. EqPlusOne does not wrap around, so every shifted `Next*`
+    /// column reads 0 there and `NextIsNoop` reads 1, as if a no-op followed.
+    /// `ShouldJump = Jump·(1 − NextIsNoop)` is then 0.
+    fn at_last_row(witness: &[Fr]) -> Vec<Fr> {
+        let mut w = witness.to_vec();
+        w[V_NEXT_PC] = Fr::zero();
+        w[V_NEXT_UNEXPANDED_PC] = Fr::zero();
+        w[V_NEXT_IS_VIRTUAL] = Fr::zero();
+        w[V_NEXT_IS_FIRST_IN_SEQUENCE] = Fr::zero();
+        w[V_NEXT_IS_NOOP] = Fr::from_u64(1);
+        w[V_SHOULD_JUMP] = Fr::zero();
+        w
+    }
+
+    /// The guest's final `j .` stall: `JAL x0, 0` at 0x8000_0100, whose
+    /// target is its own address.
+    fn jal_self_loop_witness() -> Vec<Fr> {
+        const UNEXPANDED_PC: u64 = 0x8000_0100;
+
+        let mut w = jal_witness();
+        w[V_RIGHT_INSTRUCTION_INPUT] = Fr::zero();
+        w[V_PRODUCT] = Fr::zero();
+        w[V_NEXT_PC] = w[V_PC];
+        w[V_NEXT_UNEXPANDED_PC] = Fr::from_u64(UNEXPANDED_PC);
+        w[V_IMM] = Fr::zero();
+        w[V_RD_WRITE_VALUE] = Fr::from_u64(UNEXPANDED_PC + 4);
+        w[V_RIGHT_LOOKUP_OPERAND] = Fr::from_u64(UNEXPANDED_PC);
+        w[V_LOOKUP_OUTPUT] = Fr::from_u64(UNEXPANDED_PC);
+        w
+    }
+
+    #[test]
+    fn last_row_accepts_final_jump() {
+        assert_eq!(check(&jal_self_loop_witness()), Ok(()));
+        assert_eq!(check(&at_last_row(&jal_self_loop_witness())), Ok(()));
+    }
+
+    #[test]
+    fn last_row_rejects_final_jump_that_still_claims_to_jump() {
+        let w = with_cell(
+            &at_last_row(&jal_self_loop_witness()),
+            V_SHOULD_JUMP,
+            Fr::from_u64(1),
+        );
+        assert_eq!(check(&w), Err(NEXT_UNEXP_PC_EQ_LOOKUP_IF_SHOULD_JUMP));
+    }
+
+    #[test]
+    fn last_row_rejects_sequential_instruction() {
+        // A non-jump row must advance UnexpandedPC to a nonzero address,
+        // but the shifted NextUnexpandedPC is 0.
+        assert_eq!(
+            check(&at_last_row(&add_witness())),
+            Err(NEXT_UNEXP_PC_UPDATE_OTHERWISE)
+        );
+        assert_eq!(
+            check(&at_last_row(&ld_witness())),
+            Err(NEXT_UNEXP_PC_UPDATE_OTHERWISE)
+        );
+    }
+
+    #[test]
+    fn last_row_rejects_branch() {
+        assert_eq!(
+            check(&at_last_row(&beq_taken_witness())),
+            Err(NEXT_UNEXP_PC_EQ_PC_PLUS_IMM_IF_SHOULD_BRANCH)
+        );
+        assert_eq!(
+            check(&at_last_row(&beq_not_taken_witness())),
+            Err(NEXT_UNEXP_PC_UPDATE_OTHERWISE)
+        );
+    }
+
+    #[test]
+    fn last_row_rejects_unfinished_virtual_sequence() {
+        let w = at_last_row(&virtual_inline_step_witness());
+        // Row 16 is the first to fail: with DoNotUpdateUnexpandedPC it still
+        // requires NextUnexpandedPC = UnexpandedPC, which is nonzero.
+        assert_eq!(check(&w), Err(NEXT_UNEXP_PC_UPDATE_OTHERWISE));
+
+        // Row 17 rejects the row on its own as well: zeroing every term of
+        // row 16 leaves NextPC = 0 ≠ PC + 1.
+        let mut w = w;
+        w[V_UNEXPANDED_PC] = Fr::zero();
+        assert_eq!(check(&w), Err(NEXT_PC_EQ_PC_PLUS_ONE_IF_INLINE));
+    }
 }

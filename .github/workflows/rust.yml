@@ -510,8 +510,8 @@ jobs:
         uses: taiki-e/install-action@682ce6c3c696a4cd5168a05f98e51aa02b877941 # v2
         with:
           tool: nextest
-      # e2e_matrix selects field_ops, field_limbs, and muldiv for the
-      # field-inline profile. Run the full package to retain its specialized
+      # e2e_matrix selects field_ops, field_ops_full_domain, field_limbs, and
+      # muldiv for the field-inline profile. Run the full package to retain its specialized
       # parity, tamper, and limb-conversion suites alongside matrix acceptance
       # in both Dory modes.
       - name: Run field-inline matrix and specialized suites (clear)
