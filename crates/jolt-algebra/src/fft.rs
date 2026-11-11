@@ -1060,7 +1060,8 @@ mod prime_6a23801f_tests {
     #[test]
     fn primitive_nth_root_has_correct_order_for_every_divisor() {
         for &n in &[
-            2, 3, 6, 8, 9, 18, 24, 27, 54, 75, 150, 225, 450, 675, 1350, 3375, 6750, 13500, 27000,
+            2, 3, 6, 8, 9, 18, 24, 27, 32, 54, 75, 150, 225, 450, 625, 675, 1350, 3375, 6750,
+            13500, 27000,
         ] {
             if F::SMOOTH_SUBGROUP_ORDER % n != 0 {
                 continue;
@@ -1076,7 +1077,9 @@ mod prime_6a23801f_tests {
 
     #[test]
     fn small_fft_matches_naive_dft() {
-        assert_fft_matches_naive_dft::<F>(&[2, 3, 6, 8, 9, 18, 24, 27, 54, 75, 150, 225, 450, 675]);
+        assert_fft_matches_naive_dft::<F>(&[
+            2, 3, 6, 8, 9, 18, 24, 27, 32, 54, 75, 150, 225, 450, 625, 675,
+        ]);
     }
 
     #[test]
