@@ -24,7 +24,7 @@ use super::{
 use crate::optimized::streaming::{
     dense_crossover, gruen_pair_pass, product_endpoint_terms, PairHalves, DENSE_TABLE_CAP,
 };
-use crate::optimized::support::GruenRoundMessage;
+use crate::optimized::support::{eq_round_error, GruenRoundMessage};
 use crate::{KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel};
 
 fn remainder_len(log_t: usize) -> usize {
@@ -106,19 +106,18 @@ impl<F: JoltField> OuterRemainderKernel<F> {
         let [q_zero, q_infinity] = self
             .round_pass(None, product_endpoint_terms)
             .map_err(rows_unavailable)?;
+        let gruen_round = self.split_eq.round().ok_or_else(|| eq_round_error(round))?;
         let mut failure = None;
-        let message =
-            self.split_eq
-                .checked_cubic(q_zero, q_infinity, previous_claim, round, || {
-                    self.round_pass(None, |[az, bz]| [az[1] * bz[1]])
-                        .map_or_else(
-                            |error| {
-                                failure = Some(error);
-                                F::zero()
-                            },
-                            |[at_one]| at_one,
-                        )
-                });
+        let message = gruen_round.checked_cubic(q_zero, q_infinity, previous_claim, round, || {
+            self.round_pass(None, |[az, bz]| [az[1] * bz[1]])
+                .map_or_else(
+                    |error| {
+                        failure = Some(error);
+                        F::zero()
+                    },
+                    |[at_one]| at_one,
+                )
+        });
         match failure {
             Some(error) => Err(rows_unavailable(error)),
             None => message,

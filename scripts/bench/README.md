@@ -171,7 +171,8 @@ queue timing and do not change the cost of a still-current tip.
 A PR based on a skipped tip retains its medians and signed changes. If there is
 no other unexpired exact-base reference, its check is neutral with reference
 unavailable; the sticky comment still lists executed sizes and qualifying
-changes. A reference from a matching nightly or bootstrap can still apply.
+changes using a 3% threshold marked as having no observed envelope. A reference
+from a matching nightly or bootstrap can still apply.
 
 ### Historical PR interval
 
@@ -580,10 +581,17 @@ before any result complete the App check directly.
 The comment shows the base and head medians for end-to-end time and peak RSS,
 with signed percentage changes computed as `100 * (head_median / base_median - 1)`.
 Each row identifies its physical cores, `2^k` trace ceiling and measured base/head
-trace rows. The sticky PR comment shows only rows with more than 3% time or
-peak-RSS change and retains the full-results and benchmark-history links. It
-always lists the distinct core-count/ceiling pairs with a recorded process exit,
-including when no row changes; planned cases without an exit are not listed as run.
+trace rows. The sticky PR comment shows a row only when the time or peak-RSS
+change exceeds its per-case reporting threshold: the larger of 3% and that
+metric's observed envelope. Selection uses
+`100 * (max(head/base, base/head) - 1) > threshold`, so
+increases and decreases use the same scale as the envelope. Each metric's
+threshold is shown next to its signed change; a missing envelope uses 3%, marked
+`no observed envelope`. These observed envelopes do not establish statistical
+significance. The comment links to the full results and benchmark history.
+The comment always lists the distinct core-count/ceiling pairs
+with a recorded process exit, including when no row changes; planned cases
+without an exit are not listed as run.
 Only the configured measured repetitions contribute; warmups are excluded.
 Missing repetitions, failed processes and zero denominators remain unavailable
 comparisons. Proof sizes remain in the raw samples.
@@ -885,8 +893,12 @@ reference-unavailable reason; executor failures remain failures. Published
 bootstrap acceptance then requires bands for every configured PR probe case.
 PR-tier ingests create or update one sticky `github-actions[bot]` comment linking
 the full table in the ingest attempt's job summary and the history dashboard.
-Only cells with more than 3% change in either time or peak RSS are listed, using
-the check summary's values and rounding, independently of the noise references.
+Only cells exceeding the larger of 3% and their per-metric observed envelope in
+either time or peak RSS are listed. Selection compares head/base and base/head
+symmetrically, while the values and signed changes retain the check summary's
+rounding. Each listed metric shows its reporting threshold; missing envelopes
+use 3% and are marked `no observed envelope`. The full table remains in the
+linked results.
 Validated failed or partial PR results replace the comment with
 a comparison-unavailable message. A failed ingest leaves the previous comment
 unchanged. Comment-posting errors do not fail ingest or the benchmark check.
