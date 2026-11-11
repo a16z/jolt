@@ -720,3 +720,6 @@ fn gruen_constructor_obeys_equality_in_both_orders() {
 
 #[path = "recovery_tests.rs"]
 mod recovery_tests;
+
+#[path = "field_only_tests.rs"]
+mod field_only_tests;
