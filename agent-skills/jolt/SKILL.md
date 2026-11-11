@@ -82,7 +82,7 @@ Include `"thread"` for rayon/parallel, `"stdout"` for `println!`. No `cfg_attr` 
 | Parameter | Default | When to change | How to pick a value |
 |-----------|---------|----------------|---------------------|
 | `stack_size` | 4096 | `stack overflow` | Start at 8388608 (8 MB, matches Linux default); reduce in the optimization pass. |
-| `max_trace_length` | 2^22 | `max_trace_length exceeded` | Run `analyze_<fn>` to get actual cycle count, round up to next power of 2. **Proving time and memory scale with this** — tighten in Step 9. |
+| `max_trace_length` | 2^22 | `max_trace_length exceeded` | Run `analyze_<fn>` to get actual cycle count, round up to the next power of 2 at or above it, and at least 256 on Dory or 4096 on Akita. **Proving time and memory scale with this** — tighten in Step 9. |
 | `heap_size` | 32 MB | `heap allocation failed` | Estimate peak live allocations; halve until it fails, then double back. |
 
 **Prover-only inputs** — two options depending on whether you need cryptographic privacy:
@@ -203,7 +203,7 @@ Preprocessing runs once on first invocation and is not included in "Prover runti
 
 | Error | Fix |
 |-------|-----|
-| `max_trace_length exceeded` | Add `max_trace_length = N` (tight power of 2 — proving time scales with this) |
+| `max_trace_length exceeded` | Add `max_trace_length = N` (the smallest power of 2 at or above the cycle count, at least 256 on Dory or 4096 on Akita; proving time scales with this) |
 | `heap allocation failed` | Add `heap_size = N` |
 | `stack overflow` | Increase `stack_size`; start at 8388608 (8 MB) if not already set |
 | `Illegal instruction` | Rewrite floats as fixed-point |

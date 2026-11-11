@@ -34,10 +34,6 @@ impl<G: GuestConfig + 'static> Objective for ProverTimeObjective<G> {
         self.name.as_str()
     }
 
-    #[expect(
-        clippy::expect_used,
-        reason = "the allocated trace length fits a representable power-of-two domain"
-    )]
     fn setup(&self) -> ProverTimeSetup {
         let mc = self.guest.memory_config();
         let input = self.guest.input();
@@ -51,6 +47,10 @@ impl<G: GuestConfig + 'static> Objective for ProverTimeObjective<G> {
         host_program.build(&target_dir.to_string_lossy());
         let mut program = host_program;
         let (_lazy_trace, trace, _memory, _io) = program.trace(&input, &[], &[]);
+        #[expect(
+            clippy::expect_used,
+            reason = "the allocated trace length fits a representable power-of-two domain"
+        )]
         let max_trace_length = ProverConfig::padded_trace_length::<VerifierField>(trace.len())
             .expect("padded trace domain");
         drop(trace);
