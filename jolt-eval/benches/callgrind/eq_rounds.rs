@@ -18,7 +18,8 @@ use std::hint::black_box;
 use iai_callgrind::{library_benchmark, library_benchmark_group, main, LibraryBenchmarkConfig};
 use jolt_field::{Fr, Ring, Zero};
 use jolt_poly::{
-    BindingOrder, EqPolynomial, GruenSplitEqPolynomial, PointRef, TensorEqTable, UnivariatePoly,
+    BindingOrder, EqPolynomial, GruenRound, GruenSplitEqPolynomial, PointRef, TensorEqTable,
+    UnivariatePoly,
 };
 use rayon::{ThreadPool, ThreadPoolBuilder};
 
@@ -48,7 +49,10 @@ fn setup_gruen(order: BindingOrder) -> (GruenSplitEqPolynomial<Fr>, Vec<Fr>) {
 fn bench_gruen_bind(input: (GruenSplitEqPolynomial<Fr>, Vec<Fr>)) -> GruenSplitEqPolynomial<Fr> {
     let (mut eq, challenges) = input;
     for challenge in challenges {
-        eq.bind(black_box(challenge));
+        let Some(round) = eq.round_mut() else {
+            return black_box(eq);
+        };
+        round.bind(black_box(challenge));
     }
     black_box(eq)
 }
@@ -61,21 +65,25 @@ fn bench_gruen_deg_2(input: (GruenSplitEqPolynomial<Fr>, Vec<Fr>)) -> GruenSplit
     let q_zero = Fr::from_u64(2);
     let q_one = Fr::from_u64(5);
     for challenge in challenges {
-        let (l_zero, l_one) = eq.current_linear_evals();
+        let Some(round) = eq.round_mut() else {
+            return black_box(eq);
+        };
+        let view = round.round();
+        let (l_zero, l_one) = view.linear_evals();
         let hint = l_zero * q_zero + l_one * q_one;
-        black_box(gruen_deg_2_round(&eq, q_one, hint, q_zero));
-        eq.bind(black_box(challenge));
+        black_box(gruen_deg_2_round(&view, q_one, hint, q_zero));
+        round.bind(black_box(challenge));
     }
     black_box(eq)
 }
 
 fn gruen_deg_2_round(
-    eq: &GruenSplitEqPolynomial<Fr>,
+    view: &GruenRound<'_, Fr>,
     q_one: Fr,
     hint: Fr,
     q_zero: Fr,
 ) -> UnivariatePoly<Fr> {
-    eq.gruen_poly_deg_2(q_one, hint, || q_zero)
+    view.gruen_poly_deg_2(q_one, hint, || q_zero)
         .expect("consistent round hint")
 }
 
@@ -87,21 +95,25 @@ fn bench_gruen_deg_3(input: (GruenSplitEqPolynomial<Fr>, Vec<Fr>)) -> GruenSplit
     let q_zero = Fr::from_u64(2);
     let q_one = Fr::from_u64(10);
     for challenge in challenges {
-        let (l_zero, l_one) = eq.current_linear_evals();
+        let Some(round) = eq.round_mut() else {
+            return black_box(eq);
+        };
+        let view = round.round();
+        let (l_zero, l_one) = view.linear_evals();
         let hint = l_zero * q_zero + l_one * q_one;
-        black_box(gruen_deg_3_round(&eq, q_zero, hint, q_one));
-        eq.bind(black_box(challenge));
+        black_box(gruen_deg_3_round(&view, q_zero, hint, q_one));
+        round.bind(black_box(challenge));
     }
     black_box(eq)
 }
 
 fn gruen_deg_3_round(
-    eq: &GruenSplitEqPolynomial<Fr>,
+    view: &GruenRound<'_, Fr>,
     q_zero: Fr,
     hint: Fr,
     q_one: Fr,
 ) -> UnivariatePoly<Fr> {
-    eq.gruen_poly_deg_3(q_zero, Fr::from_u64(5), hint, || q_one)
+    view.gruen_poly_deg_3(q_zero, Fr::from_u64(5), hint, || q_one)
         .expect("consistent round hint")
 }
 
@@ -113,21 +125,25 @@ fn bench_gruen_toom(input: (GruenSplitEqPolynomial<Fr>, Vec<Fr>)) -> GruenSplitE
     let q_zero = Fr::from_u64(2);
     let q_one = Fr::from_u64(10);
     for challenge in challenges {
-        let (l_zero, l_one) = eq.current_linear_evals();
+        let Some(round) = eq.round_mut() else {
+            return black_box(eq);
+        };
+        let view = round.round();
+        let (l_zero, l_one) = view.linear_evals();
         let hint = l_zero * q_zero + l_one * q_one;
-        black_box(gruen_toom_round(&eq, q_one, hint, q_zero));
-        eq.bind(black_box(challenge));
+        black_box(gruen_toom_round(&view, q_one, hint, q_zero));
+        round.bind(black_box(challenge));
     }
     black_box(eq)
 }
 
 fn gruen_toom_round(
-    eq: &GruenSplitEqPolynomial<Fr>,
+    view: &GruenRound<'_, Fr>,
     q_one: Fr,
     hint: Fr,
     q_zero: Fr,
 ) -> UnivariatePoly<Fr> {
-    eq.gruen_poly_from_evals(&[q_one, Fr::from_u64(5)], hint, || q_zero)
+    view.gruen_poly_from_evals(&[q_one, Fr::from_u64(5)], hint, || q_zero)
         .expect("consistent round hint")
 }
 

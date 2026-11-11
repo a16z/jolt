@@ -1,6 +1,9 @@
 use super::alloc::{Allocate, TableInit};
 use super::failure_policy::{FailAt, FailingPolicy};
-use crate::{AllocationCause, Budget, EqPolynomial, EqTableError, TensorEqTable};
+use crate::{
+    AllocationCause, BindingOrder, Budget, EqPolynomial, EqTableError, GruenSplitEqPolynomial,
+    PointRef, TensorEqTable,
+};
 use jolt_field::{Fr, Prime128Offset275, Ring};
 use jolt_utils::alloc::ZeroAllocError;
 use std::error::Error;
@@ -17,12 +20,13 @@ const UNLIMITED: Budget = Budget {
 #[test]
 fn each_owned_allocation_can_fail_without_leaking() {
     let calls = AtomicUsize::new(0);
-    for n in 0..=3 {
+    for n in 0usize..=3 {
         let point = vec![Fr::from_u64(2); n];
-        for kind in 0..6 {
+        for kind in 0..8 {
             let allocations = match kind {
                 3 | 4 => n + 2,
                 5 => 2,
+                6 | 7 => n.saturating_sub(1) + 5,
                 _ => 1,
             };
             for target in 1..=allocations + 1 {
@@ -40,6 +44,17 @@ fn each_owned_allocation_can_fail_without_leaking() {
                     4 => EqPolynomial::<Fr>::evals_cached_lsb_in(&point, None, policy).map(drop),
                     5 => TensorEqTable::from_point_in(&point, Fr::from_u64(1), n / 2, policy)
                         .map(drop),
+                    6 | 7 => GruenSplitEqPolynomial::from_point_in(
+                        &point,
+                        if kind == 6 {
+                            BindingOrder::LowToHigh
+                        } else {
+                            BindingOrder::HighToLow
+                        },
+                        None,
+                        policy,
+                    )
+                    .map(drop),
                     _ => unreachable!(),
                 };
                 if target <= allocations {
@@ -63,6 +78,17 @@ fn each_owned_allocation_can_fail_without_leaking() {
     calls.store(0, Ordering::SeqCst);
     assert!(matches!(
         TensorEqTable::from_point_in(&[Fr::from_u64(2); 3], Fr::from_u64(1), 0, policy),
+        Err(EqTableError::OverBudget { .. })
+    ));
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+
+    assert!(matches!(
+        GruenSplitEqPolynomial::from_point_in(
+            &[Fr::from_u64(2); 5],
+            BindingOrder::LowToHigh,
+            None,
+            policy
+        ),
         Err(EqTableError::OverBudget { .. })
     ));
     assert_eq!(calls.load(Ordering::SeqCst), 0);
@@ -91,6 +117,32 @@ fn each_owned_allocation_can_fail_without_leaking() {
         }
         assert_eq!(calls.load(Ordering::SeqCst), 0);
     }
+    for order in [BindingOrder::LowToHigh, BindingOrder::HighToLow] {
+        for n in [usize::BITS as usize, usize::BITS as usize - 1] {
+            calls.store(0, Ordering::SeqCst);
+            let policy = FailingPolicy {
+                fail: FailAt::Every,
+                ..policy
+            };
+            let result = GruenSplitEqPolynomial::from_point_in(
+                &vec![Fr::from_u64(2); n],
+                order,
+                None,
+                policy,
+            );
+            if n == usize::BITS as usize {
+                assert!(matches!(
+                    result,
+                    Err(EqTableError::DimensionOverflow { .. })
+                ));
+                assert_eq!(calls.load(Ordering::SeqCst), 0);
+            } else {
+                assert!(matches!(result, Err(EqTableError::AllocationFailed { .. })));
+                assert_eq!(calls.load(Ordering::SeqCst), 1);
+            }
+            FailingPolicy::assert_released();
+        }
+    }
     // Arithmetic-only admission of both 1 GiB factors of the 52-variable tensor.
     assert_eq!(size_of::<Prime128Offset275>(), 16);
     let policy = FailingPolicy {
@@ -107,6 +159,17 @@ fn each_owned_allocation_can_fail_without_leaking() {
         ),
         Err(EqTableError::AllocationFailed { .. })
     ));
+    for order in [BindingOrder::LowToHigh, BindingOrder::HighToLow] {
+        assert!(matches!(
+            GruenSplitEqPolynomial::from_point_in(
+                &[Prime128Offset275::from_u64(2); 51],
+                order,
+                None,
+                policy
+            ),
+            Err(EqTableError::AllocationFailed { .. })
+        ));
+    }
     FailingPolicy::assert_released();
 }
 
@@ -378,5 +441,62 @@ fn global_panics_with_the_typed_error() {
             global_panic(build),
             (expected.to_string(), file!().to_owned())
         );
+    }
+}
+
+#[test]
+fn gruen_budget_is_per_cache_and_reports_the_constructor_caller() {
+    macro_rules! construct_at_caller {
+        ($point:expr, $order:expr, $budget:expr) => {
+            (
+                line!(),
+                GruenSplitEqPolynomial::from_point_in($point, $order, None, $budget),
+            )
+        };
+    }
+
+    for (n, elements) in [(0, 1), (1, 1), (2, 3), (3, 3), (4, 7), (5, 7), (6, 15)] {
+        let point: Vec<Fr> = (0..n).map(|i| Fr::from_u64(3 + i as u64)).collect();
+        for order in [BindingOrder::LowToHigh, BindingOrder::HighToLow] {
+            let budget = Budget {
+                max_bytes: elements * size_of::<Fr>(),
+            };
+            let mut state =
+                GruenSplitEqPolynomial::from_point_in(&point, order, Some(Fr::from_u64(7)), budget)
+                    .unwrap();
+            assert_eq!(
+                state.merge().evaluations(),
+                EqPolynomial::<Fr>::evals(&point, Some(Fr::from_u64(7)))
+            );
+            for _ in 0..n {
+                state.round_mut().unwrap().bind(Fr::from_u64(1));
+            }
+            assert_eq!(
+                state.current_scalar(),
+                point
+                    .iter()
+                    .fold(Fr::from_u64(7), |acc, &coordinate| acc * coordinate)
+            );
+            let low_point = PointRef::low_to_high(&point);
+            let low_state = GruenSplitEqPolynomial::from_point_in(
+                &low_point,
+                order,
+                Some(Fr::from_u64(7)),
+                budget,
+            )
+            .unwrap();
+            assert_eq!(
+                low_state.merge().evaluations(),
+                EqPolynomial::<Fr>::evals(&low_point, Some(Fr::from_u64(7)))
+            );
+            let budget = Budget {
+                max_bytes: budget.max_bytes - 1,
+            };
+            let (line, result) = construct_at_caller!(&point, order, budget);
+            assert!(
+                matches!(result, Err(EqTableError::OverBudget { elements: admitted, bytes, max_bytes, at })
+                if admitted == elements && bytes == elements * size_of::<Fr>() && max_bytes + 1 == bytes && at.line() == line && at.file() == file!())
+            );
+        }
     }
 }

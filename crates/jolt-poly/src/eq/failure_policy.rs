@@ -8,8 +8,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 // Only buffers returned by FailingPolicy are registered; Rayon and test-runner
 // allocations are excluded. Registration and the call counter are atomic, but the
-// tensor builder allocates its two factors inside `rayon::join`, so their order is
-// unspecified: `FailAt::Nth(1)` may fail either factor.
+// tensor builder allocates its two factors, and the Gruen builder its two cached
+// tables, inside `rayon::join`. The order of each pair is unspecified, so a
+// `FailAt::Nth` aimed at one allocation of a pair may fail the other.
 static LIVE: [AtomicUsize; 16] = [const { AtomicUsize::new(0) }; 16];
 thread_local! {
     static FAIL_NEXT: Cell<bool> = const { Cell::new(false) };

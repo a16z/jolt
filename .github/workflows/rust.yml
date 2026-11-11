@@ -865,6 +865,11 @@ jobs:
       - name: Test jolt-poly and jolt-sumcheck with binary fields
         if: matrix.shard == 0
         run: cargo nextest run -p jolt-poly -p jolt-sumcheck --features jolt-poly/binary,jolt-sumcheck/binary,jolt-sumcheck/prover --cargo-quiet
+      # nextest skips doctests. jolt-poly's compile_fail examples are the only
+      # check that a Gruen round handle borrows its split-eq state.
+      - name: Test jolt-poly doctests
+        if: matrix.shard == 0
+        run: cargo test -p jolt-poly --doc -q
       - name: Test isolated external sumcheck consumer
         if: matrix.shard == 0
         run: cargo nextest run --manifest-path crates/jolt-sumcheck/tests/external-consumer/Cargo.toml --locked --cargo-quiet

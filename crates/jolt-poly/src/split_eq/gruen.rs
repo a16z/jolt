@@ -1,13 +1,12 @@
-use crate::{
-    BindingOrder, Endianness, EqPolynomial, PointLike, PointRef, Polynomial, UnivariatePoly,
-    HIGH_TO_LOW,
-};
-use jolt_field::JoltField;
+use crate::eq::alloc::{check_layout, domain_len, EqAlloc, Global};
+use crate::{BindingOrder, EqPolynomial, PointLike, Polynomial, HIGH_TO_LOW};
+use jolt_field::Field;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
+use std::panic::Location;
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct GruenSplitEqPolynomial<F: JoltField> {
+pub struct GruenSplitEqPolynomial<F: Field> {
     current_index: usize,
     current_scalar: F,
     point: Vec<F>,
@@ -16,96 +15,121 @@ pub struct GruenSplitEqPolynomial<F: JoltField> {
     binding_order: BindingOrder,
 }
 
-impl<F: JoltField> GruenSplitEqPolynomial<F> {
+#[path = "round.rs"]
+mod round;
+
+/// A read view of one active equality round.
+pub struct GruenRound<'state, F: Field> {
+    state: &'state GruenSplitEqPolynomial<F>,
+    coordinate: F,
+}
+
+/// An exclusive round view, consumed when its challenge is bound.
+///
+/// A live handle prevents borrowing the whole owner mutably:
+/// ```compile_fail,E0499
+/// use jolt_field::Field;
+/// use jolt_poly::GruenSplitEqPolynomial;
+/// fn touch<F: Field>(_: &mut GruenSplitEqPolynomial<F>) {}
+/// fn conflict<F: Field>(state: &mut GruenSplitEqPolynomial<F>, challenge: F) {
+///     if let Some(handle) = state.round_mut() {
+///         touch(state);
+///         handle.bind(challenge);
+///     }
+/// }
+/// ```
+pub struct GruenRoundMut<'state, F: Field> {
+    state: &'state mut GruenSplitEqPolynomial<F>,
+    coordinate: F,
+}
+
+impl<F: Field> GruenSplitEqPolynomial<F> {
+    #[track_caller]
     pub fn new<P: PointLike<Coord = F> + ?Sized>(point: &P, binding_order: BindingOrder) -> Self {
         Self::new_with_scaling(point, binding_order, None)
     }
 
     /// Builds tables in significance order and stores one MSB-first point copy.
+    #[track_caller]
     pub fn new_with_scaling<P: PointLike<Coord = F> + ?Sized>(
         point: &P,
         binding_order: BindingOrder,
         scaling_factor: Option<F>,
     ) -> Self {
-        if P::ENDIANNESS == HIGH_TO_LOW {
-            Self::from_coords(
-                PointRef::high_to_low(point.coords()),
-                binding_order,
-                scaling_factor,
-            )
-        } else {
-            Self::from_coords(
-                PointRef::low_to_high(point.coords()),
-                binding_order,
-                scaling_factor,
-            )
+        match Self::from_point_in(point, binding_order, scaling_factor, Global) {
+            Ok(v) => v,
+            Err(never) => match never {},
         }
     }
 
-    fn from_coords<const E: Endianness>(
-        point: PointRef<'_, E, F>,
+    /// Admits each cached factor separately. Outer storage and the point copy
+    /// are allocated through the policy but excluded from its table cap.
+    /// An empty point produces a finished state with unit tables.
+    #[track_caller]
+    pub fn from_point_in<P: PointLike<Coord = F> + ?Sized, A: EqAlloc>(
+        point: &P,
         binding_order: BindingOrder,
         scaling_factor: Option<F>,
-    ) -> Self {
-        if point.num_vars() == 0 {
-            return Self {
-                current_index: match binding_order {
-                    BindingOrder::LowToHigh => 0,
-                    BindingOrder::HighToLow => 0,
-                },
-                current_scalar: scaling_factor.unwrap_or(F::one()),
-                point: Vec::new(),
-                e_in_vec: vec![vec![F::one()]],
-                e_out_vec: vec![vec![F::one()]],
-                binding_order,
-            };
+        policy: A,
+    ) -> Result<Self, A::Error> {
+        let at = Location::caller();
+        let n = point.num_vars();
+        let _ = domain_len(n, policy)?;
+        let (out_point, in_point) = Self::table_points(point.coords(), binding_order);
+        check_layout::<F, _>(n, policy)?;
+        let out_elements = EqPolynomial::<F>::cached_elements(out_point.len(), policy)?;
+        let in_elements = EqPolynomial::<F>::cached_elements(in_point.len(), policy)?;
+        policy.admit::<F>(out_elements, at)?;
+        policy.admit::<F>(in_elements, at)?;
+        let mut canonical_point = policy.storage(n)?;
+        if P::ENDIANNESS == HIGH_TO_LOW {
+            canonical_point.extend_from_slice(point.coords());
+        } else {
+            canonical_point.extend((0..n).map(|k| point.msb(k)));
         }
-
-        let (current_index, e_in_vec, e_out_vec) = match binding_order {
+        let (out_point, in_point) = Self::table_points(&canonical_point, binding_order);
+        let allocate = |part: &[F]| match binding_order {
             BindingOrder::LowToHigh => {
-                let split = (point.num_vars() / 2).min(point.num_vars() - 1);
-                let out_point = point.msb_range(0..split);
-                let in_point = point.msb_range(split..point.num_vars() - 1);
-                #[cfg(feature = "parallel")]
-                let (e_out_vec, e_in_vec) = rayon::join(
-                    || EqPolynomial::<F>::evals_cached_msb(&out_point, None),
-                    || EqPolynomial::<F>::evals_cached_msb(&in_point, None),
-                );
-                #[cfg(not(feature = "parallel"))]
-                let (e_out_vec, e_in_vec) = (
-                    EqPolynomial::<F>::evals_cached_msb(&out_point, None),
-                    EqPolynomial::<F>::evals_cached_msb(&in_point, None),
-                );
-                (point.num_vars(), e_in_vec, e_out_vec)
+                let _span = tracing::info_span!("EqPolynomial::evals_cached_msb").entered();
+                EqPolynomial::<F>::allocate_cached::<_, _, true>(part, None, policy)
             }
             BindingOrder::HighToLow => {
-                let split = (point.num_vars() / 2).min(point.num_vars() - 1) + 1;
-                let in_point = point.msb_range(1..split);
-                let out_point = point.msb_range(split..point.num_vars());
-                #[cfg(feature = "parallel")]
-                let (e_in_vec, e_out_vec) = rayon::join(
-                    || EqPolynomial::<F>::evals_cached_lsb(&in_point, None),
-                    || EqPolynomial::<F>::evals_cached_lsb(&out_point, None),
-                );
-                #[cfg(not(feature = "parallel"))]
-                let (e_in_vec, e_out_vec) = (
-                    EqPolynomial::<F>::evals_cached_lsb(&in_point, None),
-                    EqPolynomial::<F>::evals_cached_lsb(&out_point, None),
-                );
-                (0, e_in_vec, e_out_vec)
+                EqPolynomial::<F>::allocate_cached::<_, _, false>(part, None, policy)
             }
         };
-        Self {
-            current_index,
-            current_scalar: scaling_factor.unwrap_or(F::one()),
-            point: if E == HIGH_TO_LOW {
-                point.coords().to_vec()
-            } else {
-                (0..point.num_vars()).map(|k| point.msb(k)).collect()
+        #[cfg(feature = "parallel")]
+        let (e_out_vec, e_in_vec) = rayon::join(|| allocate(out_point), || allocate(in_point));
+        #[cfg(not(feature = "parallel"))]
+        let (e_out_vec, e_in_vec) = (allocate(out_point), allocate(in_point));
+        Ok(Self {
+            current_index: match binding_order {
+                BindingOrder::LowToHigh => n,
+                BindingOrder::HighToLow => 0,
             },
-            e_in_vec,
-            e_out_vec,
+            current_scalar: scaling_factor.unwrap_or(F::one()),
+            point: canonical_point,
+            e_in_vec: e_in_vec?,
+            e_out_vec: e_out_vec?,
             binding_order,
+        })
+    }
+
+    #[inline(always)]
+    fn table_points(point: &[F], binding_order: BindingOrder) -> (&[F], &[F]) {
+        if point.is_empty() {
+            return (point, point);
+        }
+        let split = point.len() / 2;
+        match binding_order {
+            BindingOrder::LowToHigh => {
+                let head = &point[..point.len() - 1];
+                head.split_at(split.min(head.len()))
+            }
+            BindingOrder::HighToLow => {
+                let tail = &point[1..];
+                let (inner, outer) = tail.split_at(split.min(tail.len()));
+                (outer, inner)
+            }
         }
     }
 
@@ -131,17 +155,52 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
         self.current_scalar
     }
 
-    pub fn current_linear_evals(&self) -> (F, F) {
-        let point = match self.binding_order {
-            BindingOrder::LowToHigh => self.point[self.current_index - 1],
-            BindingOrder::HighToLow => self.point[self.current_index],
-        };
-        let at_one = self.current_scalar * point;
-        (self.current_scalar - at_one, at_one)
+    /// Number of variables still awaiting a challenge; zero denotes a finished state.
+    pub fn remaining_rounds(&self) -> usize {
+        match self.binding_order {
+            BindingOrder::LowToHigh => self.current_index,
+            BindingOrder::HighToLow => self.point.len() - self.current_index,
+        }
     }
 
-    pub fn current_index(&self) -> usize {
-        self.current_index
+    /// Borrows the active round; returns `None` exactly when no variables remain.
+    pub fn round(&self) -> Option<GruenRound<'_, F>> {
+        let coordinate = *self.point.get(self.coordinate_index())?;
+        Some(GruenRound {
+            state: self,
+            coordinate,
+        })
+    }
+
+    /// Exclusively borrows the active round until its consuming bind.
+    pub fn round_mut(&mut self) -> Option<GruenRoundMut<'_, F>> {
+        let coordinate = *self.point.get(self.coordinate_index())?;
+        Some(GruenRoundMut {
+            state: self,
+            coordinate,
+        })
+    }
+
+    fn coordinate_index(&self) -> usize {
+        match self.binding_order {
+            BindingOrder::LowToHigh => self.current_index.wrapping_sub(1),
+            BindingOrder::HighToLow => self.current_index,
+        }
+    }
+
+    /// Tables `(inner, outer)` for the round after `binds` more challenges.
+    /// Returns `None` when `binds >= remaining_rounds()`, including a finished state.
+    pub fn remaining_tables_after(&self, binds: usize) -> Option<(&[F], &[F])> {
+        if binds >= self.remaining_rounds() {
+            return None;
+        }
+        let inner = self.e_in_vec.len() - 1;
+        let outer = self.e_out_vec.len() - 1;
+        let inner_binds = binds.min(inner);
+        Some((
+            &self.e_in_vec[inner - inner_binds],
+            &self.e_out_vec[outer - (binds - inner_binds)],
+        ))
     }
 
     pub fn e_in_current(&self) -> &[F] {
@@ -202,37 +261,6 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
         EqPolynomial::<F>::evals(active_point, None)
     }
 
-    pub fn bind(&mut self, challenge: F) {
-        if self.point.is_empty() {
-            return;
-        }
-
-        match self.binding_order {
-            BindingOrder::LowToHigh => {
-                let point = self.point[self.current_index - 1];
-                let product = point * challenge;
-                self.current_scalar *= F::one() - point - challenge + product + product;
-                self.current_index -= 1;
-                if self.point.len() / 2 < self.current_index && self.e_in_vec.len() > 1 {
-                    let _ = self.e_in_vec.pop();
-                } else if 0 < self.current_index && self.e_out_vec.len() > 1 {
-                    let _ = self.e_out_vec.pop();
-                }
-            }
-            BindingOrder::HighToLow => {
-                let point = self.point[self.current_index];
-                let product = point * challenge;
-                self.current_scalar *= F::one() - point - challenge + product + product;
-                self.current_index += 1;
-                if self.current_index <= self.point.len() / 2 && self.e_in_vec.len() > 1 {
-                    let _ = self.e_in_vec.pop();
-                } else if self.current_index <= self.point.len() && self.e_out_vec.len() > 1 {
-                    let _ = self.e_out_vec.pop();
-                }
-            }
-        }
-    }
-
     pub fn merge(&self) -> Polynomial<F> {
         let evals = match self.binding_order {
             BindingOrder::LowToHigh => EqPolynomial::<F>::evals(
@@ -245,115 +273,6 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
             ),
         };
         Polynomial::new(evals)
-    }
-
-    /// Computes the cubic `s = l*q` from `q(0)`, its leading coefficient,
-    /// and the sumcheck hint. The missing endpoint is evaluated only when
-    /// `l(1)` vanishes. An error carries the actual endpoint sum.
-    pub fn gruen_poly_deg_3(
-        &self,
-        q_constant: F,
-        q_quadratic_coeff: F,
-        s_0_plus_s_1: F,
-        q_at_one: impl FnOnce() -> F,
-    ) -> Result<UnivariatePoly<F>, F> {
-        let (eq_eval_0, eq_eval_1) = self.current_linear_evals();
-        if self.current_scalar.is_zero() {
-            return Self::zero_round(4, s_0_plus_s_1);
-        }
-        let eq_m = eq_eval_1 - eq_eval_0;
-        let eq_eval_2 = eq_eval_1 + eq_m;
-        let eq_eval_3 = eq_eval_2 + eq_m;
-        let cubic_eval_0 = eq_eval_0 * q_constant;
-        let cubic_eval_1 = s_0_plus_s_1 - cubic_eval_0;
-        let quadratic_eval_1 = if let Some(inverse) = eq_eval_1.inverse() {
-            cubic_eval_1 * inverse
-        } else {
-            let endpoint = q_at_one();
-            let actual = cubic_eval_0 + eq_eval_1 * endpoint;
-            if actual != s_0_plus_s_1 {
-                return Err(actual);
-            }
-            endpoint
-        };
-        let e_times_2 = q_quadratic_coeff + q_quadratic_coeff;
-        let quadratic_eval_2 = quadratic_eval_1 + quadratic_eval_1 - q_constant + e_times_2;
-        let quadratic_eval_3 =
-            quadratic_eval_2 + quadratic_eval_1 - q_constant + e_times_2 + e_times_2;
-        Ok(UnivariatePoly::interpolate_over_integers(&[
-            cubic_eval_0,
-            cubic_eval_1,
-            eq_eval_2 * quadratic_eval_2,
-            eq_eval_3 * quadratic_eval_3,
-        ]))
-    }
-
-    /// Toom samples are `q(1)..q(d-1), q`'s leading coefficient, with `d>=2`.
-    /// `q_evals` must contain at least two entries.
-    /// The missing `q(0)` is evaluated only when `l(0)` vanishes.
-    pub fn gruen_poly_from_evals(
-        &self,
-        q_evals: &[F],
-        s_0_plus_s_1: F,
-        q_at_zero: impl FnOnce() -> F,
-    ) -> Result<UnivariatePoly<F>, F> {
-        if self.current_scalar.is_zero() {
-            return Self::zero_round(q_evals.len() + 2, s_0_plus_s_1);
-        }
-        let q_zero = self.recover_q_zero(q_evals[0], s_0_plus_s_1, q_at_zero)?;
-        let mut full_q_evals = Vec::with_capacity(q_evals.len() + 1);
-        full_q_evals.push(q_zero);
-        full_q_evals.extend_from_slice(q_evals);
-        let q_coeffs = UnivariatePoly::from_evals_toom(&full_q_evals).into_coefficients();
-        Ok(self.multiply_linear_factor(&q_coeffs))
-    }
-
-    /// Degree-two message for a linear inner factor, with lazy `q(0)` recovery.
-    pub fn gruen_poly_deg_2(
-        &self,
-        q_one: F,
-        s_0_plus_s_1: F,
-        q_at_zero: impl FnOnce() -> F,
-    ) -> Result<UnivariatePoly<F>, F> {
-        if self.current_scalar.is_zero() {
-            return Self::zero_round(3, s_0_plus_s_1);
-        }
-        let q_zero = self.recover_q_zero(q_one, s_0_plus_s_1, q_at_zero)?;
-        Ok(self.multiply_linear_factor(&[q_zero, q_one - q_zero]))
-    }
-
-    fn recover_q_zero(&self, q_one: F, hint: F, q_at_zero: impl FnOnce() -> F) -> Result<F, F> {
-        let (l_zero, l_one) = self.current_linear_evals();
-        if let Some(inverse) = l_zero.inverse() {
-            Ok((hint - l_one * q_one) * inverse)
-        } else {
-            let q_zero = q_at_zero();
-            let actual = l_zero * q_zero + l_one * q_one;
-            if actual == hint {
-                Ok(q_zero)
-            } else {
-                Err(actual)
-            }
-        }
-    }
-
-    fn multiply_linear_factor(&self, q_coeffs: &[F]) -> UnivariatePoly<F> {
-        let (l_zero, l_one) = self.current_linear_evals();
-        let l_slope = l_one - l_zero;
-        let mut coefficients = vec![F::zero(); q_coeffs.len() + 1];
-        for (index, q_coeff) in q_coeffs.iter().copied().enumerate() {
-            coefficients[index] += q_coeff * l_zero;
-            coefficients[index + 1] += q_coeff * l_slope;
-        }
-        UnivariatePoly::new(coefficients)
-    }
-
-    fn zero_round(coefficients: usize, hint: F) -> Result<UnivariatePoly<F>, F> {
-        if hint.is_zero() {
-            Ok(UnivariatePoly::new(vec![F::zero(); coefficients]))
-        } else {
-            Err(F::zero())
-        }
     }
 
     #[inline(always)]

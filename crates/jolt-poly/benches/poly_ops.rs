@@ -2,7 +2,10 @@
 
 use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion};
 use jolt_field::{Field, FpExt4, Fr, JoltField, Prime128Offset6A23801F, Prime32Offset99};
-use jolt_poly::{Budget, EqPolynomial, PointRef, Polynomial, TensorEqTable, UnivariatePoly};
+use jolt_poly::{
+    BindingOrder, Budget, EqPolynomial, GruenSplitEqPolynomial, PointRef, Polynomial,
+    TensorEqTable, UnivariatePoly,
+};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
 
@@ -187,6 +190,37 @@ fn bench_eq_builders(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_gruen(c: &mut Criterion) {
+    let mut group = c.benchmark_group("gruen");
+    for n in [16, 20] {
+        let mut rng = ChaCha20Rng::seed_from_u64(0xe13 + n as u64);
+        let point: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
+        let challenges: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
+        for order in [BindingOrder::LowToHigh, BindingOrder::HighToLow] {
+            let split = GruenSplitEqPolynomial::new(&point, order);
+            let label = format!("{order:?}_{n}");
+            group.bench_function(BenchmarkId::new("construct", &label), |bench| {
+                bench.iter(|| GruenSplitEqPolynomial::new(std::hint::black_box(&point), order));
+            });
+            group.bench_function(BenchmarkId::new("bind", &label), |bench| {
+                bench.iter_batched(
+                    || split.clone(),
+                    |mut state| {
+                        for &challenge in &challenges {
+                            if let Some(round) = state.round_mut() {
+                                round.bind(std::hint::black_box(challenge));
+                            }
+                        }
+                        state
+                    },
+                    BatchSize::SmallInput,
+                );
+            });
+        }
+    }
+    group.finish();
+}
+
 fn bench_univariate_interpolation(c: &mut Criterion) {
     let mut group = c.benchmark_group("UnivariatePoly::from_evals");
     for num_evals in [3, 4, 8, 16] {
@@ -213,5 +247,6 @@ criterion_group!(
     bench_eq_orders,
     bench_eq_builders,
     bench_univariate_interpolation,
+    bench_gruen,
 );
 criterion_main!(benches);

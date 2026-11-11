@@ -144,8 +144,14 @@ fn gruen_constructor_uses_significance_in_both_binding_orders() {
             assert_eq!(split, expected);
             for _ in 0..n {
                 let challenge = Fr::random(&mut rng);
-                split.bind(challenge);
-                expected.bind(challenge);
+                assert!(split
+                    .round_mut()
+                    .map(|round| round.bind(challenge))
+                    .is_some());
+                assert!(expected
+                    .round_mut()
+                    .map(|round| round.bind(challenge))
+                    .is_some());
                 assert_eq!(split, expected);
             }
         }
