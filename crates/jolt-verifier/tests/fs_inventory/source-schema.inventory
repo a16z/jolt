@@ -32,6 +32,7 @@ jolt-program::preprocess/program.rs::JoltProgramPreprocessing.max_padded_trace_l
 jolt-program::preprocess/program.rs::JoltProgramPreprocessing.memory_layout
 jolt-program::preprocess/program.rs::JoltProgramPreprocessing.ram
 jolt-program::preprocess/program.rs::ProgramMetadata.bytecode_len
+jolt-program::preprocess/program.rs::ProgramMetadata.code_word_intervals
 jolt-program::preprocess/program.rs::ProgramMetadata.entry_address
 jolt-program::preprocess/program.rs::ProgramMetadata.entry_bytecode_index
 jolt-program::preprocess/program.rs::ProgramMetadata.min_bytecode_address
