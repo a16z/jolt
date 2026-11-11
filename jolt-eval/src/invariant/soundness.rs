@@ -6,11 +6,12 @@ use arbitrary::{Arbitrary, Unstructured};
 use common::constants::{DEFAULT_MAX_TRUSTED_ADVICE_SIZE, DEFAULT_MAX_UNTRUSTED_ADVICE_SIZE};
 use common::jolt_device::MemoryConfig;
 use jolt_host::Program;
+use jolt_prover::ProverConfig;
 
 use tracer::instruction::Cycle;
 
 use super::{CheckError, Invariant, InvariantViolation};
-use crate::guests;
+use crate::guests::{self, VerifierField};
 
 /// Guest memory layout parameters.
 ///
@@ -176,7 +177,8 @@ impl Invariant for SoundnessInvariant {
             )));
         }
 
-        let max_trace_length = (trace.len() + 1).next_power_of_two();
+        let max_trace_length = ProverConfig::padded_trace_length::<VerifierField>(trace.len())
+            .map_err(|error| CheckError::InvalidInput(error.to_string()))?;
         drop(trace);
 
         if max_trace_length > MAX_TRACE_LENGTH {
