@@ -23,6 +23,7 @@ test-utils = []
 [dependencies]
 allocative = { workspace = true, optional = true }
 derive_more.workspace = true
+jolt-claim-expr.workspace = true
 jolt-claims-derive.workspace = true
 jolt-field.workspace = true
 jolt-lookup-tables.workspace = true
