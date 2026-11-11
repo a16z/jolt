@@ -387,7 +387,7 @@ No code changes.
 
 ### Testing strategy
 
-The existing tracer guests assert concrete values derived from the specification. The independent architectural reference test covers every instruction/CSR/operand class, invariant-satisfying old states, high-bit operands and aliases; it checks registers, the abstraction relation, invariants and trap/return PCs. The literal expansion-count table pins every path, and the golden fixture pins unchanged expansions and format metadata. The e2e matrix covers the boot `mtvec` write and the trap path in every guest.
+The existing tracer guests assert concrete values derived from the specification. The independent architectural reference test covers every instruction/CSR/operand class, invariant-satisfying old states, high-bit operands and aliases; it checks registers, the abstraction relation, invariants and trap/return PCs. The literal expansion-count table pins every path, and the golden fixture pins unchanged expansions and format metadata. The e2e matrix's std guests (`stdlib` and `memory_copy`) cover the boot `mtvec` write and the trap path.
 
 ### Performance
 
