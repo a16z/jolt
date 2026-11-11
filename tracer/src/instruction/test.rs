@@ -29,7 +29,7 @@ use super::{Instruction, RISCVInstruction, RISCVTrace};
 use crate::emulator::terminal::DummyTerminal;
 
 use common::constants::RISCV_REGISTER_COUNT;
-use common::jolt_device::{JoltDevice, MemoryConfig};
+use common::jolt_device::{JoltDeviceMemory, MemoryConfig};
 
 use rand::{rngs::StdRng, SeedableRng};
 
@@ -115,7 +115,7 @@ fn test_cpu() -> Cpu {
         ..Default::default()
     };
     let mut cpu = Cpu::new(Box::new(DummyTerminal::default()));
-    cpu.get_mut_mmu().jolt_device = Some(JoltDevice::new(&memory_config));
+    cpu.get_mut_mmu().jolt_device = Some(JoltDeviceMemory::new(&memory_config));
     cpu.get_mut_mmu().init_memory(TEST_MEMORY_CAPACITY);
     cpu
 }

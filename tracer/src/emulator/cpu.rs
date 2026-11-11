@@ -1220,7 +1220,7 @@ impl Cpu {
             // Pass 1 owns termination; workers replay counted ticks.
             stalled: _,
             csr,
-            // Memory image, JoltDevice and decode cache are captured by the
+            // Memory image, JoltDeviceMemory and decode cache are captured by the
             // checkpoint layer (see `parallel::ChunkCheckpoint`).
             mmu: _,
             reservation,
@@ -1268,7 +1268,7 @@ impl Cpu {
     }
 
     /// Install captured chunk state into this (worker) CPU. Counterpart of
-    /// [`Cpu::capture_chunk_state`]; the memory image, JoltDevice outputs and
+    /// [`Cpu::capture_chunk_state`]; the memory image, JoltDeviceMemory outputs and
     /// decode cache are installed by the checkpoint layer.
     pub(crate) fn install_chunk_state(&mut self, state: &ChunkCpuState) {
         debug_assert!(
@@ -1303,7 +1303,7 @@ impl Cpu {
     /// register file (including virtual registers), the CSR array, clock, wfi,
     /// privilege mode, the LR/SC reservation triple, the advice tape (data and
     /// read position), `executed_instrs`, `trace_len` (row-uniform across
-    /// trace and execute modes), and JoltDevice outputs/panic. Excludes
+    /// trace and execute modes), and JoltDeviceMemory outputs and flag words. Excludes
     /// host-side bookkeeping (markers, call stack) and the dead `f`
     /// registers. Memory is not compared — callers hash it separately.
     pub fn arch_state_diff(&self, other: &Cpu) -> Option<String> {
@@ -1390,8 +1390,8 @@ impl Cpu {
                         b.outputs.len()
                     ));
                 }
-                if a.panic != b.panic {
-                    return Some(format!("jolt_device.panic: {} vs {}", a.panic, b.panic));
+                if a.flags != b.flags {
+                    return Some(format!("jolt_device.flags: {:?} vs {:?}", a.flags, b.flags));
                 }
             }
             (None, None) => {}
@@ -1466,7 +1466,7 @@ fn decode_failure(word: u32, address: u64, compressed: bool, e: impl core::fmt::
 
 #[cfg(test)]
 mod test_cpu {
-    use common::jolt_device::{JoltDevice, MemoryConfig};
+    use common::jolt_device::{JoltDeviceMemory, MemoryConfig};
     use jolt_platform::JOLT_ADVICE_WRITE_CALL_ID;
     use std::io::{Result as IoResult, Write};
     use std::panic::{catch_unwind, AssertUnwindSafe};
@@ -1820,7 +1820,7 @@ mod test_cpu {
             heap_size: 64,
             ..Default::default()
         };
-        let layout = JoltDevice::new(&config).memory_layout;
+        let layout = JoltDeviceMemory::new(&config).memory_layout;
         let scratch = DRAM_BASE + 32;
         for (address, error) in [
             (layout.heap_end, Some("Illegal Memory Access")),
@@ -1830,7 +1830,7 @@ mod test_cpu {
             let mut cpu = create_cpu();
             // Let heap_end reach the MMU check after trace_load reads its word.
             cpu.mmu.init_memory(layout.get_total_memory_size() + 8);
-            cpu.mmu.jolt_device = Some(JoltDevice::new(&config));
+            cpu.mmu.jolt_device = Some(JoltDeviceMemory::new(&config));
             // VirtualHostIO, as in test_run_two_pass_replays_advice_writes.
             for (i, byte) in 0x0000_205bu32.to_le_bytes().into_iter().enumerate() {
                 cpu.mmu.store_raw(DRAM_BASE + i as u64, byte);

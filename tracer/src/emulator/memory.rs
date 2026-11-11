@@ -1,3 +1,4 @@
+use common::{constants::RAM_START_ADDRESS, jolt_device::FlagWords};
 use std::collections::HashMap;
 
 #[cfg(not(feature = "std"))]
@@ -175,12 +176,14 @@ impl MemoryData {
 #[derive(Clone, Debug)]
 pub struct Memory {
     pub data: MemoryData,
+    pub(crate) flag_memory: Option<(u64, FlagWords)>,
 }
 
 impl Memory {
     pub(crate) fn empty() -> Self {
         Self {
             data: MemoryData::empty(),
+            flag_memory: None,
         }
     }
 
@@ -339,12 +342,16 @@ impl Memory {
     }
 
     pub fn materialized_nonzero_bytes(&self) -> Vec<(u64, u8)> {
+        self.materialized_bytes(0)
+    }
+
+    fn materialized_bytes(&self, base: u64) -> Vec<(u64, u8)> {
         let mut bytes = Vec::new();
         let push_nonzero = |index: usize, doubleword: u64, bytes: &mut Vec<(u64, u8)>| {
             if doubleword == 0 {
                 return;
             }
-            let base_address = (index as u64) * 8;
+            let base_address = base + (index as u64) * 8;
             for byte_offset in 0..8 {
                 let byte = (doubleword >> (byte_offset * 8)) as u8;
                 if byte != 0 {
@@ -368,6 +375,16 @@ impl Memory {
         bytes
     }
 
+    /// Final witness image uses absolute addresses for RAM and stored I/O flags.
+    pub fn final_memory_bytes(&self) -> Vec<(u64, u8)> {
+        // Address conversion is fused into the existing scan; flags add sixteen bytes per run.
+        let mut bytes = self.materialized_bytes(RAM_START_ADDRESS);
+        if let Some((address, flags)) = self.flag_memory {
+            flags.append_memory(address, &mut bytes);
+        }
+        bytes
+    }
+
     /// Reads multiple bytes from memory.
     ///
     /// # Arguments
@@ -387,6 +404,7 @@ impl Memory {
     /// structure. The emptied `self` reports zero capacity, consistent with its empty backing.
     pub(crate) fn take_memory(&mut self) -> Self {
         let taken = Self {
+            flag_memory: self.flag_memory.take(),
             data: MemoryData {
                 backing: std::mem::replace(&mut self.data.backing, MemoryBacking::Flat(Vec::new())),
                 num_doublewords: self.data.num_doublewords,

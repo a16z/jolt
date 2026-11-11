@@ -96,7 +96,7 @@ mod native {
         let inputs = TraceInputs::new(Vec::new(), Vec::new(), Vec::new(), memory_config);
 
         let mut backend = X86TracerBackend::new();
-        let output = match backend.fast_run(&program, inputs) {
+        let output = match backend.run_machine(&program, inputs) {
             Ok(output) => output,
             Err(error) => {
                 // Compile-time rejection and runtime faults both surface as
@@ -111,14 +111,8 @@ mod native {
             }
         };
 
-        // Final memory arrives as nonzero (address, byte) pairs, RAM-relative.
         let memory: HashMap<u64, u8> = output.final_memory.bytes.into_iter().collect();
-        let read_byte = |address: u64| -> u8 {
-            address
-                .checked_sub(RAM_START_ADDRESS)
-                .and_then(|offset| memory.get(&offset).copied())
-                .unwrap_or(0)
-        };
+        let read_byte = |address: u64| -> u8 { memory.get(&address).copied().unwrap_or(0) };
 
         if let Some(path) = signature_path {
             if let Err(error) = write_signature(

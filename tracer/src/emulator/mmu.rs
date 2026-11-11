@@ -5,7 +5,7 @@ pub const DRAM_BASE: u64 = RAM_START_ADDRESS;
 use crate::emulator::decode_cache::DecodeCache;
 use crate::emulator::memory::Memory;
 use common::constants::{RAM_START_ADDRESS, STACK_CANARY_SIZE};
-use common::jolt_device::JoltDevice;
+use common::jolt_device::JoltDeviceMemory;
 use jolt_riscv::{RamRead, RamWrite};
 
 use super::cpu::{get_privilege_mode, PrivilegeMode, Trap, TrapType};
@@ -22,7 +22,7 @@ pub struct Mmu {
     /// invalidate it directly when the executable range is written.
     pub decode_cache: DecodeCache,
 
-    pub jolt_device: Option<JoltDevice>,
+    pub jolt_device: Option<JoltDeviceMemory>,
 
     /// Address translation can be affected `mstatus` (MPRV, MPP in machine mode)
     /// then `Mmu` has copy of it.
@@ -506,7 +506,7 @@ impl Mmu {
     /// Read a doubleword from the memory-mapped device region.
     #[expect(clippy::expect_used)]
     fn device_doubleword(&self, address: u64) -> u64 {
-        let jolt_device = self.jolt_device.as_ref().expect("JoltDevice not set");
+        let jolt_device = self.jolt_device.as_ref().expect("JoltDeviceMemory not set");
         let mut value_bytes = [0u8; 8];
         for (i, byte) in value_bytes.iter_mut().enumerate() {
             *byte = jolt_device.load(address + i as u64);
@@ -997,7 +997,7 @@ mod test_mmu {
             program_size: Some(1024),
             ..Default::default()
         };
-        mmu.jolt_device = Some(JoltDevice::new(&memory_config));
+        mmu.jolt_device = Some(JoltDeviceMemory::new(&memory_config));
         let capacity = mmu
             .jolt_device
             .as_ref()
@@ -1283,7 +1283,7 @@ mod test_mmu {
             program_size: Some(1024),
             ..Default::default()
         };
-        let device = JoltDevice::new(&config);
+        let device = JoltDeviceMemory::new(&config);
         let io_end = device.memory_layout.io_end;
         assert_eq!(io_end, RAM_START_ADDRESS - 24);
         mmu.jolt_device = Some(device);
@@ -1301,7 +1301,7 @@ mod test_mmu {
             heap_size: 8,
             ..Default::default()
         };
-        let device = JoltDevice::new(&config);
+        let device = JoltDeviceMemory::new(&config);
         assert_eq!(device.memory_layout.heap_end, RAM_START_ADDRESS + 1161);
         let mut mmu = Mmu::new(Box::new(DummyTerminal::default()));
         mmu.init_memory(device.memory_layout.get_total_memory_size());
@@ -1324,5 +1324,46 @@ mod test_mmu {
             }))
             .is_err());
         }
+    }
+    #[test]
+    fn flag_words_preserve_every_naturally_aligned_lane() {
+        let mut mmu = setup_mmu();
+        let layout = mmu.jolt_device.as_ref().unwrap().memory_layout.clone();
+        for base in [layout.panic, layout.termination] {
+            for width in [1u64, 2, 4, 8] {
+                for lane in (0..8).step_by(width as usize) {
+                    mmu.store_doubleword(base, 0).unwrap();
+                    let address = base + lane;
+                    let value = 0x8877_6655_4433_2211u64;
+                    let write = match width {
+                        1 => mmu.store(address, value as u8),
+                        2 => mmu.store_halfword(address, value as u16),
+                        4 => mmu.store_word(address, value as u32),
+                        8 => mmu.store_doubleword(address, value),
+                        _ => unreachable!(),
+                    }
+                    .unwrap();
+                    let read = match width {
+                        1 => u64::from(mmu.load(address).unwrap().0),
+                        2 => u64::from(mmu.load_halfword(address).unwrap().0),
+                        4 => u64::from(mmu.load_word(address).unwrap().0),
+                        8 => mmu.load_doubleword(address).unwrap().0,
+                        _ => unreachable!(),
+                    };
+                    let mask = u64::MAX >> (64 - 8 * width);
+                    assert_eq!(read, value & mask);
+                    let expected = (value & mask) << (8 * lane);
+                    assert_eq!(write.pre_value, 0);
+                    assert_eq!(write.post_value, expected);
+                    assert_eq!(mmu.load_doubleword(base).unwrap().0, expected);
+                }
+            }
+        }
+        mmu.store_doubleword(layout.panic, 0).unwrap();
+        for value in [7, 0, 1, 1] {
+            mmu.store_doubleword(layout.termination, value).unwrap();
+            assert_eq!(mmu.load_doubleword(layout.termination).unwrap().0, value);
+        }
+        assert!(!mmu.jolt_device.take().unwrap().into_public().unwrap().panic);
     }
 }
