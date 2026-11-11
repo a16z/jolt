@@ -9,21 +9,22 @@
 #![cfg(all(target_arch = "x86_64", target_os = "linux"))]
 #![expect(clippy::expect_used, clippy::panic)]
 
-use common::constants::STACK_CANARY_SIZE;
+use common::constants::{RAM_START_ADDRESS, STACK_CANARY_SIZE};
 use common::jolt_device::{JoltDevice, JoltDeviceMemory};
-use jolt_riscv::{JoltInstructionKind, JoltInstructionRow, NormalizedOperands};
-use jolt_tracer_x86::harness::{
-    compile_program, memory_config, run_program, single_row_program, Outcome, TEST_ADDR,
+use jolt_program::execution::JoltProgram;
+use jolt_program::expand::{expand_instruction, ExpansionAllocator};
+use jolt_riscv::{
+    JoltInstructionKind as Kind, JoltInstructionRow, NormalizedOperands, RV64IMAC_JOLT,
 };
+use jolt_tracer_x86::harness::{
+    compile_program, memory_config, run_program, single_row_program, terminal_row, Outcome,
+    TEST_ADDR,
+};
+use tracer::instruction::Instruction;
 
 const REGS: usize = common::constants::REGISTER_COUNT as usize;
 
-fn row(
-    kind: JoltInstructionKind,
-    rs1: Option<u8>,
-    rd: Option<u8>,
-    imm: i128,
-) -> JoltInstructionRow {
+fn row(kind: Kind, rs1: Option<u8>, rd: Option<u8>, imm: i128) -> JoltInstructionRow {
     JoltInstructionRow {
         source_can_end: false,
         instruction_kind: kind,
@@ -46,7 +47,7 @@ fn row(
 /// process rather than trusting the library.
 #[test]
 fn generated_code_mapping_is_not_writable() {
-    let program = single_row_program(row(JoltInstructionKind::ADDI, Some(1), Some(2), 7));
+    let program = single_row_program(row(Kind::ADDI, Some(1), Some(2), 7));
     // The artifact must stay alive: dropping it unmaps the very region whose
     // permissions we are asserting.
     let compiled = compile_program(&program).expect("compile failed");
@@ -90,11 +91,11 @@ fn generated_code_mapping_is_not_writable() {
 /// produce the defined out-of-bounds exit, not a host segfault.
 #[test]
 fn out_of_bounds_load_reports_a_fault() {
-    let program = single_row_program(row(JoltInstructionKind::LD, Some(1), Some(2), 0));
+    let program = single_row_program(row(Kind::LD, Some(1), Some(2), 0));
     let mut pre = [0u64; REGS];
     // Far past the plane, but still in the RAM region so it is not routed to
     // the device helpers: the bounds check is what must catch it.
-    pre[1] = common::constants::RAM_START_ADDRESS + (1u64 << 40);
+    pre[1] = RAM_START_ADDRESS + (1u64 << 40);
 
     let outcome = run_program(&program, &pre, &[], &[]).expect("run should not error");
     assert_eq!(
@@ -112,11 +113,11 @@ fn out_of_bounds_load_reports_a_fault() {
 /// host memory.
 #[test]
 fn out_of_bounds_store_reports_a_fault() {
-    let mut store = row(JoltInstructionKind::SD, Some(1), None, 0);
+    let mut store = row(Kind::SD, Some(1), None, 0);
     store.operands.rs2 = Some(3);
     let program = single_row_program(store);
     let mut pre = [0u64; REGS];
-    pre[1] = common::constants::RAM_START_ADDRESS + (1u64 << 40);
+    pre[1] = RAM_START_ADDRESS + (1u64 << 40);
     pre[3] = 0xdead_beef;
 
     let outcome = run_program(&program, &pre, &[], &[]).expect("run should not error");
@@ -129,7 +130,7 @@ fn out_of_bounds_store_reports_a_fault() {
 
 /// Run a single `SD` of `0xdead_beef` to `address` in the harness layout.
 fn store_to(address: u64) -> Outcome {
-    let mut store = row(JoltInstructionKind::SD, Some(1), None, 0);
+    let mut store = row(Kind::SD, Some(1), None, 0);
     store.operands.rs2 = Some(3);
     let program = single_row_program(store);
     let mut pre = [0u64; REGS];
@@ -144,10 +145,7 @@ fn harness_stack_end() -> u64 {
         .stack_end
 }
 
-/// A store into the stack canary `[stack_end, stack_end + STACK_CANARY_SIZE)`
-/// is a stack overflow. The interpreter panics on it
-/// (`Mmu::assert_effective_address`); the native backend must fault instead
-/// of performing the write.
+/// A value-changing store into the canary must fault before mutation.
 #[test]
 fn store_into_stack_canary_reports_a_fault() {
     let stack_end = harness_stack_end();
@@ -188,7 +186,7 @@ fn stores_next_to_stack_canary_succeed() {
 /// must take the jump-table filler path and report the bad target.
 #[test]
 fn in_range_unmapped_jump_reports_bad_target() {
-    let program = single_row_program(row(JoltInstructionKind::JALR, Some(1), None, 0));
+    let program = single_row_program(row(Kind::JALR, Some(1), None, 0));
     let mut pre = [0u64; REGS];
     pre[1] = TEST_ADDR + 2;
 
@@ -206,12 +204,7 @@ fn in_range_unmapped_jump_reports_bad_target() {
 #[test]
 fn static_branch_to_unmapped_target_faults_only_when_taken() {
     let target = TEST_ADDR + 12;
-    let program = single_row_program(row(
-        JoltInstructionKind::BEQ,
-        Some(1),
-        None,
-        (target - TEST_ADDR).into(),
-    ));
+    let program = single_row_program(row(Kind::BEQ, Some(1), None, (target - TEST_ADDR).into()));
     for (x1, exit) in [(1, 1), (0, 3)] {
         let mut pre = [0u64; REGS];
         pre[1] = x1;
@@ -229,7 +222,7 @@ fn static_branch_to_unmapped_target_faults_only_when_taken() {
 
 #[test]
 fn code_stores_accept_the_old_value_and_reject_changes() {
-    let mut store = row(JoltInstructionKind::SD, Some(1), None, 0);
+    let mut store = row(Kind::SD, Some(1), None, 0);
     store.operands.rs2 = Some(3);
     let program = single_row_program(store);
     let mut pre = [0u64; REGS];
@@ -248,7 +241,7 @@ fn code_stores_accept_the_old_value_and_reject_changes() {
 
 #[test]
 fn slow_load_rejects_addresses_below_the_lowest_mapped_word() {
-    let program = single_row_program(row(JoltInstructionKind::LD, Some(1), Some(2), 0));
+    let program = single_row_program(row(Kind::LD, Some(1), Some(2), 0));
     let mut pre = [0u64; REGS];
     let lowest = JoltDevice::new(&memory_config())
         .memory_layout
@@ -265,5 +258,87 @@ fn slow_load_rejects_addresses_below_the_lowest_mapped_word() {
             .helper_error
             .expect("low-load error")
             .contains("I/O underflow"));
+    }
+}
+
+#[test]
+fn layout_region_stores_accept_the_old_value_and_reject_changes() {
+    let layout = JoltDeviceMemory::new(&memory_config()).memory_layout;
+    let mut store = row(Kind::SD, Some(1), None, 0);
+    store.operands.rs2 = Some(3);
+    let program = single_row_program(store);
+    for address in [
+        layout.input_start,
+        layout.trusted_advice_start,
+        layout.untrusted_advice_start,
+        layout.stack_end,
+    ] {
+        for changed in [false, true] {
+            let mut pre = [0u64; REGS];
+            pre[1] = address;
+            pre[3] = u64::from(changed);
+            let outcome = run_program(&program, &pre, &[], &[]).expect("run protected store");
+            assert_eq!(
+                outcome.exit,
+                if changed { 4 } else { 1 },
+                "{:?}",
+                outcome.helper_error
+            );
+            if changed {
+                assert!(outcome
+                    .helper_error
+                    .expect("protected-store error")
+                    .contains("protected doubleword"));
+            }
+        }
+    }
+}
+
+#[test]
+fn conditional_stores_preserve_code_and_canary_words() {
+    let layout = JoltDeviceMemory::new(&memory_config()).memory_layout;
+    for address in [TEST_ADDR, layout.stack_end] {
+        for word in [false, true] {
+            for success in [false, true] {
+                let funct3 = if word { 2 } else { 3 };
+                let mut words = Vec::new();
+                if success {
+                    words.push(0x1000_822f | (funct3 << 12));
+                }
+                words.push(0x1820_82af | (funct3 << 12));
+                words.push(0x0000_b303); // ld x6, 0(x1)
+                let mut rows = Vec::new();
+                let mut allocator = ExpansionAllocator::new();
+                for (i, instruction) in words.iter().enumerate() {
+                    let source = Instruction::decode(*instruction, TEST_ADDR + 4 * i as u64, false)
+                        .expect("valid conditional-store instruction");
+                    rows.extend(
+                        expand_instruction(
+                            &source.source_instruction(),
+                            &mut allocator,
+                            RV64IMAC_JOLT,
+                        )
+                        .expect("conditional store expands")
+                        .into_iter()
+                        .map(JoltInstructionRow::from),
+                    );
+                }
+                rows.push(terminal_row(TEST_ADDR + 4 * words.len() as u64));
+                let program = JoltProgram::from_parts(
+                    Vec::new(),
+                    rows,
+                    Vec::new(),
+                    RAM_START_ADDRESS + 1024,
+                    TEST_ADDR,
+                );
+                let mut pre = [0u64; REGS];
+                pre[1] = address;
+                pre[2] = u64::from(!success);
+                let outcome = run_program(&program, &pre, &[], &[]).expect("run conditional store");
+                assert_eq!(outcome.exit, 1, "{:?}", outcome.helper_error);
+                assert_eq!(outcome.regs[5], u64::from(!success));
+                assert_eq!(outcome.regs[6], 0);
+            }
+        }
     }
 }

@@ -415,7 +415,9 @@ pub(crate) fn addi_only_preprocessing() -> JoltProverPreprocessing<DoryScheme, P
 /// The stage-4+ recipes' checked-inputs carrier for the fixture traces,
 /// mirroring what shape validation derives for a field-inline proof at this scale
 /// (no advice, no precommitted objects, full program).
-pub(crate) fn test_checked_inputs(code_word_intervals: &[(usize, usize)]) -> CheckedInputs {
+pub(crate) fn test_checked_inputs(
+    write_protected_word_intervals: &[(usize, usize)],
+) -> CheckedInputs {
     CheckedInputs {
         public_io: test_public_io(),
         zk: cfg!(feature = "zk"),
@@ -423,7 +425,7 @@ pub(crate) fn test_checked_inputs(code_word_intervals: &[(usize, usize)]) -> Che
         ram_K: 1 << RAM_LOG_K,
         entry_address: ENTRY,
         preprocessing_digest: [0u8; 32],
-        code_word_intervals: code_word_intervals.to_vec(),
+        write_protected_word_intervals: write_protected_word_intervals.to_vec(),
         untrusted_advice_commitment_present: false,
         trusted_advice_commitment_present: false,
         vc_capacity: cfg!(feature = "zk").then_some(MAX_BLINDFOLD_GENERATORS),
@@ -614,7 +616,7 @@ pub(crate) mod twins {
         public_io: &JoltDevice,
         stage1: &Stage1ProverOutput<Fr, C>,
         stage2: &Stage2ProverOutput<Fr, C>,
-        code_word_intervals: &[(usize, usize)],
+        write_protected_word_intervals: &[(usize, usize)],
     ) {
         let log_t = LOG_T;
         let log_k = config.ram_K.ilog2() as usize;
@@ -646,7 +648,7 @@ pub(crate) mod twins {
                 read_write_dimensions,
                 log_k,
                 tau_low.clone(),
-                code_word_intervals.to_vec(),
+                write_protected_word_intervals.to_vec(),
             ),
             product_remainder: ProductRemainder::new(
                 product_dimensions,

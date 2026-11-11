@@ -14,6 +14,7 @@ use jolt_openings::CommitmentScheme;
 use jolt_openings::GroupBatchOpening;
 #[cfg(not(feature = "akita"))]
 use jolt_openings::{AdditivelyHomomorphic, ZkOpeningScheme};
+use jolt_program::preprocess::ram::write_protected_word_intervals;
 use jolt_program::preprocess::{compute_max_ram_k, compute_min_ram_k};
 use jolt_sumcheck::SumcheckProof;
 #[cfg(feature = "akita")]
@@ -455,7 +456,7 @@ pub struct CheckedInputs {
     pub ram_K: usize,
     pub entry_address: u64,
     pub preprocessing_digest: [u8; 32],
-    pub code_word_intervals: Vec<(usize, usize)>,
+    pub write_protected_word_intervals: Vec<(usize, usize)>,
     pub untrusted_advice_commitment_present: bool,
     pub trusted_advice_commitment_present: bool,
     pub vc_capacity: Option<usize>,
@@ -636,7 +637,14 @@ where
         ram_K: ram_k,
         entry_address: program.entry_address(),
         preprocessing_digest: preprocessing.preprocessing_digest,
-        code_word_intervals: preprocessing.program.code_word_intervals().to_vec(),
+        write_protected_word_intervals: write_protected_word_intervals(
+            preprocessing.program.code_word_intervals(),
+            memory_layout,
+            ram_k,
+        )
+        .map_err(|error| VerifierError::InvalidMemoryLayout {
+            reason: error.to_string(),
+        })?,
         untrusted_advice_commitment_present,
         trusted_advice_commitment_present,
         vc_capacity,
@@ -1124,7 +1132,14 @@ where
         ram_K: ram_k,
         entry_address: preprocessing.program.entry_address(),
         preprocessing_digest: preprocessing.preprocessing_digest,
-        code_word_intervals: preprocessing.program.code_word_intervals().to_vec(),
+        write_protected_word_intervals: write_protected_word_intervals(
+            preprocessing.program.code_word_intervals(),
+            memory_layout,
+            ram_k,
+        )
+        .map_err(|error| VerifierError::InvalidMemoryLayout {
+            reason: error.to_string(),
+        })?,
         untrusted_advice_commitment_present,
         trusted_advice_commitment_present,
         vc_capacity,

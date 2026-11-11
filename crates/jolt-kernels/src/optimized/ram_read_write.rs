@@ -478,7 +478,7 @@ impl<F: JoltField> PrepareKernel<F, RamReadWriteChecking<F>> for OptimizedBacken
             inc,
             val_init,
             batch: ReadWriteBatch::new(inputs.challenges.gamma),
-            mask: IntervalMask::new(relation.code_word_intervals()),
+            mask: IntervalMask::new(relation.write_protected_word_intervals()),
             log_t,
             log_k,
         }))
@@ -585,9 +585,11 @@ impl RamReadWriteBytes {
 #[cfg(test)]
 #[expect(clippy::unwrap_used)]
 mod tests {
+    use common::jolt_device::MemoryLayout;
     use jolt_claims::protocols::jolt::geometry::ram::{ram_ra, ram_val};
     use jolt_field::{Fr, One, Ring};
     use jolt_poly::EqPolynomial;
+    use jolt_program::preprocess::ram::write_protected_word_intervals;
     use jolt_verifier::stages::relations::ConcreteSumcheck;
     use jolt_verifier::stages::stage2::ram_read_write_checking::{
         RamReadWriteChallenges, RamReadWriteInputClaims,
@@ -647,7 +649,7 @@ mod tests {
         let ra: Vec<Fr> = witness.oracle_table(ram_ra().polynomial_id()).unwrap();
         let val: Vec<Fr> = witness.oracle_table(ram_val().polynomial_id()).unwrap();
         let inc: Vec<Fr> = witness.oracle_table(ram_inc().polynomial_id()).unwrap();
-        let intervals = relation.code_word_intervals();
+        let intervals = relation.write_protected_word_intervals();
         let mut rows: Vec<[Fr; 5]> = (0..1 << (log_t + log_k))
             .map(|index| {
                 let (address, cycle) = if address_first {
@@ -755,7 +757,7 @@ mod tests {
         ops: Vec<RamOp>,
         phase_splits: &[(usize, usize)],
     ) {
-        run_parity_case(shape, init_words, ops, phase_splits, None);
+        run_parity_case(shape, init_words, ops, phase_splits, None, None);
     }
 
     fn run_parity_case(
@@ -764,6 +766,7 @@ mod tests {
         ops: Vec<RamOp>,
         phase_splits: &[(usize, usize)],
         exceptional: Option<ExceptionalEq>,
+        intervals: Option<Vec<(usize, usize)>>,
     ) {
         with_ram_fixture_init(shape, init_words, ops, |witness| {
             let first_cycle = if phase_splits[0].0 == 0 {
@@ -785,11 +788,13 @@ mod tests {
             };
             let points = RamReadWriteInputClaims::<Vec<Fr>>::default();
             let challenges = RamReadWriteChallenges { gamma };
-            let intervals = if shape.ram_k >= 8 {
-                vec![(3, 6), (7, shape.ram_k)]
-            } else {
-                vec![(0, 1)]
-            };
+            let intervals = intervals.unwrap_or_else(|| {
+                if shape.ram_k >= 8 {
+                    vec![(3, 6), (7, shape.ram_k)]
+                } else {
+                    vec![(0, 1)]
+                }
+            });
             let input_claim = dense_input_claim(witness, &tau_low, gamma, shape.ram_k, &intervals);
             for &(phase1, phase2) in phase_splits {
                 let relation = RamReadWriteChecking::<Fr>::new(
@@ -862,6 +867,45 @@ mod tests {
                 RamOp::Read { word: 4 },
                 RamOp::Write { word: 12, post: 1 },
             ],
+        );
+    }
+
+    #[test]
+    fn protected_io_mask_matches_reference_in_both_binding_orders() {
+        let lowest = super::super::testing::fixture_lowest_address();
+        let layout = MemoryLayout {
+            trusted_advice_start: lowest,
+            trusted_advice_end: lowest + 16,
+            untrusted_advice_start: lowest + 16,
+            untrusted_advice_end: lowest + 32,
+            input_start: lowest + 32,
+            input_end: lowest + 40,
+            stack_end: lowest + 88,
+            heap_end: lowest + 256,
+            ..Default::default()
+        };
+        let intervals = write_protected_word_intervals(&[(7, 9)], &layout, 32).unwrap();
+        assert_eq!(intervals, [(0, 5), (7, 9), (11, 27)]);
+        let shape = FixtureShape {
+            log_t: 4,
+            ram_k: 32,
+        };
+        run_parity_case(
+            shape,
+            Vec::new(),
+            vec![
+                RamOp::Read { word: 0 },
+                RamOp::Write { word: 2, post: 17 },
+                RamOp::Write { word: 4, post: 23 },
+                RamOp::Write { word: 7, post: 29 },
+                RamOp::Write { word: 11, post: 31 },
+                RamOp::Write { word: 26, post: 37 },
+                RamOp::Write { word: 28, post: 41 },
+                RamOp::Write { word: 2, post: 0 },
+            ],
+            &[(shape.log_t, shape.log_k()), (0, shape.log_k())],
+            None,
+            Some(intervals),
         );
     }
 
@@ -997,6 +1041,7 @@ mod tests {
                     ],
                     &[phase],
                     Some(case),
+                    None,
                 );
             }
         }

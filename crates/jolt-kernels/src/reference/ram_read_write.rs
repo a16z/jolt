@@ -47,8 +47,8 @@ impl<F: JoltField> PrepareKernel<F, RamReadWriteChecking<F>> for ReferenceBacken
             ),
         ]);
         let eq = eq_table(tau_low);
-        let intervals = relation.code_word_intervals();
-        let code_eq = (0..copies)
+        let intervals = relation.write_protected_word_intervals();
+        let protected_eq = (0..copies)
             .flat_map(|address| {
                 let protected = intervals
                     .iter()
@@ -64,7 +64,7 @@ impl<F: JoltField> PrepareKernel<F, RamReadWriteChecking<F>> for ReferenceBacken
             ),
             (
                 JoltDerivedId::from(RamReadWritePublic::CodeEqCycle),
-                layout.table(code_eq)?,
+                layout.table(protected_eq)?,
             ),
         ]);
 

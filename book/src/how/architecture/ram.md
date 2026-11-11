@@ -53,11 +53,13 @@ RAF evaluation ties `RamAddress` to the one-hot address: on each cycle it must e
 The verifier requires `lowest_address` to be a multiple of 8, so every admissible `RamAddress` is a multiple of 8.
 An access misaligned for its width, such as an `LH` at an odd address or any misaligned `LD`, leaves a low bit set in `RamAddress` and cannot be proven.
 
-## Read-write checking and protected code words
+## Read-write checking and protected words
 
 RAM read-write checking enforces both value consistency and address selection.
 Let $E(j)=\widetilde{\textsf{eq}}(r_0,j)$, where $r_0$ is the outer sumcheck's
-cycle point, and let $C(k)$ select words containing real source instructions.
+cycle point, and let $C(k)$ select words containing real source instructions,
+program input, trusted advice, untrusted advice or the stack canary
+`[stack_end, stack_end + STACK_CANARY_SIZE)`.
 Stage 2 proves
 
 $$
@@ -69,8 +71,9 @@ $$
 $$
 
 The $\gamma^2$ identity forces zero increments on protected words. It rejects
-code changes even when a later store restores the original value. Same-value
-stores remain valid, including byte, halfword and word stores into a protected
+changes to any of these regions even when a later store restores the original
+value. Same-value stores remain valid, including byte, halfword and word stores
+into a protected
 doubleword. The $\gamma^3$ identity ties the selector sum to the existing Load
 and Store flags. Together with the one-hot reductions, it requires one selected
 address on memory rows and zero on other rows. Virtual memory rows and the
@@ -78,8 +81,13 @@ field-inline memory accumulator carry these same flags.
 
 Preprocessing rounds each real source instruction's two- or four-byte extent
 outward to doublewords, merges adjacent intervals and excludes synthetic
-address-zero padding and intermediate virtual rows. The interval list enters
-the program digest in both full and committed program modes. Full preprocessing
+address-zero padding and intermediate virtual rows. It combines these intervals
+with the input, advice and canary extents from the public memory layout,
+rounds them outward to doublewords and merges overlaps and neighbors. The mask
+uses RAM indices relative to the lowest mapped address, including I/O below
+DRAM and index zero, and restricts the union to the proof's RAM domain. Both
+the source intervals and the memory layout enter the program digest in both
+full and committed program modes. Full preprocessing
 checks exact source coverage; committed verification trusts the authenticated
 key's coverage and checks the public interval shape and bounds. ELF admission
 rejects writable sections sharing a protected word. Read-only data sharing a
@@ -93,9 +101,9 @@ address bits. It adds no dense mask, trace pass, commitment, opening point or
 sumcheck round; the maximum degree remains three.
 
 The RAM value check reconstructs each pre-access value from initial RAM and
-all earlier selected increments. Since the new code identity makes those
-increments zero on protected words, each code value equals its initial value
-throughout execution. Equality of initial and final RAM alone would permit
+all earlier selected increments. Since the protection identity makes those
+increments zero on protected words, each protected value equals its initial
+value throughout execution. Equality of initial and final RAM alone would permit
 a temporary modification.
 
 The interpreter, replay tracer and native tracer reject a changed protected

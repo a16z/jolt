@@ -15,11 +15,11 @@ Jolt's tracer and constraints differ from a plain RISC-V machine in four places 
 
 ### Goal
 
-Make every accepted Jolt proof correspond to a run in which code is read-only, the I/O flag words are ordinary memory, the trace ends only at a repeatable self-jump, and every memory row accesses one mapped RAM word.
+Make every accepted Jolt proof correspond to a run in which code, program input, trusted advice, untrusted advice and the stack canary preserve their initial values, the I/O flag words are ordinary memory, the trace ends only at a repeatable self-jump, and every memory row accesses one mapped RAM word.
 
 The changes are:
 
-1. **Read-only code.** RAM read-write checking gains a γ² claim, `0 = Σ_{k,j} eq(r0,j)·C(k)·ra(k,j)·Inc(j)`, where `C` is the public mask of doublewords that hold source instructions. Program preprocessing carries the canonical code intervals; the verifier evaluates `C̃` in O(s·log K) for s intervals. The tracer rejects any store that would change a protected word.
+1. **Value-preserving protected regions.** RAM read-write checking gains a γ² claim, `0 = Σ_{k,j} eq(r0,j)·C(k)·ra(k,j)·Inc(j)`, where `C` is the public mask of doublewords that hold source instructions, program input, trusted advice, untrusted advice or the stack canary `[stack_end, stack_end + STACK_CANARY_SIZE)`. The mask combines source-code intervals with the public memory layout, rounds extents outward to doublewords and merges overlaps and adjacent intervals in RAM-index space. It is restricted to the proof's RAM domain, including index zero and I/O words below `RAM_START_ADDRESS`. Program preprocessing carries the canonical code intervals and memory layout; the verifier evaluates `C̃` in O(s·log K) for s intervals. The tracer rejects any store that would change a protected word.
 2. **Plain flag words.** The panic and termination words are ordinary bytes. A run must end with `(panic, termination) = (0,1)` or `(1,0)`; the public `panic` bit is read from that pair. `ValIo` is unchanged: it already imposes this pair.
 3. **Termination at a repeatable self-jump.** A new bytecode circuit flag `CanEnd` marks jumps at which a trace may end (direct JAL; JALR whose target provably repeats). One new R1CS row, `(Jump − ShouldJump)·(LookupOutput − UnexpandedPC + 2^64·(1 − CanEnd)) = 0`, fills the spare slot in the second uni-skip group. The prover sizes the trace to the next power of two of the executed length, so a real row can occupy the last index.
 4. **Selected address on every memory row.** RAM read-write checking gains a γ³ claim, `(Load + Store)(r0) = Σ_{k,j} eq(r0,j)·ra(k,j)`, using the Load and Store openings that stage 1 already produces. The tracer rejects loads below `lowest_address`.
@@ -36,7 +36,6 @@ The changes are:
 
 ### Non-Goals
 
-- Store permissions for the input, advice and canary regions (proposal option 1b). The tracer keeps enforcing them; the constraints do not.
 - Allowing LR/SC on the I/O window. The RAM-only guards stay.
 - Proving these properties in Lean. The jolt-qed project will re-prove its theorems against the new constraints separately.
 
@@ -45,6 +44,11 @@ The changes are:
 ### Acceptance Criteria
 
 - [ ] A guest that changes a code word and later restores it is rejected by the tracer; a test witness that bypasses the tracer is rejected by the verifier.
+- [ ] Interpreter, replay and native tracer stores that change input, trusted advice, untrusted advice or canary words are rejected; same-value stores, including narrow stores and AMOs, are accepted.
+- [ ] Failed SC.D and SC.W on canary and code words return rd = 1 and leave memory unchanged; successful same-value SC is accepted. LR/SC retain their RAM-only address guards.
+- [ ] Verifier witnesses that change input, trusted advice, untrusted advice or canary words are rejected, including changes followed by restoration.
+- [ ] The optimized and reference RAM kernels agree in both binding orders for merged intervals below DRAM, intervals touching index zero, and adjacent or overlapping source and layout intervals.
+- [ ] Changing the public memory layout changes the protection mask and preprocessing digest in full and committed program modes.
 - [ ] Same-value stores into code words are accepted.
 - [ ] A memory row whose `ra` is all zero is rejected by the verifier; a non-memory row with zero `ra` is accepted; a load of the lowest mapped word is accepted.
 - [ ] Byte, half, word and doubleword loads and stores to every lane of both flag words behave as plain memory; a run ending with a noncanonical flag pair is rejected by the tracer.
@@ -67,13 +71,13 @@ Measured on the optimized backend against `main` with interleaved runs; see the 
 
 | Change | Crates |
 |---|---|
-| Read-only code | `jolt-claims` (RAM relation), `jolt-poly` (interval MLE), `jolt-program` (code intervals), `jolt-kernels` (reference and optimized RAM read-write), `jolt-verifier` (stage 2, BlindFold, preprocessing digest), `tracer`, `jolt-tracer-x86` |
+| Value-preserving protected regions | `jolt-claims` (RAM relation), `jolt-poly` (interval MLE), `jolt-program` (code intervals), `jolt-kernels` (reference and optimized RAM read-write), `jolt-verifier` (stage 2, BlindFold, preprocessing digest), `tracer`, `jolt-tracer-x86` |
 | Plain flag words | `common` (device), `tracer`, `jolt-tracer-x86`, `jolt-witness` |
 | Termination | `jolt-riscv` (`CanEnd`), `jolt-claims` (R1CS row), `jolt-kernels` (outer sumcheck), `jolt-witness`, `jolt-prover` (trace sizing), `z3-verifier`, `zklean-extractor` |
 | Selected address | `jolt-claims` (RAM relation), kernels, verifier, `tracer`, `jolt-tracer-x86` |
 | Admission | `common`, `jolt-program`, `jolt-verifier` |
 
-The preprocessing digest domains move to the next version because preprocessing now carries the code intervals and the `CanEnd` flag.
+The PR's v3/v2 preprocessing digest domains already bind the code intervals, `CanEnd` and the entire memory layout in full and committed program modes. Deriving the enlarged mask from those fields requires no additional digest input or domain change.
 
 ### Alternatives Considered
 
@@ -91,7 +95,7 @@ The book's RAM checking, R1CS and memory-layout pages and the specs `proof-trace
 
 ## Execution
 
-The optimized RAM kernel folds `C(k)` into the Inc coefficient while address bits are unbound and represents the partially bound mask as full blocks plus at most two boundary blocks per interval, so it allocates no K-sized table. The outer kernel stores the new row's B as two limbs within the existing bound.
+The optimized RAM kernel folds `C(k)` into the Inc coefficient while address bits are unbound and represents the partially bound mask as full blocks plus at most two boundary blocks per interval. It allocates no K-sized table. The outer kernel stores the new row's B as two limbs within the existing bound.
 
 ## References
 

@@ -443,13 +443,13 @@ impl DynasmEmitter {
             ; jae >slow
             ; test al, 7
             ; jnz >slow
-            // Stack canary: plane offsets in [canary_offset, canary_offset +
-            // STACK_CANARY_SIZE) are a stack overflow. One unsigned compare
-            // covers both ends of the range; the helper reports the fault.
+            // Protect every overlapping doubleword even when the program size
+            // leaves the canary byte range unaligned.
             ; mov rsi, rcx
+            ; add rsi, 7
             ; sub rsi, QWORD [r12 + OFF_CANARY_OFFSET]
-            ; cmp rsi, STACK_CANARY_SIZE as i32
-            ; jb >slow
+            ; cmp rsi, (STACK_CANARY_SIZE + 7) as i32
+            ; jb >protected_word
         );
         // Public intervals compile to two-bound comparisons in the existing store
         // path; only a protected-word hit calls Rust, and no per-store table is built.
@@ -463,7 +463,7 @@ impl DynasmEmitter {
                 ; sub rsi, r8
                 ; mov r8, QWORD length
                 ; cmp rsi, r8
-                ; jb >code_word
+                ; jb >protected_word
             );
         }
         if e.mode == EmitMode::Record {
@@ -486,10 +486,10 @@ impl DynasmEmitter {
         dynasm!(e.ops
             ; .arch x64
             ; jmp >done
-            ; code_word:
+            ; protected_word:
             ; mov rsi, rax
         );
-        e.call_helper(helpers::code_store_doubleword as *const () as usize);
+        e.call_helper(helpers::protected_store_doubleword as *const () as usize);
         dynasm!(e.ops ; .arch x64 ; done:);
     }
 

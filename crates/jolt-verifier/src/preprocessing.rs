@@ -477,6 +477,33 @@ mod tests {
     }
 
     #[test]
+    fn digest_and_protection_mask_bind_layout_in_both_program_modes() {
+        use jolt_program::preprocess::ram::write_protected_word_intervals;
+
+        for original in [
+            ProgramPreprocessing::<Pcs>::Full(Arc::new(program())),
+            ProgramPreprocessing::<Pcs>::Committed(committed()),
+        ] {
+            let mut changed = original.clone();
+            let layout = match &mut changed {
+                ProgramPreprocessing::Full(full) => &mut Arc::make_mut(full).memory_layout,
+                ProgramPreprocessing::Committed(committed) => &mut committed.memory_layout,
+            };
+            layout.stack_end += 16;
+            let mask = |program: &ProgramPreprocessing<Pcs>| {
+                write_protected_word_intervals(
+                    program.code_word_intervals(),
+                    program.memory_layout(),
+                    program.memory_layout().max_ram_k().unwrap(),
+                )
+                .unwrap()
+            };
+            assert_ne!(mask(&original), mask(&changed));
+            assert_ne!(original.digest().unwrap(), changed.digest().unwrap());
+        }
+    }
+
+    #[test]
     fn committed_program_digest_is_stable() {
         let digest = ProgramPreprocessing::<Pcs>::Committed(committed())
             .digest()

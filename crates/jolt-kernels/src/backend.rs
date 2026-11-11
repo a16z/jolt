@@ -26,6 +26,7 @@ use jolt_poly::MultilinearPoly;
 #[cfg(feature = "allocative")]
 use jolt_poly::Polynomial;
 use jolt_poly::UnivariatePoly;
+use jolt_program::preprocess::ram::write_protected_word_intervals;
 use jolt_verifier::stages::relations::{ConcreteSumcheck, SumcheckInputClaims};
 use jolt_verifier::stages::stage1::outer_remainder::OuterRemainder;
 #[cfg(feature = "field-inline")]
@@ -241,9 +242,20 @@ impl<'a, F: JoltField, B: ?Sized> KernelContext<'a, F, B> {
         &self.session
     }
 
-    /// Public program code words used by the RAM read-write relation.
-    pub fn code_word_intervals(&self) -> &[(usize, usize)] {
-        &self.witness.program_preprocessing().ram.code_word_intervals
+    /// Public value-preserving regions in the proof's RAM domain.
+    pub fn write_protected_word_intervals(
+        &self,
+        ram_k: usize,
+    ) -> Result<Vec<(usize, usize)>, KernelError<F>> {
+        let program = self.witness.program_preprocessing();
+        write_protected_word_intervals(
+            &program.ram.code_word_intervals,
+            &program.memory_layout,
+            ram_k,
+        )
+        .map_err(|_| KernelError::InvariantViolation {
+            reason: "invalid write-protected RAM intervals",
+        })
     }
 
     /// Release the completed execution, dropping retained kernel state in the background.

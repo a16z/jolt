@@ -275,7 +275,11 @@ mod field_inline_round_trip {
         let mode = ProofMode::<Pedersen<Bn254G1>>::new(None).unwrap();
         let config = test_prover_config();
         let public_io = test_public_io();
-        let checked = test_checked_inputs(context.code_word_intervals());
+        let checked = test_checked_inputs(
+            &context
+                .write_protected_word_intervals(config.ram_K)
+                .unwrap(),
+        );
         let preprocessing = field_arithmetic_preprocessing();
 
         let mut prover_state = prover_transcript::<Keccak>(
@@ -317,7 +321,9 @@ mod field_inline_round_trip {
             &public_io,
             &stage1,
             &stage2,
-            context.code_word_intervals(),
+            &context
+                .write_protected_word_intervals(config.ram_K)
+                .unwrap(),
         );
         twins::replay_stage3(&mut transcript, &stage1, &stage2, &stage3);
         twins::replay_stage4(
@@ -492,7 +498,11 @@ mod field_inline_zk {
         let mode = ProofMode::<Pedersen<Bn254G1>>::new(Some(&setup)).unwrap();
         let config = test_prover_config();
         let public_io = test_public_io();
-        let checked = test_checked_inputs(context.code_word_intervals());
+        let checked = test_checked_inputs(
+            &context
+                .write_protected_word_intervals(config.ram_K)
+                .unwrap(),
+        );
         let preprocessing = field_arithmetic_preprocessing();
 
         let mut transcript = prover_transcript::<Keccak>(

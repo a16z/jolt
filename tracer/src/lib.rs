@@ -1051,6 +1051,117 @@ mod tests {
     }
 
     #[test]
+    fn replay_workers_enforce_value_preservation_in_layout_regions() {
+        use crate::parallel::{ChunkCheckpoint, ChunkWorker, SnapshotPool};
+        use std::panic::{catch_unwind, AssertUnwindSafe};
+
+        let elf = build_elf64(&[0x0020_b023, 0x0000_006f], &[], StrtabOrder::GnuLd);
+        let config = tiny_guest_config(&elf);
+        for region in 0..4 {
+            for changed in [false, true] {
+                let mut emulator = create_emulator(&elf, None, &[], &[], &[], &config, None);
+                let layout = &emulator
+                    .get_cpu()
+                    .mmu
+                    .jolt_device
+                    .as_ref()
+                    .unwrap()
+                    .memory_layout;
+                let address = [
+                    layout.input_start,
+                    layout.trusted_advice_start,
+                    layout.untrusted_advice_start,
+                    layout.stack_end,
+                ][region];
+                emulator.get_mut_cpu().x[1] = address as i64;
+                emulator.get_mut_cpu().x[2] = i64::from(changed);
+                let checkpoint = ChunkCheckpoint::capture(&emulator);
+                let mut worker = ChunkWorker::new(&emulator);
+                let mut pool = SnapshotPool::new();
+                let image = pool.capture(&emulator.get_cpu().mmu.memory.memory);
+                worker.install_chunk(&checkpoint, image);
+                let replay =
+                    catch_unwind(AssertUnwindSafe(|| worker.run_ticks(1, &mut Vec::new())));
+                let interpreted = catch_unwind(AssertUnwindSafe(|| emulator.tick(None)));
+                assert_eq!(replay.is_err(), changed);
+                assert_eq!(interpreted.is_err(), changed);
+                assert_eq!(
+                    emulator
+                        .get_mut_cpu()
+                        .mmu
+                        .load_doubleword(address)
+                        .unwrap()
+                        .0,
+                    0
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn replay_workers_accept_value_preserving_sc_on_code_and_canary() {
+        use crate::parallel::{ChunkCheckpoint, ChunkWorker, SnapshotPool};
+
+        for word in [false, true] {
+            for success in [false, true] {
+                let sc = if word { 0x1820_a1af } else { 0x1820_b1af };
+                let lr = if word { 0x1000_a22f } else { 0x1000_b22f };
+                let words = if success {
+                    vec![lr, sc, 0x0000_006f]
+                } else {
+                    vec![sc, 0x0000_006f]
+                };
+                let elf = build_elf64(&words, &[], StrtabOrder::GnuLd);
+                let config = tiny_guest_config(&elf);
+                for canary in [false, true] {
+                    let mut emulator = create_emulator(&elf, None, &[], &[], &[], &config, None);
+                    let address = if canary {
+                        emulator
+                            .get_cpu()
+                            .mmu
+                            .jolt_device
+                            .as_ref()
+                            .unwrap()
+                            .memory_layout
+                            .stack_end
+                    } else {
+                        emulator.get_cpu().read_pc()
+                    };
+                    let old = emulator
+                        .get_mut_cpu()
+                        .mmu
+                        .load_doubleword(address)
+                        .unwrap()
+                        .0;
+                    emulator.get_mut_cpu().x[1] = address as i64;
+                    emulator.get_mut_cpu().x[2] = if success { old as i64 } else { 1 };
+                    if success {
+                        emulator.tick(None);
+                    }
+                    let checkpoint = ChunkCheckpoint::capture(&emulator);
+                    let mut worker = ChunkWorker::new(&emulator);
+                    let mut pool = SnapshotPool::new();
+                    let image = pool.capture(&emulator.get_cpu().mmu.memory.memory);
+                    worker.install_chunk(&checkpoint, image);
+                    worker.run_ticks(1, &mut Vec::new());
+                    emulator.tick(None);
+                    assert_eq!(worker.cpu().x[3], i64::from(!success));
+                    assert_eq!(emulator.get_cpu().x[3], i64::from(!success));
+                    assert_eq!(
+                        emulator
+                            .get_mut_cpu()
+                            .mmu
+                            .load_doubleword(address)
+                            .unwrap()
+                            .0,
+                        old
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
     fn trace_of_a_tiny_guest_captures_register_semantics_and_replays() {
         let elf = tiny_guest_elf();
         let memory_config = tiny_guest_config(&elf);

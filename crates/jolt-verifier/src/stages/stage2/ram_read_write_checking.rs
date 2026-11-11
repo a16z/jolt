@@ -39,7 +39,7 @@ pub struct RamReadWriteChecking<F: JoltField> {
     dimensions: ReadWriteDimensions,
     ram_log_k: usize,
     product_tau_low: Vec<F>,
-    code_word_intervals: Vec<(usize, usize)>,
+    write_protected_word_intervals: Vec<(usize, usize)>,
 }
 
 impl<F: JoltField> RamReadWriteChecking<F> {
@@ -47,14 +47,14 @@ impl<F: JoltField> RamReadWriteChecking<F> {
         dimensions: ReadWriteDimensions,
         ram_log_k: usize,
         product_tau_low: Vec<F>,
-        code_word_intervals: Vec<(usize, usize)>,
+        write_protected_word_intervals: Vec<(usize, usize)>,
     ) -> Self {
         Self {
             symbolic: relations::ram::ReadWriteChecking::new(dimensions),
             dimensions,
             ram_log_k,
             product_tau_low,
-            code_word_intervals,
+            write_protected_word_intervals,
         }
     }
 }
@@ -67,8 +67,8 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
 }
 
 impl<F: JoltField> RamReadWriteChecking<F> {
-    pub fn code_word_intervals(&self) -> &[(usize, usize)] {
-        &self.code_word_intervals
+    pub fn write_protected_word_intervals(&self) -> &[(usize, usize)] {
+        &self.write_protected_word_intervals
     }
 
     pub fn dimensions(&self) -> ReadWriteDimensions {
@@ -138,9 +138,10 @@ impl<F: JoltField> ConcreteSumcheck<F> for RamReadWriteChecking<F> {
                             .val()
                             .get(..self.ram_log_k)
                             .ok_or_else(|| public_input_failed("RAM address point is too short"))?;
-                        let code = interval_mask_mle_msb(&self.code_word_intervals, r_address)
-                            .map_err(public_input_failed)?;
-                        Ok(eq_cycle * code)
+                        let mask =
+                            interval_mask_mle_msb(&self.write_protected_word_intervals, r_address)
+                                .map_err(public_input_failed)?;
+                        Ok(eq_cycle * mask)
                     }
                 }
             }
