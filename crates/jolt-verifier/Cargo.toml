@@ -96,3 +96,8 @@ serde_json = { workspace = true, features = ["std"] }
 quote.workspace = true
 syn = { workspace = true, features = ["visit"] }
 tempfile = "3.27.0"
+
+[package.metadata.cargo-machete]
+# Enabled only for its `test-support` feature, which the Whiteout soundness
+# tests need for `batch_coefficients()`; no source names the crate directly.
+ignored = ["akita-verifier"]

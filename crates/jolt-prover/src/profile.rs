@@ -201,7 +201,7 @@ impl Workload {
             Self::Sha2Chain => CYCLES_PER_SHA256,
             Self::Sha3Chain => CYCLES_PER_SHA3,
             Self::BTreeMap => CYCLES_PER_BTREEMAP_OP,
-            Self::Secp256k1Batch => return self.input_for_operations(1),
+            Self::Muldiv | Self::Secp256k1Batch => return self.input_for_operations(1),
             #[cfg(feature = "field-inline")]
             Self::FieldOps => return eqpoly_inputs(),
         };

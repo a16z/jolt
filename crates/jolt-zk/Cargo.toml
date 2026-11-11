@@ -47,6 +47,7 @@ whiteout-prover = ["dep:jolt-dit", "jolt-crypto/sample", "prover", "whiteout"]
 # prover, for response provers' tests (Akita's W5). Test support only.
 whiteout-test-support = [
   "dep:rand_chacha",
+  "jolt-transcript/prover-entropy",
   "jolt-transcript/transcript-blake2b",
   "whiteout-prover",
 ]
@@ -58,6 +59,7 @@ test-support = []
 whiteout-diagnostics = [
   "dep:rand_chacha",
   "jolt-crypto/sample-diagnostics",
+  "jolt-transcript/prover-entropy",
   "jolt-transcript/transcript-blake2b",
   "whiteout-prover",
 ]

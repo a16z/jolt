@@ -11,6 +11,11 @@ extend-exclude = [
   "**/fuzz/seeds/**",
 ]
 
+[default]
+# A hex commit hash in specs/whiteout-p1-profile.md and the Metal literal
+# 0xFFFFFFFFul in jolt-metal's accumulator bench.
+extend-ignore-re = ["81bf8dbe2", "0xFFFFFFFFul"]
+
 [default.extend-words]
 "groth" = "groth"
 "fle" = "fle"
@@ -38,10 +43,6 @@ extend-exclude = [
 # Theorem references ("Thm 3.2") and the Module-SIS problem in the Whiteout docs.
 "thm" = "thm"
 "msis" = "msis"
-# Hex commit hash in specs/whiteout-p1-profile.md.
-"dbe" = "dbe"
-# The `ul` suffix of the Metal literal 0xFFFFFFFFul.
-"ful" = "ful"
 
 [type.ocaml.extend-words]
 # HOL Light tactic identifiers.
