@@ -4,7 +4,8 @@ use spongefish::{DuplexSpongeInit, Encoding, VerificationError};
 
 use crate::transcript::{draw_challenges, sealed::Sealed};
 use crate::{
-    protocol_tag, prover_transcript, ChallengeCodec, ChallengeSetSize, FieldTranscript, ProverState,
+    protocol_tag, verifier_transcript, ChallengeCodec, ChallengeSetSize, FieldTranscript,
+    VerifierState,
 };
 
 /// A transcript a verifier replays to count what a proof's messages take,
@@ -20,7 +21,7 @@ use crate::{
 /// nor [`ProverInit`](crate::ProverInit), so no proof can be verified or
 /// produced with it.
 pub struct ShapeTranscript<H: DuplexSpongeInit<U = u8>> {
-    state: ProverState<H>,
+    state: VerifierState<'static, H>,
 }
 
 impl<H: DuplexSpongeInit<U = u8>> ShapeTranscript<H> {
@@ -28,7 +29,7 @@ impl<H: DuplexSpongeInit<U = u8>> ShapeTranscript<H> {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            state: prover_transcript::<H>(&protocol_tag(b"jolt-shape-replay"), &0u64),
+            state: verifier_transcript::<H>(&protocol_tag(b"jolt-shape-replay"), &0u64, &[]),
         }
     }
 }

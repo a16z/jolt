@@ -3,10 +3,12 @@
 use std::ops::{Deref, DerefMut};
 use std::slice::Iter;
 
+use jolt_algebra::cfg_chunks_mut;
+#[cfg(feature = "parallel")]
 use rayon::prelude::*;
 use zeroize::Zeroize;
 
-/// Elements per parallel job of [`wipe`].
+/// Elements per chunk of [`wipe`].
 const WIPE_CHUNK: usize = 1 << 16;
 
 /// A fixed-length heap buffer of secret plain values, overwritten with zero
@@ -64,12 +66,10 @@ impl<T> Drop for SecretVec<T> {
 }
 
 /// Empties `values` and zeroes its whole capacity with one volatile write
-/// per element, in parallel over chunks: the buffers reach tens of
-/// megabytes. `T` must own no heap, which `clear` would free unwiped.
+/// per element. With `parallel`, chunks are wiped on Rayon workers because
+/// buffers reach tens of megabytes. `T` must own no heap, which `clear` would free unwiped.
 pub(crate) fn wipe<T: Send>(values: &mut Vec<T>) {
     values.clear();
-    values
-        .spare_capacity_mut()
-        .par_chunks_mut(WIPE_CHUNK)
+    cfg_chunks_mut!(values.spare_capacity_mut(), WIPE_CHUNK)
         .for_each(|chunk| chunk.iter_mut().zeroize());
 }

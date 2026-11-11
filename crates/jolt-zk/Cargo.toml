@@ -30,6 +30,7 @@ prover = ["jolt-transcript/prover-grinding", "jolt-sumcheck/prover"]
 # Σ-protocol's segment table and parameters). Off by
 # default so the Dory verifier never compiles the lattice ring (I6).
 whiteout = [
+  "parallel",
   "dep:spongefish",
   "dep:tracing",
   "jolt-algebra/solinas",
