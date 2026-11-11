@@ -387,11 +387,10 @@ impl<F: JoltField> ProveRounds<F> for AddressFirstKernel<F> {
         round: usize,
         claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
-        self.progress.validate_round(round, bind.is_some())?;
         if let Some(r) = bind {
             self.bind(r)?;
         }
-        let message = match &self.phase {
+        match &self.phase {
             Phase::Address {
                 rows,
                 checkpoints,
@@ -449,14 +448,9 @@ impl<F: JoltField> ProveRounds<F> for AddressFirstKernel<F> {
                         )
                     })
             }
-        };
-        if message.is_ok() {
-            self.progress.record_message();
         }
-        message
     }
     fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {
-        self.progress.validate_finish()?;
         self.bind(bind)
     }
 }

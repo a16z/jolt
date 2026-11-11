@@ -92,7 +92,6 @@ fn run_parity_case(
                 &challenges,
                 input_claim,
                 &round_challenges,
-                true,
             );
         }
     });

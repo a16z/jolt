@@ -1,5 +1,3 @@
-mod round_state;
-pub(crate) use round_state::{eq_round_error, RoundChallenges, RoundProgress};
 mod product_sum;
 mod repeat_cache;
 pub(crate) use product_sum::{LowDegreeProductSum, TailFactorProducts};
@@ -27,6 +25,44 @@ use jolt_witness::{
 use rayon::prelude::*;
 
 use crate::SumcheckKernelError;
+
+/// A kernel's bound-round count against its total — the one home of the
+/// "claims only after every round is bound" invariant.
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
+pub(crate) struct RoundProgress {
+    bound: usize,
+    total: usize,
+}
+
+impl RoundProgress {
+    pub(crate) fn new(total: usize) -> Self {
+        Self { bound: 0, total }
+    }
+
+    /// Total rounds — the kernel's `ProveRounds::num_rounds`.
+    pub(crate) fn total(&self) -> usize {
+        self.total
+    }
+
+    pub(crate) fn bound(&self) -> usize {
+        self.bound
+    }
+
+    pub(crate) fn advance(&mut self) {
+        self.bound += 1;
+    }
+
+    /// Gate for every output-claim / derived-table entry point.
+    pub(crate) fn require_complete<F: JoltField>(&self) -> Result<(), SumcheckKernelError<F>> {
+        if self.bound == self.total {
+            Ok(())
+        } else {
+            Err(SumcheckKernelError::NotFullyBound {
+                remaining: self.total - self.bound,
+            })
+        }
+    }
+}
 
 /// The streaming chunk of [`collect_rows`]: large enough that the per-chunk
 /// rayon extraction dispatch amortizes (the stock bundle pass uses 2^12-row
@@ -494,6 +530,54 @@ pub(crate) fn fallible_collect_bytes<T>(len: usize) -> Option<usize> {
     len.checked_mul(5 * size_of::<T>() + size_of::<Vec<T>>() + 2 * size_of::<usize>())
 }
 
+/// The drawn challenges of a kernel's bound rounds, tracked against the
+/// round total — one authority for both the challenge history and the
+/// bound-rounds invariant. Kernels that never revisit their challenges use
+/// [`RoundProgress`] instead.
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
+pub(crate) struct RoundChallenges<F> {
+    challenges: Vec<F>,
+    total: usize,
+}
+
+impl<F: JoltField> RoundChallenges<F> {
+    pub(crate) fn new(total: usize) -> Self {
+        Self {
+            challenges: Vec::with_capacity(total),
+            total,
+        }
+    }
+
+    /// Total rounds — the kernel's `ProveRounds::num_rounds`.
+    pub(crate) fn total(&self) -> usize {
+        self.total
+    }
+
+    pub(crate) fn bound(&self) -> usize {
+        self.challenges.len()
+    }
+
+    pub(crate) fn push(&mut self, challenge: F) {
+        self.challenges.push(challenge);
+    }
+
+    /// The challenges bound so far, in binding order.
+    pub(crate) fn as_slice(&self) -> &[F] {
+        &self.challenges
+    }
+
+    /// Gate for every output-claim / derived-table entry point.
+    pub(crate) fn require_complete(&self) -> Result<(), SumcheckKernelError<F>> {
+        if self.challenges.len() == self.total {
+            Ok(())
+        } else {
+            Err(SumcheckKernelError::NotFullyBound {
+                remaining: self.total - self.challenges.len(),
+            })
+        }
+    }
+}
+
 /// Pin a kernel-maintained derived value (typically its fully bound split-eq
 /// scalar) against the verifier's own `derive_output_term` — the optimized
 /// tier's drift detector for tables it never materializes, mirroring the
@@ -536,6 +620,13 @@ pub(crate) fn pin_derived_term_if_derived<F: JoltField, R: ConcreteSumcheck<F>>(
         Ok(_) | Err(VerifierError::MissingStageClaimDerived { .. }) => Ok(()),
         Err(error) => Err(error.into()),
     }
+}
+
+/// The error for a finished equality state: [`jolt_poly::GruenSplitEqPolynomial::round`]
+/// and [`jolt_poly::GruenSplitEqPolynomial::round_mut`] return `None` once every round is
+/// bound.
+pub(crate) fn eq_round_error<F: JoltField>(round: usize) -> SumcheckError<F> {
+    SumcheckError::InvalidEqRoundState { round }
 }
 
 pub(crate) trait GruenRoundMessage<F: JoltField> {

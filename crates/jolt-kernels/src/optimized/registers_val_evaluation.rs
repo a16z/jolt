@@ -491,7 +491,6 @@ mod tests {
                 &NoChallenges::default(),
                 input_claim,
                 &round_challenges,
-                false,
             );
         });
     }

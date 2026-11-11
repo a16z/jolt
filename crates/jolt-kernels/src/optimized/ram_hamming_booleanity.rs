@@ -441,12 +441,20 @@ fn canonical_bin(pattern: u16, width: usize) -> usize {
     }
 }
 
-impl<F: JoltField> OptimizedRamHammingBooleanityKernel<F> {
-    fn message(
-        &self,
+impl<F: JoltField> ProveRounds<F> for OptimizedRamHammingBooleanityKernel<F> {
+    fn num_rounds(&self) -> usize {
+        self.progress.total()
+    }
+
+    fn prove_round(
+        &mut self,
+        bind: Option<F>,
         round: usize,
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
+        if let Some(challenge) = bind {
+            self.bind(challenge)?;
+        }
         let hamming = match &self.hamming {
             HammingState::Startup(startup) => {
                 return startup.round_poly(&self.eq, round, previous_claim);
@@ -483,32 +491,8 @@ impl<F: JoltField> OptimizedRamHammingBooleanityKernel<F> {
                 )
             })
     }
-}
-
-impl<F: JoltField> ProveRounds<F> for OptimizedRamHammingBooleanityKernel<F> {
-    fn num_rounds(&self) -> usize {
-        self.progress.total()
-    }
-
-    fn prove_round(
-        &mut self,
-        bind: Option<F>,
-        round: usize,
-        previous_claim: F,
-    ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
-        self.progress.validate_round(round, bind.is_some())?;
-        if let Some(challenge) = bind {
-            self.bind(challenge)?;
-        }
-        let message = self.message(round, previous_claim);
-        if message.is_ok() {
-            self.progress.record_message();
-        }
-        message
-    }
 
     fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {
-        self.progress.validate_finish()?;
         self.bind(bind)
     }
 }

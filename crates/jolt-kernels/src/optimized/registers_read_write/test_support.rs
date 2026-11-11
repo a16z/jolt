@@ -184,7 +184,6 @@ pub(crate) fn assert_kernel_parity<R>(
     challenges: &ConcreteSumcheckChallenges<Fr, R>,
     input_claim: Fr,
     round_challenges: &[Fr],
-    check_eq_sequence: bool,
 ) where
     R: ConcreteSumcheck<Fr>,
     ReferenceBackend: PrepareKernel<Fr, R>,
@@ -202,7 +201,6 @@ pub(crate) fn assert_kernel_parity<R>(
         challenges,
         input_claim,
         round_challenges,
-        check_eq_sequence,
     );
 }
 
@@ -222,7 +220,6 @@ pub(crate) fn assert_kernel_parity_with_session<R>(
     challenges: &ConcreteSumcheckChallenges<Fr, R>,
     input_claim: Fr,
     round_challenges: &[Fr],
-    check_eq_sequence: bool,
 ) where
     R: ConcreteSumcheck<Fr>,
     ReferenceBackend: PrepareKernel<Fr, R>,
@@ -264,19 +261,8 @@ pub(crate) fn assert_kernel_parity_with_session<R>(
     let mut claim = input_claim;
     for round in 0..rounds {
         let bind = (round > 0).then(|| round_challenges[round - 1]);
-        if check_eq_sequence {
-            crate::optimized::parity::reject_bad_eq_rounds(optimized.as_mut(), round, claim);
-        }
         let reference_poly = reference.prove_round(bind, round, claim).unwrap();
         let optimized_poly = optimized.prove_round(bind, round, claim).unwrap();
-        if check_eq_sequence {
-            crate::optimized::parity::reject_repeated_eq_round(
-                optimized.as_mut(),
-                bind,
-                round,
-                claim,
-            );
-        }
         assert_eq!(
             trimmed(&reference_poly),
             trimmed(&optimized_poly),
@@ -295,13 +281,6 @@ pub(crate) fn assert_kernel_parity_with_session<R>(
     optimized
         .finish_rounds(round_challenges[rounds - 1])
         .unwrap();
-    if check_eq_sequence {
-        crate::optimized::parity::reject_finished_eq_calls(
-            optimized.as_mut(),
-            round_challenges[rounds - 1],
-            claim,
-        );
-    }
 
     let output_points = relation
         .derive_opening_points(round_challenges, points)

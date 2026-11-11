@@ -71,6 +71,7 @@ impl<F: JoltField> PrefixColumn<F> {
 }
 
 #[cfg(test)]
+#[expect(clippy::unwrap_used, reason = "test module")]
 mod tests {
     use super::*;
     use jolt_field::Fr;
@@ -128,7 +129,7 @@ mod tests {
                     let _ = right.bind(challenge);
                     dense_left.bind_with_order(challenge, BindingOrder::LowToHigh);
                     dense_right.bind_with_order(challenge, BindingOrder::LowToHigh);
-                    assert!(eq.round_mut().map(|round| round.bind(challenge)).is_some());
+                    eq.round_mut().unwrap().bind(challenge);
                 }
             }
         }

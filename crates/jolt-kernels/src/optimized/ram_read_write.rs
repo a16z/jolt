@@ -53,7 +53,7 @@ use super::rw_matrix::{
     round0_bind, round0_bind_bytes, round0_q_at_one, round0_quadratic_coefficients, val_slope_term,
     AddressMajorMatrix, CycleMajorMatrix,
 };
-use super::support::{map_indices, pin_derived_term_if_derived, GruenRoundMessage, RoundProgress};
+use super::support::{map_indices, pin_derived_term_if_derived, GruenRoundMessage};
 use super::OptimizedBackend;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -95,7 +95,6 @@ enum Phase<F: JoltField> {
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(crate) struct RamReadWriteKernel<F: JoltField> {
     phase: Option<Phase<F>>,
-    progress: RoundProgress,
     inc: PrefixColumn<F>,
     val_init: Polynomial<F>,
     #[cfg_attr(feature = "allocative", allocative(skip))]
@@ -116,17 +115,6 @@ const LATE_PURGE_CYCLE_ROUNDS: usize = 6;
 
 impl<F: JoltField> RamReadWriteKernel<F> {
     fn ingest(&mut self, r: F, round: usize) -> Result<(), SumcheckError<F>> {
-        match self.phase.as_ref().ok_or_else(|| eq_round_error(round))? {
-            Phase::Round0 { gruen, .. }
-            | Phase::Cycle { gruen, .. }
-            | Phase::DenseCycle { gruen, .. }
-                if gruen.remaining_rounds() == 0 =>
-            {
-                return Err(eq_round_error(round))
-            }
-            Phase::Done { .. } => return Err(eq_round_error(round)),
-            _ => {}
-        }
         self.phase = Some(match self.phase.take().ok_or_else(Phase::error)? {
             Phase::Round0 { columns, gruen } => {
                 let matrix = round0_bind(&columns, r);
@@ -184,7 +172,6 @@ impl<F: JoltField> RamReadWriteKernel<F> {
             }
             Phase::Done { .. } => return Err(Phase::error()),
         });
-        self.progress.advance();
         Ok(())
     }
 
@@ -338,29 +325,21 @@ impl<F: JoltField> ProveRounds<F> for RamReadWriteKernel<F> {
         round: usize,
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
-        self.progress.validate_round(round, bind.is_some())?;
         if let Some(challenge) = bind {
             self.ingest(challenge, round - 1)?;
         }
-        let message = {
-            match &self.phase {
-                Some(Phase::Round0 { .. } | Phase::Cycle { .. } | Phase::DenseCycle { .. }) => {
-                    self.cycle_round_message(round, previous_claim)
-                }
-                Some(Phase::Address { .. } | Phase::AddressFirst { .. }) => {
-                    self.address_round_message(previous_claim)
-                }
-                Some(Phase::Done { .. }) | None => Err(Phase::error()),
+        match &self.phase {
+            Some(Phase::Round0 { .. } | Phase::Cycle { .. } | Phase::DenseCycle { .. }) => {
+                self.cycle_round_message(round, previous_claim)
             }
-        };
-        if message.is_ok() {
-            self.progress.record_message();
+            Some(Phase::Address { .. } | Phase::AddressFirst { .. }) => {
+                self.address_round_message(previous_claim)
+            }
+            Some(Phase::Done { .. }) | None => Err(Phase::error()),
         }
-        message
     }
 
     fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {
-        self.progress.validate_finish()?;
         self.ingest(bind, self.num_rounds() - 1)
     }
 }
@@ -477,7 +456,6 @@ impl<F: JoltField> PrepareKernel<F, RamReadWriteChecking<F>> for OptimizedBacken
         };
         Ok(Box::new(RamReadWriteKernel {
             phase: Some(phase),
-            progress: RoundProgress::new(log_t + log_k),
             inc,
             val_init,
             gamma: inputs.challenges.gamma,
@@ -600,72 +578,6 @@ mod tests {
     use super::*;
     use crate::optimized::parity::ExceptionalEq;
     use crate::ReferenceBackend;
-
-    #[test]
-    fn dense_cycle_rejections_preserve_the_next_valid_round() {
-        for log_t in [1, 3] {
-            let point = random_scalars(log_t, 13);
-            let ra = random_scalars(1 << log_t, 19);
-            let val = random_scalars(1 << log_t, 23);
-            let inc = random_scalars(1 << log_t, 29);
-            let gamma = Fr::from_u64(31);
-            let make = || RamReadWriteKernel {
-                phase: Some(Phase::DenseCycle {
-                    ra: PrefixColumn {
-                        values: ra.clone(),
-                        tail: [Fr::from_u64(0); 2],
-                    },
-                    val: PrefixColumn {
-                        values: val.clone(),
-                        tail: [Fr::from_u64(0); 2],
-                    },
-                    gruen: GruenSplitEqPolynomial::new(&point, BindingOrder::LowToHigh),
-                }),
-                progress: RoundProgress::new(log_t),
-                inc: PrefixColumn {
-                    values: inc.clone(),
-                    tail: [Fr::from_u64(0); 2],
-                },
-                val_init: Polynomial::new(vec![Fr::from_u64(0)]),
-                gamma,
-                log_t,
-                log_k: 0,
-            };
-            let claim = EqPolynomial::<Fr>::evals(&point, None)
-                .iter()
-                .enumerate()
-                .fold(Fr::from_u64(0), |sum, (i, &weight)| {
-                    sum + weight * ra[i] * (val[i] + gamma * (val[i] + inc[i]))
-                });
-            let mut exercised = make();
-            let mut control = make();
-            crate::optimized::parity::exercise_eq_sequence(
-                &mut exercised,
-                &mut control,
-                claim,
-                &random_scalars(log_t, 37),
-            );
-            assert_eq!(exercised.inc.values, control.inc.values);
-            match (exercised.phase, control.phase) {
-                (
-                    Some(Phase::Done {
-                        merged_eq: a,
-                        final_ra: b,
-                        final_val: c,
-                    }),
-                    Some(Phase::Done {
-                        merged_eq: x,
-                        final_ra: y,
-                        final_val: z,
-                    }),
-                ) => assert_eq!((a, b, c), (x, y, z)),
-                phases => assert!(matches!(
-                    phases,
-                    (Some(Phase::Done { .. }), Some(Phase::Done { .. }))
-                )),
-            }
-        }
-    }
 
     fn dense_input_claim(
         witness: &dyn JoltWitnessPlane<Fr>,

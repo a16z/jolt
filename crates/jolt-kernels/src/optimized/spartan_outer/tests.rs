@@ -426,15 +426,8 @@ fn parity_case_with_eq(
     let mut bind = None;
     let mut previous = input_claim;
     for (round, &challenge) in challenges.iter().enumerate() {
-        crate::optimized::parity::reject_bad_eq_rounds(optimized_kernel.as_mut(), round, previous);
         let reference_round = reference_kernel.prove_round(bind, round, previous).unwrap();
         let optimized_round = optimized_kernel.prove_round(bind, round, previous).unwrap();
-        crate::optimized::parity::reject_repeated_eq_round(
-            optimized_kernel.as_mut(),
-            bind,
-            round,
-            previous,
-        );
         assert_eq!(
             optimized_round, reference_round,
             "round {round} polynomial, log_t = {log_t}"
@@ -445,7 +438,6 @@ fn parity_case_with_eq(
     let last = bind.unwrap();
     reference_kernel.finish_rounds(last).unwrap();
     optimized_kernel.finish_rounds(last).unwrap();
-    crate::optimized::parity::reject_finished_eq_calls(optimized_kernel.as_mut(), last, previous);
 
     let reference_outputs = reference_kernel.output_claims(&claims).unwrap();
     let optimized_outputs = optimized_kernel.output_claims(&claims).unwrap();
@@ -654,15 +646,8 @@ fn sample_case(backend: &TraceBackend, log_t: usize) {
     let mut bind = None;
     let mut previous = input_claim;
     for (round, &challenge) in challenges.iter().enumerate() {
-        crate::optimized::parity::reject_bad_eq_rounds(optimized_kernel.as_mut(), round, previous);
         let reference_round = reference_kernel.prove_round(bind, round, previous).unwrap();
         let optimized_round = optimized_kernel.prove_round(bind, round, previous).unwrap();
-        crate::optimized::parity::reject_repeated_eq_round(
-            optimized_kernel.as_mut(),
-            bind,
-            round,
-            previous,
-        );
         assert_eq!(optimized_round, reference_round, "round {round}");
         previous = reference_round.evaluate(challenge);
         bind = Some(challenge);
@@ -670,7 +655,6 @@ fn sample_case(backend: &TraceBackend, log_t: usize) {
     let last = bind.unwrap();
     reference_kernel.finish_rounds(last).unwrap();
     optimized_kernel.finish_rounds(last).unwrap();
-    crate::optimized::parity::reject_finished_eq_calls(optimized_kernel.as_mut(), last, previous);
     assert_eq!(
         optimized_kernel.output_claims(&claims).unwrap(),
         reference_kernel.output_claims(&claims).unwrap()

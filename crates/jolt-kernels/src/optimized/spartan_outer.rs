@@ -1490,28 +1490,20 @@ impl<F: JoltField> ProveRounds<F> for OuterRemainderKernel<F> {
         round: usize,
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
-        self.challenges.validate_round(round, bind.is_some())?;
         if let Some(challenge) = bind {
             self.bind(challenge)?;
         }
-        let message = {
-            let gruen_round = self.split_eq.round().ok_or_else(|| eq_round_error(round))?;
-            let (q_zero, q_infinity) = match self.pending_endpoints.take() {
-                Some(endpoints) => endpoints,
-                None => self.az.product_endpoints(&self.bz, &self.split_eq),
-            };
-            gruen_round.checked_cubic(q_zero, q_infinity, previous_claim, round, || {
-                self.az.product_at_one(&self.bz, &self.split_eq)
-            })
+        let gruen_round = self.split_eq.round().ok_or_else(|| eq_round_error(round))?;
+        let (q_zero, q_infinity) = match self.pending_endpoints.take() {
+            Some(endpoints) => endpoints,
+            None => self.az.product_endpoints(&self.bz, &self.split_eq),
         };
-        if message.is_ok() {
-            self.challenges.record_message();
-        }
-        message
+        gruen_round.checked_cubic(q_zero, q_infinity, previous_claim, round, || {
+            self.az.product_at_one(&self.bz, &self.split_eq)
+        })
     }
 
     fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {
-        self.challenges.validate_finish()?;
         self.bind(bind)
     }
 }

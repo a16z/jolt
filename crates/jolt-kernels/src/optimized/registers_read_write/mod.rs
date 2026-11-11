@@ -267,25 +267,17 @@ impl<F: JoltField> ProveRounds<F> for ReadWriteKernel<F> {
         round: usize,
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
-        self.challenges.validate_round(round, bind.is_some())?;
         if let Some(challenge) = bind {
             self.bind(challenge)?;
         }
-        let message = {
-            if self.challenges.bound() < self.dimensions.log_t() {
-                self.cycle_round_message(round, previous_claim)
-            } else {
-                self.address.round_message(round, previous_claim)
-            }
-        };
-        if message.is_ok() {
-            self.challenges.record_message();
+        if self.challenges.bound() < self.dimensions.log_t() {
+            self.cycle_round_message(round, previous_claim)
+        } else {
+            self.address.round_message(round, previous_claim)
         }
-        message
     }
 
     fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {
-        self.challenges.validate_finish()?;
         self.bind(bind)
     }
 }

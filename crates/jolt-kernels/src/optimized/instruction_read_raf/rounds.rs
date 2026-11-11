@@ -181,25 +181,17 @@ impl<F: JoltField> ProveRounds<F> for OptimizedInstructionReadRafKernel<F> {
         round: usize,
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
-        self.progress.validate_round(round, bind.is_some())?;
         if let Some(challenge) = bind {
             self.bind(challenge)?;
         }
-        let message = {
-            if self.progress.bound() < self.address_bits() {
-                Ok(self.address_message(previous_claim))
-            } else {
-                self.cycle_message(round, previous_claim)
-            }
-        };
-        if message.is_ok() {
-            self.progress.record_message();
+        if self.progress.bound() < self.address_bits() {
+            Ok(self.address_message(previous_claim))
+        } else {
+            self.cycle_message(round, previous_claim)
         }
-        message
     }
 
     fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {
-        self.progress.validate_finish()?;
         self.bind(bind)
     }
 }

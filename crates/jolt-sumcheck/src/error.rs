@@ -259,10 +259,10 @@ pub enum SumcheckError<F: Field> {
     #[error("transcript rejected a challenge draw")]
     TranscriptRejected,
 
-    /// The caller's round, bind presence, or terminal call disagrees with the
-    /// equality kernel's current phase, or its equality state is exhausted.
-    #[error("round {round}: invalid equality round state ({context})")]
-    InvalidEqRoundState { round: usize, context: &'static str },
+    /// A kernel asked its split-eq state for a round handle at `round`, and the
+    /// state returned `None` because every one of its rounds is already bound.
+    #[error("round {round}: the equality state has no unbound round")]
+    InvalidEqRoundState { round: usize },
 }
 
 impl<F: Field> From<VerificationError> for SumcheckError<F> {

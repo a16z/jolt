@@ -662,12 +662,20 @@ impl<'a, F: JoltField, S: ChunkIndexSource, const TRIANGULAR: bool>
     }
 }
 
-impl<F: JoltField> OptimizedBooleanityCycleKernel<F> {
-    fn message(
-        &self,
+impl<F: JoltField> ProveRounds<F> for OptimizedBooleanityCycleKernel<F> {
+    fn num_rounds(&self) -> usize {
+        self.progress.total()
+    }
+
+    fn prove_round(
+        &mut self,
+        bind: Option<F>,
         round: usize,
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
+        if let Some(challenge) = bind {
+            self.bind(challenge)?;
+        }
         let prefix_pairs = self.tables.prefix_len().div_ceil(2);
         let tail = self
             .tables
@@ -816,32 +824,8 @@ impl<F: JoltField> OptimizedBooleanityCycleKernel<F> {
                 },
             )
     }
-}
-
-impl<F: JoltField> ProveRounds<F> for OptimizedBooleanityCycleKernel<F> {
-    fn num_rounds(&self) -> usize {
-        self.progress.total()
-    }
-
-    fn prove_round(
-        &mut self,
-        bind: Option<F>,
-        round: usize,
-        previous_claim: F,
-    ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
-        self.progress.validate_round(round, bind.is_some())?;
-        if let Some(challenge) = bind {
-            self.bind(challenge)?;
-        }
-        let message = self.message(round, previous_claim);
-        if message.is_ok() {
-            self.progress.record_message();
-        }
-        message
-    }
 
     fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {
-        self.progress.validate_finish()?;
         self.bind(bind)
     }
 }

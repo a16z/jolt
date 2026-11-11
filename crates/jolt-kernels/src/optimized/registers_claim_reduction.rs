@@ -488,7 +488,6 @@ mod tests {
                 &RegistersClaimReductionChallenges { gamma },
                 input_claim,
                 &round_challenges,
-                false,
             );
         });
     }

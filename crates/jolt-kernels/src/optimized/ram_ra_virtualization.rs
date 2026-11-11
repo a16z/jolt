@@ -392,19 +392,13 @@ impl<F: JoltField> ProveRounds<F> for RamRaVirtualizationKernel<F> {
         round: usize,
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
-        self.progress.validate_round(round, bind.is_some())?;
         if let Some(challenge) = bind {
             self.bind(challenge)?;
         }
-        let message = self.message(round, previous_claim);
-        if message.is_ok() {
-            self.progress.record_message();
-        }
-        message
+        self.message(round, previous_claim)
     }
 
     fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {
-        self.progress.validate_finish()?;
         self.bind(bind)
     }
 }
