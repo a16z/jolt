@@ -242,8 +242,8 @@ where
 /// Sends no output claims.
 ///
 /// `instance.input_claim` must be derivable from values already absorbed:
-/// it is bound with [`jolt_transcript::PrivateChannel::bind_derived`], which a masked channel
-/// does not absorb.
+/// it is bound with [`jolt_transcript::PrivateChannel::bind_derived`], which
+/// a clear transcript absorbs as a public value.
 ///
 /// The kernel's round API is fused, as for the batched engine: round `i > 0`
 /// receives challenge `i − 1`, and [`ProveRounds::finish_rounds`] the last.
@@ -273,8 +273,8 @@ where
 /// carries soundness.
 ///
 /// `instance.input_claim` must be derivable from values already absorbed:
-/// it is bound with [`jolt_transcript::PrivateChannel::bind_derived`], which a masked channel
-/// does not absorb.
+/// it is bound with [`jolt_transcript::PrivateChannel::bind_derived`], which
+/// a clear transcript absorbs as a public value.
 ///
 /// # Errors
 ///
