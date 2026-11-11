@@ -20,7 +20,7 @@ use super::one_hot_trace_setup_shape;
 use super::preprocessing::{AkitaProverPreprocessing, AkitaVc, AkitaVerifierPreprocessing};
 use crate::{PreprocessingError, ProverConfig};
 
-pub(super) fn provision(
+pub(crate) fn provision(
     preprocessing: &mut AkitaProverPreprocessing,
     config: &ProverConfig,
     untrusted: bool,

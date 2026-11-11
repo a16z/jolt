@@ -1,7 +1,7 @@
 //! The Akita prove path: native trace-group commitments and heterogeneous batched openings.
 
 #[cfg(feature = "zk")]
-mod capacity;
+pub(crate) mod capacity;
 pub mod preprocessing;
 #[cfg(not(feature = "zk"))]
 mod prover;
