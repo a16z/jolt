@@ -1,3 +1,4 @@
+use crate::single::SumcheckShape;
 use jolt_field::Field;
 use jolt_transcript::VerificationError;
 
@@ -18,7 +19,7 @@ pub enum SumcheckError<F: Field> {
     /// A round polynomial exceeded the declared degree bound.
     #[error("degree bound exceeded: degree {got}, max {max}")]
     DegreeBoundExceeded {
-        /// Actual degree of the offending round polynomial.
+        /// Reported degree; fixed-work validation may include trailing zeros.
         got: usize,
         /// Maximum allowed degree from the claim.
         max: usize,
@@ -315,6 +316,27 @@ pub enum SumcheckError<F: Field> {
     /// state returned `None` because every one of its rounds is already bound.
     #[error("round {round}: the equality state has no unbound round")]
     InvalidEqRoundState { round: usize },
+
+    #[error("sumcheck round count {rounds} exceeds u32::MAX")]
+    RoundCountOutOfRange { rounds: usize },
+
+    #[error("invalid sumcheck input: {reason}")]
+    InvalidInput { reason: &'static str },
+
+    #[error("sumcheck channel shape {got:?} does not match instance shape {expected:?}")]
+    ChannelShapeMismatch {
+        expected: SumcheckShape,
+        got: SumcheckShape,
+    },
+
+    /// A round asked a channel to price its proof of work at a degree other
+    /// than the one the channel's nonces were checked for.
+    #[error("round {round} priced at degree {got}, but the channel prices degree {expected}")]
+    RoundDegreeMismatch {
+        round: usize,
+        expected: usize,
+        got: usize,
+    },
 }
 
 impl<F: Field> From<VerificationError> for SumcheckError<F> {
