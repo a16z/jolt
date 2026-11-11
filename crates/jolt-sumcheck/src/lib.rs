@@ -144,9 +144,7 @@ pub use domain::{
     BooleanHypercube, CenteredIntegerDomain, EqFactoredRound, SumcheckDomain, SumcheckDomainSpec,
 };
 pub use error::SumcheckError;
-pub use masked::{
-    receive_masked_rounds, BatchedMaskedRounds, MaskedRound, MaskedRoundReader, RoundWire,
-};
+pub use masked::{receive_masked_rounds, BatchedMaskedRounds, MaskedRound, PadSlots, RoundWire};
 #[cfg(feature = "prover")]
 pub use pow::grind_round;
 pub use pow::round_pow_bits;
@@ -172,8 +170,13 @@ pub use round_proof::{
 };
 pub use schedule::{DegreeSchedule, MemberDegrees};
 #[cfg(feature = "prover")]
-pub use single::prove_single;
 pub use single::{
-    verify_single, SingleFormat, SingleInstance, SingleReduction, SingleSumcheckProof,
+    prove_single, prove_single_with, ClearProverRounds, FullRounds, ProveSingleRounds, ProverRound,
+    ProverRoundChannel,
+};
+pub use single::{
+    verify_single, verify_single_with, visit_single_rounds, BindScalarClaim, ClearVerifierRounds,
+    RoundSpec, SingleFormat, SingleInstance, SingleReduction, SingleSumcheckProof, SumcheckShape,
+    SumcheckShapeError, VerifierRoundChannel,
 };
 pub use verifier::SumcheckVerifier;
