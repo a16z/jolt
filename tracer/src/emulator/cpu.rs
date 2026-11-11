@@ -1848,6 +1848,7 @@ mod test_cpu {
             "{logs}"
         );
     }
+
     #[test]
     fn advice_write_enforces_guest_load_bounds() {
         let config = MemoryConfig {
