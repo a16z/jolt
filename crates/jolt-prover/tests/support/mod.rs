@@ -13,7 +13,7 @@ use jolt_host::{JoltProgramSource, Program};
 use jolt_program::execution::{ExecutionBackend, JoltProgram, TraceData, TraceInputs, TraceOutput};
 use jolt_program::preprocess::JoltProgramPreprocessing;
 use jolt_prover::ProverConfig;
-use jolt_riscv::JoltTraceRow;
+use jolt_riscv::{JoltInstructionKind, JoltTraceRow};
 use tracer::execution_backend::TracerBackend;
 
 #[cfg(feature = "field-inline")]
@@ -178,12 +178,17 @@ fn fill_trace_domain(trace: TraceOutput, rows: usize) -> TraceOutput {
     let stall = *filled
         .last()
         .expect("a traced guest ends in its stall jump");
+    let instruction = stall.instruction();
+    assert!(
+        instruction.instruction_kind == JoltInstructionKind::JAL && instruction.operands.imm == 0,
+        "full-domain trace must end in a JAL jump to its own PC"
+    );
     let mut registers = stall.registers();
     if let Some(link) = registers.rd.as_mut() {
         link.pre_value = link.post_value;
     }
     let repeat = JoltTraceRow::new(
-        stall.instruction(),
+        instruction,
         registers,
         stall.ram_access(),
         u32::try_from(stall.pc()).expect("bytecode PC fits u32"),
