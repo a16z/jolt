@@ -75,7 +75,7 @@ Key abstractions introduced:
   // BatchPrelude is the engine-form head in jolt-sumcheck (no per-stage wrapper)
   ```
 
-  `verify_clear` becomes `begin_batch(clear recorder)` + the `verify_compressed_boolean` tail —
+  `verify_clear` becomes `begin_batch(clear recorder)` + the `verify_compressed_scheduled` tail —
   a behavior-preserving refactor gated by the verifier fixture suites. Absorb-or-not is decided by
   the recorder **type**; there is no runtime boolean deciding whether transcript bytes are written.
 

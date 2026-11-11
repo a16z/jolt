@@ -176,7 +176,7 @@ fn clear_engine_twin_matches_generated_verify_clear() {
     let output_values = synthetic_output_values();
     let recorded = recorder.finish(&output_values, &mut prover_state).unwrap();
 
-    // Verifier: draw → begin_batch → verify_compressed_boolean → output-claim
+    // Verifier: draw → begin_batch → verify_compressed_scheduled → output-claim
     // absorbs (the low-level clear path the composed `verify_clear` wraps).
     let mut verifier_transcript =
         prover_transcript::<Keccak>(&jolt_transcript::protocol_tag(b"engine-twin"), b"");
@@ -191,9 +191,8 @@ fn clear_engine_twin_matches_generated_verify_clear() {
         )
         .unwrap();
     let reduction = SumcheckProof::<Fr, Bn254G1>::from(recorded.proof)
-        .verify_compressed_boolean(
-            verifier_batch.max_num_vars,
-            verifier_batch.max_degree,
+        .verify_compressed_scheduled(
+            &verifier_batch.degrees,
             verifier_batch.claimed_sum,
             &mut verifier_transcript,
         )
@@ -286,8 +285,8 @@ fn committed_engine_twin_matches_generated_verify_zk() {
             prover_coefficients.registers_val_evaluation,
         ],
     );
-    assert_eq!(consistency.max_num_vars, batch.max_num_vars);
-    assert_eq!(consistency.max_degree, batch.max_degree);
+    assert_eq!(consistency.max_num_vars, batch.max_num_vars());
+    assert_eq!(consistency.max_degree, batch.degrees.max_degree());
     assert_eq!(
         prover_state.verifier_message::<[u8; 32]>(),
         verifier_transcript.verifier_message::<[u8; 32]>()

@@ -13,7 +13,7 @@ use jolt_spartan_verifier::{
 };
 use jolt_sumcheck::{
     prove_batch, BatchMember, BatchPrelude, ClearSumcheckRecorder, CompressedSumcheckProof,
-    ProveRounds, SequentialRounds, SumcheckRecorder,
+    DegreeSchedule, ProveRounds, SequentialRounds, SumcheckRecorder,
 };
 use jolt_transcript::{Encoding, FieldTranscript, ProverTranscript};
 
@@ -109,8 +109,7 @@ fn prove_rounds<F: JoltField + Encoding>(
             rounds: member.num_rounds(),
             offset: 0,
         }],
-        member.num_rounds(),
-        degree,
+        DegreeSchedule::uniform(member.num_rounds(), degree),
     )?;
     let mut recorder = ClearSumcheckRecorder::<F>::new();
     let result = prove_batch(

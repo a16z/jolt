@@ -6,8 +6,9 @@
 use jolt_field::{Prime128Offset275, Ring};
 use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::{
-    prove_batch, BatchMember, BatchPrelude, BooleanHypercube, ClearSumcheckRecorder, ProveRounds,
-    SequentialRounds, SumcheckClaim, SumcheckError, SumcheckRecorder, SumcheckVerifier,
+    prove_batch, BatchMember, BatchPrelude, BooleanHypercube, ClearSumcheckRecorder,
+    DegreeSchedule, ProveRounds, SequentialRounds, SumcheckClaim, SumcheckError, SumcheckRecorder,
+    SumcheckVerifier,
 };
 use jolt_transcript::{
     prover_transcript, verifier_transcript, FieldTranscript, Keccak, Transcript,
@@ -54,8 +55,7 @@ fn main() -> Result<(), SumcheckError<F>> {
             rounds: 1,
             offset: 0,
         }],
-        1,
-        1,
+        DegreeSchedule::uniform(1, 1),
     )?;
     let mut member = LinearRound;
     let mut members: [&mut dyn ProveRounds<F>; 1] = [&mut member];
