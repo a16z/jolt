@@ -2,12 +2,12 @@ use crate::{
     BindingOrder, Endianness, EqPolynomial, PointLike, PointRef, Polynomial, UnivariatePoly,
     HIGH_TO_LOW,
 };
-use jolt_field::{Field, JoltField};
+use jolt_field::JoltField;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct GruenSplitEqPolynomial<F: Field> {
+pub struct GruenSplitEqPolynomial<F: JoltField> {
     current_index: usize,
     current_scalar: F,
     point: Vec<F>,
@@ -16,7 +16,7 @@ pub struct GruenSplitEqPolynomial<F: Field> {
     binding_order: BindingOrder,
 }
 
-impl<F: Field> GruenSplitEqPolynomial<F> {
+impl<F: JoltField> GruenSplitEqPolynomial<F> {
     pub fn new<P: PointLike<Coord = F> + ?Sized>(point: &P, binding_order: BindingOrder) -> Self {
         Self::new_with_scaling(point, binding_order, None)
     }
@@ -126,9 +126,7 @@ impl<F: Field> GruenSplitEqPolynomial<F> {
             .checked_mul(size_of::<F>())?
             .checked_add(vars.checked_add(1)?.checked_mul(size_of::<Vec<F>>())?)
     }
-}
 
-impl<F: JoltField> GruenSplitEqPolynomial<F> {
     pub fn current_scalar(&self) -> F {
         self.current_scalar
     }
