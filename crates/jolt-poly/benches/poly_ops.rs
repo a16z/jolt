@@ -1,11 +1,8 @@
 #![expect(unused_results)]
-use jolt_poly::Budget;
 
 use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion};
-use jolt_field::{
-    Field, FpExt4, Fr, JoltField, Prime128Offset275, Prime128Offset6A23801F, Prime32Offset99,
-};
-use jolt_poly::{EqPolynomial, PointRef, Polynomial, TensorEqTable, UnivariatePoly};
+use jolt_field::{Field, FpExt4, Fr, JoltField, Prime128Offset6A23801F, Prime32Offset99};
+use jolt_poly::{Budget, EqPolynomial, PointRef, Polynomial, TensorEqTable, UnivariatePoly};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
 
@@ -153,60 +150,40 @@ fn bench_eq_field<F: Field>(c: &mut Criterion, field: &str) {
     group.finish();
 }
 
+// Each case compares with `eq_orders/Fr/le` at the same size: the points share
+// seeds and coordinate order.
 fn bench_eq_builders(c: &mut Criterion) {
-    bench_eq_builders_field::<Fr>(c, "Fr");
-    bench_eq_builders_field::<Prime128Offset275>(c, "Prime128Offset275");
-    bench_eq_builders_field::<FpExt4<Prime32Offset99>>(c, "FpExt4");
-}
-
-fn bench_eq_builders_field<F: Field>(c: &mut Criterion, field: &str) {
-    let mut group = c.benchmark_group(format!("eq_builders/{field}"));
-    for n in 12..=18 {
-        let mut rng = ChaCha20Rng::seed_from_u64(0xe12 + n as u64);
-        let r: Vec<F> = (0..n).map(|_| F::random(&mut rng)).collect();
+    let le_point = |n: usize| -> Vec<Fr> {
+        let mut rng = ChaCha20Rng::seed_from_u64(300 + n as u64);
+        (0..n).map(|_| Fr::random(&mut rng)).collect()
+    };
+    let budget = Budget {
+        max_bytes: usize::MAX,
+    };
+    let mut group = c.benchmark_group("eq_builders/Fr");
+    for n in [14, 17, 20] {
+        let r = le_point(n);
         let point = PointRef::low_to_high(&r);
-        group.bench_function(BenchmarkId::new("evals", n), |bench| {
-            bench.iter(|| EqPolynomial::<F>::evals(std::hint::black_box(&point), None));
-        });
         group.bench_function(BenchmarkId::new("evals_budget", n), |bench| {
-            bench.iter(|| {
-                EqPolynomial::<F>::evals_in(
-                    std::hint::black_box(&point),
-                    None,
-                    Budget {
-                        max_bytes: usize::MAX,
-                    },
-                )
-            });
+            bench.iter(|| EqPolynomial::<Fr>::evals_in(std::hint::black_box(&point), None, budget));
         });
+    }
+    for n in [16, 20] {
+        let r = le_point(n);
+        let point = PointRef::low_to_high(&r);
         group.bench_function(BenchmarkId::new("mapped", n), |bench| {
             bench.iter(|| {
-                EqPolynomial::<F>::evals_mapped(std::hint::black_box(&point), None, |x| x * x)
+                EqPolynomial::<Fr>::evals_mapped(std::hint::black_box(&point), None, |x| x * x)
             });
         });
-        group.bench_function(BenchmarkId::new("evals_then_map", n), |bench| {
-            bench.iter(|| {
-                let mut table = EqPolynomial::<F>::evals(std::hint::black_box(&point), None);
-                #[cfg(feature = "parallel")]
-                {
-                    use rayon::prelude::*;
-                    table.par_iter_mut().for_each(|x| *x *= *x);
-                }
-                #[cfg(not(feature = "parallel"))]
-                for x in &mut table {
-                    *x *= *x;
-                }
-                table
-            });
-        });
-        for len in [1, (1 << n) / 3, 1 << n] {
-            group.bench_function(BenchmarkId::new(format!("prefix_{len}"), n), |bench| {
-                bench.iter(|| {
-                    EqPolynomial::<F>::evals_prefix(std::hint::black_box(&point), None, len)
-                });
-            });
-        }
     }
+    let r = le_point(20);
+    let point = PointRef::low_to_high(&r);
+    group.bench_function(BenchmarkId::new("prefix_third", 20), |bench| {
+        bench.iter(|| {
+            EqPolynomial::<Fr>::evals_prefix(std::hint::black_box(&point), None, (1 << 20) / 3)
+        });
+    });
     group.finish();
 }
 
