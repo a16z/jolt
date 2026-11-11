@@ -15,13 +15,19 @@
 
 use common::constants::{RAM_START_ADDRESS, REGISTER_COUNT};
 use common::jolt_device::JoltDevice;
-use jolt_platform::{JOLT_ADVICE_WRITE_CALL_ID, JOLT_CYCLE_TRACK_CALL_ID, JOLT_PRINT_CALL_ID};
+use jolt_platform::{
+    JOLT_ADVICE_WRITE_CALL_ID, JOLT_CYCLE_TRACK_CALL_ID, JOLT_PRINT_CALL_ID, JOLT_PRINT_LINE,
+    JOLT_PRINT_STRING,
+};
 use jolt_riscv::{JoltInstructionKind, JoltInstructionRow, NormalizedOperands};
 use jolt_tracer_x86::harness::{
     self, run_program, single_row_program, MEM_CAPACITY, SCRATCH_DWORDS, SCRATCH_START, TEST_ADDR,
 };
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
+use std::fs::File;
+use std::io::{Read, Write};
+use std::os::fd::FromRawFd;
 use tracer::emulator::cpu::Cpu;
 use tracer::emulator::terminal::DummyTerminal;
 use tracer::instruction::Instruction;
@@ -467,8 +473,9 @@ fn host_io(rng: &mut StdRng) -> Instance {
         0..=2 => (scratch_slot(rng), rng.gen_range(0..48)),
         3 => (layout.input_start, rng.gen_range(1..16)),
         // Ranges a guest load rejects: past the memory plane, between the
-        // I/O region and RAM, in an emulator peripheral, and wrapping
-        // around the address space or past 4 GiB.
+        // I/O region and RAM, in an emulator peripheral, wrapping around
+        // the address space, and past the plane at the top of the `u32`
+        // range that print and cycle-marker pointers use.
         4 => (RAM_START_ADDRESS + MEM_CAPACITY - 4, 8),
         5 => (layout.io_end + 1, 4),
         6 => (0x1020, 4),
@@ -491,6 +498,74 @@ fn host_io(rng: &mut StdRng) -> Instance {
         _ => rng.gen::<u32>() as u64 | 1 << 33,
     };
     i
+}
+
+/// Runs one `VirtualHostIO` print natively with fd 1 redirected to a pipe,
+/// and returns the bytes it wrote to stdout.
+fn native_print_output(ptr: u64, len: u64, event: u32) -> Vec<u8> {
+    let mut pre_regs = [0u64; REGS];
+    pre_regs[10] = u64::from(JOLT_PRINT_CALL_ID);
+    pre_regs[11] = ptr;
+    pre_regs[12] = len;
+    pre_regs[13] = u64::from(event);
+    let scratch = [u64::from_le_bytes(*b"hi there")];
+    let program = single_row_program(default_row(kind_by_name("VirtualHostIO")));
+
+    let mut fds = [0; 2];
+    // SAFETY: `fds` has room for the two descriptors `pipe` writes.
+    assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0);
+    let [read_end, write_end] = fds;
+    // Nextest runs each test in its own process, so no other test writes to
+    // fd 1 while it points at the pipe.
+    std::io::stdout().flush().unwrap();
+    // SAFETY: duplicates fd 1, which stays open for the whole process.
+    let saved_stdout = unsafe { libc::dup(1) };
+    assert!(saved_stdout >= 0);
+    // SAFETY: both descriptors are open; this function owns `write_end`.
+    assert!(unsafe { libc::dup2(write_end, 1) } >= 0);
+    let outcome = run_program(&program, &pre_regs, &scratch, &[]);
+    std::io::stdout().flush().unwrap();
+    // SAFETY: both descriptors are open; this function owns `saved_stdout`.
+    assert!(unsafe { libc::dup2(saved_stdout, 1) } >= 0);
+    // SAFETY: closes the two descriptors this function owns and no longer
+    // uses. The pipe's last writer closes, so the read below ends.
+    assert_eq!(unsafe { libc::close(saved_stdout) }, 0);
+    // SAFETY: as above.
+    assert_eq!(unsafe { libc::close(write_end) }, 0);
+    let outcome = outcome.unwrap();
+    assert_eq!(outcome.exit, 1, "{:?}", outcome.helper_error);
+
+    // SAFETY: `read_end` is an open pipe descriptor this function owns and
+    // hands to the `File`, which closes it.
+    let mut pipe = unsafe { File::from_raw_fd(read_end) };
+    let mut output = Vec::new();
+    let _ = pipe.read_to_end(&mut output).unwrap();
+    output
+}
+
+#[test]
+fn native_prints_exactly_the_readable_messages() {
+    let layout = JoltDevice::new(&harness::memory_config()).memory_layout;
+    assert_eq!(
+        native_print_output(SCRATCH_START, 8, JOLT_PRINT_LINE),
+        b"hi there\n"
+    );
+    assert_eq!(
+        native_print_output(SCRATCH_START, 2, JOLT_PRINT_STRING),
+        b"hi"
+    );
+    assert_eq!(native_print_output(SCRATCH_START, 8, 3), b"");
+    for (ptr, len) in [
+        (RAM_START_ADDRESS + MEM_CAPACITY - 4, 8),
+        (layout.io_end + 1, 4),
+        (0x1020, 4),
+    ] {
+        assert_eq!(
+            native_print_output(ptr, len, JOLT_PRINT_STRING),
+            b"",
+            "print at {ptr:#x} of length {len}"
+        );
+    }
 }
 
 fn imm_j_u64(rng: &mut StdRng, kind: JoltInstructionKind) -> Instance {

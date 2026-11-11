@@ -2,8 +2,10 @@
 //! (`VirtualHostIO`). A host call never aborts the trace: a call this module
 //! rejects is logged and ignored, and every backend rejects the same calls.
 
-use core::fmt;
+use core::fmt::{Display, Formatter, Result as FmtResult};
 use std::io::{Result as IoResult, Write};
+
+use jolt_platform::{JOLT_PRINT_LINE, JOLT_PRINT_STRING};
 
 /// Exclusive end of the addresses a print or cycle-marker string can occupy:
 /// the guest passes those pointers and lengths as `u32`.
@@ -30,8 +32,8 @@ pub enum HostReadError {
     Allocation { len: u64 },
 }
 
-impl fmt::Display for HostReadError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl Display for HostReadError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         match self {
             Self::Unreadable { ptr, len } => {
                 write!(f, "guest range at {ptr:#x} of length {len} is not readable")
@@ -73,8 +75,8 @@ pub fn read_host_bytes(
 /// `None` for an unknown event type.
 pub fn print_terminator(event_type: u32) -> Option<&'static str> {
     match event_type {
-        jolt_platform::JOLT_PRINT_STRING => Some(""),
-        jolt_platform::JOLT_PRINT_LINE => Some("\n"),
+        JOLT_PRINT_STRING => Some(""),
+        JOLT_PRINT_LINE => Some("\n"),
         _ => None,
     }
 }
