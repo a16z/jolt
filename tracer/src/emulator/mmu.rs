@@ -5,7 +5,7 @@ pub const DRAM_BASE: u64 = RAM_START_ADDRESS;
 use crate::emulator::decode_cache::DecodeCache;
 use crate::emulator::memory::Memory;
 use common::constants::{RAM_START_ADDRESS, STACK_CANARY_SIZE};
-use common::jolt_device::JoltDevice;
+use common::jolt_device::{JoltDevice, MemoryLayout};
 use jolt_riscv::{RamRead, RamWrite};
 
 use super::cpu::{get_privilege_mode, PrivilegeMode, Trap, TrapType};
@@ -40,6 +40,118 @@ enum MemoryAccessType {
     Execute,
     Read,
     Write,
+}
+
+/// Why an access at an effective address falls outside the Jolt memory
+/// layout.
+#[derive(Clone, Copy, Debug)]
+enum AddressFault {
+    IoOverflow,
+    IoUnderflow,
+    UnmappedDevice,
+    StackCanary,
+    HeapOverflow,
+    BeyondHeap,
+}
+
+impl AddressFault {
+    #[cold]
+    #[inline(never)]
+    fn panic(self, layout: &MemoryLayout, ea: u64, is_write: bool) -> ! {
+        let (action, verb) = if is_write {
+            ("Store", "write to")
+        } else {
+            ("Load", "read from")
+        };
+        match self {
+            Self::IoOverflow => {
+                panic!("I/O overflow: Attempted to {verb} 0x{ea:X}. Out of bounds.\n{layout:#?}")
+            }
+            Self::IoUnderflow => {
+                panic!("I/O underflow: Attempted to {verb} 0x{ea:X}. Out of bounds.\n{layout:#?}")
+            }
+            Self::UnmappedDevice => panic!(
+                "Illegal device {}: Unknown memory mapping: 0x{ea:X}\n{layout:#?}",
+                action.to_lowercase(),
+            ),
+            Self::StackCanary => panic!(
+                "Stack overflow: attempted to {verb} 0x{ea:X}, which is in the stack canary region. \
+                Increase stack_size in MemoryConfig (currently {} bytes).",
+                layout.stack_size,
+            ),
+            Self::HeapOverflow => panic!(
+                "Heap overflow: attempted to {verb} 0x{ea:X}, which is beyond the heap. \
+                Increase heap_size in MemoryConfig (currently {} bytes).",
+                layout.heap_size,
+            ),
+            Self::BeyondHeap => {
+                panic!("Illegal Memory Access: Attempted to {verb} 0x{ea:X}.\n{layout:#?}")
+            }
+        }
+    }
+}
+
+/// Checks a guest access at effective address `ea` against the Jolt memory
+/// layout.
+#[inline]
+fn address_fault(jolt_device: &JoltDevice, ea: u64, is_write: bool) -> Option<AddressFault> {
+    let layout = &jolt_device.memory_layout;
+    if ea < DRAM_BASE {
+        if ea > layout.io_end {
+            return Some(AddressFault::IoOverflow);
+        }
+        if ea < layout.get_lowest_address() && ea > RAM_START_ADDRESS - 8 {
+            return Some(AddressFault::IoUnderflow);
+        }
+        let ok = if is_write {
+            jolt_device.is_output(ea) || jolt_device.is_panic(ea) || jolt_device.is_termination(ea)
+        } else {
+            device_readable(jolt_device, ea)
+        };
+        (!ok).then_some(AddressFault::UnmappedDevice)
+    } else if is_write {
+        // These errors aren't necessarily correct as there's no way to distinguish between an
+        // attempt to write to the stack vs heap, but they're trying their best.
+        // The canary is the half-open range [stack_end, stack_end + STACK_CANARY_SIZE):
+        // the linker script places it directly after the program image
+        // (`__stack_bottom == stack_end`) and the stack proper starts right after it.
+        if ea >= layout.stack_end && ea < layout.stack_end + STACK_CANARY_SIZE {
+            Some(AddressFault::StackCanary)
+        } else if ea >= layout.heap_end {
+            Some(AddressFault::HeapOverflow)
+        } else {
+            None
+        }
+    } else {
+        (ea >= layout.heap_end).then_some(AddressFault::BeyondHeap)
+    }
+}
+
+/// Whether [`JoltDevice::load`] serves the byte at `address` (it asserts on
+/// any other address below RAM).
+#[inline]
+fn device_readable(jolt_device: &JoltDevice, address: u64) -> bool {
+    jolt_device.is_input(address)
+        || jolt_device.is_trusted_advice(address)
+        || jolt_device.is_untrusted_advice(address)
+        || jolt_device.is_output(address)
+        || jolt_device.is_panic(address)
+        || jolt_device.is_termination(address)
+        || address <= RAM_START_ADDRESS - 8
+}
+
+/// The emulator peripheral, if any, at a physical address below RAM; the
+/// tracer does not model any of them.
+#[inline]
+fn unsupported_peripheral(address: u64) -> Option<&'static str> {
+    match address {
+        0x00001020..=0x00001fff => Some("dtb"),
+        0x02000000..=0x0200ffff => Some("clint"),
+        0x0C000000..=0x0fffffff => Some("plic"),
+        0x10000000..=0x100000ff => Some("UART"),
+        0x10001000..=0x10001FFF => Some("disk"),
+        _ => None,
+    }
 }
 
 impl Mmu {
@@ -110,70 +222,34 @@ impl Mmu {
 
     #[inline]
     fn assert_effective_address(&self, ea: u64, is_write: bool) {
-        if self.jolt_device.is_none() {
+        let Some(jolt_device) = self.jolt_device.as_ref() else {
             return;
-        }
-
-        let jolt_device = self.jolt_device.as_ref().unwrap();
-        let layout = &jolt_device.memory_layout;
-        let (action, verb) = if is_write {
-            ("Store", "write to")
-        } else {
-            ("Load", "read from")
         };
+        if let Some(fault) = address_fault(jolt_device, ea, is_write) {
+            fault.panic(&jolt_device.memory_layout, ea, is_write);
+        }
+    }
 
-        if ea < DRAM_BASE {
-            assert!(
-                ea <= layout.io_end,
-                "I/O overflow: Attempted to {verb} 0x{ea:X}. Out of bounds.\n{layout:#?}",
-            );
-            assert!(
-                ea >= layout.get_lowest_address() || ea <= RAM_START_ADDRESS - 8,
-                "I/O underflow: Attempted to {verb} 0x{ea:X}. Out of bounds.\n{layout:#?}",
-            );
-
-            let ok = if is_write {
-                jolt_device.is_output(ea)
-                    || jolt_device.is_panic(ea)
-                    || jolt_device.is_termination(ea)
-            } else {
-                jolt_device.is_input(ea)
-                    || jolt_device.is_trusted_advice(ea)
-                    || jolt_device.is_untrusted_advice(ea)
-                    || jolt_device.is_output(ea)
-                    || jolt_device.is_panic(ea)
-                    || jolt_device.is_termination(ea)
-                    || ea <= RAM_START_ADDRESS - 8
-            };
-            assert!(
-                ok,
-                "Illegal device {}: Unknown memory mapping: 0x{ea:X}\n{layout:#?}",
-                action.to_lowercase(),
-            );
-        } else {
-            if is_write {
-                // These errors aren't necessarily correct as there's no way to distinguish between an
-                // attempt to write to the stack vs heap, but they're trying their best.
-                // The canary is the half-open range [stack_end, stack_end + STACK_CANARY_SIZE):
-                // the linker script places it directly after the program image
-                // (`__stack_bottom == stack_end`) and the stack proper starts right after it.
-                assert!(
-                    ea < layout.stack_end || ea >= layout.stack_end + STACK_CANARY_SIZE,
-                    "Stack overflow: attempted to {verb} 0x{ea:X}, which is in the stack canary region. \
-                    Increase stack_size in MemoryConfig (currently {} bytes).",
-                    layout.stack_size,
-                );
-                assert!(
-                    ea < layout.heap_end,
-                    "Heap overflow: attempted to {verb} 0x{ea:X}, which is beyond the heap. \
-                    Increase heap_size in MemoryConfig (currently {} bytes).",
-                    layout.heap_size,
-                );
-            } else {
-                assert!(
-                    ea < layout.heap_end,
-                    "Illegal Memory Access: Attempted to {verb} 0x{ea:X}.\n{layout:#?}",
-                );
+    /// Whether [`Mmu::load`] at `address` returns without panicking. A host
+    /// call (`VirtualHostIO`) checks every byte it reads with this first, so
+    /// a bad guest pointer skips the call instead of aborting the trace.
+    pub(crate) fn is_host_readable(&self, address: u64) -> bool {
+        // Jolt never enables address translation, and the page walk has
+        // panicking paths of its own.
+        if !matches!(self.addressing_mode, AddressingMode::None) {
+            return false;
+        }
+        let ea = self.get_effective_address(address);
+        match self.jolt_device.as_ref() {
+            Some(jolt_device) if address_fault(jolt_device, ea, false).is_some() => false,
+            _ if ea >= DRAM_BASE => self.memory.validate_address(ea),
+            None => false,
+            // `load` also records the containing doubleword (`trace_load`),
+            // which reads all eight of its bytes from the device.
+            Some(jolt_device) => {
+                let doubleword = ea & !7;
+                unsupported_peripheral(ea).is_none()
+                    && (doubleword..doubleword + 8).all(|a| device_readable(jolt_device, a))
             }
         }
     }
@@ -442,28 +518,17 @@ impl Mmu {
         self.assert_effective_load_address(effective_address);
         match effective_address >= DRAM_BASE {
             true => self.memory.read_byte(effective_address),
-            false => match effective_address {
-                0x00001020..=0x00001fff => panic!("load_raw:dtb is unsupported."),
-                0x02000000..=0x0200ffff => panic!("load_raw:clint is unsupported."),
-                0x0C000000..=0x0fffffff => panic!("load_raw:plic is unsupported."),
-                0x10000000..=0x100000ff => panic!("load_raw:UART is unsupported."),
-                0x10001000..=0x10001FFF => panic!("load_raw:disk is unsupported."),
-                _ => {
-                    if let Some(jolt_device) = self.jolt_device.as_ref() {
-                        if jolt_device.is_input(effective_address)
-                            || jolt_device.is_trusted_advice(effective_address)
-                            || jolt_device.is_untrusted_advice(effective_address)
-                            || jolt_device.is_output(effective_address)
-                            || jolt_device.is_panic(effective_address)
-                            || jolt_device.is_termination(effective_address)
-                            || effective_address <= RAM_START_ADDRESS - 8
-                        {
-                            return jolt_device.load(effective_address);
-                        }
-                    }
-                    panic!("Load Failed: Unknown memory mapping {effective_address:X}.");
+            false => {
+                if let Some(name) = unsupported_peripheral(effective_address) {
+                    panic!("load_raw:{name} is unsupported.");
                 }
-            },
+                if let Some(jolt_device) = self.jolt_device.as_ref() {
+                    if device_readable(jolt_device, effective_address) {
+                        return jolt_device.load(effective_address);
+                    }
+                }
+                panic!("Load Failed: Unknown memory mapping {effective_address:X}.");
+            }
         }
     }
 
@@ -989,6 +1054,7 @@ mod test_mmu {
     use super::*;
     use crate::emulator::terminal::DummyTerminal;
     use common::jolt_device::MemoryConfig;
+    use std::panic::{catch_unwind, AssertUnwindSafe};
 
     fn setup_mmu() -> Mmu {
         let terminal = Box::new(DummyTerminal::default());
@@ -1007,6 +1073,57 @@ mod test_mmu {
         mmu.init_memory(capacity);
 
         mmu
+    }
+
+    /// `is_host_readable` must hold exactly where `load` returns normally,
+    /// including in the gap between a small I/O region and RAM.
+    #[test]
+    fn host_readable_addresses_are_exactly_those_load_accepts() {
+        let small_io = MemoryConfig {
+            max_input_size: 13,
+            max_trusted_advice_size: 3,
+            max_untrusted_advice_size: 0,
+            max_output_size: 5,
+            program_size: Some(1024),
+            ..Default::default()
+        };
+        let mut mmus = vec![setup_mmu(), Mmu::new(Box::new(DummyTerminal::default()))];
+        mmus[1].init_memory(64);
+        let mut device_mmu = Mmu::new(Box::new(DummyTerminal::default()));
+        let device = JoltDevice::new(&small_io);
+        device_mmu.init_memory(device.memory_layout.get_total_memory_size());
+        device_mmu.jolt_device = Some(device);
+        mmus.push(device_mmu);
+
+        for mut mmu in mmus {
+            let mut addresses = vec![
+                0,
+                8,
+                0x1020,
+                0x1000_1fff,
+                0x1000_2000,
+                DRAM_BASE - 9,
+                DRAM_BASE - 8,
+                DRAM_BASE - 1,
+                DRAM_BASE,
+                DRAM_BASE + 63,
+                DRAM_BASE + 64,
+                u64::MAX,
+            ];
+            if let Some(device) = mmu.jolt_device.as_ref() {
+                let layout = &device.memory_layout;
+                let lowest = layout.get_lowest_address();
+                addresses.extend([lowest - 1, lowest, layout.input_start, layout.termination]);
+                addresses.extend((layout.io_end - 8)..=(layout.io_end + 8));
+                addresses.extend([layout.heap_end - 1, layout.heap_end]);
+            }
+            for address in addresses {
+                let readable = mmu.is_host_readable(address);
+                let loads = catch_unwind(AssertUnwindSafe(|| mmu.load(address)))
+                    .is_ok_and(|result| result.is_ok());
+                assert_eq!(readable, loads, "address {address:#x}");
+            }
+        }
     }
 
     #[test]

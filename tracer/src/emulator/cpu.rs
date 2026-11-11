@@ -1074,13 +1074,17 @@ impl Cpu {
         &mut self.mmu
     }
 
-    pub fn handle_jolt_cycle_marker(&mut self, ptr: u32, len: u32, event: u32) -> Result<(), Trap> {
+    /// Handles a cycle-marker host call. An unknown event or an unreadable
+    /// label is logged and ignored.
+    pub fn handle_jolt_cycle_marker(&mut self, ptr: u32, len: u32, event: u32) {
         if self.host_io == HostIo::Replay {
-            return Ok(());
+            return;
         }
         match event {
             JOLT_CYCLE_MARKER_START => {
-                let label = self.read_string(ptr, len)?;
+                let Some(label) = self.read_host_string(ptr, len) else {
+                    return;
+                };
                 let marker = ActiveMarker {
                     start_instrs: self.executed_instrs,
                     start_trace_len: self.trace_len,
@@ -1091,7 +1095,9 @@ impl Cpu {
             }
 
             JOLT_CYCLE_MARKER_END => {
-                let label = self.read_string(ptr, len)?;
+                let Some(label) = self.read_host_string(ptr, len) else {
+                    return;
+                };
                 if let Some(mark) = self.active_markers.remove(&label) {
                     let real = self.executed_instrs - mark.start_instrs;
                     let total = self.trace_len - mark.start_trace_len;
@@ -1107,46 +1113,65 @@ impl Cpu {
                     warn!("Attempt to end a marker '{label}' that was never started");
                 }
             }
-            _ => {
-                panic!("Unexpected event: event must match either start or end marker.")
-            }
+            _ => warn!("Ignoring cycle-marker host call with unknown event {event}"),
         }
-        Ok(())
     }
 
-    pub fn handle_jolt_print(&mut self, ptr: u32, len: u32, event_type: u32) -> Result<(), Trap> {
+    /// Handles a print host call. An unknown event type or an unreadable
+    /// message is logged and ignored.
+    pub fn handle_jolt_print(&mut self, ptr: u32, len: u32, event_type: u32) {
         if self.host_io == HostIo::Replay {
-            return Ok(());
+            return;
         }
-        let message = self.read_string(ptr, len)?;
-        if event_type == JOLT_PRINT_STRING {
-            print!("{message}");
-        } else if event_type == JOLT_PRINT_LINE {
+        if event_type != JOLT_PRINT_STRING && event_type != JOLT_PRINT_LINE {
+            warn!("Ignoring print host call with unknown event type {event_type}");
+            return;
+        }
+        let Some(message) = self.read_host_string(ptr, len) else {
+            return;
+        };
+        if event_type == JOLT_PRINT_LINE {
             println!("{message}");
         } else {
-            panic!("Unexpected event type: {event_type}");
+            print!("{message}");
         }
-        Ok(())
     }
 
-    pub fn handle_advice_write(&mut self, ptr: u64, len: u64) -> Result<(), Trap> {
-        let mut bytes = Vec::with_capacity(len as usize);
-        for i in 0..len {
-            let (b, _) = self.mmu.load(ptr + i)?;
-            bytes.push(b);
+    /// Appends `len` guest bytes starting at `ptr` to the advice tape. An
+    /// unreadable range is logged and appends nothing.
+    pub fn handle_advice_write(&mut self, ptr: u64, len: u64) {
+        if let Some(bytes) = self.read_host_bytes(ptr, len) {
+            advice_tape_write(self, &bytes);
         }
-        advice_tape_write(self, &bytes);
-        Ok(())
     }
 
-    fn read_string(&mut self, mut addr: u32, len: u32) -> Result<String, Trap> {
+    fn read_host_string(&mut self, ptr: u32, len: u32) -> Option<String> {
+        let bytes = self.read_host_bytes(ptr.into(), len.into())?;
+        Some(String::from_utf8_lossy(&bytes).into_owned())
+    }
+
+    /// Reads the guest bytes `[ptr, ptr + len)` for a host call. Returns
+    /// `None`, before loading anything, when the range wraps around the
+    /// address space or any byte in it is not readable; a load there would
+    /// panic.
+    fn read_host_bytes(&mut self, ptr: u64, len: u64) -> Option<Vec<u8>> {
+        let readable = ptr
+            .checked_add(len)
+            .filter(|&end| (ptr..end).all(|address| self.mmu.is_host_readable(address)));
+        let Some(end) = readable else {
+            if self.host_io == HostIo::Live {
+                warn!(
+                    "Ignoring host call: guest range at {ptr:#x} of length {len} is not readable"
+                );
+            }
+            return None;
+        };
         let mut bytes = Vec::with_capacity(len as usize);
-        for _ in 0..len {
-            let (b, _) = self.mmu.load(addr.into())?;
-            bytes.push(b);
-            addr += 1;
+        for address in ptr..end {
+            let (byte, _) = self.mmu.load(address).ok()?;
+            bytes.push(byte);
         }
-        Ok(String::from_utf8_lossy(&bytes).into_owned())
+        Some(bytes)
     }
 
     /// Track a function call (JAL/JALR instruction that saves callsite information)
@@ -1472,6 +1497,7 @@ mod test_cpu {
     use super::*;
     use crate::emulator::mmu::DRAM_BASE;
     use crate::emulator::terminal::DummyTerminal;
+    use common::jolt_device::{JoltDevice, MemoryConfig};
 
     fn create_cpu() -> Cpu {
         Cpu::new(Box::new(DummyTerminal::default()))
@@ -1665,9 +1691,85 @@ mod test_cpu {
         for (i, byte) in [0xde_u8, 0xad, 0xbe, 0xef].iter().enumerate() {
             cpu.get_mut_mmu().store_raw(DRAM_BASE + i as u64, *byte);
         }
-        cpu.handle_advice_write(DRAM_BASE, 4).unwrap();
+        cpu.handle_advice_write(DRAM_BASE, 4);
         assert_eq!(cpu.advice_tape.len(), 4);
         assert_eq!(advice_tape_read(&mut cpu, 4), Some(0xefbe_adde));
+    }
+
+    fn create_cpu_with_layout() -> Cpu {
+        let mut cpu = create_cpu();
+        let device = JoltDevice::new(&MemoryConfig {
+            program_size: Some(1024),
+            ..Default::default()
+        });
+        cpu.get_mut_mmu()
+            .init_memory(device.memory_layout.get_total_memory_size());
+        cpu.get_mut_mmu().jolt_device = Some(device);
+        cpu
+    }
+
+    #[test]
+    fn host_calls_with_unknown_events_are_ignored() {
+        let mut cpu = create_cpu();
+        cpu.get_mut_mmu().init_memory(64);
+        cpu.get_mut_mmu().store_raw(DRAM_BASE, b'x');
+        let ptr = DRAM_BASE as u32;
+
+        cpu.handle_jolt_cycle_marker(ptr, 1, u32::MAX);
+        cpu.handle_jolt_print(ptr, 1, u32::MAX);
+        assert!(cpu.active_markers.is_empty());
+    }
+
+    #[test]
+    fn host_calls_on_unreadable_memory_are_ignored() {
+        let mut cpu = create_cpu_with_layout();
+        let layout = cpu
+            .get_mut_mmu()
+            .jolt_device
+            .as_ref()
+            .unwrap()
+            .memory_layout
+            .clone();
+        // Past the heap, an emulator peripheral, and the gap above the I/O region.
+        for ptr in [layout.heap_end, 0x1020, layout.io_end + 1] {
+            let ptr32 = u32::try_from(ptr).unwrap();
+            cpu.handle_jolt_print(ptr32, 4, JOLT_PRINT_LINE);
+            cpu.handle_jolt_cycle_marker(ptr32, 4, JOLT_CYCLE_MARKER_START);
+            cpu.handle_advice_write(ptr, 4);
+        }
+
+        // Without a Jolt device: below RAM, and past the end of memory.
+        let mut bare = create_cpu();
+        bare.get_mut_mmu().init_memory(64);
+        for ptr in [0x100, DRAM_BASE + 64] {
+            bare.handle_jolt_print(ptr as u32, 4, JOLT_PRINT_STRING);
+            bare.handle_jolt_cycle_marker(ptr as u32, 4, JOLT_CYCLE_MARKER_START);
+            bare.handle_advice_write(ptr, 4);
+        }
+
+        for cpu in [&cpu, &bare] {
+            assert!(cpu.active_markers.is_empty());
+            assert!(cpu.advice_tape.is_empty());
+        }
+    }
+
+    #[test]
+    fn host_call_ranges_are_read_whole_or_not_at_all() {
+        let mut cpu = create_cpu();
+        cpu.get_mut_mmu().init_memory(64);
+
+        // A u64 range that wraps around the address space, and u32 ranges that
+        // cross 2^32.
+        cpu.handle_advice_write(u64::MAX - 1, 4);
+        cpu.handle_jolt_print(u32::MAX - 1, 4, JOLT_PRINT_STRING);
+        cpu.handle_jolt_cycle_marker(u32::MAX - 1, 4, JOLT_CYCLE_MARKER_START);
+        // A range whose last byte is past the end of memory appends nothing.
+        cpu.handle_advice_write(DRAM_BASE + 60, 5);
+        assert!(cpu.active_markers.is_empty());
+        assert!(cpu.advice_tape.is_empty());
+
+        cpu.handle_advice_write(DRAM_BASE + 60, 4);
+        assert_eq!(cpu.advice_tape.len(), 4);
     }
 
     #[test]
@@ -1702,23 +1804,19 @@ mod test_cpu {
         }
         let ptr = DRAM_BASE as u32;
 
-        cpu.handle_jolt_cycle_marker(ptr, label.len() as u32, JOLT_CYCLE_MARKER_START)
-            .unwrap();
+        cpu.handle_jolt_cycle_marker(ptr, label.len() as u32, JOLT_CYCLE_MARKER_START);
         assert_eq!(cpu.active_markers.len(), 1);
         assert!(cpu.active_markers.contains_key("my_marker"));
 
         // A second start with the same label restarts the span
-        cpu.handle_jolt_cycle_marker(ptr, label.len() as u32, JOLT_CYCLE_MARKER_START)
-            .unwrap();
+        cpu.handle_jolt_cycle_marker(ptr, label.len() as u32, JOLT_CYCLE_MARKER_START);
         assert_eq!(cpu.active_markers.len(), 1);
 
-        cpu.handle_jolt_cycle_marker(ptr, label.len() as u32, JOLT_CYCLE_MARKER_END)
-            .unwrap();
+        cpu.handle_jolt_cycle_marker(ptr, label.len() as u32, JOLT_CYCLE_MARKER_END);
         assert!(cpu.active_markers.is_empty());
 
         // Ending a marker that was never started is tolerated
-        cpu.handle_jolt_cycle_marker(ptr + 64, 0, JOLT_CYCLE_MARKER_END)
-            .unwrap();
+        cpu.handle_jolt_cycle_marker(ptr + 64, 0, JOLT_CYCLE_MARKER_END);
     }
 
     #[test]
@@ -1734,10 +1832,8 @@ mod test_cpu {
         let start_ptr = DRAM_BASE as u32;
         let end_ptr = start_ptr + 32;
 
-        cpu.handle_jolt_cycle_marker(start_ptr, label.len() as u32, JOLT_CYCLE_MARKER_START)
-            .unwrap();
-        cpu.handle_jolt_cycle_marker(end_ptr, label.len() as u32, JOLT_CYCLE_MARKER_END)
-            .unwrap();
+        cpu.handle_jolt_cycle_marker(start_ptr, label.len() as u32, JOLT_CYCLE_MARKER_START);
+        cpu.handle_jolt_cycle_marker(end_ptr, label.len() as u32, JOLT_CYCLE_MARKER_END);
         assert!(cpu.active_markers.is_empty());
     }
 
@@ -1752,8 +1848,7 @@ mod test_cpu {
             for (i, byte) in label.iter().enumerate() {
                 cpu.get_mut_mmu().store_raw(DRAM_BASE + i as u64, *byte);
             }
-            cpu.handle_jolt_cycle_marker(ptr, label.len() as u32, JOLT_CYCLE_MARKER_START)
-                .unwrap();
+            cpu.handle_jolt_cycle_marker(ptr, label.len() as u32, JOLT_CYCLE_MARKER_START);
         }
         assert!(cpu.active_markers.contains_key("aaaa"));
         assert!(cpu.active_markers.contains_key("bbbb"));
@@ -1792,12 +1887,10 @@ mod test_cpu {
             .finish();
 
         tracing::subscriber::with_default(subscriber, || {
-            cpu.handle_jolt_cycle_marker(ptr, label.len() as u32, JOLT_CYCLE_MARKER_START)
-                .unwrap();
+            cpu.handle_jolt_cycle_marker(ptr, label.len() as u32, JOLT_CYCLE_MARKER_START);
             cpu.executed_instrs = 3;
             cpu.trace_len = 5;
-            cpu.handle_jolt_cycle_marker(ptr, label.len() as u32, JOLT_CYCLE_MARKER_START)
-                .unwrap();
+            cpu.handle_jolt_cycle_marker(ptr, label.len() as u32, JOLT_CYCLE_MARKER_START);
         });
 
         let marker = &cpu.active_markers["span"];
