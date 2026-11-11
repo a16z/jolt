@@ -7,8 +7,7 @@ use std::ops::Range;
 
 use jolt_field::{Accumulator, JoltField};
 use jolt_poly::{
-    BindingOrder, EqPolynomial, GruenSplitEqPolynomial, LtPolynomial, Polynomial, TensorEqTable,
-    UnivariatePoly,
+    BindingOrder, EqPolynomial, GruenRound, LtPolynomial, Polynomial, TensorEqTable, UnivariatePoly,
 };
 use jolt_sumcheck::SumcheckError;
 #[cfg(feature = "parallel")]
@@ -631,6 +630,13 @@ pub(crate) fn pin_derived_term_if_derived<F: JoltField, R: ConcreteSumcheck<F>>(
     }
 }
 
+/// The error for a finished equality state: [`jolt_poly::GruenSplitEqPolynomial::round`]
+/// and [`jolt_poly::GruenSplitEqPolynomial::round_mut`] return `None` once every round is
+/// bound.
+pub(crate) fn eq_round_error<F: JoltField>(round: usize) -> SumcheckError<F> {
+    SumcheckError::InvalidEqRoundState { round }
+}
+
 pub(crate) trait GruenRoundMessage<F: JoltField> {
     /// `s(t) = ℓ(t) · q(t)` at `t = 0, 1, …, q_evals.len() − 1`, checked
     /// against `s(0) + s(1) = previous_claim` (the reference tier's round
@@ -675,7 +681,7 @@ pub(crate) trait GruenRoundMessage<F: JoltField> {
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>>;
 }
 
-impl<F: JoltField> GruenRoundMessage<F> for GruenSplitEqPolynomial<F> {
+impl<F: JoltField> GruenRoundMessage<F> for GruenRound<'_, F> {
     fn checked_round_poly(
         &self,
         q_evals: &mut [F],
@@ -683,7 +689,7 @@ impl<F: JoltField> GruenRoundMessage<F> for GruenSplitEqPolynomial<F> {
         round: usize,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
         debug_assert!(q_evals.len() >= 2);
-        let (l_at_0, l_at_1) = self.current_linear_evals();
+        let (l_at_0, l_at_1) = self.linear_evals();
         let l_step = l_at_1 - l_at_0;
         let mut l_eval = l_at_0;
         for q in q_evals.iter_mut() {
@@ -1375,7 +1381,7 @@ mod bundle_access_tests {
 #[cfg(test)]
 mod product_grid_tests {
     #[cfg(feature = "akita")]
-    use jolt_field::Prime128OffsetA7F7;
+    use jolt_field::Prime128Offset6A23801F;
     use jolt_field::{Accumulator, Fr, JoltField};
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;
@@ -1491,7 +1497,7 @@ mod product_grid_tests {
     #[test]
     fn products_match_direct_evaluations_at_every_supported_length_fp128() {
         for factors in 2..=MAX_GRID_FACTORS {
-            assert_product_grid::<Prime128OffsetA7F7>(factors);
+            assert_product_grid::<Prime128Offset6A23801F>(factors);
         }
     }
 }
@@ -1500,7 +1506,7 @@ mod product_grid_tests {
 mod prefix_cycle_weights_tests {
     use super::PrefixCycleWeights;
     #[cfg(feature = "akita")]
-    use jolt_field::Prime128OffsetA7F7;
+    use jolt_field::Prime128Offset6A23801F;
     use jolt_field::{Fr, JoltField};
     use jolt_poly::eq_index_msb;
 
@@ -1562,6 +1568,6 @@ mod prefix_cycle_weights_tests {
     fn factored_blocks_and_constant_suffix_match_equality_weights() {
         check::<Fr>();
         #[cfg(feature = "akita")]
-        check::<Prime128OffsetA7F7>();
+        check::<Prime128Offset6A23801F>();
     }
 }

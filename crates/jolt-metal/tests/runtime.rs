@@ -368,7 +368,7 @@ mod gpu {
         // SAFETY: the zero-thread grid executes no memory access.
         unsafe { batch.dispatch_unchecked(pipeline, &bindings, Grid::linear(0, 1)) }.unwrap();
         let _ = batch.commit_and_wait().unwrap();
-        assert!(out.read().unwrap().is_empty());
+        assert_eq!(out.read().unwrap(), [0u32; 0]);
         // A batch dropped without committing runs nothing and must not raise.
         drop(Batch::new(&device).unwrap());
     }

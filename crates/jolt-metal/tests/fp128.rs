@@ -17,7 +17,7 @@ mod ops;
 mod support;
 
 mod gpu {
-    use jolt_field::solinas::{Prime128Offset275, Prime128OffsetA7F7};
+    use jolt_field::solinas::{Prime128Offset275, Prime128Offset6A23801F};
     use jolt_metal::ErrorClass;
 
     use super::field::{edges, element, modulus, random_elements, TestField};
@@ -127,7 +127,13 @@ mod gpu {
             .collect();
         pairs.extend(mul_windows::<F>());
         let random = random_elements::<F>(&mut words, 2 * RANDOM);
-        pairs.extend(random.chunks_exact(2).map(|pair| (pair[0], pair[1])));
+        pairs.extend(
+            random
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|pair| (pair[0], pair[1])),
+        );
         let mul_branches: Vec<Fold2> = pairs.iter().map(|&(a, b)| mul_branch::<F>(a, b)).collect();
         for branch in [Fold2::Plain, Fold2::Canonicalize, Fold2::Overflow] {
             assert!(
@@ -198,8 +204,8 @@ mod gpu {
     }
 
     #[test]
-    fn fp128_a7f7_matches_jolt_field() {
-        conformance::<Prime128OffsetA7F7>("fp128_a7f7_matches_jolt_field", 0xf128_a7f7);
+    fn fp128_6a23801f_matches_jolt_field() {
+        conformance::<Prime128Offset6A23801F>("fp128_6a23801f_matches_jolt_field", 0xf128_6a23801f);
     }
 
     #[test]
@@ -210,11 +216,12 @@ mod gpu {
     #[test]
     fn non_canonical_output_is_rejected_on_read_back() {
         let (_gpu, device) = gpu("non_canonical_output_is_rejected_on_read_back");
-        let library = library::<Prime128OffsetA7F7>(&device, &[], &[]);
+        let library = library::<Prime128Offset6A23801F>(&device, &[], &[]);
         // SAFETY: the noncanonical writer only writes its thread index in the fresh three-element output.
-        let error =
-            unsafe { run::<Prime128OffsetA7F7>(&device, &library, WRITE_NON_CANONICAL, vec![], 3) }
-                .unwrap_err();
+        let error = unsafe {
+            run::<Prime128Offset6A23801F>(&device, &library, WRITE_NON_CANONICAL, vec![], 3)
+        }
+        .unwrap_err();
         assert_eq!(error.class(), ErrorClass::Fault, "{error}");
         assert!(error.to_string().contains("element 0"), "{error}");
     }

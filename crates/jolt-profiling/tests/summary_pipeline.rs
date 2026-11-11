@@ -496,7 +496,7 @@ fn summary_deserializes_without_hardware_extensions() {
     )
     .unwrap();
     assert!(summary.hardware_counters.is_none());
-    assert!(summary.run.streaming_families.is_empty());
+    assert_eq!(summary.run.streaming_families, [] as [String; 0]);
     let root = summary.root.unwrap();
     assert_eq!(root.instructions, Some(12));
     assert_eq!(root.cycles, None);
