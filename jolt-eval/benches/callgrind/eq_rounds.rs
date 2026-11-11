@@ -1,8 +1,14 @@
 //! Deterministic instruction counts for little-endian eq expansion, Gruen
 //! bind sweeps and degree-2, degree-3 and Toom rounds in both binding orders,
 //! and tensor folding at 16 variables. `callgrind:eq_rounds:instructions`
-//! sums all cases. Callgrind counts only the benchmark thread, so the tensor
-//! fold runs in a one-thread Rayon pool that uses that thread as its worker.
+//! sums all cases. The tensor fold runs in a one-thread Rayon pool that uses
+//! the benchmark thread as its worker, so its count is deterministic.
+//!
+//! Every closure handed to generic library code is defined in a helper outside
+//! the benchmark functions. Callgrind toggles collection on entry to any symbol
+//! that matches `*::__iai_callgrind_wrapper_mod::*`. A generic instantiation
+//! named after a closure defined inside a benchmark function also matches, and
+//! entering it would switch collection off for part of the measured work.
 //!
 //! Opt-in: requires Valgrind and an `iai-callgrind-runner` matching the
 //! workspace `iai-callgrind` version.
@@ -11,7 +17,10 @@ use std::hint::black_box;
 
 use iai_callgrind::{library_benchmark, library_benchmark_group, main, LibraryBenchmarkConfig};
 use jolt_field::{Fr, Ring, Zero};
-use jolt_poly::{BindingOrder, EqPolynomial, GruenSplitEqPolynomial, PointRef, TensorEqTable};
+use jolt_poly::{
+    BindingOrder, EqPolynomial, GruenRound, GruenSplitEqPolynomial, PointRef, TensorEqTable,
+    UnivariatePoly,
+};
 use rayon::{ThreadPool, ThreadPoolBuilder};
 
 fn setup_point(vars: usize) -> Vec<Fr> {
@@ -62,10 +71,20 @@ fn bench_gruen_deg_2(input: (GruenSplitEqPolynomial<Fr>, Vec<Fr>)) -> GruenSplit
         let view = round.round();
         let (l_zero, l_one) = view.linear_evals();
         let hint = l_zero * q_zero + l_one * q_one;
-        black_box(view.gruen_poly_deg_2(q_one, hint, || q_zero)).expect("consistent round hint");
+        black_box(gruen_deg_2_round(&view, q_one, hint, q_zero));
         round.bind(black_box(challenge));
     }
     black_box(eq)
+}
+
+fn gruen_deg_2_round(
+    view: &GruenRound<'_, Fr>,
+    q_one: Fr,
+    hint: Fr,
+    q_zero: Fr,
+) -> UnivariatePoly<Fr> {
+    view.gruen_poly_deg_2(q_one, hint, || q_zero)
+        .expect("consistent round hint")
 }
 
 #[library_benchmark]
@@ -82,11 +101,20 @@ fn bench_gruen_deg_3(input: (GruenSplitEqPolynomial<Fr>, Vec<Fr>)) -> GruenSplit
         let view = round.round();
         let (l_zero, l_one) = view.linear_evals();
         let hint = l_zero * q_zero + l_one * q_one;
-        black_box(view.gruen_poly_deg_3(q_zero, Fr::from_u64(5), hint, || q_one))
-            .expect("consistent round hint");
+        black_box(gruen_deg_3_round(&view, q_zero, hint, q_one));
         round.bind(black_box(challenge));
     }
     black_box(eq)
+}
+
+fn gruen_deg_3_round(
+    view: &GruenRound<'_, Fr>,
+    q_zero: Fr,
+    hint: Fr,
+    q_one: Fr,
+) -> UnivariatePoly<Fr> {
+    view.gruen_poly_deg_3(q_zero, Fr::from_u64(5), hint, || q_one)
+        .expect("consistent round hint")
 }
 
 #[library_benchmark]
@@ -103,11 +131,20 @@ fn bench_gruen_toom(input: (GruenSplitEqPolynomial<Fr>, Vec<Fr>)) -> GruenSplitE
         let view = round.round();
         let (l_zero, l_one) = view.linear_evals();
         let hint = l_zero * q_zero + l_one * q_one;
-        black_box(view.gruen_poly_from_evals(&[q_one, Fr::from_u64(5)], hint, || q_zero))
-            .expect("consistent round hint");
+        black_box(gruen_toom_round(&view, q_one, hint, q_zero));
         round.bind(black_box(challenge));
     }
     black_box(eq)
+}
+
+fn gruen_toom_round(
+    view: &GruenRound<'_, Fr>,
+    q_one: Fr,
+    hint: Fr,
+    q_zero: Fr,
+) -> UnivariatePoly<Fr> {
+    view.gruen_poly_from_evals(&[q_one, Fr::from_u64(5)], hint, || q_zero)
+        .expect("consistent round hint")
 }
 
 fn setup_tensor() -> (TensorEqTable<Fr>, Vec<Fr>, ThreadPool) {
@@ -127,14 +164,18 @@ fn setup_tensor() -> (TensorEqTable<Fr>, Vec<Fr>, ThreadPool) {
 #[bench::vars_16(setup_tensor())]
 fn bench_tensor_fold(input: (TensorEqTable<Fr>, Vec<Fr>, ThreadPool)) -> Fr {
     let (eq, values, pool) = input;
-    black_box(pool.install(|| {
+    black_box(tensor_fold(&eq, &values, &pool))
+}
+
+fn tensor_fold(eq: &TensorEqTable<Fr>, values: &[Fr], pool: &ThreadPool) -> Fr {
+    pool.install(|| {
         eq.par_fold_out_in(
             Fr::zero,
             |acc, row, _, weight| *acc += weight * values[row],
             |_, weight, inner| weight * inner,
             |left, right| left + right,
         )
-    }))
+    })
 }
 
 library_benchmark_group!(
