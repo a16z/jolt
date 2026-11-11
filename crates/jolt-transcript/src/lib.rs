@@ -9,8 +9,8 @@
 //! hides behind pads; on a clear transcript they are public messages.
 //! [`ClaimDomain`] is what a verifier check on those values is written over,
 //! so the clear and masked verifiers share one formula.
-//! [`prover_transcript`] and [`verifier_transcript`] bind the session and the
-//! public statement before the first message.
+//! `prover_transcript` (under `prover-entropy`) and [`verifier_transcript`] bind
+//! the session and public statement before the first message.
 //!
 //! The transcript is positional and word aligned: no message carries a label,
 //! and every absorb and squeeze is a whole number of eight-byte words
@@ -71,7 +71,9 @@ pub use private::{PadSlots, PrivateChannel};
 pub use prover::{ProverInit, ProverTranscript};
 #[cfg(feature = "test-utils")]
 pub use scripted::{Script, ScriptedTranscript, TranscriptEvent};
-pub use setup::{prover_transcript, session_id, verifier_transcript, PROTOCOL_ID};
+#[cfg(feature = "prover-entropy")]
+pub use setup::prover_transcript;
+pub use setup::{session_id, verifier_transcript, PROTOCOL_ID};
 pub use shake128::{ProverState, Shake128, Shake128Hasher};
 pub use shape::ShapeTranscript;
 pub use spongefish::{Encoding, VerificationError, VerifierState};

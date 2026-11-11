@@ -40,14 +40,14 @@ mod metal {
     use std::process::Command;
     use std::time::{Duration, Instant};
 
-    use jolt_algebra::solinas::Prime128OffsetA7F7;
+    use jolt_algebra::solinas::Prime128Offset6A23801F;
     use jolt_algebra::Zero;
     use jolt_metal::runtime::{Batch, Binding, Device, DeviceBuffer, Grid};
 
     use super::support::{dispatch, elements, library, pipeline, threadgroup, words};
 
     /// The field whose kernels the limits bound.
-    type F = Prime128OffsetA7F7;
+    type F = Prime128Offset6A23801F;
 
     const FIELD_OPS: &str = include_str!("../tests/shaders/field_ops.metal");
     const FIELD_BENCH: &str = include_str!("shaders/field_bench.metal");

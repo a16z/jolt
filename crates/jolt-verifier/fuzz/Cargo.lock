@@ -238,12 +238,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bumpalo"
-version = "3.20.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "72f5acc6cb2ba439de613abc23857ec3d78374d8ed5ac84e9d11336e87da8649"
-
-[[package]]
 name = "cc"
 version = "1.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -494,10 +488,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "300e883d756b2e4ec94e02791f39b04b522276138852cfc41d9fb7e904106099"
 dependencies = [
  "cfg-if",
- "js-sys",
  "libc",
  "r-efi",
- "wasm-bindgen",
 ]
 
 [[package]]
@@ -560,11 +552,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "jolt-claim-expr"
+version = "0.1.0"
+dependencies = [
+ "jolt-algebra",
+ "serde",
+ "thiserror",
+]
+
+[[package]]
 name = "jolt-claims"
 version = "0.1.0"
 dependencies = [
  "derive_more",
  "jolt-algebra",
+ "jolt-claim-expr",
  "jolt-claims-derive",
  "jolt-lookup-tables",
  "jolt-openings",
@@ -718,8 +720,11 @@ name = "jolt-sumcheck"
 version = "0.1.0"
 dependencies = [
  "jolt-algebra",
+ "jolt-crypto",
  "jolt-poly",
+ "jolt-r1cs",
  "jolt-transcript",
+ "rand_core",
  "serde",
  "thiserror",
  "tracing",
@@ -731,7 +736,6 @@ version = "0.1.0"
 dependencies = [
  "ark-bn254",
  "ark-ff",
- "getrandom 0.4.3",
  "jolt-algebra",
  "sha3",
  "shake",
@@ -803,7 +807,7 @@ name = "jolt-zk"
 version = "0.1.0"
 dependencies = [
  "jolt-algebra",
- "jolt-claims",
+ "jolt-claim-expr",
  "jolt-crypto",
  "jolt-poly",
  "jolt-r1cs",
@@ -811,20 +815,9 @@ dependencies = [
  "jolt-transcript",
  "jolt-utils",
  "rand_core",
- "rayon",
  "serde",
  "thiserror",
  "zeroize",
-]
-
-[[package]]
-name = "js-sys"
-version = "0.3.107"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8dc09d2154098bbf4ef54eab6b117a3c24cbbffe94046b16ee6d6d4510584d3a"
-dependencies = [
- "cfg-if",
- "wasm-bindgen",
 ]
 
 [[package]]
@@ -1013,12 +1006,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rustversion"
-version = "1.0.23"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cf54715a573b99ac80df0bc206da022bcd442c974952c7b9720069370852e21f"
-
-[[package]]
 name = "semver"
 version = "1.0.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1095,7 +1082,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "62560b5029264a655fc461a0ecadc4d24862799190897d3225b3272b7a3f13b7"
 dependencies = [
  "digest 0.11.3",
- "getrandom 0.4.3",
  "keccak",
  "zeroize",
 ]
@@ -1235,50 +1221,6 @@ name = "wasi"
 version = "0.11.1+wasi-snapshot-preview1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ccf3ec651a847eb01de73ccad15eb7d99f80485de043efb2f370cd654f4ea44b"
-
-[[package]]
-name = "wasm-bindgen"
-version = "0.2.130"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a0181c14ddd6c7b8b0b0132a5f1ea2f32be0d893cd3ea97b6e3b28886b8a3d1c"
-dependencies = [
- "cfg-if",
- "rustversion",
- "wasm-bindgen-macro",
- "wasm-bindgen-shared",
-]
-
-[[package]]
-name = "wasm-bindgen-macro"
-version = "0.2.130"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6e931a02a39abdbf66966fc35902b5ed58344750a70885bed4ebb3d8eaf28ed9"
-dependencies = [
- "quote",
- "wasm-bindgen-macro-support",
-]
-
-[[package]]
-name = "wasm-bindgen-macro-support"
-version = "0.2.130"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2ca4b54280e455bd831e33a6b8e734baf432fe63fbc35c42ac14ce67a043a53a"
-dependencies = [
- "bumpalo",
- "proc-macro2",
- "quote",
- "syn 3.0.3",
- "wasm-bindgen-shared",
-]
-
-[[package]]
-name = "wasm-bindgen-shared"
-version = "0.2.130"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3b1f9c3798725016c6ee5f2f57869ec0831e8bbc0ab0310a86e787e97f41389e"
-dependencies = [
- "unicode-ident",
-]
 
 [[package]]
 name = "zerocopy"

@@ -24,7 +24,7 @@ possible input pair.
 | Layer | Current evidence |
 | --- | --- |
 | Arithmetic specification | Reviewed equations for scalar addition, subtraction, and multiplication modulo `2^128 - C` under the Fp128 offset bounds and modulo the `2^64 - 59` prime |
-| Exact proof object | Generic Fp128 HOL Light body theorems, A7F7 callable subroutine theorems, and Fp64 body and callable subroutine theorems |
+| Exact proof object | Generic Fp128 HOL Light body theorems, 6A23801F callable subroutine theorems, and Fp64 body and callable subroutine theorems |
 | Linux inspection witness | Complete byte equality with the proved object |
 | Darwin AArch64 inspection witness | Complete byte equality with the proved object |
 | Darwin x86-64 inspection witness | Exact wrapper bytes checked, while frame semantics remain outside the theorem |
@@ -56,9 +56,9 @@ contracts, correct feature selection, and a final integration check.
 
 If assembly does not improve performance, its unsafe boundary and proof upkeep
 are difficult to justify. The parameterized paths remain because native
-measurements show a gain over the portable implementation. The A7F7 BMI2 and
+measurements show a gain over the portable implementation. The 6A23801F BMI2 and
 ADX variant remains separate because not every x86-64 processor supports those
-instructions and because its bytes embed the A7F7 offset. Fp64 keeps its Rust
+instructions and because its bytes embed the 6A23801F offset. Fp64 keeps its Rust
 production path because the assembly experiment was slower.
 
 ## What the arithmetic theorem rules out
@@ -227,12 +227,15 @@ or prove the earlier instructions that prepared it. The report marks that
 register as an external input. Reviewers must not treat an unproved input value
 as a checked constant.
 
-The current external Akita path demonstrates both issues. Its AArch64 compiler
-output contains many addition and multiplication bodies with the same decoded
-pattern as the Jolt proof objects. LLVM chose different registers and moved the
-A7F7 constant load. Its subtraction allocation also differs in how input and
-output registers share storage. The exact Jolt object theorem therefore does
-not apply to those copies.
+An earlier external Akita build, which used the retired A7F7 field,
+demonstrated both issues. Its AArch64 compiler output contained many addition
+and multiplication bodies with the same decoded pattern as the Jolt proof
+objects of that time. LLVM chose different registers and moved the A7F7
+constant load, which was then a single `movn` instruction. Its subtraction
+allocation also differed in how input and output registers share storage. The
+exact Jolt object theorem therefore did not apply to those copies. This scan
+has not been repeated on a 6A23801F Akita binary, whose constant load is a
+`movz`, `movk` pair.
 
 The scan proves neither reachability nor completeness by itself. A matching
 sequence can belong to prover code, unused generic code, or another operation

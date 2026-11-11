@@ -24,8 +24,8 @@ impl<const P: u64> MetalField for Fp64<P> {}
 impl<F: MetalField + PseudoMersenne> MetalField for Ext2<F> where F::Bits: Pod {}
 
 /// `Fp128<P>` is `jolt::Fp128<C>` in MSL, with `C = 2^128 − P` spelled from
-/// `P` at compile time, so no offset is written by hand: `jolt::Fp128<0xffffa7f7u>`
-/// with host suffix `fp128_ffffa7f7`.
+/// `P` at compile time, so no offset is written by hand: `jolt::Fp128<0x6a23801fu>`
+/// with host suffix `fp128_6a23801f`.
 impl<const P: u128> MslType for Fp128<P> {
     const MSL_NAME: &'static str = Fp128Spelling::<P>::MSL_NAME.text();
     const HOST_SUFFIX: &'static str = Fp128Spelling::<P>::HOST_SUFFIX.text();
@@ -77,7 +77,7 @@ impl<F: MslType> Ext2Spelling<F> {
     const HOST_SUFFIX: Spelling = spell(&[b"ext2_", F::HOST_SUFFIX.as_bytes()]);
 }
 
-/// Longest spelling any field type needs: `jolt::Ext2<jolt::Fp128<0xffffa7f7u>>`.
+/// Longest spelling any field type needs: `jolt::Ext2<jolt::Fp128<0x6a23801fu>>`.
 const SPELLING_CAPACITY: usize = 36;
 
 /// An ASCII name assembled at compile time: the first `len` bytes.
@@ -141,14 +141,14 @@ const fn hex8(value: u32) -> [u8; 8] {
 
 #[cfg(test)]
 mod tests {
-    use jolt_algebra::solinas::{Prime128Offset275, Prime128OffsetA7F7, Prime64Offset59};
+    use jolt_algebra::solinas::{Prime128Offset275, Prime128Offset6A23801F, Prime64Offset59};
 
     use super::*;
 
     #[test]
     fn spellings_come_from_the_modulus() {
-        assert_eq!(Prime128OffsetA7F7::MSL_NAME, "jolt::Fp128<0xffffa7f7u>");
-        assert_eq!(Prime128OffsetA7F7::HOST_SUFFIX, "fp128_ffffa7f7");
+        assert_eq!(Prime128Offset6A23801F::MSL_NAME, "jolt::Fp128<0x6a23801fu>");
+        assert_eq!(Prime128Offset6A23801F::HOST_SUFFIX, "fp128_6a23801f");
         assert_eq!(Prime128Offset275::MSL_NAME, "jolt::Fp128<0x00000113u>");
         assert_eq!(Prime128Offset275::HOST_SUFFIX, "fp128_00000113");
         assert_eq!(Prime64Offset59::MSL_NAME, "jolt::Fp64<0x0000003bu>");

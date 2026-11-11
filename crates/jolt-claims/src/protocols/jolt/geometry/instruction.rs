@@ -33,7 +33,7 @@ pub(crate) const READ_RAF_ADDRESS_ROUND_DEGREE: usize = 2;
 /// injective exactly when `p >= 2^(2·XLEN)`. BN254's scalar field clears
 /// `2^128` by 126 bits, and an aliased address `k + p ~ 2^254` is not even
 /// representable in 128 one-hot address variables. The Akita fp128 field is
-/// `p = 2^128 - 2^32 + 22537`, which falls short of `2^128` by 4_294_944_759,
+/// `p = 2^128 - 1780711455`, which falls short of `2^128` by 1_780_711_455,
 /// giving every honest index below that window a second committable preimage
 /// that the lookup table reads differently. See [`upper_half_all_ones`] for the
 /// predicate that closes it.
@@ -64,10 +64,10 @@ pub fn upper_half_all_ones<F: JoltField>(r_address: &[F]) -> F {
 
 #[cfg(test)]
 mod canonical_address_tests {
-    /// `p = 2^128 - 2^32 + 22537`, the Akita fp128 modulus.
-    const P: u128 = u128::MAX - (1 << 32) + 22537 + 1;
+    /// `p = 2^128 - 1780711455`, the Akita fp128 modulus.
+    const P: u128 = u128::MAX - 1_780_711_455 + 1;
     /// `c = 2^128 - p`, the width of the alias window.
-    const C: u128 = (1 << 32) - 22537;
+    const C: u128 = 1_780_711_455;
     /// The smallest address the predicate rejects.
     const FIRST_ALL_ONES: u128 = u128::MAX - (u64::MAX as u128);
 
@@ -93,9 +93,9 @@ mod canonical_address_tests {
     ///    on their right operand at all.
     #[test]
     fn canonical_predicate_separates_aliases_from_honest_indices() {
-        assert_eq!(P, 2u128.pow(127) + (2u128.pow(127) - (1 << 32) + 22537));
+        assert_eq!(P, 2u128.pow(127) + (2u128.pow(127) - 1_780_711_455));
         assert_eq!(C, u128::MAX - P + 1);
-        assert_eq!(C, 4_294_944_759);
+        assert_eq!(C, 1_780_711_455);
 
         for r in [0u128, 1, 2, C / 2, C - 2, C - 1] {
             let alias = P + r;

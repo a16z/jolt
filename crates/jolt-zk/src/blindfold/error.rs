@@ -1,10 +1,16 @@
+#[cfg(feature = "blindfold")]
 use jolt_algebra::JoltField;
+#[cfg(feature = "blindfold")]
 use jolt_crypto::VectorOpeningError;
+#[cfg(feature = "blindfold")]
 use jolt_r1cs::ConstraintMatrixEvalError;
+#[cfg(feature = "blindfold")]
 use jolt_sumcheck::SumcheckError;
+#[cfg(feature = "blindfold")]
 use jolt_transcript::VerificationError as TranscriptVerificationError;
 use thiserror::Error as ThisError;
 
+#[cfg(feature = "blindfold")]
 use crate::masking::ZkError;
 
 #[derive(Clone, Debug, ThisError, PartialEq, Eq)]
@@ -25,6 +31,7 @@ pub enum RelaxedError {
     },
 }
 
+#[cfg(feature = "blindfold")]
 #[derive(Debug, ThisError)]
 pub enum ProverError<F: JoltField> {
     #[error(transparent)]
@@ -88,12 +95,14 @@ pub enum ProverError<F: JoltField> {
     TranscriptRejected,
 }
 
+#[cfg(feature = "blindfold")]
 impl<F: JoltField> From<TranscriptVerificationError> for ProverError<F> {
     fn from(_: TranscriptVerificationError) -> Self {
         Self::TranscriptRejected
     }
 }
 
+#[cfg(feature = "blindfold")]
 #[derive(Debug, ThisError)]
 pub enum VerificationError<F: JoltField> {
     /// The transcript refused a challenge draw: the challenge codec does not
@@ -130,12 +139,14 @@ pub enum VerificationError<F: JoltField> {
     InnerFinalClaimMismatch { expected: F, actual: F },
 }
 
+#[cfg(feature = "blindfold")]
 impl<F: JoltField> From<TranscriptVerificationError> for VerificationError<F> {
     fn from(_: TranscriptVerificationError) -> Self {
         Self::TranscriptRejected
     }
 }
 
+#[cfg(feature = "blindfold")]
 impl<F: JoltField + 'static> From<ProverError<F>> for ZkError {
     fn from(error: ProverError<F>) -> Self {
         Self::BlindFoldProver(Box::new(error))
@@ -144,6 +155,7 @@ impl<F: JoltField + 'static> From<ProverError<F>> for ZkError {
 
 /// A transcript rejection inside the BlindFold proof surfaces as
 /// [`ZkError::TranscriptRejected`], as it does everywhere else in a proof.
+#[cfg(feature = "blindfold")]
 impl<F: JoltField + 'static> From<VerificationError<F>> for ZkError {
     fn from(error: VerificationError<F>) -> Self {
         if matches!(error, VerificationError::TranscriptRejected) {

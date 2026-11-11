@@ -22,6 +22,7 @@ jolt-crypto.workspace = true
 jolt-dory.workspace = true
 jolt-hyperkzg.workspace = true
 jolt-transcript = { workspace = true, features = [
+  "prover-entropy",
   "bn254",
   "transcript-blake2b",
 ] }

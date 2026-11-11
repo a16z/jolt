@@ -189,7 +189,7 @@ mod tests {
     use crate::optimized::lazy_ra::LazyFoldedRa;
     use jolt_algebra::Fr;
     #[cfg(feature = "akita")]
-    use jolt_algebra::Prime128OffsetA7F7;
+    use jolt_algebra::Prime128Offset6A23801F;
     use jolt_poly::EqPolynomial;
     #[cfg(feature = "akita")]
     use jolt_witness::witnesses::FusedInc;
@@ -325,7 +325,7 @@ mod tests {
     #[cfg(feature = "akita")]
     #[test]
     fn bulk_instruction_decoding_matches_selectors_fp128() {
-        check::<Prime128OffsetA7F7>();
+        check::<Prime128Offset6A23801F>();
     }
 
     fn check_materialized<F: JoltField>(instruction: usize) {
@@ -416,7 +416,7 @@ mod tests {
     #[cfg(feature = "akita")]
     #[test]
     fn materialized_families_match_multilinear_weights_fp128() {
-        check_materialized::<Prime128OffsetA7F7>(32);
+        check_materialized::<Prime128Offset6A23801F>(32);
     }
 
     fn check_paired<F: JoltField>() {
@@ -517,6 +517,6 @@ mod tests {
     #[cfg(feature = "akita")]
     #[test]
     fn paired_branches_match_defining_sum_fp128() {
-        check_paired::<Prime128OffsetA7F7>();
+        check_paired::<Prime128Offset6A23801F>();
     }
 }

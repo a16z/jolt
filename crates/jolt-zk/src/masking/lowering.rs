@@ -21,7 +21,7 @@ use std::collections::btree_map::Entry;
 use std::collections::BTreeMap;
 
 use jolt_algebra::Field;
-use jolt_claims::{Expr, FactoredExpr, Source};
+use jolt_claim_expr::{Expr, FactoredExpr, Source};
 use jolt_poly::{Point, LOW_TO_HIGH};
 use jolt_sumcheck::{
     BooleanHypercube, DegreeSchedule, EqFactoredRound, MaskedRound, RoundWire, SumcheckDomain,

@@ -2288,7 +2288,7 @@ mod tests {
         check::<Fr>(16, 4);
         check::<Fr>(20, 4);
         #[cfg(feature = "akita")]
-        check::<Prime128OffsetA7F7>(32, 4);
+        check::<Prime128Offset6A23801F>(32, 4);
     }
 
     /// The sumcheck input claim from first principles:
@@ -2364,7 +2364,7 @@ mod tests {
     ) {
         assert_parity_prefix_field::<Fr>(log_t, num_virtual_ra_polys, seed, exceptional, prefix);
         #[cfg(feature = "akita")]
-        assert_parity_prefix_field::<Prime128OffsetA7F7>(
+        assert_parity_prefix_field::<Prime128Offset6A23801F>(
             log_t,
             num_virtual_ra_polys,
             seed,
@@ -2537,7 +2537,7 @@ mod tests {
         }
         check::<Fr>();
         #[cfg(feature = "akita")]
-        check::<Prime128OffsetA7F7>();
+        check::<Prime128Offset6A23801F>();
     }
 
     #[test]
@@ -2564,7 +2564,7 @@ mod tests {
         }
         check::<Fr>();
         #[cfg(feature = "akita")]
-        check::<Prime128OffsetA7F7>();
+        check::<Prime128Offset6A23801F>();
     }
 
     #[test]
@@ -2617,7 +2617,7 @@ mod tests {
         }
         check::<Fr>();
         #[cfg(feature = "akita")]
-        check::<Prime128OffsetA7F7>();
+        check::<Prime128Offset6A23801F>();
     }
 
     #[test]
@@ -2631,7 +2631,7 @@ mod tests {
         }
         check::<Fr>();
         #[cfg(feature = "akita")]
-        check::<Prime128OffsetA7F7>();
+        check::<Prime128Offset6A23801F>();
     }
 
     #[test]
@@ -2639,7 +2639,7 @@ mod tests {
         for prefix in [6003, 1 << 14] {
             check_repeated_lookup_rows::<Fr>(14, prefix, None);
             #[cfg(feature = "akita")]
-            check_repeated_lookup_rows::<Prime128OffsetA7F7>(14, prefix, None);
+            check_repeated_lookup_rows::<Prime128Offset6A23801F>(14, prefix, None);
         }
     }
 

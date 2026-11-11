@@ -9,8 +9,8 @@ description = "Clear binary HyperKZG openings over BN254"
 workspace = true
 
 [dependencies]
-jolt-crypto.workspace = true
-jolt-algebra.workspace = true
+jolt-crypto = { workspace = true, features = ["bn254"] }
+jolt-algebra = { workspace = true, features = ["bn254"] }
 jolt-openings.workspace = true
 jolt-poly.workspace = true
 jolt-transcript.workspace = true
@@ -19,6 +19,7 @@ thiserror.workspace = true
 
 [dev-dependencies]
 jolt-transcript = { workspace = true, features = [
+  "prover-entropy",
   "bn254",
   "test-utils",
   "transcript-blake2b",

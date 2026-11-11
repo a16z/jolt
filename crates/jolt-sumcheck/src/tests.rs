@@ -33,7 +33,7 @@ use crate::{
 type F = Fr;
 /// BN254 challenges need no proof of work, so the proof-of-work tests run
 /// over Akita's field, whose rounds grind.
-type P = Prime128OffsetA7F7;
+type P = Prime128Offset6A23801F;
 type PT = ProverState<Blake2b512>;
 
 fn pow_bits(degree: usize) -> u32 {

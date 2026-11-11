@@ -9,7 +9,7 @@
 //!
 //! Extension implementations cover `Ext2` (the `TwoNr` configuration), `FpExt4`,
 //! and `FpExt8` over the nine registered pseudo-Mersenne bases only. In particular,
-//! there is no implementation for the non-field towers over `Prime128OffsetA7F7`
+//! there is no implementation for the non-field towers over `Prime128Offset6A23801F`
 //! or for arbitrary quadratic configurations.
 //!
 //! A protocol's session/version must bind the field, message lengths, and codec
@@ -68,7 +68,7 @@ mod sealed {
 /// Extensions use one base pool of `len * DEGREE` coordinates, grouped in the
 /// canonical basis via `ExtField::from_base_fn`. Implementations cover `Ext2`
 /// with `TwoNr`, `FpExt4`, and `FpExt8` over the nine registered bases only;
-/// non-field towers over `Prime128OffsetA7F7` and arbitrary quadratic configs
+/// non-field towers over `Prime128Offset6A23801F` and arbitrary quadratic configs
 /// have no implementation.
 ///
 /// Every message is a whole number of eight-byte words, so each squeeze starts
@@ -242,7 +242,7 @@ prime_codec!(Fp64, u64);
 prime_codec!(Fp128, u128);
 
 // Registered bases have p ≡ ±3 (mod 8). This sealed list excludes
-// Prime128OffsetA7F7 from all towers, and the quadratic impl fixes TwoNr.
+// Prime128Offset6A23801F from all towers, and the quadratic impl fixes TwoNr.
 #[cfg(feature = "solinas")]
 trait TowerBase: PseudoMersenne + CanonicalEncoding {}
 

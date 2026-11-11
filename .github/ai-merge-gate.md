@@ -33,7 +33,7 @@ The Pika App bot (`BOT_kgDOFAtqNQ`) or a maintainer must post this standalone PR
 This pull request #<number> has been reviewed at commit <40-character lowercase head SHA> using skill <skill name> and model <model name> with <effort> reasoning effort, and no issues were found.
 ```
 
-The model must be `GPT-6 Astra` or `Claude Opus 5.5`; effort must be `max` or `xhigh`.
+The model must be `GPT-6 Astra`, `Claude Opus 5.5` or `Claude Fable 5.2`; effort must be `max` or `xhigh`.
 For edited comments, both the author and last editor must qualify. Review bodies and labels
 cannot replace the comment. A new head needs a new attestation.
 

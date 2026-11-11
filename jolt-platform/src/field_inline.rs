@@ -14,7 +14,7 @@ pub const FIELD_INLINE_MODULUS_ENV: &str = "JOLT_FIELD_INLINE_MODULUS";
 pub enum FieldInlineModulus {
     /// The BN254 scalar field, proven with Dory.
     Bn254,
-    /// The 128-bit prime `2^128 - 2^32 + 22537`, proven with Akita.
+    /// The 128-bit prime `2^128 - 1780711455`, proven with Akita.
     Fp128,
 }
 
@@ -24,7 +24,7 @@ const BN254_LIMBS: [u64; 4] = [
     0xb850_45b6_8181_585d,
     0x3064_4e72_e131_a029,
 ];
-const FP128_LIMBS: [u64; 2] = [0xffff_ffff_0000_5809, 0xffff_ffff_ffff_ffff];
+const FP128_LIMBS: [u64; 2] = [0xffff_ffff_95dc_7fe1, 0xffff_ffff_ffff_ffff];
 
 impl FieldInlineModulus {
     /// The modulus as little-endian u64 limbs; the most significant limb is

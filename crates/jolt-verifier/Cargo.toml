@@ -69,7 +69,7 @@ jolt-riscv = { workspace = true, features = ["serialization"] }
 jolt-sumcheck.workspace = true
 jolt-transcript.workspace = true
 jolt-verifier-derive.workspace = true
-jolt-zk.workspace = true
+jolt-zk = { workspace = true, features = ["blindfold"] }
 num-traits.workspace = true
 serde.workspace = true
 sha3.workspace = true
@@ -78,6 +78,7 @@ tracing.workspace = true
 
 [dev-dependencies]
 jolt-transcript = { workspace = true, features = [
+  "prover-entropy",
   "bn254",
   "test-utils",
   "transcript-keccak",

@@ -48,7 +48,7 @@ fp128-field-inline = ["jolt-algebra?/solinas"]
 thiserror.workspace = true
 jolt-program = { workspace = true, features = ["image", "serialization"] }
 jolt-riscv = { workspace = true, features = ["serialization"] }
-jolt-algebra = { workspace = true, optional = true }
+jolt-algebra = { workspace = true, optional = true, features = ["bn254"] }
 jolt-platform.workspace = true
 fnv.workspace = true
 object.workspace = true

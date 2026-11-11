@@ -1140,11 +1140,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "jolt-claim-expr"
+version = "0.1.0"
+dependencies = [
+ "jolt-algebra",
+ "serde",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "jolt-claims"
 version = "0.1.0"
 dependencies = [
  "derive_more",
  "jolt-algebra",
+ "jolt-claim-expr",
  "jolt-claims-derive",
  "jolt-lookup-tables",
  "jolt-openings",
@@ -1446,6 +1456,7 @@ dependencies = [
  "jolt-transcript",
  "jolt-verifier",
  "jolt-witness",
+ "jolt-zk",
  "rayon",
  "serde",
  "thiserror 2.0.18",
@@ -1515,7 +1526,9 @@ dependencies = [
  "jolt-algebra",
  "jolt-crypto",
  "jolt-poly",
+ "jolt-r1cs",
  "jolt-transcript",
+ "rand_core",
  "serde",
  "thiserror 2.0.18",
  "tracing",
@@ -1624,7 +1637,7 @@ name = "jolt-zk"
 version = "0.1.0"
 dependencies = [
  "jolt-algebra",
- "jolt-claims",
+ "jolt-claim-expr",
  "jolt-crypto",
  "jolt-poly",
  "jolt-r1cs",

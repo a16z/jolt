@@ -5,7 +5,7 @@
 #![cfg(feature = "prover")]
 
 use jolt_algebra::{Field, Fr, Ring};
-use jolt_claims::{challenge, constant, opening, Expr, FactoredExpr, Source};
+use jolt_claim_expr::{challenge, constant, opening, Expr, FactoredExpr, Source};
 use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::{
     receive_masked_rounds, DegreeSchedule, MaskedRound, MemberDegrees, RoundWire, SumcheckDomain,

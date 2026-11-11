@@ -9,6 +9,20 @@ description = "Masking front end and BlindFold back end for zero-knowledge Jolt"
 workspace = true
 
 [features]
+default = []
+blindfold = [
+  "dep:jolt-crypto",
+  "dep:jolt-r1cs",
+  "dep:jolt-utils",
+  "jolt-sumcheck/committed",
+  "jolt-sumcheck/r1cs",
+]
+parallel = [
+  "dep:rayon",
+  "jolt-poly/parallel",
+  "jolt-sumcheck/parallel",
+  "jolt-crypto?/parallel",
+]
 # The prove side: masked round proof of work and BlindFold's prover, which
 # search nonces by copying the sponge state. Verifier builds leave it off.
 prover = ["jolt-transcript/prover-grinding", "jolt-sumcheck/prover"]
@@ -48,18 +62,18 @@ whiteout-diagnostics = [
 ]
 
 [dependencies]
-jolt-claims.workspace = true
-jolt-crypto.workspace = true
+jolt-claim-expr.workspace = true
+jolt-crypto = { workspace = true, optional = true }
 jolt-dit = { workspace = true, optional = true }
 jolt-algebra.workspace = true
 jolt-poly.workspace = true
-jolt-r1cs.workspace = true
+jolt-r1cs = { workspace = true, optional = true }
 jolt-sumcheck.workspace = true
 jolt-transcript.workspace = true
-jolt-utils.workspace = true
+jolt-utils = { workspace = true, optional = true }
 rand_chacha = { workspace = true, optional = true }
 rand_core.workspace = true
-rayon.workspace = true
+rayon = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive"] }
 spongefish = { workspace = true, optional = true }
 thiserror.workspace = true
@@ -67,8 +81,10 @@ tracing = { workspace = true, optional = true }
 zeroize.workspace = true
 
 [dev-dependencies]
+jolt-crypto = { workspace = true, features = ["bn254"] }
 jolt-algebra = { workspace = true, features = ["bn254", "solinas"] }
 jolt-transcript = { workspace = true, features = [
+  "prover-entropy",
   "bn254",
   "transcript-blake2b",
 ] }

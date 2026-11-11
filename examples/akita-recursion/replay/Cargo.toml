@@ -36,7 +36,7 @@ jolt-verifier = { workspace = true, features = ["akita"], optional = true }
 
 akita-types = { workspace = true, optional = true }
 anyhow.workspace = true
-serde_json.workspace = true
+serde_json = { workspace = true, features = ["std"] }
 jolt-algebra.workspace = true
 jolt-host = { workspace = true, optional = true }
 jolt-inlines-blake2 = { workspace = true, optional = true, features = ["host"] }

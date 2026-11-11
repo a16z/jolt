@@ -365,12 +365,12 @@ mod tests {
 #[cfg(test)]
 mod sparse_segment_table_tests {
     use super::*;
-    use jolt_algebra::{Fr, Prime128OffsetA7F7};
+    use jolt_algebra::{Fr, Prime128Offset6A23801F};
 
     #[test]
     fn bounded_low_tables_match_scalar_mle_for_offsets_and_boolean_points() {
         check_sparse_segments::<Fr>();
-        check_sparse_segments::<Prime128OffsetA7F7>();
+        check_sparse_segments::<Prime128Offset6A23801F>();
     }
 
     fn check_sparse_segments<F: JoltField>() {

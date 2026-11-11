@@ -3483,6 +3483,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "jolt-claim-expr"
+version = "0.1.0"
+dependencies = [
+ "jolt-algebra",
+ "serde",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "jolt-claims"
 version = "0.1.0"
 dependencies = [
@@ -3490,6 +3499,7 @@ dependencies = [
  "bincode 2.0.1",
  "derive_more",
  "jolt-algebra",
+ "jolt-claim-expr",
  "jolt-claims-derive",
  "jolt-lookup-tables",
  "jolt-openings",
@@ -4158,6 +4168,7 @@ dependencies = [
  "getrandom 0.4.3",
  "jolt-algebra",
  "jolt-inlines-blake2",
+ "jolt-transcript",
  "light-poseidon",
  "num-bigint 0.4.6",
  "sha3 0.12.0",
@@ -4256,7 +4267,7 @@ name = "jolt-zk"
 version = "0.1.0"
 dependencies = [
  "jolt-algebra",
- "jolt-claims",
+ "jolt-claim-expr",
  "jolt-crypto",
  "jolt-dit",
  "jolt-poly",

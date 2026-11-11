@@ -17,7 +17,7 @@ mod ops;
 mod support;
 
 mod gpu {
-    use jolt_algebra::solinas::{Prime128Offset275, Prime128OffsetA7F7};
+    use jolt_algebra::solinas::{Prime128Offset275, Prime128Offset6A23801F};
     use jolt_metal::ErrorClass;
 
     use super::field::{edges, element, modulus, random_elements, TestField};
@@ -205,7 +205,7 @@ mod gpu {
 
     #[test]
     fn fp128_a7f7_matches_jolt_algebra() {
-        conformance::<Prime128OffsetA7F7>("fp128_a7f7_matches_jolt_algebra", 0xf128_a7f7);
+        conformance::<Prime128Offset6A23801F>("fp128_a7f7_matches_jolt_algebra", 0xf128_a7f7);
     }
 
     #[test]
@@ -216,11 +216,12 @@ mod gpu {
     #[test]
     fn non_canonical_output_is_rejected_on_read_back() {
         let (_gpu, device) = gpu("non_canonical_output_is_rejected_on_read_back");
-        let library = library::<Prime128OffsetA7F7>(&device, &[], &[]);
+        let library = library::<Prime128Offset6A23801F>(&device, &[], &[]);
         // SAFETY: the noncanonical writer only writes its thread index in the fresh three-element output.
-        let error =
-            unsafe { run::<Prime128OffsetA7F7>(&device, &library, WRITE_NON_CANONICAL, vec![], 3) }
-                .unwrap_err();
+        let error = unsafe {
+            run::<Prime128Offset6A23801F>(&device, &library, WRITE_NON_CANONICAL, vec![], 3)
+        }
+        .unwrap_err();
         assert_eq!(error.class(), ErrorClass::Fault, "{error}");
         assert!(error.to_string().contains("element 0"), "{error}");
     }

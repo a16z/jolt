@@ -1599,8 +1599,8 @@ mod stage_pushforward_tests {
     #[cfg(feature = "akita")]
     #[test]
     fn fp128_weighted_tiles_and_batches_match_the_cycle_eq_mle() {
-        use jolt_algebra::Prime128OffsetA7F7;
-        tiled_weighted_pushforwards::<Prime128OffsetA7F7>(19, 7, 1 << 17);
+        use jolt_algebra::Prime128Offset6A23801F;
+        tiled_weighted_pushforwards::<Prime128Offset6A23801F>(19, 7, 1 << 17);
     }
 }
 
@@ -2172,7 +2172,7 @@ mod akita_tests {
 mod cycle_group_tests {
     use jolt_algebra::Fr;
     #[cfg(feature = "akita")]
-    use jolt_algebra::Prime128OffsetA7F7;
+    use jolt_algebra::Prime128Offset6A23801F;
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;
 
@@ -2257,7 +2257,7 @@ mod cycle_group_tests {
     #[cfg(feature = "akita")]
     #[test]
     fn stepped_group_samples_match_recomputed_samples_fp128() {
-        check_group_samples::<Prime128OffsetA7F7>();
+        check_group_samples::<Prime128Offset6A23801F>();
     }
 }
 
@@ -2267,7 +2267,7 @@ mod grouped_cycle_tests {
     use super::*;
     use jolt_algebra::Fr;
     #[cfg(feature = "akita")]
-    use jolt_algebra::Prime128OffsetA7F7;
+    use jolt_algebra::Prime128Offset6A23801F;
     use jolt_poly::BindingOrder;
     #[cfg(feature = "akita")]
     use jolt_witness::witnesses::FusedInc;
@@ -2401,7 +2401,7 @@ mod grouped_cycle_tests {
     fn long_period_pc_groups_preserve_independent_coefficients() {
         check::<Fr>(4, true);
         #[cfg(feature = "akita")]
-        check::<Prime128OffsetA7F7>(4, true);
+        check::<Prime128Offset6A23801F>(4, true);
     }
 
     #[test]
@@ -2409,7 +2409,7 @@ mod grouped_cycle_tests {
         for num_ra in [2, 4] {
             check::<Fr>(num_ra, false);
             #[cfg(feature = "akita")]
-            check::<Prime128OffsetA7F7>(num_ra, false);
+            check::<Prime128Offset6A23801F>(num_ra, false);
         }
     }
 }

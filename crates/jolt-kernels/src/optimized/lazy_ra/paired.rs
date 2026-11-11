@@ -198,7 +198,7 @@ mod tests {
     use crate::optimized::constant_suffix::ConstantSuffix;
     use crate::optimized::instruction_read_raf::{InstructionCycleRow, LookupIndexChunks};
     #[cfg(feature = "akita")]
-    use jolt_algebra::Prime128OffsetA7F7;
+    use jolt_algebra::Prime128Offset6A23801F;
     use jolt_algebra::{Fr, JoltField};
     #[cfg(feature = "akita")]
     use jolt_witness::witnesses::FusedInc;
@@ -290,6 +290,6 @@ mod tests {
     fn paired_instruction_gathers_match_multilinear_definition() {
         check::<Fr>();
         #[cfg(feature = "akita")]
-        check::<Prime128OffsetA7F7>();
+        check::<Prime128Offset6A23801F>();
     }
 }

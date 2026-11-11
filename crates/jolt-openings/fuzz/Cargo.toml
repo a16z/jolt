@@ -30,6 +30,7 @@ jolt-algebra = { path = "../../jolt-algebra", features = ["bn254"] }
 jolt-openings = { path = ".." }
 jolt-poly = { path = "../../jolt-poly" }
 jolt-transcript = { path = "../../jolt-transcript", features = [
+  "prover-entropy",
   "bn254",
   "transcript-blake2b",
 ] }

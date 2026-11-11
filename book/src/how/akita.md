@@ -6,10 +6,10 @@ The `akita` Cargo feature selects this protocol at compile time. The current imp
 
 ## Field and witness representation
 
-Jolt's Akita path uses `AkitaField`, the upstream `fp128` configuration's alias for `jolt_algebra::Prime128OffsetA7F7`. Its modulus is
+Jolt's Akita path uses `AkitaField`, the upstream `fp128` configuration's alias for `jolt_algebra::Prime128Offset6A23801F`. Its modulus is
 
 $$
-p = 2^{128} - 2^{32} + 22537.
+p = 2^{128} - 1780711455.
 $$
 
 The RISC-V execution model and sumcheck-based approach remain shared with Dory, but the commitment layout changes. Akita does not provide the additive commitment homomorphism used by Dory's [random-linear-combination opening](./optimizations/batched-openings.md). Jolt instead commits the trace's one-hot columns as distinct polynomials in one native commitment group, called `OneHotTrace`.

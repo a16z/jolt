@@ -6,25 +6,36 @@
 //! HyperNova §7) and proves the folded instance with Spartan's outer and inner
 //! sumchecks; the folded witness is uniform, so the tail reveals nothing.
 
+#[cfg(feature = "blindfold")]
 mod backend;
 mod error;
+#[cfg(feature = "blindfold")]
 mod proof;
+#[cfg(feature = "blindfold")]
 mod protocol;
-#[cfg(feature = "prover")]
+#[cfg(all(feature = "prover", feature = "blindfold"))]
 mod prove;
+#[cfg(feature = "blindfold")]
 mod relaxed;
+#[cfg(feature = "blindfold")]
 mod verify;
 
+#[cfg(feature = "blindfold")]
 pub use backend::{BlindFold, BlindFoldPadOpening, BlindFoldResidualWitness};
-pub use error::{ProverError, RelaxedError, VerificationError};
+pub use error::RelaxedError;
+#[cfg(feature = "blindfold")]
+pub use error::{ProverError, VerificationError};
+#[cfg(feature = "blindfold")]
 pub use proof::{BlindFoldProof, FoldedEvaluation, FoldingCommitments, OuterClaims};
+#[cfg(feature = "blindfold")]
 pub use protocol::{
     pad_row_count, BlindFoldDimensions, BlindFoldProtocol, FinalOpeningWitnessCoordinates,
     RowDimensions, WitnessCoordinate, WitnessRowLayout,
 };
-#[cfg(feature = "prover")]
+#[cfg(all(feature = "prover", feature = "blindfold"))]
 pub use prove::{
     prove, prove_with_row_committer, BlindFoldRowCommitter, BlindFoldWitness,
     DirectBlindFoldRowCommitter,
 };
+#[cfg(feature = "blindfold")]
 pub use relaxed::{RelaxedInstance, RelaxedWitness};
