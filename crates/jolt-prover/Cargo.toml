@@ -24,10 +24,7 @@ parallel = [
   "jolt-sumcheck/parallel",
   "dep:rayon",
 ]
-prover-fixtures = [
-  "dep:jolt-host",
-  "dep:zeroize",
-]
+prover-fixtures = ["dep:jolt-host", "dep:zeroize"]
 # Field-inline protocol composition: the field-inline prover — every stage
 # proves the composed protocol, and only field-inline guests are accepted (the
 # witness plane refuses classic-profile traces). The e2e acceptance lives in

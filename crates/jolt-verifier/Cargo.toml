@@ -54,7 +54,6 @@ akita = [
 
 [dependencies]
 allocative = { workspace = true, optional = true }
-ark-serialize.workspace = true
 bincode.workspace = true
 common.workspace = true
 jolt-claims.workspace = true

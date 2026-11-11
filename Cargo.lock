@@ -3348,8 +3348,6 @@ dependencies = [
 name = "jolt-akita"
 version = "0.1.0"
 dependencies = [
- "akita-algebra",
- "akita-challenges",
  "akita-config",
  "akita-error",
  "akita-params",
@@ -4193,7 +4191,6 @@ dependencies = [
  "akita-transcript",
  "akita-verifier",
  "allocative",
- "ark-serialize 0.5.0",
  "bincode 2.0.1",
  "common",
  "jolt-akita",

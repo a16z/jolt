@@ -35,6 +35,13 @@ extend-exclude = [
 "unt" = "unt"
 # Canonical Akita schedule artifact extension.
 "aks" = "aks"
+# Theorem references ("Thm 3.2") and the Module-SIS problem in the Whiteout docs.
+"thm" = "thm"
+"msis" = "msis"
+# Hex commit hash in specs/whiteout-p1-profile.md.
+"dbe" = "dbe"
+# The `ul` suffix of the Metal literal 0xFFFFFFFFul.
+"ful" = "ful"
 
 [type.ocaml.extend-words]
 # HOL Light tactic identifiers.

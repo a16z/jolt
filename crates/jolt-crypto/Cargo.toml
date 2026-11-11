@@ -49,12 +49,7 @@ lattice = [
 ont-static-base = ["lattice"]
 # Whiteout's constant-time Gaussian sampler and joint rejection rule. Prover-only,
 # so separate from `lattice` and kept out of every verifier build.
-sample = [
-  "dep:subtle",
-  "dep:num-bigint",
-  "dep:chacha20",
-  "dep:zeroize",
-]
+sample = ["dep:subtle", "dep:num-bigint", "dep:chacha20", "dep:zeroize"]
 # Exposes the constant-time challenge sampler's candidate count, which
 # jolt-zk's timing diagnostics condition on. Diagnostics only.
 sample-diagnostics = ["sample"]
@@ -66,10 +61,7 @@ jolt-transcript = { path = "../jolt-transcript", default-features = false }
 serde = { workspace = true, features = ["derive", "alloc"] }
 rand_core = { workspace = true }
 # The sampler's per-chunk ChaCha20 streams (SIMD backends).
-chacha20 = { workspace = true, features = [
-  "rng",
-  "zeroize",
-], optional = true }
+chacha20 = { workspace = true, features = ["rng", "zeroize"], optional = true }
 subtle = { workspace = true, optional = true }
 zeroize = { workspace = true, optional = true }
 thiserror = { workspace = true, optional = true }

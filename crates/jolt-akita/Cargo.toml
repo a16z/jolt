@@ -39,16 +39,17 @@ zk-prover = [
 profiling = ["parallel"]
 # Akita's prover-side record of its argument-string messages, with the masked
 # channels' pad marks (the Whiteout census's input).
-logging = ["akita-pcs/logging-transcript", "akita-transcript/logging-transcript"]
+logging = [
+  "akita-pcs/logging-transcript",
+  "akita-transcript/logging-transcript",
+]
 
 [dependencies]
 # Jolt keeps its own catalogs for Jolt-specific trace shapes; Akita's shipped
 # catalogs do not cover this adapter's complete production and test grids.
-akita-algebra.workspace = true
 akita-config.workspace = true
 akita-error.workspace = true
 akita-pcs = { workspace = true, features = ["transcript-keccak"] }
-akita-challenges.workspace = true
 akita-planner.workspace = true
 akita-schedules.workspace = true
 akita-transcript.workspace = true
