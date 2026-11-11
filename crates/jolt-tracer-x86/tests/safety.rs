@@ -352,7 +352,7 @@ fn advice_write_enforces_guest_load_bounds() {
     let layout = JoltDeviceMemory::new(&memory_config()).memory_layout;
     let program = single_row_program(row(Kind::VirtualHostIO(VirtualHostIO(())), None, None, 0));
     for (address, error) in [
-        (layout.get_lowest_address() - 1, None),
+        (layout.get_lowest_address() - 1, Some("I/O underflow")),
         (layout.heap_end, Some("Illegal Memory Access")),
         (layout.get_lowest_address(), None),
         (SCRATCH_START, None),
