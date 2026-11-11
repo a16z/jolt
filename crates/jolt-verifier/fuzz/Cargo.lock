@@ -753,7 +753,6 @@ dependencies = [
 name = "jolt-verifier"
 version = "0.1.0"
 dependencies = [
- "ark-serialize",
  "bincode 2.0.1",
  "common",
  "jolt-algebra",
