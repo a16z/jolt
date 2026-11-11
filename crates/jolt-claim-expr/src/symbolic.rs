@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 
 use jolt_algebra::Ring;
 
-use crate::{Expr, Source, SumcheckDomain};
+use crate::{Expr, FactoredExpr, Source, SumcheckDomain};
 
 /// Pure symbolic description of one sumcheck relation: its id, sumcheck spec, and
 /// input/output algebra over the relation's id types. The expression methods are
@@ -71,6 +71,17 @@ pub trait SymbolicSumcheck {
     fn output_expression<F: Ring>(
         &self,
     ) -> Expr<F, Self::OpeningId, Self::DerivedId, Self::ChallengeId>;
+
+    /// The output formula in factored form. A relation whose output is a
+    /// product of sums states it here and defines
+    /// [`output_expression`](Self::output_expression) as its
+    /// [`expand`](FactoredExpr::expand)ion; the default is one term per
+    /// monomial.
+    fn output_factored<F: Ring>(
+        &self,
+    ) -> FactoredExpr<F, Self::OpeningId, Self::DerivedId, Self::ChallengeId> {
+        self.output_expression().into()
+    }
 
     /// The distinct opening ids this relation *produces*, read off its
     /// [`output_expression`](Self::output_expression) — which references every
