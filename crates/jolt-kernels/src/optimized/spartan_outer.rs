@@ -2260,7 +2260,7 @@ mod tests {
     #[cfg(not(feature = "field-inline"))]
     fn prepared_b_folds_match_canonical_matrix() {
         #[cfg(feature = "akita")]
-        use jolt_field::Prime128OffsetA7F7;
+        use jolt_field::Prime128Offset6A23801F;
         fn check<F: JoltField>() {
             let mut rows = synthetic_rows(8, 0xB0_1D);
             for negative in [false, true] {
@@ -2317,7 +2317,7 @@ mod tests {
         }
         check::<Fr>();
         #[cfg(feature = "akita")]
-        check::<Prime128OffsetA7F7>();
+        check::<Prime128Offset6A23801F>();
     }
 
     /// The integer extension of each base-window basis vector is exactly the

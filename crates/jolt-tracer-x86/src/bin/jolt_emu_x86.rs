@@ -35,6 +35,7 @@ mod native {
     use common::jolt_device::MemoryConfig;
     use jolt_program::execution::TraceInputs;
     use jolt_tracer_x86::X86TracerBackend;
+    use tracer::emulator::decode_htif_exit;
 
     const EXIT_FAILED: u8 = 1;
     const EXIT_USAGE: u8 = 2;
@@ -143,14 +144,10 @@ mod native {
             return ExitCode::from(EXIT_FAILED);
         }
 
-        // HTIF encoding, as decoded by Emulator::run_test.
-        let device = (value >> 56) & 0xFF;
-        let payload = value & 0xFFFF_FFFF_FFFF;
-        if device != 0 || payload & 1 != 1 {
+        let Some(endcode) = decode_htif_exit(value) else {
             eprintln!("{elf_path}: unexpected tohost value {value:#x}");
             return ExitCode::from(EXIT_FAILED);
-        }
-        let endcode = payload >> 1;
+        };
         if endcode == 0 {
             ExitCode::SUCCESS
         } else {
@@ -209,4 +206,15 @@ fn main() -> ExitCode {
 fn main() -> ExitCode {
     eprintln!("jolt-emu-x86 requires x86_64 Linux; use jolt-emu on this target");
     ExitCode::from(2u8)
+}
+
+#[cfg(test)]
+mod tests {
+    use tracer::emulator::decode_htif_exit;
+
+    #[test]
+    fn htif_rejects_a_nonzero_command_with_a_success_payload() {
+        assert_eq!(decode_htif_exit(1), Some(0));
+        assert_eq!(decode_htif_exit(0x0001_0000_0000_0001), None);
+    }
 }
