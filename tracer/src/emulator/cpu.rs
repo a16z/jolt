@@ -1153,11 +1153,7 @@ impl Cpu {
             if chunk.invalid().is_empty() {
                 Ok(())
             } else {
-                stdout.write_all(
-                    char::REPLACEMENT_CHARACTER
-                        .encode_utf8(&mut [0; 4])
-                        .as_bytes(),
-                )
+                stdout.write_all("\u{FFFD}".as_bytes())
             }
         });
         let written = written.and_then(|()| {
