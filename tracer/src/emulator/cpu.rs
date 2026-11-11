@@ -46,6 +46,14 @@ impl AdviceTape {
         self.data.extend_from_slice(bytes);
     }
 
+    /// Like [`AdviceTape::write`], but leaves the tape unchanged instead of
+    /// aborting when it cannot grow to hold `bytes`.
+    fn try_write(&mut self, bytes: &[u8]) -> Result<(), TryReserveError> {
+        self.data.try_reserve(bytes.len())?;
+        self.data.extend_from_slice(bytes);
+        Ok(())
+    }
+
     /// Read a specific number of bytes from the advice tape (called during second emulation pass)
     pub fn read(&mut self, num_bytes: usize) -> Option<u64> {
         if self.read_position + num_bytes > self.data.len() {
@@ -91,11 +99,16 @@ use jolt_platform::{
 };
 #[cfg(feature = "field-inline")]
 use jolt_program::field_inline::FieldEncodedValue;
+use std::collections::TryReserveError;
 #[cfg(feature = "std")]
 use std::collections::VecDeque;
+use std::io::Write;
 
 const CSR_CAPACITY: usize = 4096;
 const MAX_CALL_STACK_DEPTH: usize = 32;
+/// Exclusive end of the addresses a print or cycle-marker string can occupy:
+/// the guest passes those pointers and lengths as `u32`.
+const HOST_STRING_ADDRESS_LIMIT: u64 = 1 << 32;
 
 #[cfg(feature = "field-inline")]
 #[derive(Clone, Debug)]
@@ -1089,9 +1102,10 @@ impl Cpu {
                     start_instrs: self.executed_instrs,
                     start_trace_len: self.trace_len,
                 };
-                if self.active_markers.insert(label.clone(), marker).is_some() {
+                if self.active_markers.remove(&label).is_some() {
                     warn!("Marker with label '{label}' is already active; restarting it");
                 }
+                self.active_markers.insert(label, marker);
             }
 
             JOLT_CYCLE_MARKER_END => {
@@ -1117,8 +1131,8 @@ impl Cpu {
         }
     }
 
-    /// Handles a print host call. An unknown event type or an unreadable
-    /// message is logged and ignored.
+    /// Handles a print host call. An unknown event type, an unreadable
+    /// message, or a failed write to stdout is logged and ignored.
     pub fn handle_jolt_print(&mut self, ptr: u32, len: u32, event_type: u32) {
         if self.host_io == HostIo::Replay {
             return;
@@ -1127,38 +1141,71 @@ impl Cpu {
             warn!("Ignoring print host call with unknown event type {event_type}");
             return;
         }
-        let Some(message) = self.read_host_string(ptr, len) else {
+        let Some(bytes) = self.read_host_bytes(ptr.into(), len.into(), HOST_STRING_ADDRESS_LIMIT)
+        else {
             return;
         };
-        if event_type == JOLT_PRINT_LINE {
-            println!("{message}");
-        } else {
-            print!("{message}");
+        // Writes the bytes `print!("{}", String::from_utf8_lossy(&bytes))`
+        // would, without its panic on a stdout error or a second copy.
+        let mut stdout = std::io::stdout().lock();
+        let written = bytes.utf8_chunks().try_for_each(|chunk| {
+            stdout.write_all(chunk.valid().as_bytes())?;
+            if chunk.invalid().is_empty() {
+                Ok(())
+            } else {
+                stdout.write_all(
+                    char::REPLACEMENT_CHARACTER
+                        .encode_utf8(&mut [0; 4])
+                        .as_bytes(),
+                )
+            }
+        });
+        let written = written.and_then(|()| {
+            if event_type == JOLT_PRINT_LINE {
+                stdout.write_all(b"\n")
+            } else {
+                Ok(())
+            }
+        });
+        if let Err(error) = written {
+            warn!("Guest print to stdout failed: {error}");
         }
     }
 
     /// Appends `len` guest bytes starting at `ptr` to the advice tape. An
-    /// unreadable range is logged and appends nothing.
+    /// unreadable range, or one the tape cannot grow to hold, is logged and
+    /// appends nothing.
     pub fn handle_advice_write(&mut self, ptr: u64, len: u64) {
-        if let Some(bytes) = self.read_host_bytes(ptr, len) {
-            advice_tape_write(self, &bytes);
+        let Some(bytes) = self.read_host_bytes(ptr, len, u64::MAX) else {
+            return;
+        };
+        if self.advice_tape.try_write(&bytes).is_err() && self.host_io == HostIo::Live {
+            warn!("Ignoring advice write of {len} bytes: the advice tape cannot grow");
         }
     }
 
     fn read_host_string(&mut self, ptr: u32, len: u32) -> Option<String> {
-        let bytes = self.read_host_bytes(ptr.into(), len.into())?;
-        Some(String::from_utf8_lossy(&bytes).into_owned())
+        let bytes = self.read_host_bytes(ptr.into(), len.into(), HOST_STRING_ADDRESS_LIMIT)?;
+        Some(
+            String::from_utf8(bytes)
+                .unwrap_or_else(|error| String::from_utf8_lossy(error.as_bytes()).into_owned()),
+        )
     }
 
     /// Reads the guest bytes `[ptr, ptr + len)` for a host call. Returns
-    /// `None`, before loading anything, when the range wraps around the
-    /// address space or any byte in it is not readable; a load there would
-    /// panic.
-    fn read_host_bytes(&mut self, ptr: u64, len: u64) -> Option<Vec<u8>> {
+    /// `None`, before loading anything, when the range ends past
+    /// `address_limit`, when any byte in it is not readable (a load there
+    /// would panic), or when the buffer cannot be allocated.
+    fn read_host_bytes(&mut self, ptr: u64, len: u64, address_limit: u64) -> Option<Vec<u8>> {
         let readable = ptr
             .checked_add(len)
+            .filter(|&end| end <= address_limit)
             .filter(|&end| (ptr..end).all(|address| self.mmu.is_host_readable(address)));
-        let Some(end) = readable else {
+        let mut bytes = Vec::new();
+        let reserved = usize::try_from(len)
+            .ok()
+            .is_some_and(|len| bytes.try_reserve_exact(len).is_ok());
+        let (Some(end), true) = (readable, reserved) else {
             if self.host_io == HostIo::Live {
                 warn!(
                     "Ignoring host call: guest range at {ptr:#x} of length {len} is not readable"
@@ -1166,7 +1213,6 @@ impl Cpu {
             }
             return None;
         };
-        let mut bytes = Vec::with_capacity(len as usize);
         for address in ptr..end {
             let (byte, _) = self.mmu.load(address).ok()?;
             bytes.push(byte);
@@ -1495,6 +1541,7 @@ mod test_cpu {
     use std::sync::{Arc, Mutex};
 
     use super::*;
+    use crate::emulator::memory::Memory;
     use crate::emulator::mmu::DRAM_BASE;
     use crate::emulator::terminal::DummyTerminal;
     use common::jolt_device::{JoltDevice, MemoryConfig};
@@ -1714,10 +1761,28 @@ mod test_cpu {
         cpu.get_mut_mmu().init_memory(64);
         cpu.get_mut_mmu().store_raw(DRAM_BASE, b'x');
         let ptr = DRAM_BASE as u32;
+        let logs = LogBuffer::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer({
+                let logs = logs.clone();
+                move || logs.clone()
+            })
+            .with_ansi(false)
+            .finish();
 
-        cpu.handle_jolt_cycle_marker(ptr, 1, u32::MAX);
-        cpu.handle_jolt_print(ptr, 1, u32::MAX);
+        tracing::subscriber::with_default(subscriber, || {
+            cpu.handle_jolt_cycle_marker(ptr, 1, u32::MAX);
+            cpu.handle_jolt_print(ptr, 1, u32::MAX);
+        });
+
         assert!(cpu.active_markers.is_empty());
+        let logs = String::from_utf8(logs.0.lock().unwrap().clone()).unwrap();
+        for warning in [
+            "Ignoring cycle-marker host call with unknown event 4294967295",
+            "Ignoring print host call with unknown event type 4294967295",
+        ] {
+            assert!(logs.contains(warning), "{logs}");
+        }
     }
 
     #[test]
@@ -1757,19 +1822,43 @@ mod test_cpu {
     fn host_call_ranges_are_read_whole_or_not_at_all() {
         let mut cpu = create_cpu();
         cpu.get_mut_mmu().init_memory(64);
+        for offset in 56..64 {
+            cpu.get_mut_mmu().store_raw(DRAM_BASE + offset, 0xab);
+        }
+        cpu.get_mut_mmu()
+            .memory
+            .memory
+            .data
+            .start_saving_checkpoints();
 
-        // A u64 range that wraps around the address space, and u32 ranges that
-        // cross 2^32.
+        // A range that wraps around the address space, and one whose last
+        // byte is past the end of memory.
         cpu.handle_advice_write(u64::MAX - 1, 4);
-        cpu.handle_jolt_print(u32::MAX - 1, 4, JOLT_PRINT_STRING);
-        cpu.handle_jolt_cycle_marker(u32::MAX - 1, 4, JOLT_CYCLE_MARKER_START);
-        // A range whose last byte is past the end of memory appends nothing.
         cpu.handle_advice_write(DRAM_BASE + 60, 5);
-        assert!(cpu.active_markers.is_empty());
         assert!(cpu.advice_tape.is_empty());
+        let reads = Memory {
+            data: cpu.get_mut_mmu().memory.memory.data.save_checkpoint(),
+        };
+        assert_eq!(reads.get_doubleword(56), 0, "a rejected range was loaded");
 
         cpu.handle_advice_write(DRAM_BASE + 60, 4);
-        assert_eq!(cpu.advice_tape.len(), 4);
+        assert_eq!(advice_tape_read(&mut cpu, 4), Some(0xabab_abab));
+    }
+
+    #[test]
+    fn host_call_strings_stay_below_4_gib() {
+        // RAM from 2 GiB to just past 4 GiB. Zeroed pages are allocated lazily.
+        let mut cpu = create_cpu();
+        cpu.get_mut_mmu().init_memory((1 << 31) + 64);
+        for address in (1 << 32) - 2..(1 << 32) + 2 {
+            cpu.get_mut_mmu().store_raw(address, b'x');
+        }
+
+        cpu.handle_jolt_cycle_marker(u32::MAX - 1, 4, JOLT_CYCLE_MARKER_START);
+        assert!(cpu.active_markers.is_empty());
+
+        cpu.handle_jolt_cycle_marker(u32::MAX - 1, 2, JOLT_CYCLE_MARKER_START);
+        assert!(cpu.active_markers.contains_key("xx"));
     }
 
     #[test]

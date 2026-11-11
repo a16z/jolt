@@ -8,7 +8,7 @@ use common::constants::{RAM_START_ADDRESS, STACK_CANARY_SIZE};
 use common::jolt_device::{JoltDevice, MemoryLayout};
 use jolt_riscv::{RamRead, RamWrite};
 
-use super::cpu::{get_privilege_mode, PrivilegeMode, Trap, TrapType};
+use super::cpu::{PrivilegeMode, Trap, TrapType};
 use super::terminal::Terminal;
 
 #[derive(Clone, Debug)]
@@ -40,6 +40,14 @@ enum MemoryAccessType {
     Execute,
     Read,
     Write,
+}
+
+/// How [`Mmu::translate_address`] maps a virtual address.
+enum Translation {
+    Identity,
+    PageWalk,
+    /// `translate_address` panics with this message.
+    Unsupported(&'static str),
 }
 
 /// Why an access at an effective address falls outside the Jolt memory
@@ -234,9 +242,12 @@ impl Mmu {
     /// call (`VirtualHostIO`) checks every byte it reads with this first, so
     /// a bad guest pointer skips the call instead of aborting the trace.
     pub(crate) fn is_host_readable(&self, address: u64) -> bool {
-        // Jolt never enables address translation, and the page walk has
-        // panicking paths of its own.
-        if !matches!(self.addressing_mode, AddressingMode::None) {
+        // A page walk reads page-table entries with the panicking raw loads.
+        // Jolt never enables paging.
+        if !matches!(
+            self.translation(&MemoryAccessType::Read),
+            Translation::Identity
+        ) {
             return false;
         }
         let ea = self.get_effective_address(address);
@@ -764,43 +775,46 @@ impl Mmu {
         access_type: &MemoryAccessType,
     ) -> Result<u64, ()> {
         let address = self.get_effective_address(v_address);
-        let p_address = match self.addressing_mode {
-            AddressingMode::None => Ok(address),
-            AddressingMode::SV39 => match self.privilege_mode {
-                PrivilegeMode::Machine => match access_type {
-                    MemoryAccessType::Execute => Ok(address),
-                    _ => match (self.mstatus >> 17) & 1 {
-                        0 => Ok(address),
-                        _ => {
-                            let privilege_mode = get_privilege_mode((self.mstatus >> 11) & 3);
-                            match privilege_mode {
-                                PrivilegeMode::Machine => Ok(address),
-                                _ => {
-                                    let current_privilege_mode = self.privilege_mode;
-                                    self.update_privilege_mode(privilege_mode);
-                                    let result = self.translate_address(v_address, access_type);
-                                    self.update_privilege_mode(current_privilege_mode);
-                                    result
-                                }
-                            }
-                        }
-                    },
-                },
-                PrivilegeMode::User | PrivilegeMode::Supervisor => {
-                    let vpns = [
-                        (address >> 12) & 0x1ff,
-                        (address >> 21) & 0x1ff,
-                        (address >> 30) & 0x1ff,
-                    ];
-                    self.traverse_page(address, 3 - 1, self.ppn, &vpns, access_type)
-                }
-                _ => Ok(address),
-            },
-            AddressingMode::SV48 => {
-                panic!("AddressingMode SV48 is not supported yet.");
+        match self.translation(access_type) {
+            Translation::Identity => Ok(address),
+            Translation::PageWalk => {
+                let vpns = [
+                    (address >> 12) & 0x1ff,
+                    (address >> 21) & 0x1ff,
+                    (address >> 30) & 0x1ff,
+                ];
+                self.traverse_page(address, 3 - 1, self.ppn, &vpns, access_type)
             }
-        };
-        p_address
+            Translation::Unsupported(reason) => panic!("{reason}"),
+        }
+    }
+
+    /// How [`Mmu::translate_address`] maps an address for `access_type` in
+    /// the current addressing mode, privilege mode and `mstatus`.
+    fn translation(&self, access_type: &MemoryAccessType) -> Translation {
+        match self.addressing_mode {
+            AddressingMode::None => Translation::Identity,
+            AddressingMode::SV48 => {
+                Translation::Unsupported("AddressingMode SV48 is not supported yet.")
+            }
+            AddressingMode::SV39 => match self.privilege_mode {
+                // Machine mode translates loads and stores only when MPRV is
+                // set, and then under the privilege mode in MPP.
+                PrivilegeMode::Machine => {
+                    let mprv = (self.mstatus >> 17) & 1 == 1;
+                    if matches!(access_type, MemoryAccessType::Execute) || !mprv {
+                        return Translation::Identity;
+                    }
+                    match (self.mstatus >> 11) & 3 {
+                        0 | 1 => Translation::PageWalk,
+                        3 => Translation::Identity,
+                        _ => Translation::Unsupported("Unknown privilege encoding"),
+                    }
+                }
+                PrivilegeMode::User | PrivilegeMode::Supervisor => Translation::PageWalk,
+                PrivilegeMode::Reserved => Translation::Identity,
+            },
+        }
     }
 
     fn traverse_page(
@@ -1052,6 +1066,7 @@ impl MemoryWrapper {
 #[cfg(test)]
 mod test_mmu {
     use super::*;
+    use crate::emulator::cpu::get_privilege_mode;
     use crate::emulator::terminal::DummyTerminal;
     use common::jolt_device::MemoryConfig;
     use std::panic::{catch_unwind, AssertUnwindSafe};
@@ -1076,7 +1091,8 @@ mod test_mmu {
     }
 
     /// `is_host_readable` must hold exactly where `load` returns normally,
-    /// including in the gap between a small I/O region and RAM.
+    /// including in the gap between a small I/O region and RAM and under
+    /// SV39 in machine mode, where translation is the identity.
     #[test]
     fn host_readable_addresses_are_exactly_those_load_accepts() {
         let small_io = MemoryConfig {
@@ -1094,6 +1110,10 @@ mod test_mmu {
         device_mmu.init_memory(device.memory_layout.get_total_memory_size());
         device_mmu.jolt_device = Some(device);
         mmus.push(device_mmu);
+        let mut sv39_mmu = Mmu::new(Box::new(DummyTerminal::default()));
+        sv39_mmu.init_memory(64);
+        sv39_mmu.update_addressing_mode(AddressingMode::SV39);
+        mmus.push(sv39_mmu);
 
         for mut mmu in mmus {
             let mut addresses = vec![
