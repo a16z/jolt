@@ -16,9 +16,10 @@ use crate::{
 /// and it prices every challenge set at 2^256, so no step asks for proof of
 /// work. It passes every check, so a proof's values and nonces do not stop
 /// the replay: a shape-correct proof replays to its end whether or not it
-/// carries the nonces a real transcript's prices ask for. It has
-/// no NARG string and implements neither [`VerifierInit`](crate::VerifierInit)
-/// nor [`ProverInit`](crate::ProverInit), so no proof can be verified or
+/// carries the nonces a real transcript's prices ask for. It wraps a
+/// verifier sponge over an empty NARG string that it never reads, and it
+/// implements neither [`VerifierInit`](crate::VerifierInit) nor
+/// [`ProverInit`](crate::ProverInit), so no proof can be verified or
 /// produced with it.
 pub struct ShapeTranscript<H: DuplexSpongeInit<U = u8>> {
     state: VerifierState<'static, H>,
