@@ -144,9 +144,7 @@ pub use domain::{
     BooleanHypercube, CenteredIntegerDomain, EqFactoredRound, SumcheckDomain, SumcheckDomainSpec,
 };
 pub use error::SumcheckError;
-pub use masked::{
-    receive_masked_rounds, BatchedMaskedRounds, MaskedRound, MaskedRoundReader, RoundWire,
-};
+pub use masked::{receive_masked_rounds, BatchedMaskedRounds, MaskedRound, PadSlots, RoundWire};
 #[cfg(feature = "prover")]
 pub use pow::grind_round;
 pub use pow::round_pow_bits;

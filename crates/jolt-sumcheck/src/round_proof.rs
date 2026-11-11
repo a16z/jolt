@@ -61,6 +61,26 @@ pub fn append_compressed_round<F: Field + Encoding, T: Transcript>(transcript: &
     transcript.append_private(sent);
 }
 
+/// The actual degree of `coefficients` if any coefficient above `degree` is
+/// nonzero, else `None`. Kernels may sample a polynomial at more points than
+/// its degree needs, leaving zero leading coefficients, so every degree-bound
+/// check ignores them through this one helper. The scan visits every
+/// coefficient above the bound, zeros included, so its length depends only
+/// on public sizes; only invalid output takes the slower path that finds the
+/// degree.
+pub(crate) fn excess_degree<F: Field>(coefficients: &[F], degree: usize) -> Option<usize> {
+    let excess = coefficients
+        .iter()
+        .skip(degree.saturating_add(1))
+        .fold(false, |excess, coefficient| excess | !coefficient.is_zero());
+    excess.then(|| {
+        coefficients
+            .iter()
+            .rposition(|coefficient| !coefficient.is_zero())
+            .unwrap_or(0)
+    })
+}
+
 /// `poly`'s coefficients padded with zeros to the `degree + 1` of its degree
 /// bound: the fixed-width form a masked round sends, since a masked message's
 /// length must not depend on the witness.
@@ -68,7 +88,8 @@ pub fn append_compressed_round<F: Field + Encoding, T: Transcript>(transcript: &
 /// # Errors
 ///
 /// [`SumcheckError::DegreeOverflow`] if `degree + 1` overflows, and
-/// [`SumcheckError::DegreeBoundExceeded`] if `poly` has more coefficients.
+/// [`SumcheckError::DegreeBoundExceeded`] if `poly` has a nonzero
+/// coefficient above `degree`.
 pub fn padded_coefficients<F: Field>(
     poly: &UnivariatePoly<F>,
     degree: usize,
@@ -77,13 +98,10 @@ pub fn padded_coefficients<F: Field>(
         .checked_add(1)
         .ok_or(SumcheckError::DegreeOverflow { degree })?;
     let coefficients = poly.coefficients();
-    if coefficients.len() > width {
-        return Err(SumcheckError::DegreeBoundExceeded {
-            got: UnivariatePolynomial::degree(poly),
-            max: degree,
-        });
+    if let Some(got) = excess_degree(coefficients, degree) {
+        return Err(SumcheckError::DegreeBoundExceeded { got, max: degree });
     }
-    let mut padded = coefficients.to_vec();
+    let mut padded: Vec<F> = coefficients.iter().take(width).copied().collect();
     padded.resize(width, F::zero());
     Ok(padded)
 }
