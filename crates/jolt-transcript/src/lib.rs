@@ -5,8 +5,8 @@
 //! both sides share: public messages, field challenges through each field's
 //! [`ChallengeCodec`], and proof-of-work steps whose nonce the proof carries.
 //! [`ProverTranscript`] and [`VerifierTranscript`] add the NARG string.
-//! [`prover_transcript`] and [`verifier_transcript`] bind the session and the
-//! public statement before the first message.
+//! `prover_transcript` (under `prover-entropy`) and [`verifier_transcript`] bind
+//! the session and public statement before the first message.
 //!
 //! The transcript is positional and word aligned: no message carries a label,
 //! and every absorb and squeeze is a whole number of eight-byte words
@@ -62,7 +62,9 @@ pub use poseidon::PoseidonSponge;
 pub use prover::{ProverInit, ProverTranscript};
 #[cfg(feature = "test-utils")]
 pub use scripted::{Script, ScriptedTranscript, TranscriptEvent};
-pub use setup::{prover_transcript, session_id, verifier_transcript, PROTOCOL_ID};
+#[cfg(feature = "prover-entropy")]
+pub use setup::prover_transcript;
+pub use setup::{session_id, verifier_transcript, PROTOCOL_ID};
 pub use shake128::{ProverState, Shake128, Shake128Hasher};
 pub use spongefish::{Encoding, VerificationError, VerifierState};
 pub use transcript::{FieldTranscript, Transcript};

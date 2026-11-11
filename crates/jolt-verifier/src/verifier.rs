@@ -1550,7 +1550,7 @@ mod tests {
 
         public_io.outputs = vec![0, 0];
         let checked = validate_inputs(&preprocessing, &public_io, &proof, false).unwrap();
-        assert!(checked.public_io.outputs.is_empty());
+        assert_eq!(checked.public_io.outputs, [0u8; 0]);
     }
 
     #[test]

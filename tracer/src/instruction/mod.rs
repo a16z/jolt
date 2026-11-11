@@ -1601,7 +1601,7 @@ pub fn uncompress_instruction(halfword: u32) -> u32 {
                         }
                         // imm == 0 is for reserved instruction
                     }
-                    if r != 0 && r != 2 {
+                    if r != 2 {
                         // C.LUI
                         // lui r, nzimm
                         let nzimm = match halfword & 0x1000 {
@@ -1611,13 +1611,13 @@ pub fn uncompress_instruction(halfword: u32) -> u32 {
                             ((halfword << 5) & 0x20000) | // nzimm[17] <= [12]
                             ((halfword << 10) & 0x1f000); // nzimm[16:12] <= [6:2]
                         if nzimm != 0 {
+                            if r == 0 {
+                                // HINT
+                                return 0x13;
+                            }
                             return nzimm | (r << 7) | 0x37;
                         }
-                        // nzimm == 0 is for reserved instruction
-                    }
-                    if r == 0 {
-                        // NOP
-                        return 0x13;
+                        // nzimm == 0 is reserved for every rd, x0 included
                     }
                 }
                 4 => {
@@ -1823,7 +1823,7 @@ pub fn uncompress_instruction(halfword: u32) -> u32 {
                     if rd != 0 {
                         return (offset << 20) | (2 << 15) | (3 << 12) | (rd << 7) | 0x7;
                     }
-                    // rd == 0 is reserved instruction
+                    // rd == 0 (f0) is legal with Zcd; Jolt has no D, so it rejects it
                 }
                 2 => {
                     // C.LWSP
@@ -3115,10 +3115,11 @@ mod tests {
         let cases: &[(u32, u32, &str)] = &[
             (0x0024, i_type(8, 2, 0b000, 9, 0x13), "c.addi4spn x9, 8"),
             (0x0000, INVALID, "c.addi4spn nzuimm=0 is reserved"),
+            (0x001c, INVALID, "c.addi4spn x15 nzuimm=0 is reserved"),
             (0x2404, i_type(8, 8, 0b011, 9, 0x07), "c.fld f9, 8(x8)"),
             (0x4044, i_type(4, 8, 0b010, 9, 0x03), "c.lw x9, 4(x8)"),
             (0x690c, i_type(16, 10, 0b011, 11, 0x03), "c.ld x11, 16(x10)"),
-            (0x8000, INVALID, "q0 funct3=100 is reserved"),
+            (0x8000, INVALID, "c.lbu (Zcb) is not implemented by Jolt"),
             (0xa488, s_type(8, 10, 9, 0b011, 0x27), "c.fsd f10, 8(x9)"),
             (0xc0c8, s_type(4, 10, 9, 0b010, 0x23), "c.sw x10, 4(x9)"),
             (0xe488, s_type(8, 10, 9, 0b011, 0x23), "c.sd x10, 8(x9)"),
@@ -3137,7 +3138,9 @@ mod tests {
             (0x6285, u_type(1, 5, 0x37), "c.lui x5, 1"),
             (0x7281, u_type(0xfffe0, 5, 0x37), "c.lui x5, 0xfffe0"),
             (0x6281, INVALID, "c.lui nzimm=0 is reserved"),
-            (0x6005, 0x13, "c.lui rd=0 is a nop"),
+            (0x6005, 0x13, "c.lui rd=0 hint"),
+            (0x6001, INVALID, "c.lui rd=0 nzimm=0 is reserved"),
+            (0x7001, 0x13, "c.lui rd=0 hint (sign bit only)"),
             (0x9085, i_type(33, 9, 0b101, 9, 0x13), "c.srli x9, 33"),
             (0x8485, i_type(0x400 | 1, 9, 0b101, 9, 0x13), "c.srai x9, 1"),
             (0x996d, i_type(-5, 10, 0b111, 10, 0x13), "c.andi x10, -5"),
@@ -3155,14 +3158,18 @@ mod tests {
                 r_type(0x00, 10, 9, 0b000, 9, 0x3b),
                 "c.addw x9, x10",
             ),
-            (0x9cc9, INVALID, "q1 funct1=1 funct2=10 is reserved"),
+            (0x9cc9, INVALID, "c.mul (Zcb) is not implemented by Jolt"),
             (0xa801, j_type(16, 0), "c.j +16"),
             (0xbfc5, j_type(-16, 0), "c.j -16"),
             (0xc481, b_type(8, 9, 0, 0b000), "c.beqz x9, +8"),
             (0xfce5, b_type(-8, 9, 0, 0b001), "c.bnez x9, -8"),
             (0x12a2, i_type(40, 5, 0b001, 5, 0x13), "c.slli x5, 40"),
             (0x23e2, i_type(24, 2, 0b011, 7, 0x07), "c.fldsp f7, 24"),
-            (0x2062, INVALID, "c.fldsp rd=0 is reserved"),
+            (
+                0x2062,
+                INVALID,
+                "c.fldsp f0 is rejected by Jolt's decompressor",
+            ),
             (0x4412, i_type(4, 2, 0b010, 8, 0x03), "c.lwsp x8, 4"),
             (0x4012, INVALID, "c.lwsp rd=0 is reserved"),
             (0x64a2, i_type(8, 2, 0b011, 9, 0x03), "c.ldsp x9, 8"),
@@ -3196,6 +3203,22 @@ mod tests {
                     );
                 }
             }
+        }
+        // The invalid word is what makes a reserved parcel halt instead of run.
+        assert!(Instruction::decode(INVALID, ADDR, true).is_err());
+    }
+
+    /// The emulator and program-image decompressors must agree on every
+    /// 16-bit parcel, reserved ones included, so a parcel one of them rejects
+    /// is rejected by both.
+    #[test]
+    fn uncompress_agrees_with_jolt_riscv_on_every_parcel() {
+        for halfword in (0..=u16::MAX).filter(|halfword| halfword & 0b11 != 0b11) {
+            assert_eq!(
+                uncompress_instruction(u32::from(halfword)),
+                jolt_riscv::uncompress_rv64_instruction(halfword),
+                "halfword {halfword:#06x}"
+            );
         }
     }
 }
