@@ -1,8 +1,6 @@
 //! Prover-only operations on `spongefish::ProverState`.
 
 use crate::codec::NargMessage;
-#[cfg(feature = "prover-coins")]
-pub use crate::coins::ChildCoins;
 pub use crate::coins::{OwnedCoins, ProverCoins};
 #[cfg(feature = "prover-grinding")]
 use crate::pow::{nonce_word, Leb128, SpongePow, CHECK_BYTES};

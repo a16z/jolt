@@ -60,8 +60,6 @@ pub use grind_bits::{
 };
 #[cfg(feature = "transcript-poseidon")]
 pub use poseidon::PoseidonSponge;
-#[cfg(feature = "prover-coins")]
-pub use prover::ChildCoins;
 pub use prover::{OwnedCoins, ProverCoins, ProverInit, ProverTranscript};
 #[cfg(feature = "test-utils")]
 pub use scripted::{Script, ScriptedTranscript, TranscriptEvent};
