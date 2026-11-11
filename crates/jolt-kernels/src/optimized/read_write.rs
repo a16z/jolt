@@ -45,16 +45,15 @@ impl ReadWriteOrder {
 /// Fixed batch coefficients, shared by every sparse-matrix phase.
 #[derive(Clone, Copy)]
 pub(super) struct ReadWriteBatch<F> {
-    value: F,
-    increment: [F; 2],
+    gamma: F,
     code: F,
     count: F,
 }
 
 #[derive(Clone, Copy)]
 pub(super) struct ReadWriteCoefficients<F> {
-    value: F,
-    increment: F,
+    gamma: F,
+    code_increment: F,
     count: F,
 }
 
@@ -62,8 +61,7 @@ impl<F: JoltField> ReadWriteBatch<F> {
     pub(super) fn new(gamma: F) -> Self {
         let code = gamma * gamma;
         Self {
-            value: F::one() + gamma,
-            increment: [gamma, gamma + code],
+            gamma,
             code,
             count: code * gamma,
         }
@@ -71,16 +69,16 @@ impl<F: JoltField> ReadWriteBatch<F> {
 
     pub(super) fn unbound(&self, protected: bool) -> ReadWriteCoefficients<F> {
         ReadWriteCoefficients {
-            value: self.value,
-            increment: self.increment[usize::from(protected)],
+            gamma: self.gamma,
+            code_increment: if protected { self.code } else { F::zero() },
             count: self.count,
         }
     }
 
     pub(super) fn bound(&self, mask: F) -> ReadWriteCoefficients<F> {
         ReadWriteCoefficients {
-            value: self.value,
-            increment: self.increment[0] + self.code * mask,
+            gamma: self.gamma,
+            code_increment: self.code * mask,
             count: self.count,
         }
     }
@@ -94,7 +92,13 @@ impl<F: JoltField> ReadWriteCoefficients<F> {
 
     #[inline]
     pub(super) fn slope(&self, val: F, inc: F) -> F {
-        self.value * val + self.increment * inc
+        // Unprotected entries need only the original read/write multiplication.
+        let read_write = val + self.gamma * (val + inc);
+        if self.code_increment.is_zero() {
+            read_write
+        } else {
+            read_write + self.code_increment * inc
+        }
     }
 }
 
