@@ -40,6 +40,7 @@
 //! | [`domain`] | [`SumcheckDomain`] implementations for round-sum checks |
 //! | `r1cs` | R1CS lowering for sumcheck verifier equations (`r1cs` feature) |
 //! | [`round_proof`] | [`RoundMessage`] and [`ClearRound`] traits |
+//! | [`schedule`] | [`DegreeSchedule`] — a batch's public per-round degree bounds |
 //! | [`single`] | `prove_single` and [`verify_single`] — one unbatched instance, compressed or eq-factored |
 //! | [`committed`] | Commitment-backed round messages |
 //! | [`error`] | [`SumcheckError`] variants |
@@ -117,6 +118,7 @@ pub mod prover;
 pub mod r1cs;
 pub mod recorder;
 pub mod round_proof;
+pub mod schedule;
 pub mod single;
 pub mod verifier;
 
@@ -161,9 +163,15 @@ pub use r1cs::{
 pub use recorder::CommittedSumcheckRecorder;
 pub use recorder::{ClearSumcheckRecorder, RecordedSumcheck, SumcheckRecorder};
 pub use round_proof::{append_compressed_round, ClearRound, RoundMessage};
+pub use schedule::{DegreeSchedule, MemberDegrees};
 #[cfg(feature = "prover")]
-pub use single::prove_single;
 pub use single::{
-    verify_single, SingleFormat, SingleInstance, SingleReduction, SingleSumcheckProof,
+    prove_single, prove_single_with, ClearProverRounds, FullRounds, ProveSingleRounds, ProverRound,
+    ProverRoundChannel,
+};
+pub use single::{
+    verify_single, verify_single_with, visit_single_rounds, BindScalarClaim, ClearVerifierRounds,
+    RoundSpec, SingleFormat, SingleInstance, SingleReduction, SingleSumcheckProof, SumcheckShape,
+    SumcheckShapeError, VerifierRoundChannel,
 };
 pub use verifier::SumcheckVerifier;

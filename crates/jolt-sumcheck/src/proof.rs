@@ -3,6 +3,7 @@ use crate::{
     committed::{CommittedSumcheckConsistency, CommittedSumcheckProof},
     domain::{BooleanHypercube, SumcheckDomain},
     error::SumcheckError,
+    schedule::DegreeSchedule,
     verifier::SumcheckVerifier,
 };
 use jolt_field::Field;
@@ -129,15 +130,11 @@ impl<F: Field, C> SumcheckProof<F, C> {
     }
 
     /// Verifies a compressed clear Boolean-hypercube sumcheck proof against a
-    /// combined claim given as plain `(num_vars, degree, claimed_sum)`.
-    ///
-    /// Takes the claim dimensions directly rather than a [`SumcheckClaim`] so a
-    /// batched-verify driver that has already reduced its instances to one combined
-    /// claim can call it without constructing a claim value.
-    pub fn verify_compressed_boolean<T>(
+    /// combined claim `claimed_sum`, each round bounded by its own degree in
+    /// `degrees`, as a batch's generated `degree_schedule` gives them.
+    pub fn verify_compressed_scheduled<T>(
         &self,
-        num_vars: usize,
-        degree: usize,
+        degrees: &DegreeSchedule,
         claimed_sum: F,
         transcript: &mut T,
     ) -> Result<EvaluationClaim<F>, SumcheckError<F>>
@@ -146,12 +143,15 @@ impl<F: Field, C> SumcheckProof<F, C> {
         T: FieldTranscript<F>,
     {
         match self {
-            Self::Clear(ClearProof::Compressed(proof)) => SumcheckVerifier::verify_compressed(
-                &SumcheckClaim::new(num_vars, degree, claimed_sum),
-                proof,
-                BooleanHypercube,
-                transcript,
-            ),
+            Self::Clear(ClearProof::Compressed(proof)) => {
+                SumcheckVerifier::verify_compressed_scheduled(
+                    claimed_sum,
+                    degrees,
+                    proof,
+                    BooleanHypercube,
+                    transcript,
+                )
+            }
             Self::Clear(ClearProof::Full(_)) => Err(SumcheckError::WrongProofEncoding {
                 expected: "compressed clear",
                 got: "full clear",

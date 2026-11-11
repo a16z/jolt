@@ -20,6 +20,10 @@ use super::spartan::{
 
 pub(crate) const INPUT_VIRTUALIZATION_DEGREE: usize = 3;
 pub(crate) const READ_RAF_BASE_DEGREE: usize = 2;
+/// The read-RAF summand's degree in each address variable: the variable lies
+/// in exactly one `ra` chunk, and the table value term (`Val + γ·RafVal`) is
+/// multilinear in it.
+pub(crate) const READ_RAF_ADDRESS_ROUND_DEGREE: usize = 2;
 
 /// Whether instruction read-RAF must pin the lookup address to its canonical
 /// representative in `[0, p)`.

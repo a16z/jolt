@@ -11,7 +11,7 @@
 
 use jolt_field::Field;
 
-use crate::SumcheckError;
+use crate::{DegreeSchedule, SumcheckError};
 
 /// One present batch member: its input claim (the member's initial running
 /// claim), its batching coefficient, its round count, and its activation
@@ -33,11 +33,12 @@ pub struct BatchMember<F> {
 }
 
 /// The computed head of a batched sumcheck: the present members (declaration
-/// order), the combined claim, and the batch dimensions.
+/// order), the combined claim, and the batch's degree schedule, whose length
+/// is the batch's round count.
 ///
 /// # Padding rules
 ///
-/// Write `n = max_num_vars` and `W = [offset, offset + rounds)` for a member's
+/// Write `n = max_num_vars()` and `W = [offset, offset + rounds)` for a member's
 /// active window. The field selects the rule: invertible `F::from_u64(2)` gives
 /// constant extension; otherwise the summand is zero-extended.
 ///
@@ -67,8 +68,7 @@ pub struct BatchPrelude<F> {
     /// The padded random linear combination of the members' input claims —
     /// the batch's initial running claim, under the padding rule above.
     pub claimed_sum: F,
-    pub max_num_vars: usize,
-    pub max_degree: usize,
+    pub degrees: DegreeSchedule,
 }
 
 impl<F> BatchMember<F> {
@@ -89,16 +89,16 @@ impl<F: Field> BatchPrelude<F> {
         clippy::expect_used,
         reason = "legacy constructor retained for generated in-repo callers; external callers use try_new"
     )]
-    pub fn new(members: Vec<BatchMember<F>>, max_num_vars: usize, max_degree: usize) -> Self {
-        Self::try_new(members, max_num_vars, max_degree).expect("invalid sumcheck batch prelude")
+    pub fn new(members: Vec<BatchMember<F>>, degrees: DegreeSchedule) -> Self {
+        Self::try_new(members, degrees).expect("invalid sumcheck batch prelude")
     }
 
     pub fn try_new(
         members: Vec<BatchMember<F>>,
-        max_num_vars: usize,
-        max_degree: usize,
+        degrees: DegreeSchedule,
     ) -> Result<Self, SumcheckError<F>> {
-        validate_batch_dimensions(&members, max_num_vars, max_degree)?;
+        validate_batch_dimensions(&members, &degrees)?;
+        let max_num_vars = degrees.num_rounds();
         let padding = PaddingRule::for_field();
         let claimed_sum = members
             .iter()
@@ -110,9 +110,13 @@ impl<F: Field> BatchPrelude<F> {
         Ok(Self {
             members,
             claimed_sum,
-            max_num_vars,
-            max_degree,
+            degrees,
         })
+    }
+
+    /// The batch's round count.
+    pub fn max_num_vars(&self) -> usize {
+        self.degrees.num_rounds()
     }
 
     /// Returns `λ` such that an honest member's final claim is `λ * g(r_W)`.
@@ -140,9 +144,9 @@ impl<F: Field> BatchPrelude<F> {
                     member,
                     members: self.members.len(),
                 })?;
-        if challenges.len() != self.max_num_vars {
+        if challenges.len() != self.max_num_vars() {
             return Err(SumcheckError::WrongNumberOfRounds {
-                expected: self.max_num_vars,
+                expected: self.max_num_vars(),
                 got: challenges.len(),
             });
         }
@@ -158,7 +162,7 @@ impl<F: Field> BatchPrelude<F> {
     }
 
     pub(crate) fn validate(&self) -> Result<(), SumcheckError<F>> {
-        validate_batch_dimensions(&self.members, self.max_num_vars, self.max_degree)
+        validate_batch_dimensions(&self.members, &self.degrees)
     }
 }
 
@@ -191,12 +195,10 @@ impl<F: Field> PaddingRule<F> {
 
 fn validate_batch_dimensions<F: Field>(
     members: &[BatchMember<F>],
-    max_num_vars: usize,
-    max_degree: usize,
+    degrees: &DegreeSchedule,
 ) -> Result<(), SumcheckError<F>> {
-    if max_degree.checked_add(1).is_none() {
-        return Err(SumcheckError::DegreeOverflow { degree: max_degree });
-    }
+    degrees.validate()?;
+    let max_num_vars = degrees.num_rounds();
     for (member, described) in members.iter().enumerate() {
         let exponent = max_num_vars.checked_sub(described.rounds).ok_or(
             SumcheckError::BatchMemberRoundsOutOfRange {
@@ -225,9 +227,6 @@ fn validate_batch_dimensions<F: Field>(
             });
         }
     }
-    if max_num_vars > 0 && max_degree == 0 {
-        return Err(SumcheckError::ZeroBatchDegree { max_num_vars });
-    }
     Ok(())
 }
 
@@ -236,7 +235,7 @@ mod tests {
     use jolt_field::{Prime64Offset59, Ring};
 
     use super::{BatchMember, BatchPrelude};
-    use crate::SumcheckError;
+    use crate::{DegreeSchedule, SumcheckError};
 
     type F = Prime64Offset59;
 
@@ -252,7 +251,7 @@ mod tests {
     #[test]
     fn checked_constructor_rejects_rounds_larger_than_batch() {
         assert!(matches!(
-            BatchPrelude::try_new(vec![member(3, 0)], 2, 1),
+            BatchPrelude::try_new(vec![member(3, 0)], DegreeSchedule::uniform(2, 1)),
             Err(SumcheckError::BatchMemberRoundsOutOfRange {
                 member: 0,
                 rounds: 3,
@@ -264,7 +263,7 @@ mod tests {
     #[test]
     fn checked_constructor_rejects_window_overflow() {
         assert!(matches!(
-            BatchPrelude::try_new(vec![member(1, usize::MAX)], 2, 1),
+            BatchPrelude::try_new(vec![member(1, usize::MAX)], DegreeSchedule::uniform(2, 1)),
             Err(SumcheckError::BatchMemberWindowOverflow {
                 member: 0,
                 offset: usize::MAX,
@@ -276,7 +275,7 @@ mod tests {
     #[test]
     fn checked_constructor_rejects_window_outside_batch() {
         assert!(matches!(
-            BatchPrelude::try_new(vec![member(2, 1)], 2, 1),
+            BatchPrelude::try_new(vec![member(2, 1)], DegreeSchedule::uniform(2, 1)),
             Err(SumcheckError::BatchMemberWindowOutOfRange {
                 member: 0,
                 offset: 1,
@@ -289,7 +288,7 @@ mod tests {
     #[test]
     fn checked_constructor_rejects_degree_overflow() {
         assert!(matches!(
-            BatchPrelude::<F>::try_new(Vec::new(), 0, usize::MAX),
+            BatchPrelude::<F>::try_new(Vec::new(), DegreeSchedule::uniform(1, usize::MAX)),
             Err(SumcheckError::DegreeOverflow { degree: usize::MAX })
         ));
     }
