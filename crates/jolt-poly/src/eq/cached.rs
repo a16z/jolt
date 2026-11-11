@@ -1,4 +1,4 @@
-use super::alloc::{check_layout, domain_len, EqAlloc, EqTableError, Global, TableInit};
+use super::alloc::{check_layout, domain_len, EqAlloc, Global, TableInit};
 use super::EqPolynomial;
 use crate::point::PointLike;
 use jolt_field::Field;
@@ -75,12 +75,9 @@ impl<F: Field> EqPolynomial<F> {
         F: Mul<P::Coord, Output = F>,
     {
         let len = domain_len(r.num_vars(), policy)?;
-        let elements = len.checked_add(len - 1).ok_or_else(|| {
-            policy.reject(EqTableError::SizeOverflow {
-                elements: len,
-                element_size: 2,
-            })
-        })?;
+        // `len` is a power of two that fits in usize, so the level total
+        // `2 * len - 1` fits too.
+        let elements = len + (len - 1);
         check_layout::<F, _>(len, policy)?;
         check_layout::<Vec<F>, _>(r.num_vars() + 1, policy)?;
         policy.admit::<F>(elements, at)?;
