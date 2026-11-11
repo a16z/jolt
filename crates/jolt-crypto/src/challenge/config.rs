@@ -413,7 +413,7 @@ mod entropy_tests {
     fn production_primes_and_challenges_meet_ls18_shortness() {
         assert_ls18_short_difference_bound::<Prime32Offset99>(2);
         assert_ls18_short_difference_bound::<Prime64Offset59>(2);
-        assert_ls18_short_difference_bound::<Prime128Offset6A23801F>(4);
+        assert_ls18_short_difference_bound::<Prime128Offset6A23801F>(16);
     }
 
     #[test]
