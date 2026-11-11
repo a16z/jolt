@@ -635,7 +635,8 @@ fn gruen_constructor_identity<F: Field, const E: Endianness>() {
         let point = PointRef::<E, _>::new(&coords);
         for order in [BindingOrder::LowToHigh, BindingOrder::HighToLow] {
             for scaling_factor in [None, Some(F::zero()), Some(F::from_u64(7))] {
-                let table = GruenSplitEqPolynomial::<F>::from_point(&point, order, scaling_factor);
+                let table =
+                    GruenSplitEqPolynomial::<F>::new_with_scaling(&point, order, scaling_factor);
                 let scale = scaling_factor.unwrap_or(F::one());
                 assert_eq!(table.current_scalar, scale);
                 assert_eq!(

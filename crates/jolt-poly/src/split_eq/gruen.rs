@@ -1,4 +1,7 @@
-use crate::{BindingOrder, EqPolynomial, PointLike, Polynomial, UnivariatePoly, HIGH_TO_LOW};
+use crate::{
+    BindingOrder, Endianness, EqPolynomial, PointLike, PointRef, Polynomial, UnivariatePoly,
+    HIGH_TO_LOW,
+};
 use jolt_field::{Field, JoltField};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -14,31 +17,37 @@ pub struct GruenSplitEqPolynomial<F: Field> {
 }
 
 impl<F: Field> GruenSplitEqPolynomial<F> {
-    pub fn new(point: &[F], binding_order: BindingOrder) -> Self {
+    pub fn new<P: PointLike<Coord = F> + ?Sized>(point: &P, binding_order: BindingOrder) -> Self {
         Self::new_with_scaling(point, binding_order, None)
     }
 
-    pub fn new_with_scaling(
-        point: &[F],
-        binding_order: BindingOrder,
-        scaling_factor: Option<F>,
-    ) -> Self {
-        Self::from_point(point, binding_order, scaling_factor)
-    }
-
     /// Builds tables in significance order and stores one MSB-first point copy.
-    pub fn from_point<P: PointLike<Coord = F> + ?Sized>(
+    pub fn new_with_scaling<P: PointLike<Coord = F> + ?Sized>(
         point: &P,
         binding_order: BindingOrder,
         scaling_factor: Option<F>,
     ) -> Self {
-        let canonical_point = if P::ENDIANNESS == HIGH_TO_LOW {
-            point.coords().to_vec()
+        if P::ENDIANNESS == HIGH_TO_LOW {
+            Self::from_coords(
+                PointRef::high_to_low(point.coords()),
+                binding_order,
+                scaling_factor,
+            )
         } else {
-            (0..point.num_vars()).map(|k| point.msb(k)).collect()
-        };
-        let point = canonical_point.as_slice();
-        if point.is_empty() {
+            Self::from_coords(
+                PointRef::low_to_high(point.coords()),
+                binding_order,
+                scaling_factor,
+            )
+        }
+    }
+
+    fn from_coords<const E: Endianness>(
+        point: PointRef<'_, E, F>,
+        binding_order: BindingOrder,
+        scaling_factor: Option<F>,
+    ) -> Self {
+        if point.num_vars() == 0 {
             return Self {
                 current_index: match binding_order {
                     BindingOrder::LowToHigh => 0,
@@ -52,67 +61,51 @@ impl<F: Field> GruenSplitEqPolynomial<F> {
             };
         }
 
-        let (out_point, in_point) = Self::table_points(point, binding_order);
-        match binding_order {
+        let (current_index, e_in_vec, e_out_vec) = match binding_order {
             BindingOrder::LowToHigh => {
+                let split = (point.num_vars() / 2).min(point.num_vars() - 1);
+                let out_point = point.msb_range(0..split);
+                let in_point = point.msb_range(split..point.num_vars() - 1);
                 #[cfg(feature = "parallel")]
                 let (e_out_vec, e_in_vec) = rayon::join(
-                    || EqPolynomial::<F>::evals_cached_msb(out_point, None),
-                    || EqPolynomial::<F>::evals_cached_msb(in_point, None),
+                    || EqPolynomial::<F>::evals_cached_msb(&out_point, None),
+                    || EqPolynomial::<F>::evals_cached_msb(&in_point, None),
                 );
                 #[cfg(not(feature = "parallel"))]
                 let (e_out_vec, e_in_vec) = (
-                    EqPolynomial::<F>::evals_cached_msb(out_point, None),
-                    EqPolynomial::<F>::evals_cached_msb(in_point, None),
+                    EqPolynomial::<F>::evals_cached_msb(&out_point, None),
+                    EqPolynomial::<F>::evals_cached_msb(&in_point, None),
                 );
-                Self {
-                    current_index: point.len(),
-                    current_scalar: scaling_factor.unwrap_or(F::one()),
-                    point: canonical_point,
-                    e_in_vec,
-                    e_out_vec,
-                    binding_order,
-                }
+                (point.num_vars(), e_in_vec, e_out_vec)
             }
             BindingOrder::HighToLow => {
+                let split = (point.num_vars() / 2).min(point.num_vars() - 1) + 1;
+                let in_point = point.msb_range(1..split);
+                let out_point = point.msb_range(split..point.num_vars());
                 #[cfg(feature = "parallel")]
                 let (e_in_vec, e_out_vec) = rayon::join(
-                    || EqPolynomial::<F>::evals_cached_lsb(in_point, None),
-                    || EqPolynomial::<F>::evals_cached_lsb(out_point, None),
+                    || EqPolynomial::<F>::evals_cached_lsb(&in_point, None),
+                    || EqPolynomial::<F>::evals_cached_lsb(&out_point, None),
                 );
                 #[cfg(not(feature = "parallel"))]
                 let (e_in_vec, e_out_vec) = (
-                    EqPolynomial::<F>::evals_cached_lsb(in_point, None),
-                    EqPolynomial::<F>::evals_cached_lsb(out_point, None),
+                    EqPolynomial::<F>::evals_cached_lsb(&in_point, None),
+                    EqPolynomial::<F>::evals_cached_lsb(&out_point, None),
                 );
-                Self {
-                    current_index: 0,
-                    current_scalar: scaling_factor.unwrap_or(F::one()),
-                    point: canonical_point,
-                    e_in_vec,
-                    e_out_vec,
-                    binding_order,
-                }
+                (0, e_in_vec, e_out_vec)
             }
-        }
-    }
-
-    #[inline(always)]
-    fn table_points(point: &[F], binding_order: BindingOrder) -> (&[F], &[F]) {
-        if point.is_empty() {
-            return (point, point);
-        }
-        let split = point.len() / 2;
-        match binding_order {
-            BindingOrder::LowToHigh => {
-                let head = &point[..point.len() - 1];
-                head.split_at(split.min(head.len()))
-            }
-            BindingOrder::HighToLow => {
-                let tail = &point[1..];
-                let (inner, outer) = tail.split_at(split.min(tail.len()));
-                (outer, inner)
-            }
+        };
+        Self {
+            current_index,
+            current_scalar: scaling_factor.unwrap_or(F::one()),
+            point: if E == HIGH_TO_LOW {
+                point.coords().to_vec()
+            } else {
+                (0..point.num_vars()).map(|k| point.msb(k)).collect()
+            },
+            e_in_vec,
+            e_out_vec,
+            binding_order,
         }
     }
 

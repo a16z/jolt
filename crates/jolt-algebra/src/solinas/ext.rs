@@ -179,6 +179,8 @@ impl<F: PseudoMersenne, C: Ext2Config<F>> Ring for FpExt2<F, C> {
 }
 
 impl<F: PseudoMersenne, C: Ext2Config<F>> Field for FpExt2<F, C> {
+    zeroed_field_vec!();
+
     /// Inversion via the norm: `x^{-1} = conjugate(x) / norm(x)`.
     fn inverse(&self) -> Option<Self> {
         if self.is_zero() {
@@ -372,6 +374,8 @@ impl<F: PseudoMersenne> Ring for FpExt4<F> {
 }
 
 impl<F: PseudoMersenne> Field for FpExt4<F> {
+    zeroed_field_vec!();
+
     /// Inversion via the subfield tower: write `self = a + b·e1` over the
     /// e2-subfield, invert the norm `a² − e1²·b²` there, then one base
     /// inversion.
@@ -498,6 +502,8 @@ impl<F: PseudoMersenne> Ring for FpExt8<F> {
 }
 
 impl<F: PseudoMersenne> Field for FpExt8<F> {
+    zeroed_field_vec!();
+
     /// Inversion by dense Gaussian elimination on the 8×8 multiplication
     /// matrix — explicit and auditable; octic inversion is not a hot path.
     fn inverse(&self) -> Option<Self> {
@@ -880,10 +886,39 @@ mod bytemuck_tests {
 
 // SAFETY: all coefficients are zero-byte-valid; the extension zero has all
 // zero coefficients. The quadratic config marker occupies no storage.
-unsafe impl<F: PseudoMersenne + ZeroBytesValid, C: Ext2Config<F>> ZeroBytesValid for FpExt2<F, C> {}
+unsafe impl<F: PseudoMersenne, C: Ext2Config<F>> ZeroBytesValid for FpExt2<F, C> {}
 
 // SAFETY: the transparent coefficient array is zero-byte-valid whenever F is.
-unsafe impl<F: PseudoMersenne + ZeroBytesValid> ZeroBytesValid for FpExt4<F> {}
+unsafe impl<F: PseudoMersenne> ZeroBytesValid for FpExt4<F> {}
 
 // SAFETY: the transparent coefficient array is zero-byte-valid whenever F is.
-unsafe impl<F: PseudoMersenne + ZeroBytesValid> ZeroBytesValid for FpExt8<F> {}
+unsafe impl<F: PseudoMersenne> ZeroBytesValid for FpExt8<F> {}
+
+#[cfg(test)]
+#[expect(clippy::unwrap_used)]
+mod tests {
+    use super::{Ext2, FpExt4, FpExt8};
+    use crate::solinas::{Prime128Offset6A23801F, Prime32Offset99, Prime64Offset59};
+    use crate::Field;
+
+    fn assert_zeroed_vectors<F: Field>() {
+        for len in [0, 1, 17, 1024] {
+            let expected = vec![F::zero(); len];
+            assert_eq!(F::zeroed_vec(len), expected);
+            assert_eq!(F::try_zeroed_vec(len).unwrap(), expected);
+        }
+    }
+
+    #[test]
+    fn extension_zeroed_vectors_are_zero() {
+        assert_zeroed_vectors::<Ext2<Prime32Offset99>>();
+        assert_zeroed_vectors::<FpExt4<Prime32Offset99>>();
+        assert_zeroed_vectors::<FpExt8<Prime32Offset99>>();
+        assert_zeroed_vectors::<Ext2<Prime64Offset59>>();
+        assert_zeroed_vectors::<FpExt4<Prime64Offset59>>();
+        assert_zeroed_vectors::<FpExt8<Prime64Offset59>>();
+        assert_zeroed_vectors::<Ext2<Prime128Offset6A23801F>>();
+        assert_zeroed_vectors::<FpExt4<Prime128Offset6A23801F>>();
+        assert_zeroed_vectors::<FpExt8<Prime128Offset6A23801F>>();
+    }
+}

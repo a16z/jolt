@@ -47,7 +47,7 @@ fn bench_eq_construction_field<F: Field>(c: &mut Criterion, field: &str) {
         if n != 16 {
             group.bench_function(BenchmarkId::new("tensor", n), |bench| {
                 bench.iter(|| {
-                    TensorEqTable::<F>::from_point(
+                    TensorEqTable::<F>::new_with_scaling_and_split(
                         std::hint::black_box(&point),
                         F::from_u64(3),
                         n / 2,
@@ -89,7 +89,7 @@ fn bench_eq_gruen_construction_field<F: JoltField>(c: &mut Criterion, field: &st
         for order in [BindingOrder::LowToHigh, BindingOrder::HighToLow] {
             group.bench_function(BenchmarkId::new(format!("gruen_{order:?}"), n), |bench| {
                 bench.iter(|| {
-                    GruenSplitEqPolynomial::<F>::from_point(
+                    GruenSplitEqPolynomial::<F>::new_with_scaling(
                         std::hint::black_box(&point),
                         order,
                         Some(F::from_u64(3)),

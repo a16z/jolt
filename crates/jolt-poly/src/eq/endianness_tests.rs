@@ -68,7 +68,7 @@ fn builders<F: Field>() {
             }
         }
 
-        let tensor = TensorEqTable::<F>::from_point(&le, scale, n - n / 2);
+        let tensor = TensorEqTable::<F>::new_with_scaling_and_split(&le, scale, n - n / 2);
         for (i, value) in dense.iter().enumerate() {
             assert_eq!(tensor.evaluate_index(i), *value);
         }
@@ -139,7 +139,7 @@ fn gruen_constructor_uses_significance_in_both_binding_orders() {
         let reversed = r.iter().rev().copied().collect::<Vec<_>>();
         let le = Point::<LOW_TO_HIGH, _>::new(r);
         for order in [BindingOrder::LowToHigh, BindingOrder::HighToLow] {
-            let mut split = GruenSplitEqPolynomial::<Fr>::from_point(&le, order, None);
+            let mut split = GruenSplitEqPolynomial::<Fr>::new(&le, order);
             let mut expected = GruenSplitEqPolynomial::<Fr>::new(&reversed, order);
             assert_eq!(split, expected);
             for _ in 0..n {
@@ -147,6 +147,55 @@ fn gruen_constructor_uses_significance_in_both_binding_orders() {
                 split.bind(challenge);
                 expected.bind(challenge);
                 assert_eq!(split, expected);
+            }
+        }
+    }
+}
+
+fn eq_value_le<F: Field>(point: &[F], index: usize) -> F {
+    point
+        .iter()
+        .enumerate()
+        .map(|(bit, &coordinate)| {
+            if (index >> bit) & 1 == 1 {
+                coordinate
+            } else {
+                F::one() - coordinate
+            }
+        })
+        .product()
+}
+
+#[test]
+fn tensor_new_respects_owned_little_endian_points() {
+    let mut rng = ChaCha20Rng::seed_from_u64(207);
+    for n in 0..=8 {
+        let r: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
+        let reversed: Vec<Fr> = r.iter().rev().copied().collect();
+        let le = Point::<LOW_TO_HIGH, _>::new(r);
+        let tensor = TensorEqTable::new(&le);
+        assert_eq!(tensor, TensorEqTable::new(reversed.as_slice()));
+        for index in 0..1 << n {
+            assert_eq!(tensor.evaluate_index(index), eq_value_le(&le, index));
+        }
+    }
+}
+
+#[test]
+fn gruen_new_respects_owned_little_endian_points() {
+    let mut rng = ChaCha20Rng::seed_from_u64(208);
+    for n in 0..=8 {
+        let r: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
+        let reversed: Vec<Fr> = r.iter().rev().copied().collect();
+        let le = Point::<LOW_TO_HIGH, _>::new(r);
+        for order in [BindingOrder::LowToHigh, BindingOrder::HighToLow] {
+            let split = GruenSplitEqPolynomial::new(&le, order);
+            assert_eq!(
+                split,
+                GruenSplitEqPolynomial::new(reversed.as_slice(), order)
+            );
+            for (index, &value) in split.merge().evaluations().iter().enumerate() {
+                assert_eq!(value, eq_value_le(&le, index));
             }
         }
     }

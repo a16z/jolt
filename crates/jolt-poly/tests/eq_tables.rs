@@ -95,5 +95,6 @@ fn prefix_rejects_long_lengths() {
 #[test]
 #[should_panic(expected = "index out of bounds")]
 fn tensor_evaluate_index_rejects_out_of_range() {
-    let _ = TensorEqTable::<Fr>::from_point(&[] as &[Fr], Fr::from_u64(1), 0).evaluate_index(1);
+    let _ = TensorEqTable::<Fr>::new_with_scaling_and_split(&[] as &[Fr], Fr::from_u64(1), 0)
+        .evaluate_index(1);
 }
