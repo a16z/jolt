@@ -3,8 +3,9 @@
 //! Table cases check native expected output, prove with the optimized backend,
 //! and verify through the public verifier API. Field-inline builds select the
 //! active field-ops and field-limbs cases and the inactive muldiv case; ordinary
-//! builds select the general guest table. Every build also proves
-//! `fibonacci_ring_512`. Specialized suites retain tampering, reference-backend parity,
+//! builds select the general guest table. Akita builds also prove
+//! `fibonacci_ring_512` and assert the ring dimension of its trace commitment.
+//! Specialized suites retain tampering, reference-backend parity,
 //! committed programs, and other mode-specific checks.
 
 #[cfg(feature = "prover-fixtures")]
@@ -173,7 +174,8 @@ mod matrix {
 
     /// The fibonacci guest's `fib(n)`, with the wrapping `u128` additions of
     /// its release build.
-    fn fibonacci(n: u32) -> u128 {
+    #[cfg(feature = "akita")]
+    fn fibonacci_reference(n: u32) -> u128 {
         let (mut a, mut b) = (0u128, 1u128);
         for _ in 1..n {
             (a, b) = (b, a.wrapping_add(b));
@@ -181,17 +183,15 @@ mod matrix {
         b
     }
 
-    /// A trace padded to 2^18 rows. Akita's default one-hot catalog commits a
-    /// trace group of that size at inner ring dimension 512 for every group
-    /// width, while the table cases commit at 256, so only this case reaches the
-    /// dimension-512 trace commitment kernels. The Akita arms assert the
-    /// dimension their proof selected, so the case cannot silently drop below it.
+    /// A trace padded to 2^18 rows, which Akita commits at inner ring dimension
+    /// 512; the test asserts the dimension its proof selected.
+    #[cfg(feature = "akita")]
     fn fibonacci_ring_512() -> GuestCase {
         const N: u32 = 20_000;
         GuestCase {
             inputs: postcard::to_stdvec(&N).expect("serialize guest input"),
             expected_output: Some(
-                postcard::to_stdvec(&fibonacci(N)).expect("serialize guest output"),
+                postcard::to_stdvec(&fibonacci_reference(N)).expect("serialize guest output"),
             ),
             max_padded_trace_length: Some(1 << 18),
             ..GuestCase::new("fibonacci-guest")
@@ -358,11 +358,6 @@ mod matrix {
         use super::*;
         guests!(emit_tests);
 
-        #[test]
-        fn fibonacci_ring_512() {
-            super::mode::prove_and_verify(&super::fibonacci_ring_512());
-        }
-
         #[cfg(not(feature = "field-inline"))]
         #[test]
         fn muldiv_full_domain_cycle_first() {
@@ -393,11 +388,6 @@ mod matrix {
         #[cfg(not(feature = "field-inline"))]
         use super::*;
         guests!(emit_tests);
-
-        #[test]
-        fn fibonacci_ring_512() {
-            super::mode::prove_and_verify(&super::fibonacci_ring_512());
-        }
     }
 
     #[cfg(feature = "akita")]
@@ -515,8 +505,6 @@ mod matrix {
             let _ = prove_and_verify_trace_ring(case);
         }
 
-        /// Proves and verifies `case`, returning the inner ring dimension at
-        /// which the proof's opening commits the trace group.
         pub(super) fn prove_and_verify_trace_ring(case: &GuestCase) -> usize {
             let prepared = support::prepare(case);
             let mut config = ProverConfig::derive_from_dimensions::<AkitaField>(
@@ -618,8 +606,6 @@ mod matrix {
             }
         }
 
-        /// Proves and verifies `case`, returning the inner ring dimension at
-        /// which the proof's opening commits the trace group.
         #[cfg(feature = "akita")]
         pub(super) fn prove_and_verify_trace_ring(case: &GuestCase) -> usize {
             let (output, ()) = akita::prove(case, JoltBackend::optimized(), |_, _, _| ());
