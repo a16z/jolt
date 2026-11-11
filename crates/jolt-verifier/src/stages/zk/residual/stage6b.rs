@@ -117,6 +117,10 @@ where
     clippy::arithmetic_side_effects,
     reason = "tests use plain arithmetic on fixture data"
 )]
+#[expect(
+    clippy::panic,
+    reason = "an unresolved public must fail the parity test"
+)]
 mod field_inline_tests {
     use super::*;
     use crate::stages::field_inline_bytecode::FieldInlineBytecodeFold;
@@ -285,9 +289,17 @@ mod field_inline_tests {
                         fr(0)
                     }
                 }
-                VerifierPublicId::Jolt(JoltDerivedId::BytecodeReadRaf(public)) => {
-                    publics.value(*public).unwrap_or_else(|| fr(0))
-                }
+                // γ^k for k ≥ 2 is one derived leaf (`bytecode::challenge_pow_expr`); the ZK
+                // residual registers its value next to the other read-RAF publics.
+                VerifierPublicId::Jolt(JoltDerivedId::BytecodeReadRaf(
+                    BytecodeReadRafPublic::ChallengePow {
+                        challenge: BytecodeReadRafChallenge::Gamma,
+                        exponent,
+                    },
+                )) => (0..*exponent).fold(fr(1), |power, _| power * challenges.gamma),
+                VerifierPublicId::Jolt(JoltDerivedId::BytecodeReadRaf(public)) => publics
+                    .value(*public)
+                    .unwrap_or_else(|| panic!("unresolved read-RAF public {public:?}")),
                 VerifierPublicId::Jolt(_)
                 | VerifierPublicId::SpartanOuter(_)
                 | VerifierPublicId::FieldInline(_)
