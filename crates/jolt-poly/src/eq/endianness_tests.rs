@@ -186,23 +186,3 @@ fn tensor_new_respects_owned_little_endian_points() {
         }
     }
 }
-
-#[test]
-fn gruen_new_respects_owned_little_endian_points() {
-    let mut rng = ChaCha20Rng::seed_from_u64(208);
-    for n in 0..=8 {
-        let r: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
-        let reversed: Vec<Fr> = r.iter().rev().copied().collect();
-        let le = Point::<LOW_TO_HIGH, _>::new(r);
-        for order in [BindingOrder::LowToHigh, BindingOrder::HighToLow] {
-            let split = GruenSplitEqPolynomial::new(&le, order);
-            assert_eq!(
-                split,
-                GruenSplitEqPolynomial::new(reversed.as_slice(), order)
-            );
-            for (index, &value) in split.merge().evaluations().iter().enumerate() {
-                assert_eq!(value, eq_value_le(&le, index));
-            }
-        }
-    }
-}

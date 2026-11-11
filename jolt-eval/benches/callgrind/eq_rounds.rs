@@ -1,7 +1,8 @@
 //! Deterministic instruction counts for little-endian eq expansion, Gruen
 //! bind sweeps and degree-2, degree-3 and Toom rounds in both binding orders,
 //! and tensor folding at 16 variables. `callgrind:eq_rounds:instructions`
-//! sums all cases. The tensor fold uses one Rayon worker.
+//! sums all cases. Callgrind counts only the benchmark thread, so the tensor
+//! fold runs in a one-thread Rayon pool that uses that thread as its worker.
 //!
 //! Opt-in: requires Valgrind and an `iai-callgrind-runner` matching the
 //! workspace `iai-callgrind` version.
@@ -11,6 +12,7 @@ use std::hint::black_box;
 use iai_callgrind::{library_benchmark, library_benchmark_group, main, LibraryBenchmarkConfig};
 use jolt_field::{Fr, Ring, Zero};
 use jolt_poly::{BindingOrder, EqPolynomial, GruenSplitEqPolynomial, PointRef, TensorEqTable};
+use rayon::{ThreadPool, ThreadPoolBuilder};
 
 fn setup_point(vars: usize) -> Vec<Fr> {
     (0..vars).map(|i| Fr::from_u64(2 * i as u64 + 1)).collect()
@@ -108,20 +110,31 @@ fn bench_gruen_toom(input: (GruenSplitEqPolynomial<Fr>, Vec<Fr>)) -> GruenSplitE
     black_box(eq)
 }
 
-fn setup_tensor() -> (TensorEqTable<Fr>, Vec<Fr>) {
-    (TensorEqTable::new(&setup_point(16)), setup_point(1 << 16))
+fn setup_tensor() -> (TensorEqTable<Fr>, Vec<Fr>, ThreadPool) {
+    let pool = ThreadPoolBuilder::new()
+        .num_threads(1)
+        .use_current_thread()
+        .build()
+        .expect("one-thread pool on the benchmark thread");
+    (
+        TensorEqTable::new(&setup_point(16)),
+        setup_point(1 << 16),
+        pool,
+    )
 }
 
 #[library_benchmark]
 #[bench::vars_16(setup_tensor())]
-fn bench_tensor_fold(input: (TensorEqTable<Fr>, Vec<Fr>)) -> Fr {
-    let (eq, values) = input;
-    black_box(eq.par_fold_out_in(
-        Fr::zero,
-        |acc, row, _, weight| *acc += weight * values[row],
-        |_, weight, inner| weight * inner,
-        |left, right| left + right,
-    ))
+fn bench_tensor_fold(input: (TensorEqTable<Fr>, Vec<Fr>, ThreadPool)) -> Fr {
+    let (eq, values, pool) = input;
+    black_box(pool.install(|| {
+        eq.par_fold_out_in(
+            Fr::zero,
+            |acc, row, _, weight| *acc += weight * values[row],
+            |_, weight, inner| weight * inner,
+            |left, right| left + right,
+        )
+    }))
 }
 
 library_benchmark_group!(
