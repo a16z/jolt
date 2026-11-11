@@ -200,9 +200,9 @@ transformed by the forward NTT and accumulated pointwise into each output row.
   bound. At the headline the mask's tail cut `14k ≈ 2^39.5` takes two limbs,
   so `N·y` and `L·y` cost two passes.
 
-`q ≡ 9 (mod 16)` gives no NTT over F_q for `X^256 + 1`. Schoolbook `N·y` would
-cost seconds per attempt. CRT-NTT is therefore the definition and also the
-production path.
+`q ≡ 33 (mod 64)` leaves F_q without a 512th root of unity, so `X^256 + 1` has
+no NTT over F_q. Schoolbook `N·y` would cost seconds per attempt. CRT-NTT is
+therefore the definition and also the production path.
 
 ### 1.4 `TwoLevelLayout`: description only
 
@@ -242,8 +242,10 @@ kernels against these semantics (§7, item 5).
 - `sample_box_digits(rng, len, log_basis) -> Vec<i8>`, which is prover-only
   and gated behind jolt-crypto's `sample` feature, draws uniform digits of
   the balanced alphabet. Each digit is a masked byte, so the draw is constant
-  time. Distinct vectors then differ by a unit (§2.3: coordinates below
-  `q^{1/4}/2`).
+  time. Distinct vectors then differ by a unit (§2.3): `q ≡ 33 (mod 64)`
+  splits `X^D + 1` into 16 factors, so coefficients below `q^{1/16}/4`
+  (just under 64) give a unit. That holds for `log_basis ≤ 6`;
+  `sample_box_digits` and `required_randomness_columns` reject larger bases.
 - `required_randomness_columns(image_coeffs, extra_coeffs, ring_dim, log_basis, slack_bits)`
   returns the smallest whole number of ring columns whose entropy is at least
   `(image_coeffs + extra_coeffs)·⌈log₂ q⌉ + 2λ + slack_bits`.

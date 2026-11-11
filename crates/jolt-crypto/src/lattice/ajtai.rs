@@ -8,9 +8,9 @@
 //! row is reconstructed exactly over `Z` and reduced into `F` with a
 //! constant-time Garner. No step reads an input-dependent table entry or
 //! branches on an input value, so secret inputs (Whiteout's Gaussian mask and
-//! its commitment digits) take the same path as public ones. `q ≡ 9 (mod 16)`
-//! admits no NTT over `F_q` for `X^256 + 1`, which is why the arithmetic runs
-//! over CRT primes.
+//! its commitment digits) take the same path as public ones. `q ≡ 33 (mod 64)`
+//! leaves `F_q` without a 512th root of unity, so `X^256 + 1` admits no NTT
+//! over `F_q`, which is why the arithmetic runs over CRT primes.
 
 use std::ops::Range;
 use std::sync::{Arc, OnceLock};

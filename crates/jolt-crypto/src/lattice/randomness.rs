@@ -1,7 +1,8 @@
 //! Hiding randomness for Ajtai commitments (Whiteout §2.3, §4.1).
 //!
 //! Randomness is drawn uniformly from a box of balanced digits. Distinct box
-//! vectors differ by a coordinate below `q^{1/4}/2`, which is a unit, so the
+//! vectors differ by a coordinate whose coefficients lie below `q^{1/16}/4`,
+//! which makes it a unit (see `MAX_RANDOMNESS_LOG_BASIS`). So the
 //! commitment map is a universal hash and the leftover hash lemma hides the
 //! image once the box has enough entropy.
 
@@ -18,8 +19,20 @@ use jolt_algebra::{CanonicalEncoding, Field};
 /// image's bit length by `2λ`.
 pub const HIDING_SECURITY_BITS: usize = 128;
 
+/// The largest digit base `2^log_basis` whose digit differences are units in
+/// `F_q[X]/(X^D + 1)` for the production field `Prime128Offset6A23801F`.
+///
+/// That prime satisfies `q ≡ 33 (mod 64)`, so for every `D ≥ 16`, `X^D + 1`
+/// splits into 16 factors, and LS18 (Cor. 1.2) makes every nonzero element
+/// with coefficients below `q^{1/16}/4` (just under 64) a unit. Balanced
+/// digits of base `2^log_basis` differ by at most `2^log_basis − 1`: 63 at
+/// this cap, 127 one base above it. `sample_box_digits` and
+/// `required_randomness_columns` reject larger bases.
+pub(super) const MAX_RANDOMNESS_LOG_BASIS: u32 = 6;
+
 /// `len` digits drawn uniformly from the balanced alphabet
-/// `[−2^{log_basis−1}, 2^{log_basis−1} − 1]`.
+/// `[−2^{log_basis−1}, 2^{log_basis−1} − 1]`. Fails for `log_basis` outside
+/// `1..=6`, the bases whose digit differences are units.
 ///
 /// Each digit is one masked byte of `rng` output: no rejection, no branch
 /// and no table, so the running time is independent of the digits. The
@@ -30,9 +43,9 @@ pub fn sample_box_digits<R: RngCore + CryptoRng>(
     len: usize,
     log_basis: u32,
 ) -> Result<Zeroizing<Vec<i8>>, CryptoError> {
-    if !(1..=8).contains(&log_basis) {
+    if !(1..=MAX_RANDOMNESS_LOG_BASIS).contains(&log_basis) {
         return Err(CryptoError::InvalidInput(format!(
-            "box digits need log_basis in 1..=8, got {log_basis}"
+            "box digits need log_basis in 1..={MAX_RANDOMNESS_LOG_BASIS}, got {log_basis}"
         )));
     }
     let mask = ((1u16 << log_basis) - 1) as u8;
@@ -54,7 +67,8 @@ pub fn sample_box_digits<R: RngCore + CryptoRng>(
 /// `image_coeffs` is the commitment image's coefficient count, and
 /// `extra_coeffs` covers further outputs the same randomness must hide, such
 /// as the 64 coefficients of Whiteout's row `L` on the pad commitment. Each
-/// commitment slice draws its own randomness of this size.
+/// commitment slice draws its own randomness of this size. Fails for
+/// `log_basis` outside `1..=6`, the bases whose digit differences are units.
 pub fn required_randomness_columns<F: Field + CanonicalEncoding>(
     image_coeffs: usize,
     extra_coeffs: usize,
@@ -62,9 +76,9 @@ pub fn required_randomness_columns<F: Field + CanonicalEncoding>(
     log_basis: u32,
     slack_bits: usize,
 ) -> Result<usize, CryptoError> {
-    if !(1..=8).contains(&log_basis) {
+    if !(1..=MAX_RANDOMNESS_LOG_BASIS).contains(&log_basis) {
         return Err(CryptoError::InvalidInput(format!(
-            "randomness digits need log_basis in 1..=8, got {log_basis}"
+            "randomness digits need log_basis in 1..={MAX_RANDOMNESS_LOG_BASIS}, got {log_basis}"
         )));
     }
     let overflow = || CryptoError::InvalidSetup("randomness size overflows usize".into());

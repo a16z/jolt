@@ -252,7 +252,8 @@ P8 and P7 need no new cells, because existing ones certify them:
   knowledge error would then become about 2^−23, not 2^−127, to gain
   log₂(106/104) = 0.03 bits.
 - **Invertibility is not the binding constraint.** Differences are units by
-  [LS18, Cor. 1.2], since ‖c − c′‖∞ ≤ 4 < q^{1/4}/2. The norm factor Γ_Δ
+  [LS18, Cor. 1.2], since ‖c − c′‖∞ ≤ 4 < q^{1/16}/4 ≈ 64 (q ≡ 33 mod 64
+  splits X^d + 1 into 16 factors). The norm factor Γ_Δ
   enters only through the size of Δ, never through invertibility.
 
 ## 5. Lever on the extraction argument (Q4): 0.09 bits of slack

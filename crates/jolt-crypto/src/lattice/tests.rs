@@ -1,13 +1,17 @@
 #![expect(clippy::indexing_slicing, clippy::unwrap_used, reason = "test code")]
 
 use jolt_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
-use jolt_algebra::{CanonicalBytes, CyclotomicRing, Field, One, Prime128Offset6A23801F, Ring};
+use jolt_algebra::{
+    pseudo_mersenne_modulus, CanonicalBytes, CanonicalEncoding, CyclotomicRing, Field, One,
+    Prime128Offset6A23801F, PseudoMersenne, Ring,
+};
 use rand_chacha::rand_core::{RngCore, SeedableRng};
 use rand_chacha::ChaCha20Rng;
 use shake::digest::{ExtendableOutput, Update, XofReader};
 use shake::Shake256;
 use std::sync::Arc;
 
+use super::randomness::MAX_RANDOMNESS_LOG_BASIS;
 use super::*;
 use crate::CryptoError;
 
@@ -417,6 +421,34 @@ fn box_digits_cover_exactly_the_balanced_alphabet() {
     assert!(digits.iter().all(|d| (-8..=7).contains(d)));
     assert!((-8..=7).all(|v| digits.contains(&v)));
     assert!(sample_box_digits(&mut rng, 1, 9).is_err());
+    assert!(sample_box_digits(&mut rng, 1, MAX_RANDOMNESS_LOG_BASIS).is_ok());
+    assert!(sample_box_digits(&mut rng, 1, MAX_RANDOMNESS_LOG_BASIS + 1).is_err());
+}
+
+/// LS18 (Cor. 1.2) for the production field: `q ≡ 33 (mod 64)` splits
+/// `X^D + 1` into 16 factors, so a nonzero difference of digits is a unit
+/// when `2^log_basis − 1 < q^{1/16}/4`. The cap meets this, and the next
+/// base does not.
+#[test]
+fn randomness_log_basis_cap_keeps_digit_differences_units() {
+    let modulus = pseudo_mersenne_modulus(F::MODULUS_BITS, F::OFFSET).unwrap();
+    let split_count = 16u128;
+    assert_eq!(modulus % (4 * split_count), 2 * split_count + 1);
+    // Raising `2^b − 1 < q^{1/16}/4` to the 16th power gives
+    // `(2^b − 1)^16 · 4^16 < q`; `None` means the left side exceeds `u128`.
+    let shortness_lhs = |log_basis: u32| {
+        ((1u128 << log_basis) - 1)
+            .checked_pow(16)
+            .and_then(|power| power.checked_mul(4u128.pow(16)))
+    };
+    assert!(shortness_lhs(MAX_RANDOMNESS_LOG_BASIS).is_some_and(|lhs| lhs < modulus));
+    assert!(shortness_lhs(MAX_RANDOMNESS_LOG_BASIS + 1).is_none_or(|lhs| lhs >= modulus));
+
+    assert!(required_randomness_columns::<F>(768, 0, 256, MAX_RANDOMNESS_LOG_BASIS, 8).is_ok());
+    assert!(matches!(
+        required_randomness_columns::<F>(768, 0, 256, MAX_RANDOMNESS_LOG_BASIS + 1, 8),
+        Err(CryptoError::InvalidInput(_))
+    ));
 }
 
 fn headline_two_level(outer_dim: usize) -> TwoLevelLayout {
