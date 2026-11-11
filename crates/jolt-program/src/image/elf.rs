@@ -4,7 +4,10 @@ use object::elf::SHF_WRITE;
 use object::{Object, ObjectSection, SectionFlags, SectionKind};
 use std::collections::BTreeMap;
 
-use crate::{preprocess::PreprocessingError, ProgramError};
+use crate::{
+    preprocess::{ram::code_word_intervals, PreprocessingError},
+    ProgramError,
+};
 
 /// Contents decoded directly from an RV64 ELF program image.
 ///
@@ -92,24 +95,25 @@ pub fn decode_elf(
         decode_text_section(start, &raw_data, &mut instructions, profile)?;
     }
 
-    for instruction in &instructions {
-        let row = instruction.row();
-        let address = row.address as u64;
-        let end = address
-            .checked_add(if row.is_compressed { 2 } else { 4 })
-            .ok_or(ProgramError::MalformedImage(
-                "invalid source instruction extent",
-            ))?;
-        let code_start = address / 8;
-        let code_end = end.div_ceil(8);
-        for &(start, end) in &writable_ranges {
-            let first_word = start / 8;
-            let end_word = end.div_ceil(8);
-            if code_start < end_word && first_word < code_end {
-                return Err(ProgramError::MalformedImage(
-                    "writable section shares a protected code doubleword",
-                ));
-            }
+    let protected_words = code_word_intervals(
+        instructions.iter().map(|instruction| {
+            let row = instruction.row();
+            (row.address as u64, row.is_compressed)
+        }),
+        0,
+    )
+    .map_err(|_| ProgramError::MalformedImage("invalid source instruction extent"))?;
+    // Protection freezes the whole word, including any read-only bytes sharing
+    // it. Zero text padding alone creates no protected interval.
+    for (start, end) in writable_ranges {
+        let first_word = start / 8;
+        let end_word = end.div_ceil(8);
+        if protected_words.iter().any(|&(code_start, code_end)| {
+            (code_start as u128) < u128::from(end_word) && u128::from(first_word) < code_end as u128
+        }) {
+            return Err(ProgramError::MalformedImage(
+                "writable section shares a protected code doubleword",
+            ));
         }
     }
 
