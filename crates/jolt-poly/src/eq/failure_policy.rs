@@ -1,4 +1,4 @@
-use super::alloc::{sealed, Budget, EqAlloc, EqTableError, TableInit};
+use super::alloc::{sealed::Sealed, Budget, EqAlloc, EqTableError, TableInit};
 use jolt_field::Field;
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
@@ -58,7 +58,7 @@ pub(super) struct FailAt<'a> {
     pub target: usize,
     pub budget: Budget,
 }
-impl sealed::Sealed for FailAt<'_> {}
+impl Sealed for FailAt<'_> {}
 impl FailAt<'_> {
     pub fn fail_next_allocation() {
         FAIL_NEXT.with(|flag| flag.set(true));

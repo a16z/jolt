@@ -5,6 +5,7 @@
 use core::convert::Infallible;
 use jolt_field::Field;
 use jolt_utils::alloc::ZeroAllocError;
+use sealed::Sealed;
 use std::{alloc::Layout, collections::TryReserveError, panic::Location};
 use thiserror::Error;
 
@@ -13,7 +14,7 @@ pub(crate) mod sealed {
 }
 
 /// Sealed allocation behavior; table lengths and storage capacities are guaranteed.
-pub trait EqAlloc: sealed::Sealed + Copy + Send + Sync {
+pub trait EqAlloc: Sealed + Copy + Send + Sync {
     type Error: Send;
     /// Report invalid shape or arguments; `Global` panics and `Budget` returns the error.
     fn reject(self, error: EqTableError) -> Self::Error;
@@ -86,7 +87,7 @@ pub enum EqTableError {
     InvalidSplit { outer_vars: usize, num_vars: usize },
 }
 
-impl sealed::Sealed for Global {}
+impl Sealed for Global {}
 impl EqAlloc for Global {
     type Error = Infallible;
     #[expect(
@@ -113,7 +114,7 @@ impl EqAlloc for Global {
     }
 }
 
-impl sealed::Sealed for Budget {}
+impl Sealed for Budget {}
 impl EqAlloc for Budget {
     type Error = EqTableError;
     fn reject(self, error: EqTableError) -> EqTableError {
