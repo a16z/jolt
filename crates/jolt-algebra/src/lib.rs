@@ -99,6 +99,21 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 
 mod accum;
+#[cfg(any(feature = "bn254", feature = "solinas", feature = "binary"))]
+macro_rules! zeroed_field_vec {
+    () => {
+        #[inline]
+        fn zeroed_vec(len: usize) -> Vec<Self> {
+            jolt_utils::alloc::zeroed_vec(len)
+        }
+
+        #[inline]
+        fn try_zeroed_vec(len: usize) -> Result<Vec<Self>, jolt_utils::alloc::ZeroAllocError> {
+            jolt_utils::alloc::try_zeroed_vec(len)
+        }
+    };
+}
+
 mod algebra;
 #[cfg(feature = "binary")]
 mod binary;

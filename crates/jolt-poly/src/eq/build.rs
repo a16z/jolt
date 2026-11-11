@@ -1,0 +1,237 @@
+use super::boolean_bits_msb;
+use super::EqPolynomial;
+use crate::point::{msb_index, Endianness, PointLike};
+use jolt_field::Field;
+use jolt_utils::Math;
+use std::ops::{Mul, SubAssign};
+impl<F: Field> EqPolynomial<F> {
+    /// Computes `eq(x, y) = Π_i (x_i y_i + (1 - x_i)(1 - y_i))` for two slices.
+    pub fn mle<C>(x: &[C], y: &[C]) -> F
+    where
+        C: Copy + Send + Sync + Into<F>,
+        F: Mul<C, Output = F> + SubAssign<F>,
+    {
+        assert_eq!(x.len(), y.len());
+        x.iter()
+            .zip(y.iter())
+            .map(|(x_i, y_i)| {
+                let x: F = (*x_i).into();
+                let y: F = (*y_i).into();
+                x * y + (F::one() - x) * (F::one() - y)
+            })
+            .fold(F::one(), |acc, v| acc * v)
+    }
+
+    /// Computes `{ eq(r, x) : x ∈ {0,1}^n }` with optional scaling.
+    ///
+    /// Uses a serial or parallel path based on table size. Coordinate significance
+    /// follows `PointLike::ENDIANNESS`; bare slices are high-to-low.
+    #[tracing::instrument(skip_all, name = "EqPolynomial::evals")]
+    pub fn evals<P: PointLike + ?Sized>(r: &P, scaling_factor: Option<F>) -> Vec<F>
+    where
+        P::Coord: Send + Sync + Into<F>,
+        F: Mul<P::Coord, Output = F> + SubAssign<F>,
+    {
+        if r.num_vars() <= 16 {
+            Self::evals_serial(r, scaling_factor)
+        } else {
+            Self::evals_parallel(r, scaling_factor)
+        }
+    }
+
+    /// Computes `eq(r, k)` over an aligned power-of-two block of Boolean indices.
+    ///
+    /// Returns values for `k = start_index..start_index + block_size` using the
+    /// same index convention as [`Self::evals`], but only
+    /// materializes the suffix table needed for the aligned block.
+    pub fn evals_for_aligned_block<P: PointLike + ?Sized>(
+        r: &P,
+        start_index: usize,
+        block_size: usize,
+    ) -> Vec<F>
+    where
+        P::Coord: Send + Sync + Into<F>,
+        F: Mul<P::Coord, Output = F> + SubAssign<F>,
+    {
+        assert!(block_size.is_power_of_two());
+        assert_ne!(block_size, 0);
+        assert_eq!(start_index % block_size, 0);
+
+        let total_vars = r.num_vars();
+        let block_vars = block_size.log_2();
+        assert!(block_vars <= total_vars);
+
+        let prefix_len = total_vars - block_vars;
+        let prefix_value = start_index >> block_vars;
+        let mut prefix_scale = F::one();
+        for (k, bit) in boolean_bits_msb(prefix_len, prefix_value)
+            .into_iter()
+            .enumerate()
+        {
+            let r_i = r.msb(k).into();
+            prefix_scale *= if bit { r_i } else { F::one() - r_i };
+        }
+
+        Self::evals(&r.msb_range(prefix_len..total_vars), Some(prefix_scale))
+    }
+
+    /// Chooses the largest aligned power-of-two block fitting the remaining range.
+    ///
+    /// Returns the block length and its eq table. This covers contiguous ranges
+    /// with a small sequence of aligned-block tables without building the full
+    /// domain table.
+    pub fn evals_for_max_aligned_block<P: PointLike + ?Sized>(
+        r: &P,
+        start_index: usize,
+        remaining_len: usize,
+    ) -> (usize, Vec<F>)
+    where
+        P::Coord: Send + Sync + Into<F>,
+        F: Mul<P::Coord, Output = F> + SubAssign<F>,
+    {
+        assert!(remaining_len > 0);
+        let max_len_pow = if remaining_len.is_power_of_two() {
+            remaining_len
+        } else {
+            remaining_len.next_power_of_two() >> 1
+        };
+        let align_pow = if start_index == 0 {
+            1usize << r.num_vars()
+        } else {
+            1usize << start_index.trailing_zeros()
+        };
+        let block_size = max_len_pow.min(align_pow);
+        (
+            block_size,
+            Self::evals_for_aligned_block(r, start_index, block_size),
+        )
+    }
+
+    #[inline]
+    pub(crate) fn evals_serial<P: PointLike + ?Sized>(r: &P, scaling_factor: Option<F>) -> Vec<F>
+    where
+        P::Coord: Send + Sync + Into<F>,
+        F: Mul<P::Coord, Output = F> + SubAssign<F>,
+    {
+        let mut evals: Vec<F> = vec![scaling_factor.unwrap_or(F::one()); r.num_vars().pow2()];
+        let mut size = 1;
+        for j in 0..r.num_vars() {
+            let r_j = r.msb(j);
+            size *= 2;
+            for i in (0..size).rev().step_by(2) {
+                let scalar = evals[i / 2];
+                evals[i] = scalar * r_j;
+                evals[i - 1] = scalar - evals[i];
+            }
+        }
+        evals
+    }
+
+    /// Parallel eq table construction with optional scaling.
+    ///
+    /// Builds radix-four layers from least to most significant coordinates,
+    /// using rayon to process the entries within each layer.
+    #[tracing::instrument(skip_all, name = "EqPolynomial::evals_parallel")]
+    #[inline]
+    pub(crate) fn evals_parallel<P: PointLike + ?Sized>(r: &P, scaling_factor: Option<F>) -> Vec<F>
+    where
+        P::Coord: Send + Sync + Into<F>,
+        F: Mul<P::Coord, Output = F> + SubAssign<F>,
+    {
+        Self::evals_parallel_coords(r.coords(), P::ENDIANNESS, scaling_factor)
+    }
+
+    // Sharing coordinate kernels keeps Rayon's closures independent of the view
+    // type. Inlining folds the caller's constant endianness before the entry loops.
+    #[inline(always)]
+    fn evals_parallel_coords<C>(
+        r: &[C],
+        endianness: Endianness,
+        scaling_factor: Option<F>,
+    ) -> Vec<F>
+    where
+        C: Copy + Send + Sync + Into<F>,
+        F: Mul<C, Output = F>,
+    {
+        let final_size = r.len().pow2();
+        let mut evals: Vec<F> = F::zeroed_vec(final_size);
+        let mut size = 1;
+        evals[0] = scaling_factor.unwrap_or(F::one());
+        let mut i = r.len();
+
+        while i >= 2 {
+            let r_lo = r[msb_index(endianness, r.len(), i - 1)];
+            let r_hi = r[msb_index(endianness, r.len(), i - 2)];
+            i -= 2;
+
+            let (q0, rest) = evals.split_at_mut(size);
+            let (q1, rest) = rest.split_at_mut(size);
+            let (q2, rest) = rest.split_at_mut(size);
+            let (q3, _) = rest.split_at_mut(size);
+
+            #[cfg(feature = "parallel")]
+            {
+                use rayon::prelude::*;
+                q0.par_iter_mut()
+                    .zip(q1.par_iter_mut())
+                    .zip(q2.par_iter_mut())
+                    .zip(q3.par_iter_mut())
+                    .for_each(|(((x, q1_out), q2_out), q3_out)| {
+                        let with_lo = *x * r_lo;
+                        let without_lo = *x - with_lo;
+
+                        *q2_out = without_lo * r_hi;
+                        *x = without_lo - *q2_out;
+                        *q3_out = with_lo * r_hi;
+                        *q1_out = with_lo - *q3_out;
+                    });
+            }
+
+            #[cfg(not(feature = "parallel"))]
+            {
+                for j in 0..size {
+                    let x_val = q0[j];
+                    let with_lo = x_val * r_lo;
+                    let without_lo = x_val - with_lo;
+
+                    q2[j] = without_lo * r_hi;
+                    q0[j] = without_lo - q2[j];
+                    q3[j] = with_lo * r_hi;
+                    q1[j] = with_lo - q3[j];
+                }
+            }
+
+            size *= 4;
+        }
+
+        for k in (0..i).rev() {
+            let r = &r[msb_index(endianness, r.len(), k)];
+            let (evals_left, evals_right) = evals.split_at_mut(size);
+            let (evals_right, _) = evals_right.split_at_mut(size);
+
+            #[cfg(feature = "parallel")]
+            {
+                use rayon::prelude::*;
+                evals_left
+                    .par_iter_mut()
+                    .zip(evals_right.par_iter_mut())
+                    .for_each(|(x, y)| {
+                        *y = *x * *r;
+                        *x -= *y;
+                    });
+            }
+
+            #[cfg(not(feature = "parallel"))]
+            {
+                for i in 0..size {
+                    evals_right[i] = evals_left[i] * *r;
+                    evals_left[i] -= evals_right[i];
+                }
+            }
+
+            size *= 2;
+        }
+
+        evals
+    }
+}

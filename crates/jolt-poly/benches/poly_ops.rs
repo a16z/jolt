@@ -1,8 +1,8 @@
 #![expect(unused_results)]
 
 use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion};
-use jolt_field::{Field, Fr, JoltField, Prime128Offset6A23801F};
-use jolt_poly::{EqPolynomial, Polynomial, UnivariatePoly};
+use jolt_field::{Field, FpExt4, Fr, JoltField, Prime128Offset6A23801F, Prime32Offset99};
+use jolt_poly::{EqPolynomial, PointRef, Polynomial, TensorEqTable, UnivariatePoly};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
 
@@ -109,6 +109,47 @@ fn bench_eq_evals(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_eq_orders(c: &mut Criterion) {
+    bench_eq_field::<Fr>(c, "Fr");
+    bench_eq_field::<Prime128Offset6A23801F>(c, "Prime128Offset6A23801F");
+    bench_eq_field::<FpExt4<Prime32Offset99>>(c, "FpExt4");
+}
+
+fn bench_eq_field<F: Field>(c: &mut Criterion, field: &str) {
+    let mut group = c.benchmark_group(format!("eq_orders/{field}"));
+    for n in [12, 14, 16, 17, 20, 22] {
+        let mut rng = ChaCha20Rng::seed_from_u64(300 + n as u64);
+        let r: Vec<F> = (0..n).map(|_| F::random(&mut rng)).collect();
+        group.bench_function(BenchmarkId::new("be", n), |bench| {
+            bench.iter(|| EqPolynomial::<F>::evals(std::hint::black_box(&r), None));
+        });
+        let le = PointRef::low_to_high(&r);
+        group.bench_function(BenchmarkId::new("le", n), |bench| {
+            bench.iter(|| EqPolynomial::<F>::evals(std::hint::black_box(&le), None));
+        });
+    }
+    for n in [10, 14] {
+        let mut rng = ChaCha20Rng::seed_from_u64(600 + n as u64);
+        let r: Vec<F> = (0..n).map(|_| F::random(&mut rng)).collect();
+        group.bench_function(BenchmarkId::new("cached_msb", n), |bench| {
+            bench.iter(|| EqPolynomial::<F>::evals_cached_msb(std::hint::black_box(&r), None));
+        });
+        group.bench_function(BenchmarkId::new("cached_lsb", n), |bench| {
+            bench.iter(|| EqPolynomial::<F>::evals_cached_lsb(std::hint::black_box(&r), None));
+        });
+        group.bench_function(BenchmarkId::new("tensor", n), |bench| {
+            bench.iter(|| {
+                TensorEqTable::<F>::new_with_scaling_and_split(
+                    std::hint::black_box(&r),
+                    F::from_u64(1),
+                    n / 2,
+                )
+            });
+        });
+    }
+    group.finish();
+}
+
 fn bench_univariate_interpolation(c: &mut Criterion) {
     let mut group = c.benchmark_group("UnivariatePoly::from_evals");
     for num_evals in [3, 4, 8, 16] {
@@ -132,6 +173,7 @@ criterion_group!(
     bench_eq_evaluations,
     bench_evaluate,
     bench_eq_evals,
+    bench_eq_orders,
     bench_univariate_interpolation,
 );
 criterion_main!(benches);
