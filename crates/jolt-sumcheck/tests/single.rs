@@ -778,7 +778,7 @@ fn native_round_validation_precedes_send_and_preserves_owned_buffer() {
 
 #[test]
 fn streaming_visitor_borrows_wires_and_stops_on_failure() {
-    use jolt_sumcheck::{visit_single_rounds, SumcheckShape, VerifierRoundChannel};
+    use jolt_sumcheck::{visit_single_rounds, RoundSpec, SumcheckShape, VerifierRoundChannel};
     use std::borrow::Cow;
     struct Borrowed {
         wire: [Fr; 2],
@@ -796,7 +796,7 @@ fn streaming_visitor_borrows_wires_and_stops_on_failure() {
         fn verify_round<R>(
             &mut self,
             round: usize,
-            _degree: usize,
+            _spec: RoundSpec,
             visit: impl FnOnce(Cow<'_, [Fr]>, usize, Fr) -> Result<R, ChannelError>,
         ) -> Result<R, ChannelError> {
             self.calls += 1;
@@ -883,7 +883,8 @@ fn full_adapter_rejects_invalid_sequences_without_touching_kernel() {
 #[test]
 fn verifier_rejects_channel_shape_mismatch_before_claim_binding() {
     use jolt_sumcheck::{
-        verify_single_with, visit_single_rounds, ClearVerifierRounds, SumcheckShape,
+        verify_single_with, visit_single_rounds, ClearVerifierRounds, RoundSpec, SumcheckShape,
+        VerifierRoundChannel,
     };
     for factored in [false, true] {
         let mut kernel = ProductKernel::<Fr>::sampled(2, 101, factored, Fr::from_u64);
@@ -939,6 +940,32 @@ fn verifier_rejects_channel_shape_mismatch_before_claim_binding() {
             ));
         }
         assert_eq!(visits, 0);
+        // A direct caller cannot price a round's proof of work at another
+        // degree than the channel's nonces were checked for.
+        let mut transcript = verifier_transcript::<Blake2b512>(&session(), b"", &[]);
+        let mut untouched = verifier_transcript::<Blake2b512>(&session(), b"", &[]);
+        let mut channel =
+            ClearVerifierRounds::new(original.shape().unwrap(), &proof, &mut transcript).unwrap();
+        let result = channel.verify_round(
+            0,
+            RoundSpec {
+                width: 2,
+                degree: 1,
+            },
+            |_, (), _| Ok(()),
+        );
+        assert!(matches!(
+            result,
+            Err(SumcheckError::RoundDegreeMismatch {
+                round: 0,
+                expected: 2,
+                got: 1
+            })
+        ));
+        assert_eq!(
+            transcript.verifier_message::<[u8; 32]>(),
+            untouched.verifier_message::<[u8; 32]>()
+        );
     }
     for format in [
         SingleFormat::Compressed,

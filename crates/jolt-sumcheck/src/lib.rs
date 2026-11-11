@@ -168,7 +168,7 @@ pub use single::{
 };
 pub use single::{
     verify_single, verify_single_with, visit_single_rounds, BindScalarClaim, ClearVerifierRounds,
-    SingleFormat, SingleInstance, SingleReduction, SingleSumcheckProof, SumcheckShape,
+    RoundSpec, SingleFormat, SingleInstance, SingleReduction, SingleSumcheckProof, SumcheckShape,
     SumcheckShapeError, VerifierRoundChannel,
 };
 pub use verifier::SumcheckVerifier;

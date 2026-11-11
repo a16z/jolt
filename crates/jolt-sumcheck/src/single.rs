@@ -77,7 +77,7 @@ mod prover;
 #[cfg(feature = "prover")]
 mod rounds;
 mod shape;
-pub use channels::{BindScalarClaim, ClearVerifierRounds, VerifierRoundChannel};
+pub use channels::{BindScalarClaim, ClearVerifierRounds, RoundSpec, VerifierRoundChannel};
 #[cfg(feature = "prover")]
 pub use prover::{ClearProverRounds, ProverRoundChannel};
 #[cfg(feature = "prover")]
@@ -192,9 +192,13 @@ where
     C: VerifierRoundChannel<E>,
 {
     channel.validate_shape(shape)?;
+    let spec = RoundSpec {
+        width: shape.degree_bound(),
+        degree: shape.degree_bound(),
+    };
     for round in 0..shape.num_rounds() {
         channel
-            .verify_round(round, shape.degree_bound(), |wire, slots, challenge| {
+            .verify_round(round, spec, |wire, slots, challenge| {
                 if wire.len() != shape.degree_bound() {
                     return Ok(Err(SumcheckError::WrongRoundWidth {
                         round,

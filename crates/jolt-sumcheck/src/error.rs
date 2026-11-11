@@ -305,6 +305,15 @@ pub enum SumcheckError<F: Field> {
         expected: SumcheckShape,
         got: SumcheckShape,
     },
+
+    /// A round asked a channel to price its proof of work at a degree other
+    /// than the one the channel's nonces were checked for.
+    #[error("round {round} priced at degree {got}, but the channel prices degree {expected}")]
+    RoundDegreeMismatch {
+        round: usize,
+        expected: usize,
+        got: usize,
+    },
 }
 
 impl<F: Field> From<VerificationError> for SumcheckError<F> {

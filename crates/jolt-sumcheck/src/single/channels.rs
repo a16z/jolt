@@ -3,6 +3,16 @@ use crate::pow::RoundNonces;
 use jolt_field::Field;
 use jolt_transcript::{Encoding, FieldTranscript, PrivateChannel};
 
+/// One round's public transport shape: the number of wire values it carries
+/// and the degree bound its proof of work is priced at. A single instance's
+/// wire carries exactly `degree` values; a masked batch round in the full
+/// format carries `degree + 1`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RoundSpec {
+    pub width: usize,
+    pub degree: usize,
+}
+
 /// Receive, absorb, check proof of work, then draw the challenge and visit the
 /// wire. A borrowed decode buffer need only live for the visitor invocation.
 pub trait VerifierRoundChannel<E: Field> {
@@ -12,10 +22,12 @@ pub trait VerifierRoundChannel<E: Field> {
     /// Transports whose shape is supplied solely by the driver may accept it directly.
     fn validate_shape(&self, shape: SumcheckShape) -> Result<(), Self::Error>;
     fn map_sumcheck_error(&self, error: SumcheckError<E>) -> Self::Error;
+    /// Reads one round of `spec.width` values, checks its proof of work at
+    /// `spec.degree`, draws its challenge, and lends the wire to `visit`.
     fn verify_round<R>(
         &mut self,
         round: usize,
-        degree: usize,
+        spec: RoundSpec,
         visit: impl FnOnce(Cow<'_, [E]>, Self::Slots, E) -> Result<R, Self::Error>,
     ) -> Result<R, Self::Error>;
 }
@@ -85,9 +97,16 @@ impl<E: Field + Encoding, T: FieldTranscript<E>> VerifierRoundChannel<E>
     fn verify_round<R>(
         &mut self,
         round: usize,
-        degree: usize,
+        spec: RoundSpec,
         visit: impl FnOnce(Cow<'_, [E]>, (), E) -> Result<R, Self::Error>,
     ) -> Result<R, Self::Error> {
+        if spec.degree != self.shape.degree_bound() {
+            return Err(SumcheckError::RoundDegreeMismatch {
+                round,
+                expected: self.shape.degree_bound(),
+                got: spec.degree,
+            });
+        }
         let wire = self
             .proof
             .rounds
@@ -96,10 +115,10 @@ impl<E: Field + Encoding, T: FieldTranscript<E>> VerifierRoundChannel<E>
                 expected: round.saturating_add(1),
                 got: self.proof.rounds.len(),
             })?;
-        if wire.len() != degree {
+        if wire.len() != spec.width {
             return Err(SumcheckError::WrongRoundWidth {
                 round,
-                expected: degree,
+                expected: spec.width,
                 got: wire.len(),
             });
         }
