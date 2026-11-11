@@ -66,7 +66,7 @@ pub use grind_bits::{
 };
 #[cfg(feature = "transcript-poseidon")]
 pub use poseidon::PoseidonSponge;
-pub use private::PrivateChannel;
+pub use private::{PadSlots, PrivateChannel};
 pub use prover::{ProverInit, ProverTranscript};
 #[cfg(feature = "test-utils")]
 pub use scripted::{Script, ScriptedTranscript, TranscriptEvent};
