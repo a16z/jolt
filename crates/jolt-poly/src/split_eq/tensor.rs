@@ -1,6 +1,8 @@
+use crate::eq::alloc::{check_layout, domain_len, EqAlloc, EqTableError, Global, TableInit};
 use jolt_field::{Accumulator, Field, WithAccumulator};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
+use std::panic::Location;
 
 use crate::{Endianness, EqPolynomial, PointLike, PointRef, HIGH_TO_LOW};
 
@@ -13,10 +15,12 @@ pub struct TensorEqTable<F: Field> {
 }
 
 impl<F: Field> TensorEqTable<F> {
+    #[track_caller]
     pub fn new<P: PointLike<Coord = F> + ?Sized>(point: &P) -> Self {
         Self::new_with_scaling(point, F::one())
     }
 
+    #[track_caller]
     pub fn new_with_scaling<P: PointLike<Coord = F> + ?Sized>(point: &P, scale: F) -> Self {
         Self::new_with_scaling_and_split(point, scale, point.num_vars() / 2)
     }
@@ -24,48 +28,91 @@ impl<F: Field> TensorEqTable<F> {
     /// Factors `scale * eq(point, x)` with `split` most-significant variables
     /// outside. Index layout is `(x_out << in_bits) | x_in`.
     /// `split` must be at most `point.num_vars()`.
+    #[track_caller]
     pub fn new_with_scaling_and_split<P: PointLike<Coord = F> + ?Sized>(
         point: &P,
         scale: F,
         split: usize,
     ) -> Self {
-        let out_point = point.msb_range(0..split);
-        let in_point = point.msb_range(split..point.num_vars());
+        match Self::from_point_in(point, scale, split, Global) {
+            Ok(v) => v,
+            Err(never) => match never {},
+        }
+    }
+
+    #[track_caller]
+    pub fn from_point_in<P: PointLike<Coord = F> + ?Sized, A: EqAlloc>(
+        point: &P,
+        scale: F,
+        outer_vars: usize,
+        policy: A,
+    ) -> Result<Self, A::Error> {
+        let at = Location::caller();
+        let num_vars = point.num_vars();
+        let _ = domain_len(num_vars, policy)?;
+        if outer_vars > num_vars {
+            return Err(policy.reject(EqTableError::InvalidSplit {
+                outer_vars,
+                num_vars,
+            }));
+        }
+        let out_len = domain_len(outer_vars, policy)?;
+        let in_len = domain_len(num_vars - outer_vars, policy)?;
+        check_layout::<F, _>(out_len, policy)?;
+        check_layout::<F, _>(in_len, policy)?;
+        policy.admit::<F>(out_len, at)?;
+        policy.admit::<F>(in_len, at)?;
+        let out_point = point.msb_range(0..outer_vars);
+        let in_point = point.msb_range(outer_vars..point.num_vars());
         if P::ENDIANNESS == HIGH_TO_LOW {
             Self::from_parts(
                 PointRef::high_to_low(out_point.coords()),
                 PointRef::high_to_low(in_point.coords()),
                 scale,
+                policy,
             )
         } else {
             Self::from_parts(
                 PointRef::low_to_high(out_point.coords()),
                 PointRef::low_to_high(in_point.coords()),
                 scale,
+                policy,
             )
         }
     }
 
-    fn from_parts<const E: Endianness>(
+    fn from_parts<const E: Endianness, A: EqAlloc>(
         out_point: PointRef<'_, E, F>,
         in_point: PointRef<'_, E, F>,
         scale: F,
-    ) -> Self {
+        policy: A,
+    ) -> Result<Self, A::Error> {
         #[cfg(feature = "parallel")]
         let (e_out, e_in) = rayon::join(
-            || EqPolynomial::<F>::evals(&out_point, Some(scale)),
-            || EqPolynomial::<F>::evals(&in_point, None),
+            || Self::allocate_factor(&out_point, Some(scale), policy),
+            || Self::allocate_factor(&in_point, None, policy),
         );
         #[cfg(not(feature = "parallel"))]
         let (e_out, e_in) = (
-            EqPolynomial::<F>::evals(&out_point, Some(scale)),
-            EqPolynomial::<F>::evals(&in_point, None),
+            Self::allocate_factor(&out_point, Some(scale), policy),
+            Self::allocate_factor(&in_point, None, policy),
         );
-        Self {
-            e_out,
-            e_in,
+        Ok(Self {
+            e_out: e_out?,
+            e_in: e_in?,
             in_bits: in_point.num_vars(),
-        }
+        })
+    }
+
+    #[tracing::instrument(skip_all, name = "EqPolynomial::evals")]
+    fn allocate_factor<P: PointLike<Coord = F> + ?Sized, A: EqAlloc>(
+        point: &P,
+        scale: Option<F>,
+        policy: A,
+    ) -> Result<Vec<F>, A::Error> {
+        let mut values = policy.table(domain_len(point.num_vars(), policy)?, TableInit::Zero)?;
+        EqPolynomial::<F>::fill_evals(point, scale, &mut values);
+        Ok(values)
     }
 
     pub fn len(&self) -> usize {
@@ -90,9 +137,28 @@ impl<F: Field> TensorEqTable<F> {
         (self.e_out[x_out], self.e_in[x_in])
     }
 
+    /// Evaluates the equality weight at a Boolean index.
+    ///
+    /// # Panics
+    /// Panics if `index` is outside the table's domain.
+    #[track_caller]
     pub fn evaluate_index(&self, index: usize) -> F {
+        match self.evaluate_index_in(index, Global) {
+            Ok(v) => v,
+            Err(never) => match never {},
+        }
+    }
+
+    #[track_caller]
+    pub fn evaluate_index_in<A: EqAlloc>(&self, index: usize, policy: A) -> Result<F, A::Error> {
+        if index >= self.len() {
+            return Err(policy.reject(EqTableError::IndexOutOfRange {
+                index,
+                len: self.len(),
+            }));
+        }
         let (outer, inner) = self.factors_at_index(index);
-        outer * inner
+        Ok(outer * inner)
     }
 
     /// Sum the tables at one Boolean index with a single accumulator reduction.

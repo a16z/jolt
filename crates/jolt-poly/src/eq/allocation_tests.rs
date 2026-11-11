@@ -1,5 +1,5 @@
 use super::EqPolynomial;
-use crate::{PointRef, TensorEqTable};
+use crate::{eq_index, Budget, PointRef, TensorEqTable};
 use jolt_field::{impl_ring_ops, Field, Fr, Ring};
 use jolt_utils::alloc::{try_zeroed_vec, zeroed_vec, ZeroAllocError};
 use num_traits::Zero;
@@ -77,6 +77,17 @@ fn generic_callers<F: Field>(r: &[F]) {
         assert_eq!(*value, tensor.evaluate_index(i));
     }
     assert_eq!(table.iter().copied().sum::<F>(), F::from_u64(1));
+    let budgeted = EqPolynomial::<F>::evals_in(
+        &point,
+        None,
+        Budget {
+            max_bytes: usize::MAX,
+        },
+    )
+    .unwrap();
+    for (i, value) in budgeted.iter().enumerate() {
+        assert_eq!(*value, eq_index(&point, i as u128));
+    }
 }
 
 #[test]

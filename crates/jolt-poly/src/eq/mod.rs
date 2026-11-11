@@ -3,6 +3,7 @@ use jolt_field::Field;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
+pub mod alloc;
 mod build;
 mod cached;
 mod scalar;
@@ -358,3 +359,13 @@ mod endianness_tests;
     reason = "tests assert valid nonzero tags and allocations"
 )]
 mod allocation_tests;
+
+#[cfg(test)]
+mod failure_policy;
+#[cfg(test)]
+#[expect(
+    clippy::unwrap_used,
+    clippy::panic,
+    reason = "policy contract tests assert errors and successful allocations"
+)]
+mod policy_tests;

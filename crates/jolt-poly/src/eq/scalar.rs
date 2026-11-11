@@ -1,6 +1,9 @@
+use super::alloc::{check_layout, domain_len, EqAlloc, EqTableError, Global, TableInit};
 use super::EqPolynomial;
 use crate::{MleError, PointLike, PointRef};
 use jolt_field::Field;
+use std::ops::Mul;
+use std::panic::Location;
 pub fn try_eq_mle<F: Field>(left: &[F], right: &[F]) -> Result<F, MleError> {
     if left.len() != right.len() {
         return Err(MleError::EqualityArityMismatch {
@@ -104,7 +107,99 @@ impl<F: Field> EqPolynomial<F> {
     }
 
     /// Sum equality weights at indices `0..len` in O(number of variables).
+    #[track_caller]
     pub fn prefix_sum<P: PointLike<Coord = F> + ?Sized>(point: &P, len: usize) -> F {
-        F::one() - Self::suffix_sum(point, len)
+        match Self::prefix_sum_in(point, len, Global) {
+            Ok(v) => v,
+            Err(never) => match never {},
+        }
+    }
+
+    #[track_caller]
+    pub fn prefix_sum_in<P: PointLike<Coord = F> + ?Sized, A: EqAlloc>(
+        point: &P,
+        len: usize,
+        policy: A,
+    ) -> Result<F, A::Error> {
+        let expected = domain_len(point.num_vars(), policy)?;
+        if len > expected {
+            return Err(policy.reject(EqTableError::LengthMismatch { expected, got: len }));
+        }
+        Ok(F::one() - Self::suffix_sum(point, len))
+    }
+}
+
+impl<F: Field> EqPolynomial<F> {
+    /// Materializes only `evals(r, scale)[..len]` in significance order.
+    /// Uses one buffer and O(number of variables + len) field operations.
+    ///
+    /// # Panics
+    /// Panics if the domain overflows `usize` or `len` exceeds the domain.
+    #[track_caller]
+    pub fn evals_prefix<P>(r: &P, scale: Option<F>, len: usize) -> Vec<F>
+    where
+        P: PointLike + ?Sized,
+        P::Coord: Send + Sync + Into<F>,
+        F: Mul<P::Coord, Output = F>,
+    {
+        match Self::evals_prefix_in(r, scale, len, Global) {
+            Ok(v) => v,
+            Err(never) => match never {},
+        }
+    }
+
+    #[track_caller]
+    pub fn evals_prefix_in<P, A: EqAlloc>(
+        r: &P,
+        scale: Option<F>,
+        len: usize,
+        policy: A,
+    ) -> Result<Vec<F>, A::Error>
+    where
+        P: PointLike + ?Sized,
+        P::Coord: Send + Sync + Into<F>,
+        F: Mul<P::Coord, Output = F>,
+    {
+        let at = Location::caller();
+        let expected = domain_len(r.num_vars(), policy)?;
+        if len > expected {
+            return Err(policy.reject(EqTableError::LengthMismatch { expected, got: len }));
+        }
+        check_layout::<F, _>(len, policy)?;
+        policy.admit::<F>(len, at)?;
+        let mut values = policy.table(len, TableInit::Zero)?;
+        Self::fill_prefix(r, scale, &mut values);
+        Ok(values)
+    }
+
+    fn fill_prefix<P>(r: &P, scale: Option<F>, values: &mut [F])
+    where
+        P: PointLike + ?Sized,
+        P::Coord: Send + Sync + Into<F>,
+        F: Mul<P::Coord, Output = F>,
+    {
+        if values.is_empty() {
+            return;
+        }
+        let suffix_vars = values.len().next_power_of_two().ilog2() as usize;
+        let prefix_vars = r.num_vars() - suffix_vars;
+        let mut scale = scale.unwrap_or(F::one());
+        for j in 0..prefix_vars {
+            let at_one = scale * r.msb(j);
+            scale -= at_one;
+        }
+        values[0] = scale;
+        let mut size = 1;
+        for j in (prefix_vars..r.num_vars()).rev() {
+            let coord = r.msb(j);
+            for i in 0..size.min(values.len()) {
+                let at_one = values[i] * coord;
+                if i + size < values.len() {
+                    values[i + size] = at_one;
+                }
+                values[i] -= at_one;
+            }
+            size *= 2;
+        }
     }
 }
