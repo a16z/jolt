@@ -1,7 +1,7 @@
 #![expect(unused_results)]
 
 use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion};
-use jolt_field::{Field, FpExt4, Fr, JoltField, Prime128Offset6A23801F, Prime32Offset99, Ring};
+use jolt_field::{Field, FpExt4, Fr, JoltField, Prime128Offset6A23801F, Prime32Offset99};
 use jolt_poly::{
     BindingOrder, Budget, EqPolynomial, GruenSplitEqPolynomial, PointRef, Polynomial,
     TensorEqTable, UnivariatePoly,
@@ -215,36 +215,6 @@ fn bench_gruen(c: &mut Criterion) {
                     },
                     BatchSize::SmallInput,
                 );
-            });
-            let Some(round) = split.round() else { continue };
-            let q = UnivariatePoly::new(vec![Fr::from_u64(3), Fr::from_u64(7), Fr::from_u64(2)]);
-            let (l0, l1) = round.linear_evals();
-            let hint = l0 * q.evaluate(Fr::from_u64(0)) + l1 * q.evaluate(Fr::from_u64(1));
-            group.bench_function(BenchmarkId::new("degree_3", &label), |bench| {
-                bench.iter(|| {
-                    round.gruen_poly_deg_3(
-                        std::hint::black_box(Fr::from_u64(3)),
-                        Fr::from_u64(2),
-                        hint,
-                        || q.evaluate(Fr::from_u64(1)),
-                    )
-                });
-            });
-            group.bench_function(BenchmarkId::new("from_evals", &label), |bench| {
-                bench.iter(|| {
-                    round.gruen_poly_from_evals(
-                        std::hint::black_box(&[q.evaluate(Fr::from_u64(1)), Fr::from_u64(2)]),
-                        hint,
-                        || q.evaluate(Fr::from_u64(0)),
-                    )
-                });
-            });
-            group.bench_function(BenchmarkId::new("degree_2", &label), |bench| {
-                bench.iter(|| {
-                    round.gruen_poly_deg_2(std::hint::black_box(Fr::from_u64(7)), hint, || {
-                        Fr::from_u64(3)
-                    })
-                });
             });
         }
     }
