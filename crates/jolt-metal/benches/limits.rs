@@ -40,14 +40,14 @@ mod metal {
     use std::process::Command;
     use std::time::{Duration, Instant};
 
-    use jolt_field::solinas::Prime128OffsetA7F7;
+    use jolt_field::solinas::Prime128Offset6A23801F;
     use jolt_field::Zero;
     use jolt_metal::runtime::{Batch, Binding, Device, DeviceBuffer, Grid};
 
     use super::support::{dispatch, elements, library, pipeline, threadgroup, words};
 
     /// The field whose kernels the limits bound.
-    type F = Prime128OffsetA7F7;
+    type F = Prime128Offset6A23801F;
 
     const FIELD_OPS: &str = include_str!("../tests/shaders/field_ops.metal");
     const FIELD_BENCH: &str = include_str!("shaders/field_bench.metal");
@@ -219,7 +219,9 @@ mod metal {
 
     fn to_words(values: &[u64]) -> Vec<Word> {
         values
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .map(|pair| {
                 let [a, b] = [pair[0], pair[1]];
                 [a as u32, (a >> 32) as u32, b as u32, (b >> 32) as u32]

@@ -28,6 +28,7 @@
 //! exact: the Gruen-reconstructed evaluations equal the true round
 //! polynomial's, and both sides interpolate the same four points.
 
+use crate::optimized::support::eq_round_error;
 use jolt_claims::protocols::jolt::{JoltDerivedId, RamHammingBooleanityPublic};
 use jolt_claims::NoChallenges;
 use jolt_field::JoltField;
@@ -129,8 +130,12 @@ struct OptimizedRamHammingBooleanityKernel<F: JoltField> {
 }
 
 impl<F: JoltField> OptimizedRamHammingBooleanityKernel<F> {
-    fn bind(&mut self, challenge: F) {
-        self.eq.bind(challenge);
+    fn bind(&mut self, challenge: F) -> Result<(), SumcheckError<F>> {
+        let round = self.progress.bound();
+        self.eq
+            .round_mut()
+            .ok_or_else(|| eq_round_error(round))?
+            .bind(challenge);
         match &mut self.hamming {
             HammingState::Startup(startup) => {
                 startup.challenges.push(challenge);
@@ -143,6 +148,7 @@ impl<F: JoltField> OptimizedRamHammingBooleanityKernel<F> {
             }
         }
         self.progress.advance();
+        Ok(())
     }
 }
 
@@ -333,7 +339,10 @@ impl<F: JoltField> HammingStartup<F> {
             }
             [q_0, q_1, q_2]
         };
-        let (l_0, l_1) = eq.current_linear_evals();
+        let (l_0, l_1) = eq
+            .round()
+            .ok_or_else(|| eq_round_error(round))?
+            .linear_evals();
         let slope = l_1 - l_0;
         let actual = l_0 * q_0 + l_1 * (q_0 + q_1 + q_2);
         if actual != previous_claim {
@@ -444,7 +453,7 @@ impl<F: JoltField> ProveRounds<F> for OptimizedRamHammingBooleanityKernel<F> {
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
         if let Some(challenge) = bind {
-            self.bind(challenge);
+            self.bind(challenge)?;
         }
         let hamming = match &self.hamming {
             HammingState::Startup(startup) => {
@@ -467,6 +476,8 @@ impl<F: JoltField> ProveRounds<F> for OptimizedRamHammingBooleanityKernel<F> {
             |left, right| [left[0] + right[0], left[1] + right[1]],
         );
         self.eq
+            .round()
+            .ok_or_else(|| eq_round_error(round))?
             .checked_cubic(constant, leading, previous_claim, round, || {
                 self.eq.par_fold_out_in_prefix(
                     prefix_pairs,
@@ -482,8 +493,7 @@ impl<F: JoltField> ProveRounds<F> for OptimizedRamHammingBooleanityKernel<F> {
     }
 
     fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {
-        self.bind(bind);
-        Ok(())
+        self.bind(bind)
     }
 }
 
@@ -789,7 +799,7 @@ mod tests {
             let eq_point = case.point(log_t, test_challenge(0));
             if matches!(case, ExceptionalEq::ZeroPrefix) {
                 let mut eq = GruenSplitEqPolynomial::new(&eq_point, BindingOrder::LowToHigh);
-                eq.bind(test_challenge(0));
+                eq.round_mut().unwrap().bind(test_challenge(0));
                 assert_eq!(eq.current_scalar(), Fr::zero(), "round 0 zeroes the prefix");
             }
             hamming_parity(log_t, &bits, eq_point.into_iter().rev().collect());

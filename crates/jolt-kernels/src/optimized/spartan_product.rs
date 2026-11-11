@@ -10,6 +10,7 @@
 //! Only extension nodes are computed from the witness; the supplied claims
 //! fill the base nodes when the first-round polynomial is assembled.
 
+use crate::optimized::support::eq_round_error;
 #[cfg(feature = "field-inline")]
 use jolt_claims::protocols::composed::ComposedOpeningId;
 #[cfg(feature = "field-inline")]
@@ -662,16 +663,22 @@ impl<F: JoltField> ProductRemainderKernel<F> {
         })
     }
 
-    fn bind(&mut self, challenge: F) {
+    fn bind(&mut self, challenge: F) -> Result<(), SumcheckError<F>> {
+        let round = self.challenges.bound();
+        let gruen_round = self
+            .split_eq
+            .round_mut()
+            .ok_or_else(|| eq_round_error(round))?;
         let shrunk = self.left.bind(challenge);
         let _ = self.right.bind(challenge);
         if shrunk && !self.purged {
             self.purged = true;
             crate::mem::purge_retained_memory(self.challenges.total());
         }
-        self.split_eq.bind(challenge);
+        gruen_round.bind(challenge);
         self.challenges.push(challenge);
         self.pending_endpoints = None;
+        Ok(())
     }
 
     fn cycle_weights(&self) -> PrefixCycleWeights<F> {
@@ -756,21 +763,20 @@ impl<F: JoltField> ProveRounds<F> for ProductRemainderKernel<F> {
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
         if let Some(challenge) = bind {
-            self.bind(challenge);
+            self.bind(challenge)?;
         }
+        let gruen_round = self.split_eq.round().ok_or_else(|| eq_round_error(round))?;
         let (q_zero, q_infinity) = match self.pending_endpoints.take() {
             Some(endpoints) => endpoints,
             None => self.left.product_endpoints(&self.right, &self.split_eq),
         };
-        self.split_eq
-            .checked_cubic(q_zero, q_infinity, previous_claim, round, || {
-                self.left.product_at_one(&self.right, &self.split_eq)
-            })
+        gruen_round.checked_cubic(q_zero, q_infinity, previous_claim, round, || {
+            self.left.product_at_one(&self.right, &self.split_eq)
+        })
     }
 
     fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {
-        self.bind(bind);
-        Ok(())
+        self.bind(bind)
     }
 }
 
