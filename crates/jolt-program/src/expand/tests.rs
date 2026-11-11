@@ -298,7 +298,7 @@ impl InlineExpansionProvider for RdOperandProvider {
     fn expand_inline(
         &mut self,
         instruction: &SourceInstruction,
-        _profile: jolt_riscv::JoltInstructionProfile,
+        _profile: JoltInstructionProfile,
     ) -> Result<ExpandedInstructionSequence, ExpansionError> {
         let row = instruction.row();
         let mut builder = InlineExpansionBuilder::new(*row);
