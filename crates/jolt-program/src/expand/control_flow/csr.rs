@@ -2,8 +2,9 @@
 //!
 //! Jolt's hart is M-mode only (no S/U modes, no F/D/V, no interrupt sources),
 //! so most `mstatus` fields are read-only. The CSRs live in reserved virtual
-//! registers. Writes legalize the value the way the privileged specification
-//! and the Sail model do for that configuration:
+//! registers. Writes follow the privileged specification for that configuration.
+//! Matching Sail also requires its `mcause` write policy to store raw values,
+//! as described in `specs/m-mode-trap-csr-semantics.md`.
 //!
 //! | CSR      | Virtual register holds        | Write of `v`                                   |
 //! |----------|-------------------------------|------------------------------------------------|
