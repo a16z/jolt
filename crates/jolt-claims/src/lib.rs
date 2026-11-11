@@ -37,7 +37,7 @@ pub use claim_data::{
 };
 use jolt_claim_expr::formula_error;
 pub use jolt_claim_expr::{
-    challenge, constant, derived, opening, referenced_openings, Expr, Source, SumcheckDomain,
-    SymbolicSumcheck, Term,
+    challenge, constant, derived, opening, referenced_openings, Expr, FactoredExpr, FactoredTerm,
+    Source, SumcheckDomain, SymbolicSumcheck, Term,
 };
 pub use jolt_claims_derive::{InputClaims, OutputClaims, SumcheckChallenges};

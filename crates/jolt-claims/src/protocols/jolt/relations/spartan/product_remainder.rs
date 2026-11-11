@@ -8,9 +8,9 @@ use crate::protocols::jolt::geometry::spartan::{
     right_instruction_input_product, SpartanProductDimensions, PRODUCT_REMAINDER_DEGREE,
 };
 use crate::protocols::jolt::{
-    JoltChallengeId, JoltDerivedId, JoltExpr, JoltOpeningId, JoltRelationId,
+    JoltChallengeId, JoltDerivedId, JoltExpr, JoltFactoredExpr, JoltOpeningId, JoltRelationId,
 };
-use crate::{opening, InputClaims, OutputClaims, SymbolicSumcheck};
+use crate::{opening, FactoredExpr, InputClaims, OutputClaims, SymbolicSumcheck};
 
 /// Produced product-remainder openings (the eight virtualized instruction-product
 /// operands and flags), all sharing the single product opening point. Generic over
@@ -112,6 +112,14 @@ impl SymbolicSumcheck for ProductRemainder {
     }
 
     fn output_expression<F: Ring>(&self) -> JoltExpr<F> {
-        product_tau_kernel() * self.left_factor_expression() * self.right_factor_expression()
+        self.output_factored().expand()
+    }
+
+    fn output_factored<F: Ring>(&self) -> JoltFactoredExpr<F> {
+        FactoredExpr::product(vec![
+            product_tau_kernel(),
+            self.left_factor_expression(),
+            self.right_factor_expression(),
+        ])
     }
 }
