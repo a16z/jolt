@@ -134,8 +134,8 @@ pub extern "sysv64" fn protected_store_doubleword(
     let (state, host) = host_context(state);
     let offset = address - RAM_START_ADDRESS;
     let mut bytes = [0u8; 8];
-    // SAFETY: the generated store admission checked alignment and plane bounds
-    // before comparing the address with the public protected intervals.
+    // SAFETY: the generated store admission checked an aligned start below the
+    // logical plane size; MemoryPlane::new rounds its backing to whole words.
     unsafe {
         (state.mem_base as *const u8)
             .add(offset as usize)
@@ -280,13 +280,12 @@ impl tracer::InlineAdviceContext for GuestAdviceContext<'_> {
         }
         if address >= RAM_START_ADDRESS {
             let offset = address - RAM_START_ADDRESS;
-            if offset + 8 > self.state.mem_size {
+            if offset >= self.state.mem_size {
                 return None;
             }
-            // SAFETY: offset + 8 is within the mapped plane.
             let mut bytes = [0u8; 8];
-            // SAFETY: offset + 8 <= mem_size, so the read stays inside the
-            // mapped guest-memory plane.
+            // SAFETY: an aligned start below mem_size fits in the whole-word
+            // backing allocated by MemoryPlane::new.
             unsafe {
                 (self.state.mem_base as *const u8)
                     .add(offset as usize)

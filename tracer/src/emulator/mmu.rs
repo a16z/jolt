@@ -1459,6 +1459,43 @@ mod test_mmu {
     }
 
     #[test]
+    fn final_partial_canary_word_accepts_only_unchanged_stores() {
+        use std::panic::{catch_unwind, AssertUnwindSafe};
+
+        let config = MemoryConfig {
+            program_size: Some(1025),
+            stack_size: 0,
+            heap_size: 0,
+            ..Default::default()
+        };
+        let device = JoltDeviceMemory::new(&config);
+        assert_eq!(device.memory_layout.heap_end, RAM_START_ADDRESS + 1153);
+        let mut mmu = Mmu::new(Box::new(DummyTerminal::default()));
+        mmu.init_memory(device.memory_layout.get_total_memory_size());
+        mmu.jolt_device = Some(device);
+        let address = RAM_START_ADDRESS + 1152;
+        let write = mmu.store_doubleword(address, 0).unwrap();
+        assert_eq!((write.pre_value, write.post_value), (0, 0));
+        for value in [1, 256] {
+            let error = catch_unwind(AssertUnwindSafe(|| mmu.store_doubleword(address, value)))
+                .expect_err("changed canary word must fail");
+            let message = error.downcast_ref::<String>().expect("protection panic");
+            assert!(message.contains("Store changes protected doubleword"));
+            assert_eq!(mmu.load_doubleword(address).unwrap().0, 0);
+        }
+        for offset in [1153, 1160] {
+            assert!(catch_unwind(AssertUnwindSafe(|| {
+                mmu.store_doubleword(RAM_START_ADDRESS + offset, 0)
+            }))
+            .is_err());
+            assert!(catch_unwind(AssertUnwindSafe(|| {
+                mmu.load_doubleword(RAM_START_ADDRESS + offset)
+            }))
+            .is_err());
+        }
+    }
+
+    #[test]
     fn conditional_stores_preserve_code_and_canary_words() {
         use crate::emulator::cpu::Cpu;
         use crate::instruction::Instruction;

@@ -10,8 +10,10 @@
 #![expect(clippy::expect_used, clippy::panic)]
 
 use common::constants::{RAM_START_ADDRESS, STACK_CANARY_SIZE};
-use common::jolt_device::{JoltDevice, JoltDeviceMemory};
-use jolt_program::execution::JoltProgram;
+use common::jolt_device::{JoltDevice, JoltDeviceMemory, MemoryConfig};
+use jolt_program::execution::{
+    ChunkedExecutionBackend, ExecutionBackend, JoltProgram, TraceError, TraceInputs,
+};
 use jolt_program::expand::{expand_instruction, ExpansionAllocator};
 use jolt_riscv::{
     JoltInstructionKind as Kind, JoltInstructionRow, NormalizedOperands, RV64IMAC_JOLT,
@@ -20,6 +22,7 @@ use jolt_tracer_x86::harness::{
     compile_program, memory_config, run_program, single_row_program, terminal_row, Outcome,
     TEST_ADDR,
 };
+use jolt_tracer_x86::X86TracerBackend;
 use tracer::instruction::Instruction;
 
 const REGS: usize = common::constants::REGISTER_COUNT as usize;
@@ -291,6 +294,134 @@ fn layout_region_stores_accept_the_old_value_and_reject_changes() {
                     .contains("protected doubleword"));
             }
         }
+    }
+}
+
+fn partial_word_program(config: &MemoryConfig, offset: u64, value: u64) -> JoltProgram {
+    let layout = JoltDeviceMemory::new(config).memory_layout;
+    let mut store = row(Kind::SD, Some(1), None, offset.into());
+    store.operands.rs2 = Some(3);
+    let mut terminate = row(
+        Kind::SD,
+        Some(1),
+        None,
+        i128::from(layout.termination) - i128::from(RAM_START_ADDRESS),
+    );
+    terminate.operands.rs2 = Some(4);
+    let mut rows = vec![
+        row(Kind::AUIPC, None, Some(1), 0),
+        row(Kind::ADDI, Some(0), Some(3), value.into()),
+        store,
+        row(Kind::LD, Some(1), Some(2), offset.into()),
+        row(Kind::ADDI, Some(0), Some(4), 1),
+        terminate,
+    ];
+    for (i, row) in rows.iter_mut().enumerate() {
+        row.address = RAM_START_ADDRESS as usize + 4 * i;
+    }
+    rows.push(terminal_row(RAM_START_ADDRESS + 4 * rows.len() as u64));
+    // Source recovery parses this sectionless ELF; execution uses the rows above.
+    let mut elf = vec![0; 64];
+    elf[..7].copy_from_slice(b"\x7fELF\x02\x01\x01");
+    elf[16..18].copy_from_slice(&2u16.to_le_bytes());
+    elf[18..20].copy_from_slice(&243u16.to_le_bytes());
+    elf[20..24].copy_from_slice(&1u32.to_le_bytes());
+    elf[24..32].copy_from_slice(&RAM_START_ADDRESS.to_le_bytes());
+    elf[52..54].copy_from_slice(&64u16.to_le_bytes());
+    elf[54..56].copy_from_slice(&56u16.to_le_bytes());
+    elf[58..60].copy_from_slice(&64u16.to_le_bytes());
+    JoltProgram::from_parts(
+        elf,
+        rows,
+        Vec::new(),
+        RAM_START_ADDRESS + config.program_size.expect("program size"),
+        RAM_START_ADDRESS,
+    )
+}
+
+#[test]
+fn final_partial_canary_word_accepts_only_unchanged_stores() {
+    let config = MemoryConfig {
+        program_size: Some(1025),
+        stack_size: 0,
+        heap_size: 0,
+        ..Default::default()
+    };
+    let inputs = TraceInputs::new(Vec::new(), Vec::new(), Vec::new(), config);
+    let mut backend = X86TracerBackend::new();
+    let unchanged = partial_word_program(&config, 1152, 0);
+    let trace = backend
+        .trace(&unchanged, inputs.clone())
+        .expect("unchanged canary word");
+    assert_eq!(
+        trace.trace.rows()[3]
+            .registers()
+            .rd
+            .expect("load result")
+            .post_value,
+        0
+    );
+    let summary = backend
+        .execute(&unchanged, inputs.clone(), 1)
+        .expect("checkpoint canary word");
+    assert_eq!(summary.checkpoints.len(), trace.trace.rows().len());
+    for (checkpoint, expected) in summary.checkpoints.iter().zip(trace.trace.rows()) {
+        let replay = backend
+            .replay_chunk(checkpoint)
+            .expect("replay canary word");
+        assert_eq!(replay.rows(), std::slice::from_ref(expected));
+    }
+    for value in [1, 256] {
+        let changed = partial_word_program(&config, 1152, value);
+        assert!(matches!(
+            X86TracerBackend::new().run_machine(&changed, inputs.clone()),
+            Err(TraceError::Backend("host helper reported an error"))
+        ));
+    }
+    for offset in [1153, 1160] {
+        let outside = partial_word_program(&config, offset, 0);
+        assert!(X86TracerBackend::new()
+            .run_machine(&outside, inputs.clone())
+            .is_err());
+    }
+}
+
+#[test]
+fn final_partial_heap_word_preserves_backing_bytes_across_checkpoints() {
+    let config = MemoryConfig {
+        program_size: Some(1025),
+        stack_size: 0,
+        heap_size: 8,
+        ..Default::default()
+    };
+    let inputs = TraceInputs::new(Vec::new(), Vec::new(), Vec::new(), config);
+    let program = partial_word_program(&config, 1160, 256);
+    let mut backend = X86TracerBackend::new();
+    backend.set_min_checkpoint_spacing_rows(1);
+    let trace = backend
+        .trace(&program, inputs.clone())
+        .expect("partial heap word");
+    assert_eq!(
+        trace.trace.rows()[3]
+            .registers()
+            .rd
+            .expect("load result")
+            .post_value,
+        256
+    );
+    assert!(trace
+        .final_memory
+        .as_ref()
+        .expect("final memory")
+        .bytes
+        .contains(&(RAM_START_ADDRESS + 1161, 1)));
+    let summary = backend
+        .execute(&program, inputs, 1)
+        .expect("checkpoint heap word");
+    assert_eq!(summary.checkpoints.len(), trace.trace.rows().len());
+    for (checkpoint, expected) in summary.checkpoints.iter().zip(trace.trace.rows()) {
+        let replay = backend.replay_chunk(checkpoint).expect("replay heap word");
+        assert_eq!(replay.rows(), std::slice::from_ref(expected));
     }
 }
 
