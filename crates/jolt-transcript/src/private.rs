@@ -34,11 +34,12 @@ pub trait PrivateChannel {
     fn append_private<F: Field + Encoding>(&mut self, values: &[F]);
 
     /// Binds a claim the verifier can already derive from earlier messages.
-    /// A clear transcript absorbs it as a public value; a masked channel
-    /// binds nothing, since the masked messages it derives from already do.
+    /// A clear transcript absorbs it as a public value.
     ///
-    /// The claim must be a function of values already absorbed: under a
-    /// masked channel this call adds nothing to the transcript.
+    /// The claim must be a function of values already absorbed. A masked
+    /// transport, which cannot implement this trait, binds such a claim
+    /// through its own seam and absorbs nothing for it: the masked messages
+    /// the claim derives from already bind it.
     fn bind_derived<F: Field + Encoding>(&mut self, claim: &F);
 }
 
