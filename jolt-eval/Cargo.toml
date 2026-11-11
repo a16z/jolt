@@ -58,6 +58,7 @@ libc = "0.2"
 criterion = { workspace = true }
 iai-callgrind.workspace = true
 iai-callgrind-runner.workspace = true
+rayon.workspace = true
 
 [[bench]]
 name = "bind_parallel_high_to_low"

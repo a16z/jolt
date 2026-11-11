@@ -888,10 +888,14 @@ mod bytemuck_tests {
 // zero coefficients. The quadratic config marker occupies no storage.
 unsafe impl<F: PseudoMersenne, C: Ext2Config<F>> ZeroBytesValid for FpExt2<F, C> {}
 
-// SAFETY: the transparent coefficient array is zero-byte-valid whenever F is.
+// SAFETY: `FpExt4` is a transparent array of four coefficients, each
+// zero-byte-valid through the `PseudoMersenne: ZeroBytesValid` supertrait; the
+// extension zero is `[F::zero(); 4]`, all zero coefficients.
 unsafe impl<F: PseudoMersenne> ZeroBytesValid for FpExt4<F> {}
 
-// SAFETY: the transparent coefficient array is zero-byte-valid whenever F is.
+// SAFETY: `FpExt8` is a transparent array of eight coefficients, each
+// zero-byte-valid through the `PseudoMersenne: ZeroBytesValid` supertrait; the
+// extension zero is `[F::zero(); 8]`, all zero coefficients.
 unsafe impl<F: PseudoMersenne> ZeroBytesValid for FpExt8<F> {}
 
 #[cfg(test)]
