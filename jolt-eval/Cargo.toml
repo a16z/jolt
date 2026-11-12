@@ -58,6 +58,7 @@ libc = "0.2"
 criterion = { workspace = true }
 iai-callgrind.workspace = true
 iai-callgrind-runner.workspace = true
+rayon.workspace = true
 
 [[bench]]
 name = "bind_parallel_high_to_low"
@@ -110,6 +111,11 @@ harness = false
 [[bench]]
 name = "eq_evals"
 path = "benches/callgrind/eq_evals.rs"
+harness = false
+
+[[bench]]
+name = "eq_rounds"
+path = "benches/callgrind/eq_rounds.rs"
 harness = false
 
 [[bin]]

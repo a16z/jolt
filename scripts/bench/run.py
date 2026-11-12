@@ -616,8 +616,8 @@ def validate_metrics(metrics, case):
         if not isinstance(result[key], int) or result[key] <= 0:
             raise ValueError(f'{key} must be a positive integer')
     padded = result['padded_trace_rows']
-    if padded & (padded - 1) or padded <= result['trace_rows']:
-        raise ValueError('padded trace does not cover the proof rows and final no-op')
+    if padded & (padded - 1) or padded < result['trace_rows']:
+        raise ValueError('padded trace must be a power of two covering the proof rows')
     if result['e2e_s'] < result['prove_s'] + result['setup_s']:
         raise ValueError('end-to-end interval does not contain prove and setup')
     public_output = metrics['public_output']

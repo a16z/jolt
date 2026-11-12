@@ -40,6 +40,7 @@
 //! | [`domain`] | [`SumcheckDomain`] implementations for round-sum checks |
 //! | `r1cs` | R1CS lowering for sumcheck verifier equations (`r1cs` feature) |
 //! | [`round_proof`] | [`RoundMessage`] and [`ClearRound`] traits |
+//! | [`single`] | `prove_single` and [`verify_single`] — one unbatched instance, compressed or eq-factored |
 //! | [`committed`] | Commitment-backed round messages |
 //! | [`error`] | [`SumcheckError`] variants |
 //!
@@ -116,6 +117,7 @@ pub mod prover;
 pub mod r1cs;
 pub mod recorder;
 pub mod round_proof;
+pub mod single;
 pub mod verifier;
 
 #[cfg(all(test, feature = "committed", feature = "prover"))]
@@ -134,7 +136,9 @@ pub use committed::{
 };
 #[cfg(feature = "binary")]
 pub use domain::F8Domain;
-pub use domain::{BooleanHypercube, CenteredIntegerDomain, SumcheckDomain, SumcheckDomainSpec};
+pub use domain::{
+    BooleanHypercube, CenteredIntegerDomain, EqFactoredRound, SumcheckDomain, SumcheckDomainSpec,
+};
 pub use error::SumcheckError;
 #[cfg(feature = "prover")]
 pub use pow::grind_round;
@@ -157,4 +161,9 @@ pub use r1cs::{
 pub use recorder::CommittedSumcheckRecorder;
 pub use recorder::{ClearSumcheckRecorder, RecordedSumcheck, SumcheckRecorder};
 pub use round_proof::{append_compressed_round, ClearRound, RoundMessage};
+#[cfg(feature = "prover")]
+pub use single::prove_single;
+pub use single::{
+    verify_single, SingleFormat, SingleInstance, SingleReduction, SingleSumcheckProof,
+};
 pub use verifier::SumcheckVerifier;
