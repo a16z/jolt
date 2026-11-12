@@ -4,10 +4,11 @@
 //! Gruen factoring avoids a dense eq table. One split-eq row walk recovers
 //! the five output claims at the bound point.
 
+use crate::optimized::support::eq_round_error;
 use jolt_claims::protocols::jolt::relations::claim_reductions::instruction::InstructionClaimReductionOutputClaims;
 use jolt_claims::protocols::jolt::{InstructionClaimReductionPublic, JoltDerivedId};
 use jolt_field::{Accumulator, JoltField};
-use jolt_poly::{BindingOrder, EqPolynomial, GruenSplitEqPolynomial, UnivariatePoly};
+use jolt_poly::{BindingOrder, EqPolynomial, GruenSplitEqPolynomial, Polynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 #[cfg(feature = "parallel")]
 use jolt_utils::par_collect_windows;
@@ -24,7 +25,9 @@ use jolt_witness::{JoltWitnessPlane, WitnessBundle, WitnessError};
 use rayon::prelude::*;
 
 use super::prefix_product::PrefixColumn;
-use super::support::{pin_derived_term, BundleStore, GruenRoundMessage, RoundProgress};
+use super::support::{
+    fallible_collect_bytes, pin_derived_term, BundleStore, GruenRoundMessage, RoundProgress,
+};
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
@@ -60,6 +63,39 @@ impl InstructionOperandRow {
 }
 
 pub struct OptimizedInstructionClaimReduction;
+
+impl OptimizedInstructionClaimReduction {
+    /// Construction allowance over `2^log_t` cycles, or `None` past
+    /// `usize::MAX`. The fallible-collect bound covers the combined prefix
+    /// table; parallel materialization fills its destination directly.
+    /// Not counted: the row store, a handle on the witness's rows when it
+    /// has one.
+    pub fn construction_bytes<F: JoltField>(log_t: usize) -> Option<usize> {
+        fallible_collect_bytes::<F>(1usize.checked_shl(u32::try_from(log_t).ok()?)?)
+    }
+
+    /// Peak bytes over `2^log_t` cycles, `log_t >= 1`, from the end of
+    /// `prepare` through the output walk, or `None` past `usize::MAX`: the
+    /// combined table bounded by `T` entries, its split-eq tables
+    /// ([`GruenSplitEqPolynomial::low_to_high_bytes`]) and `log_t` challenge
+    /// slots, plus the larger of the buffer the table's first in-place shrink
+    /// allocates ([`Polynomial::in_place_shrink_len`]) and the output walk's
+    /// reversed challenges and two eq tables. Both windows keep the table's
+    /// full capacity counted. Not counted: the row store, a handle on the
+    /// witness's rows when it has one; the round messages.
+    pub fn post_prepare_peak_bytes<F: JoltField>(log_t: usize) -> Option<usize> {
+        let pow2 = |bits: usize| 1usize.checked_shl(u32::try_from(bits).ok()?);
+        let cycles = pow2(log_t)?;
+        let walk = log_t
+            .checked_add(pow2(log_t / 2)?)?
+            .checked_add(pow2(log_t.div_ceil(2))?)?;
+        cycles
+            .checked_add(log_t)?
+            .checked_add(Polynomial::<F>::in_place_shrink_len(cycles).max(walk))?
+            .checked_mul(size_of::<F>())?
+            .checked_add(GruenSplitEqPolynomial::<F>::low_to_high_bytes(log_t)?)
+    }
+}
 
 impl<F: JoltField> PrepareKernel<F, InstructionClaimReduction<F>>
     for OptimizedInstructionClaimReduction
@@ -299,14 +335,21 @@ impl<F: JoltField> OptimizedInstructionClaimReductionKernel<F> {
             *value += tail_mass;
         }
         self.gruen
+            .round()
+            .ok_or_else(|| eq_round_error(round))?
             .checked_round_poly(&mut q_evals, previous_claim, round)
     }
 
-    fn bind(&mut self, challenge: F) {
-        self.gruen.bind(challenge);
+    fn bind(&mut self, challenge: F) -> Result<(), SumcheckError<F>> {
+        let round = self.progress.bound();
+        self.gruen
+            .round_mut()
+            .ok_or_else(|| eq_round_error(round))?
+            .bind(challenge);
         let _ = self.combined.bind(challenge);
         self.bound_challenges.push(challenge);
         self.progress.advance();
+        Ok(())
     }
 }
 
@@ -322,14 +365,13 @@ impl<F: JoltField> ProveRounds<F> for OptimizedInstructionClaimReductionKernel<F
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
         if let Some(challenge) = bind {
-            self.bind(challenge);
+            self.bind(challenge)?;
         }
         self.message(round, previous_claim)
     }
 
     fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {
-        self.bind(bind);
-        Ok(())
+        self.bind(bind)
     }
 }
 
@@ -394,7 +436,7 @@ mod tests {
         InstructionClaimReductionPublic, JoltDerivedId, TraceDimensions,
     };
     #[cfg(feature = "akita")]
-    use jolt_field::Prime128OffsetA7F7;
+    use jolt_field::Prime128Offset6A23801F;
     use jolt_field::{Fr, JoltField, Ring};
     use jolt_poly::{BindingOrder, Polynomial};
     use jolt_sumcheck::ProveRounds;
@@ -626,6 +668,6 @@ mod tests {
     fn operand_claims_match_dense_evaluation_at_scalar_boundaries() {
         check_operand_claims_at_scalar_boundaries::<Fr>();
         #[cfg(feature = "akita")]
-        check_operand_claims_at_scalar_boundaries::<Prime128OffsetA7F7>();
+        check_operand_claims_at_scalar_boundaries::<Prime128Offset6A23801F>();
     }
 }

@@ -670,7 +670,8 @@ class AiMergeGateTests(unittest.TestCase):
             (f"Review complete.\r\n{valid}\r\n", "success"),
             *((attestation(skill="Independent security review", model=model, effort=effort), "success")
               for model, effort in [("GPT-6 Astra", "max"), ("GPT-6 Astra", "xhigh"),
-                                    ("Claude Opus 5.5", "max"), ("Claude Opus 5.5", "xhigh")]),
+                                    ("Claude Opus 5.5", "max"), ("Claude Opus 5.5", "xhigh"),
+                                    ("Claude Fable 5.2", "max"), ("Claude Fable 5.2", "xhigh")]),
             # Only those exact model and effort spellings count: no aliases, API IDs or case variants.
             (attestation(model="Astra"), "neutral"),
             (attestation(model="gpt-6-astra"), "neutral"),
@@ -944,6 +945,42 @@ class AiMergeGateTests(unittest.TestCase):
         self.assertEqual(set(apis.labels), {"keep"})
         self.assertEqual(apis.gate()[0], "neutral")
 
+    def test_classifier_per_path_ratings_are_collapsed(self) -> None:
+        answer = {"reasoning": "Summary </details>.", "risks": [
+            {"path": "docs/</details>.md", "level": 1, "reasoning": "Docs </details>."},
+            {"path": "src/a.rs", "level": 2, "reasoning": "Prover only."},
+        ]}
+        apis = evaluate(FakeApis(files=[item["path"] for item in answer["risks"]],
+                                 answer_text=json.dumps(answer)))
+        expected = (
+            "Summary &lt;/details&gt;\\.\n\nRisk: risk-2\n\n"
+            "<details>\n<summary>Per-path ratings (2 files)</summary>\n\n"
+            "- docs/&lt;/details&gt;\\.md: risk-1 — Docs &lt;/details&gt;\\.\n"
+            "- src/a\\.rs: risk-2 — Prover only\\.\n\n</details>\n\n"
+            "_gpt-6.1-sol, reasoning effort xhigh_"
+        )
+        [classification] = [run for run in apis.created if run["name"] == GATE.CLASSIFIER]
+        self.assertEqual(classification["output"]["summary"], expected)
+        self.assertEqual(apis.posted[-1],
+                         "<!-- ai-merge-gate/classifier -->\n### Verifier classifier: risk-2\n\n"
+                         f"Head `{HEAD}`\n\n{expected}\n\n"
+                         f'<!-- ai-merge-gate/attempts {{"{HEAD}": 1}} -->')
+
+        answer = {"reasoning": "Classified changed files.", "risks": [
+            {"path": f"docs/file{i}.md", "level": 1, "reasoning": "Text <code> & API. " * 90}
+            for i in range(30)
+        ]}
+        apis = evaluate(FakeApis(files=[item["path"] for item in answer["risks"]],
+                                 answer_text=json.dumps(answer)))
+        [classification] = [run for run in apis.created if run["name"] == GATE.CLASSIFIER]
+        for body in (classification["output"]["summary"], apis.posted[-1]):
+            self.assertIn("[display clipped:", body)
+            self.assertEqual(body.count("<details>"), 1)
+            self.assertEqual(body.count("</details>"), 1)
+            self.assertIn("\n\n</details>\n\n_gpt-6.1-sol, reasoning effort xhigh_", body)
+        self.assertEqual(json.loads(GATE.LEDGER.fullmatch(apis.posted[-1].splitlines()[-1]).group(1)),
+                         {HEAD: 1})
+
     def test_maintainer_pr_content_stays_data(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             sentinel = Path(directory) / "executed"
@@ -1099,11 +1136,12 @@ class AiMergeGateTests(unittest.TestCase):
         self.assertLess(len(apis.model_requests[0]["input"]), 1000)
         self.assertIn("risk-1", apis.labels)
 
-    def test_classifier_attempts_are_capped_per_head_and_per_pull_request(self) -> None:
+    def test_classifier_attempts_are_capped_only_per_head(self) -> None:
         attested = comment("core-a", attestation())
         # A malformed answer fails the attempt without caching a result, as a timeout would.
         for case, comments, paid in [("two per head", [attested], 2),
-                                     ("three per pull request, across heads", [ledger({OLD: 2}), attested], 1)]:
+                                     ("other heads do not spend this head's attempts",
+                                      [ledger({OLD: 2, NEW_HEAD: 1}), attested], 2)]:
             with self.subTest(case=case):
                 apis = FakeApis(comments=comments, answer_text="SAFE")
                 counted = []

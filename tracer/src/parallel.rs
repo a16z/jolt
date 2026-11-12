@@ -128,8 +128,8 @@ impl SnapshotPool {
 }
 
 /// A resident chunk-replay worker: one CPU reused across chunks, running in
-/// [`HostIo::Replay`] (no duplicate prints/markers/advice-appends, no call
-/// tracking) for its whole lifetime.
+/// [`HostIo::Replay`] (no duplicate prints/markers, no call tracking) for its
+/// whole lifetime.
 pub struct ChunkWorker {
     cpu: Cpu,
     /// Empty-entry decode cache covering the program text, cloned per chunk:

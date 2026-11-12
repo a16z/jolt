@@ -246,21 +246,31 @@ def check_result(job_id, documents, exit_code, summary):
 
 def render_pr_comment(result, summary_path, details_url, exit_code=0):
     rows = bench.render_comment(result, summary_path)
-    lines = ['<!-- jolt-e2e-benchmark-comment -->', '## End-to-end CPU benchmark', '',
+    lines = [ci.COMMENT_HEADER, '',
              f'[Full results]({details_url}) · '
              '[Benchmark history](https://a16z.github.io/jolt/dev/prover-history/)', '',
              f"Base: `{result['revisions']['base']}`. Submitted head: `{result['revisions']['head']}`. "
              f"Measured merge: `{result['revisions']['merge']}`.", '']
+    sizes = sorted({(case['physical_cores'], case['scale_log2']) for case in result['cases']
+                    if any(sample['exit_code'] is not None for sample in case['samples'])})
+    lines += ['Sizes run (physical cores × trace ceiling): ' +
+              (', '.join(f'{cores} × 2^{scale}' for cores, scale in sizes) if sizes else 'none recorded') + '.', '']
     if exit_code or result['status'] != 'complete':
         lines.append('Comparison unavailable; see full results for execution status.')
     elif rows:
-        lines += ['Rows with more than 3% change in time or peak resident set size (RSS) are shown; '
-                  'positive means an increase. '
+        lines += ['Rows are shown when the time or peak resident set size (RSS) change exceeds its '
+                  'per-case reporting threshold: the larger of 3% and that metric\'s observed envelope. '
+                  'Changes are compared symmetrically using the larger of head/base and base/head; '
+                  'displayed changes remain signed head/base changes, with positive meaning an increase. '
+                  'Missing envelopes use 3%. Observed envelopes do not establish statistical significance. '
                   'PCS is the polynomial commitment scheme: Akita is lattice-based; Dory is curve-based.', '',
-                  '| Workload / PCS | Physical cores | End-to-end base / head (s) | Signed time change | Peak RSS base / head (bytes) | Signed RSS change |',
-                  '|---|---:|---:|---:|---:|---:|', *rows]
+                  '| Workload / PCS | Physical cores | Trace ceiling | Trace rows base / head | End-to-end base / head (s) | Signed time change | Time threshold | Peak RSS base / head (bytes) | Signed RSS change | RSS threshold |',
+                  '|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|', *rows]
     else:
-        lines.append('No change above 3% in end-to-end proving time or peak RSS.')
+        lines.append('No change exceeds its per-case reporting threshold in end-to-end proving time or peak RSS. '
+                     'Each metric uses the larger of 3% and its observed envelope (3% if unavailable), '
+                     'comparing head/base and base/head symmetrically. '
+                     'Observed envelopes do not establish statistical significance.')
     return '\n'.join(lines) + '\n'
 
 

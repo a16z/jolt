@@ -3,12 +3,15 @@
 ## Guest × mode acceptance matrix
 
 `crates/jolt-prover/tests/e2e_matrix.rs` holds one guest table per instruction
-profile. The ordinary profile has eleven cases: muldiv, fibonacci, memory-ops,
-stdlib, memory-copy, memory-compare, sha2, sha3 through both its unaligned and aligned entry points,
-advice-consumer, and btreemap. Enabling `field-inline` selects `field_ops`,
-`field_limbs`, and `muldiv`, covering active field operations, the SDK's
-checked limb conversions, and an ordinary guest proved under the field-inline
-protocol with no field activity.
+profile. The ordinary profile has twelve cases: muldiv, fibonacci, memory-ops,
+stdlib, memory-copy, memory-compare, sha2, sha3 through both its unaligned and
+aligned entry points, advice-consumer, btreemap, and muldiv-full-domain. The
+last one extends muldiv's execution with its own terminal stall until it fills
+its padded trace domain, and bakes that domain in as the maximum, so the proof
+has no padding row. Enabling `field-inline` selects `field_ops`, `field_limbs`,
+and `muldiv`, covering active field operations, the SDK's checked limb
+conversions, and an ordinary guest proved under the field-inline protocol
+with no field activity.
 
 The shared runner checks each guest's output against a natively computed
 value, its panic status, trace bound, and field activity, then proves it with
@@ -21,6 +24,9 @@ Specialized checks (tampering, committed programs, forced one-hot sizes)
 stay in `zk_e2e.rs` and `akita_e2e.rs`; field-inline parity and tampering
 checks stay in `field_inline_e2e.rs` and `akita_field_inline_e2e.rs`; limb
 conversion policy and dishonest-advice checks stay in `field_inline_limbs.rs`.
+
+Clear-mode full-domain cases also cover default cycle-first read/write rounds
+on the optimized and reference backends, and active field-inline operations.
 
 ```bash
 cargo nextest run -p jolt-prover --features prover-fixtures -E 'binary(e2e_matrix)' --cargo-quiet
@@ -37,9 +43,11 @@ Add a guest by appending a row to its profile table: the example crate name,
 its entry function when the crate has several, the `stack_size` from its
 `#[jolt::provable]` attribute when it exceeds the 4 KiB default, `std: true`
 when the guest crate enables `jolt`'s `guest-std` feature, postcard-encoded
-inputs that keep the trace under the row's padded bound (2^16 by default),
-and the postcard-encoded output computed natively in the test. Field cases
-that execute field instructions must also set `field_inline_active: true`.
+inputs that keep the trace within (at most equal to) the row's padded bound
+(2^16 by default), and the postcard-encoded output computed natively in the
+test. Rows with `max_padded_trace_length: None` are filled to their padded
+domain instead. Field cases that execute field instructions must also set
+`field_inline_active: true`.
 
 ## Tamper rejection phases
 

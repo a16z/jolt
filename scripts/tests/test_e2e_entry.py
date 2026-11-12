@@ -61,7 +61,8 @@ class ExecutorTests(unittest.TestCase):
     def test_executor_tiers_cover_every_planner_tier(self):
         from scripts.tests.test_e2e_ci import ci
         self.assertEqual(set(entry.TIMEOUTS), set(ci.TIERS))
-        self.assertEqual(entry.TIMEOUTS['calibration'], 180 * 60)
+        self.assertEqual(entry.TIMEOUTS, {'pr': 120 * 60, 'main': 180 * 60,
+                                        'nightly': 240 * 60, 'calibration': 180 * 60})
 
     def test_fetch_still_refuses_symlinks_in_results(self):
         root = self.job / 'result'

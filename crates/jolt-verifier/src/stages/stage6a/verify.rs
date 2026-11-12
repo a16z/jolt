@@ -327,7 +327,7 @@ mod tests {
             want.append(&value);
         }
 
-        assert_eq!(got.absorbed(), want.absorbed());
+        assert_eq!(got.absorbed().concat(), want.absorbed().concat());
     }
 
     /// The `stage_gamma_powers` expansion of a drawn scalar must equal

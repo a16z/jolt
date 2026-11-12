@@ -4,6 +4,7 @@
 import argparse
 import contextlib
 import hashlib
+import html
 import json
 import os
 from pathlib import Path
@@ -22,6 +23,7 @@ TARGET_CPU = 'znver4'
 TIERS = ('pr', 'main', 'nightly', 'calibration')
 RUN_ONLY_SCOPE = 'artifact-verification-through-results-on-this-host'
 LOCAL_SCOPE = 'sequential-build-preparation-through-results-on-this-host'
+COMMENT_HEADER = '<!-- jolt-e2e-benchmark-comment -->\n## End-to-end CPU benchmark'
 
 
 def git_file(revision, name):
@@ -71,8 +73,8 @@ def labelled_pr(number, *, authenticated):
 def recheck_pr(plan):
     # The hosted planner checks permissions. Public reads on the target bind the
     # same label application after queue/lock waits, without passing it a token.
-    # The plan pins the base and merge it builds. The API base.sha lags merge^1,
-    # and merge_commit_sha changes whenever main advances, so neither is rechecked.
+    # The plan pins the base and merge it builds. GitHub can recompute base.sha
+    # and the merge ref after planning, so neither is rechecked.
     pr, admission = labelled_pr(plan['provenance']['pr_number'], authenticated=False)
     if admission != plan['admission'] or pr['head']['sha'] != plan['runs'][0]['submitted_head']:
         raise ValueError('PR label, branch or head changed after trusted admission')
@@ -93,14 +95,17 @@ def resolve(event_name, event, repository, sha):
                 or (submitted['repo'] or {}).get('full_name') != repository
                 or (event['action'] == 'labeled' and event['sender']['login'] != admission['label_actor'])):
             raise ValueError('the labelled PR request is no longer current')
+        if pr.get('mergeable') is False:
+            raise ValueError('PR conflicts with main; resolve the conflicts before benchmarking')
         bench.capture(['git', 'fetch', '--no-tags', 'origin',
                        '+refs/heads/main:refs/e2e/main',
                        f'+refs/pull/{number}/merge:refs/e2e/merge'])
         merge = bench.git_revision('refs/e2e/merge')
-        base = bench.git_revision(f'{merge}^1')
-        head = bench.git_revision(f'{merge}^2')
-        if head != pr['head']['sha'] or base != bench.git_revision('refs/e2e/main'):
-            raise ValueError('the PR merge ref does not contain the current main and submitted head')
+        parents = bench.capture(['git', 'show', '-s', '--format=%P', merge]).split()
+        if (len(parents) != 2 or parents[1] != pr['head']['sha']
+                or parents[0] not in bench.capture(['git', 'rev-list', '--first-parent', 'refs/e2e/main']).splitlines()):
+            raise ValueError('the PR merge ref must merge a first-parent main commit with the submitted head')
+        base, head = parents
         return harness, [{'base': base, 'head': merge, 'submitted_head': head}], number, admission
     if event_name == 'push':
         before, after = event['before'], event['after']
@@ -188,6 +193,21 @@ def plan(args):
     with Path(os.environ['GITHUB_STEP_SUMMARY']).open('a') as summary:
         summary.write('End-to-end benchmarks: ' + ('enabled' if plan['enabled'] else plan['reason']) + '\n')
     return 0
+
+
+def refusal_comment(args):
+    plan = bench.parse_json(args.plan.read_text())
+    event = bench.provenance()[1]
+    head = event['pull_request']['head']['sha']
+    prov = plan['provenance']
+    url = f'https://github.com/a16z/jolt/actions/runs/{prov["run_id"]}/attempts/{prov["run_attempt"]}'
+    comment = (f'{COMMENT_HEADER}\n\n'
+               f'Benchmark not run for submitted head `{head}`.\n\n'
+               f'<pre>{html.escape(plan["reason"])}</pre>\n\n[Planning run]({url})\n')
+    args.out.mkdir(parents=True, exist_ok=True)
+    (args.out / 'pr-comment.md').write_text(comment)
+    with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+        output.write(f'pr_number={prov["pr_number"]}\nhead_sha={head}\n')
 
 
 def load_plan(path):
@@ -356,6 +376,18 @@ def execute(args, *, locked=False):
 
 def calibration_phase(args, plan):
     tip = plan['runs'][-1]['head']
+    if plan['tier'] == 'main' and plan['provenance'].get('event') == 'push':
+        try:
+            current = subprocess.check_output(['git', 'ls-remote', '--exit-code', 'origin',
+                'refs/heads/main'], cwd=bench.ROOT, text=True, stderr=subprocess.PIPE, timeout=30)
+        except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+            current = ''
+        head = re.fullmatch(r'([0-9a-f]{40})\trefs/heads/main\n?', current)
+        if head and head[1] != tip:
+            bench.write_json(args.out / 'calibration/skipped.json', {
+                'reason': 'main tip superseded before calibration', 'planned_tip': tip,
+                'observed_main': head[1], 'checked_at': bench.utc_now()})
+            return False
     started, begin = bench.utc_now(), time.perf_counter()
     manifests = verified_bundles(args, plan, {tip})
     artifacts = {'id': args.artifact_id, 'index_sha256': args.index_sha256,
@@ -527,6 +559,9 @@ def main():
     planning = commands.add_parser('plan')
     planning.add_argument('--out', type=Path, required=True)
     planning.add_argument('--config', type=Path, default=bench.DEFAULT_CONFIG)
+    refusal = commands.add_parser('refusal-comment', help='render a refused PR plan from this workflow')
+    refusal.add_argument('--plan', type=Path, required=True)
+    refusal.add_argument('--out', type=Path, required=True)
     preparation = commands.add_parser('prepare')
     preparation.add_argument('--plan', type=Path, required=True)
     preparation.add_argument('--out', type=Path, required=True)
@@ -556,7 +591,7 @@ def main():
     targeting.add_argument('--out', type=Path, required=True)
     args = parser.parse_args()
     return {'prepare': prepare, 'verify': verify, 'execute': execute,
-            'local': local, 'plan': plan, 'finalize': finalize,
+            'local': local, 'plan': plan, 'refusal-comment': refusal_comment, 'finalize': finalize,
             'dispatch': dispatch, 'target': target}[args.command](args)
 
 

@@ -24,6 +24,8 @@ default = ["transcript-keccak"]
 # enables it on this crate through the workspace `[patch]`. `yolocrypto`
 # changes visibility only, not the bytes absorbed or squeezed.
 prover-grinding = ["spongefish/yolocrypto"]
+# OS-seeded prover initialization; verifier consumers leave this disabled.
+prover-entropy = ["spongefish/getrandom", "dep:getrandom_v04"]
 solinas = ["jolt-field/solinas"]
 binary = ["jolt-field/binary"]
 bn254 = ["dep:ark-bn254", "dep:ark-ff", "jolt-field/bn254"]
@@ -47,7 +49,7 @@ jolt-inlines-blake2 = { workspace = true, optional = true }
 ark-bn254 = { workspace = true, optional = true }
 ark-ff = { workspace = true, optional = true }
 light-poseidon = { workspace = true, optional = true }
-spongefish = { workspace = true, features = ["getrandom"] }
+spongefish.workspace = true
 shake.workspace = true
 blake2 = { workspace = true, optional = true }
 jolt-field = { path = "../jolt-field", default-features = false, features = [
@@ -58,9 +60,15 @@ sha3.workspace = true
 # spongefish seeds the prover's private RNG from getrandom 0.4, which needs
 # an explicit backend on wasm32-unknown-unknown.
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-getrandom_v04 = { workspace = true, features = ["wasm_js"] }
+getrandom_v04 = { workspace = true, features = ["wasm_js"], optional = true }
 
 [dev-dependencies]
+jolt-transcript = { path = ".", features = ["prover-entropy"] }
+# A production field for the unit tests (`claim_domain`), without turning on
+# this crate's own `solinas` feature.
+jolt-field = { path = "../jolt-field", default-features = false, features = [
+  "solinas",
+] }
 criterion = { workspace = true }
 num-bigint = { workspace = true }
 

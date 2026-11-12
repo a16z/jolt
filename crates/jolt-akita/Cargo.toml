@@ -51,6 +51,7 @@ jolt-openings = { path = "../jolt-openings", default-features = false, features 
 jolt-poly.workspace = true
 jolt-platform.workspace = true
 jolt-transcript = { path = "../jolt-transcript", default-features = false, features = [
+  "prover-entropy",
   "solinas",
 ] }
 rayon.workspace = true
@@ -61,6 +62,7 @@ tracing.workspace = true
 [dev-dependencies]
 bincode.workspace = true
 jolt-transcript = { workspace = true, default-features = false, features = [
+  "prover-entropy",
   "transcript-blake2b",
 ] }
 serde_json = { workspace = true, features = ["std"] }

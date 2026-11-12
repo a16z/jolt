@@ -303,8 +303,8 @@ pub(super) fn bind_indexed_to_direct<F: JoltField>(
             let (evens, odds) = split_soa_pair_group(group_vals, group);
             merge_soa(evens, odds, |even, odd| {
                 out[written] = MaybeUninit::new(SparseEntry::<F, F>::bind(
-                    even.map(&deref).as_ref(),
-                    odd.map(&deref).as_ref(),
+                    even.map(deref).as_ref(),
+                    odd.map(deref).as_ref(),
                     r,
                     &unused,
                     &unused,

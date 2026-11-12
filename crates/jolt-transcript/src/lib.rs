@@ -5,8 +5,12 @@
 //! both sides share: public messages, field challenges through each field's
 //! [`ChallengeCodec`], and proof-of-work steps whose nonce the proof carries.
 //! [`ProverTranscript`] and [`VerifierTranscript`] add the NARG string.
-//! [`prover_transcript`] and [`verifier_transcript`] bind the session and the
-//! public statement before the first message.
+//! [`PrivateChannel`] absorbs witness-dependent values, which a masked mode
+//! hides behind pads; on a clear transcript they are public messages.
+//! [`ClaimDomain`] is what a verifier check on witness-dependent values is
+//! written over, so every verifier that runs the check evaluates one formula.
+//! `prover_transcript` (under `prover-entropy`) and [`verifier_transcript`] bind
+//! the session and public statement before the first message.
 //!
 //! The transcript is positional and word aligned: no message carries a label,
 //! and every absorb and squeeze is a whole number of eight-byte words
@@ -36,12 +40,14 @@
 )]
 
 mod challenge;
+mod claim_domain;
 mod codec;
 mod digest_hash;
 mod grind_bits;
 #[cfg(feature = "transcript-poseidon")]
 mod poseidon;
 mod pow;
+mod private;
 mod prover;
 #[cfg(feature = "test-utils")]
 mod scripted;
@@ -51,6 +57,7 @@ mod transcript;
 mod verifier;
 
 pub use challenge::{ChallengeCodec, UniformBytes, MAX_CHALLENGE_BYTES};
+pub use claim_domain::{ClaimDomain, ClaimMismatch, ClearDomain};
 pub use codec::{protocol_tag, word_padding, BytesMsg, NargMessage, TAG_BYTES, WORD_BYTES};
 pub use digest_hash::{DigestHash, DigestHasher, DIGEST_HASH};
 pub use grind_bits::{
@@ -59,10 +66,13 @@ pub use grind_bits::{
 };
 #[cfg(feature = "transcript-poseidon")]
 pub use poseidon::PoseidonSponge;
+pub use private::PrivateChannel;
 pub use prover::{ProverInit, ProverTranscript};
 #[cfg(feature = "test-utils")]
 pub use scripted::{Script, ScriptedTranscript, TranscriptEvent};
-pub use setup::{prover_transcript, session_id, verifier_transcript, PROTOCOL_ID};
+#[cfg(feature = "prover-entropy")]
+pub use setup::prover_transcript;
+pub use setup::{session_id, verifier_transcript, PROTOCOL_ID};
 pub use shake128::{ProverState, Shake128, Shake128Hasher};
 pub use spongefish::{Encoding, VerificationError, VerifierState};
 pub use transcript::{FieldTranscript, Transcript};

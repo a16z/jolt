@@ -12,7 +12,7 @@
 //! - **Gruen split-eq + Dao–Thaler factoring** for the `log_T` cycle rounds:
 //!   cycle-first keeps the eq factor in `O(√T)` tables, and each cubic message is
 //!   reconstructed from the quadratic factor's `[q(0), q_∞]` plus the
-//!   running claim ([`GruenSplitEqPolynomial::gruen_poly_deg_3`]).
+//!   running claim ([`jolt_poly::GruenRound::gruen_poly_deg_3`]).
 //! - **Hint-based quadratic address rounds** on the address-major matrix
 //!   against the bound `val_init` column (`s(1)` recovered from the claim).
 //!
@@ -29,9 +29,10 @@
 //! a constant suffix equal to the final checkpoint; both remain implicit.
 //! Mixed cycle/address schedules are explicitly unsupported.
 
+use crate::optimized::support::eq_round_error;
 use jolt_claims::protocols::jolt::geometry::ram::ram_inc;
 use jolt_claims::protocols::jolt::{
-    JoltDerivedId, JoltPolynomialId, JoltVirtualPolynomial, RamReadWritePublic,
+    JoltDerivedId, JoltPolynomialId, JoltVirtualPolynomial, RamReadWritePublic, ReadWriteDimensions,
 };
 use jolt_field::JoltField;
 use jolt_poly::{BindingOrder, GruenSplitEqPolynomial, Polynomial, TensorEqTable, UnivariatePoly};
@@ -46,10 +47,10 @@ use jolt_verifier::stages::stage2::ram_read_write_checking::{
 use jolt_witness::JoltWitnessPlane;
 
 use super::prefix_product::PrefixColumn;
-use super::ram_trace::RamAccessColumns;
+use super::ram_trace::{ram_access_columns_bytes, RamAccessColumns};
 use super::read_write::ReadWriteOrder;
 use super::rw_matrix::{
-    round0_bind, round0_q_at_one, round0_quadratic_coefficients, val_slope_term,
+    round0_bind, round0_bind_bytes, round0_q_at_one, round0_quadratic_coefficients, val_slope_term,
     AddressMajorMatrix, CycleMajorMatrix,
 };
 use super::support::{map_indices, pin_derived_term_if_derived, GruenRoundMessage};
@@ -118,11 +119,11 @@ impl<F: JoltField> RamReadWriteKernel<F> {
             Phase::Round0 { columns, gruen } => {
                 let matrix = round0_bind(&columns, r);
                 crate::mem::drop_in_background_thread(columns);
-                self.finish_cycle_bind(matrix, gruen, r, round)
+                self.finish_cycle_bind(matrix, gruen, r, round)?
             }
             Phase::Cycle { mut matrix, gruen } => {
                 matrix.bind(r);
-                self.finish_cycle_bind(matrix, gruen, r, round)
+                self.finish_cycle_bind(matrix, gruen, r, round)?
             }
             Phase::Address {
                 mut matrix,
@@ -154,10 +155,11 @@ impl<F: JoltField> RamReadWriteKernel<F> {
                 mut val,
                 mut gruen,
             } => {
+                let gruen_round = gruen.round_mut().ok_or_else(|| eq_round_error(round))?;
                 let _ = ra.bind(r);
                 let _ = val.bind(r);
                 let _ = self.inc.bind(r);
-                gruen.bind(r);
+                gruen_round.bind(r);
                 if round + 1 == self.log_t + self.log_k {
                     Phase::Done {
                         merged_eq: vec![gruen.current_scalar()],
@@ -179,8 +181,11 @@ impl<F: JoltField> RamReadWriteKernel<F> {
         mut gruen: GruenSplitEqPolynomial<F>,
         r: F,
         round: usize,
-    ) -> Phase<F> {
-        gruen.bind(r);
+    ) -> Result<Phase<F>, SumcheckError<F>> {
+        gruen
+            .round_mut()
+            .ok_or_else(|| eq_round_error(round))?
+            .bind(r);
         let _ = self.inc.bind(r);
         let phase = if round + 1 == self.log_t {
             let matrix = matrix.into_address_major();
@@ -197,7 +202,7 @@ impl<F: JoltField> RamReadWriteKernel<F> {
         if round == 0 || round == LATE_PURGE_CYCLE_ROUNDS || round + 1 == self.log_t {
             crate::mem::purge_retained_memory(self.log_t);
         }
-        phase
+        Ok(phase)
     }
 
     fn finish_address(&self, matrix: AddressMajorMatrix<F>, merged_eq: Vec<F>) -> Phase<F> {
@@ -267,28 +272,32 @@ impl<F: JoltField> RamReadWriteKernel<F> {
             }
             _ => return Err(Phase::error()),
         };
-        gruen.checked_cubic(q_0, q_infty, previous_claim, round, || {
-            let e_in = gruen.e_in_current();
-            let e_out = gruen.e_out_current();
-            let in_bits = e_in.len().trailing_zeros() as usize;
-            let in_mask = e_in.len() - 1;
-            let weight = |pair| e_out[pair >> in_bits] * e_in[pair & in_mask];
-            match &self.phase {
-                Some(Phase::Round0 { columns, .. }) => {
-                    round0_q_at_one(columns, weight, &self.inc, self.gamma)
+        gruen
+            .round()
+            .ok_or_else(|| eq_round_error(round))?
+            .checked_cubic(q_0, q_infty, previous_claim, round, || {
+                let e_in = gruen.e_in_current();
+                let e_out = gruen.e_out_current();
+                let in_bits = e_in.len().trailing_zeros() as usize;
+                let in_mask = e_in.len() - 1;
+                let weight = |pair| e_out[pair >> in_bits] * e_in[pair & in_mask];
+                match &self.phase {
+                    Some(Phase::Round0 { columns, .. }) => {
+                        round0_q_at_one(columns, weight, &self.inc, self.gamma)
+                    }
+                    Some(Phase::Cycle { matrix, .. }) => {
+                        matrix.q_at_one(weight, &self.inc, self.gamma)
+                    }
+                    Some(Phase::DenseCycle { ra, val, .. }) => (0..ra.values.len().div_ceil(2))
+                        .fold(F::zero(), |sum, pair| {
+                            let row = 2 * pair + 1;
+                            sum + weight(pair)
+                                * ra.value(row)
+                                * val_slope_term(val.value(row), self.inc.value(row), self.gamma)
+                        }),
+                    _ => unreachable!("cycle phase was checked above"),
                 }
-                Some(Phase::Cycle { matrix, .. }) => matrix.q_at_one(weight, &self.inc, self.gamma),
-                Some(Phase::DenseCycle { ra, val, .. }) => {
-                    (0..ra.values.len().div_ceil(2)).fold(F::zero(), |sum, pair| {
-                        let row = 2 * pair + 1;
-                        sum + weight(pair)
-                            * ra.value(row)
-                            * val_slope_term(val.value(row), self.inc.value(row), self.gamma)
-                    })
-                }
-                _ => unreachable!("cycle phase was checked above"),
-            }
-        })
+            })
     }
 
     fn address_round_message(
@@ -456,10 +465,106 @@ impl<F: JoltField> PrepareKernel<F, RamReadWriteChecking<F>> for OptimizedBacken
     }
 }
 
+/// Bytes the RAM read-write kernel and RAM RAF evaluation hold in the same
+/// stage-2 batch, over the `prefix_cycles` cycles before the trace's constant
+/// suffix.
+#[derive(Clone, Copy, Debug)]
+pub struct RamReadWriteBytes {
+    /// From the read-write kernel's preparation until a member of the batch
+    /// first binds.
+    pub prepared: usize,
+    /// Through the read-write kernel's first bind and RAF's first bind after
+    /// it.
+    pub first_bind: usize,
+}
+
+impl RamReadWriteBytes {
+    /// The read-write kernel's tables for `dimensions` under `prepare`'s
+    /// `ReadWriteOrder` dispatch, with RAF's folded `ra` and unmap tables, or
+    /// `None` past `usize::MAX`. A phase split `prepare` rejects fails with
+    /// the same error.
+    ///
+    /// Both orders count the increment prefix (at most `prefix_cycles`
+    /// entries), `val_init` (at least four slots), the split-eq tables
+    /// ([`GruenSplitEqPolynomial::low_to_high_bytes`]) and RAF's two `K`-entry
+    /// tables. Cycle-first adds one generation of access columns
+    /// ([`ram_access_columns_bytes`]), queued for a background drop only after
+    /// round 0 returns; its first bind adds the round-0 collect at its largest
+    /// entry count (`round0_bind_bytes`), then one half-length copy of a RAF
+    /// table. The increment prefix's first bind stays in its allocation. Address-first adds the eq prefix (at
+    /// most `prefix_cycles` entries) and the matrix at its collected capacity
+    /// (`AddressMajorMatrix::collected_bytes`), which `prepare` builds beside
+    /// one generation of access columns before it drops the value columns;
+    /// its first bind keeps the shared address column and holds the larger of
+    /// the bind's collect (`AddressMajorMatrix::first_bind_bytes`, the old
+    /// entries included) and its bound entries
+    /// (`AddressMajorMatrix::bound_bytes`) beside one half-length copy of a
+    /// `K`-entry table: `val_init`'s, or one of RAF's. RAF binds its tables
+    /// one at a time after the read-write kernel under the optimized backend's
+    /// sequential member scheduler. The cycle-table handoff of a two-address
+    /// first bind fits in these bytes.
+    ///
+    /// Not counted: later binds, and the preparation transients other than
+    /// the stored tables: the access columns' collection (the eager check
+    /// reserves it separately), `val_init`'s `K` reconstruction flags,
+    /// address-first's eq-table tensor factors, and RAF's fold staging and eq
+    /// factors.
+    pub fn new<F: JoltField>(
+        dimensions: ReadWriteDimensions,
+        prefix_cycles: usize,
+    ) -> Result<Option<Self>, KernelError<F>> {
+        let order = ReadWriteOrder::new::<F>(dimensions)?;
+        Ok(Self::for_order::<F>(order, dimensions, prefix_cycles))
+    }
+
+    fn for_order<F: JoltField>(
+        order: ReadWriteOrder,
+        dimensions: ReadWriteDimensions,
+        prefix_cycles: usize,
+    ) -> Option<Self> {
+        let (log_t, log_k) = (dimensions.log_t(), dimensions.log_k());
+        let addresses = 1usize.checked_shl(u32::try_from(log_k).ok()?)?;
+        let field = |entries: usize| entries.checked_mul(size_of::<F>());
+        let half_copy = field(addresses / 2)?;
+        let shared = [
+            field(prefix_cycles)?,
+            field(addresses.max(4))?,
+            GruenSplitEqPolynomial::<F>::low_to_high_bytes(log_t)?,
+            field(addresses.checked_mul(2)?)?,
+        ]
+        .into_iter()
+        .try_fold(0usize, usize::checked_add)?;
+        match order {
+            ReadWriteOrder::CycleFirst => {
+                let prepared = shared.checked_add(ram_access_columns_bytes(prefix_cycles, 1)?)?;
+                Some(Self {
+                    prepared,
+                    first_bind: prepared
+                        .checked_add(round0_bind_bytes::<F>(prefix_cycles, log_k)?)?
+                        .checked_add(half_copy)?,
+                })
+            }
+            ReadWriteOrder::AddressFirst => {
+                let eq = shared.checked_add(field(prefix_cycles)?)?;
+                let bind = AddressMajorMatrix::<F>::first_bind_bytes(prefix_cycles)?.max(
+                    AddressMajorMatrix::<F>::bound_bytes(prefix_cycles)?.checked_add(half_copy)?,
+                );
+                Some(Self {
+                    prepared: eq
+                        .checked_add(ram_access_columns_bytes(prefix_cycles, 1)?)?
+                        .checked_add(AddressMajorMatrix::<F>::collected_bytes(prefix_cycles)?)?,
+                    first_bind: eq
+                        .checked_add(ram_access_columns_bytes(prefix_cycles, 0)?)?
+                        .checked_add(bind)?,
+                })
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 #[expect(clippy::unwrap_used)]
 mod tests {
-    use jolt_claims::protocols::jolt::geometry::dimensions::ReadWriteDimensions;
     use jolt_claims::protocols::jolt::geometry::ram::{ram_ra, ram_val};
     use jolt_field::{Fr, Ring};
     use jolt_poly::EqPolynomial;
@@ -743,5 +848,20 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// Address-first, the first bind holds one half-length copy of a
+    /// `K`-entry table at a time beside its bound entries. Over 2^13 cycles,
+    /// 2^20 addresses and 4096 proof rows, with 136-byte entries, that 16 MiB
+    /// copy outweighs the bind's collect, and the term is 118,284,976 bytes:
+    /// above the 105,571,064 bytes with the collect leading instead, below the
+    /// 135,062,192 bytes with two copies at once.
+    #[test]
+    fn address_first_first_bind_holds_one_half_copy() {
+        let bytes = RamReadWriteBytes::new::<Fr>(ReadWriteDimensions::new(13, 20, 0, 20), 4096)
+            .unwrap()
+            .unwrap()
+            .first_bind;
+        assert_eq!(bytes, 118_284_976);
     }
 }
