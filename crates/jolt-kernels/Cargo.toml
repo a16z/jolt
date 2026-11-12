@@ -65,11 +65,13 @@ tracing.workspace = true
 libc.workspace = true
 
 [dev-dependencies]
+jolt-field = { workspace = true, features = ["bn254"] }
 common = { workspace = true, features = ["std"] }
 jolt-claims = { workspace = true, features = ["test-utils"] }
 jolt-dory.workspace = true
 jolt-witness = { workspace = true, features = ["test-utils"] }
 jolt-transcript = { workspace = true, features = [
+  "prover-entropy",
   "bn254",
   "transcript-blake2b",
 ] }

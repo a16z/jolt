@@ -45,7 +45,7 @@ pub(super) struct CoeffLut<F> {
 impl<F: JoltField> CoeffLut<F> {
     pub(super) fn new(values: Vec<F>) -> Self {
         debug_assert!(values.len().is_power_of_two());
-        debug_assert!(values[0] == F::zero());
+        debug_assert_eq!(values[0], F::zero());
         Self { values }
     }
 

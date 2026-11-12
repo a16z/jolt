@@ -63,12 +63,13 @@ with an optional binary suffix (`KiB`, `MiB`, `GiB` or `TiB`, e.g. `32GiB`).
 The profile reserves bytes against it in this order and exits with an error
 at the first reservation that does not fit:
 
-1. After tracing, before proving: the optimized prover's known eager
-   reservation, which is the trace buffer at its reserved capacity plus the
-   largest stage-1–5 envelope over the trace's rows before its constant
-   padding suffix.
-2. Under Akita, before PCS setup: the rest of the trace output, and the
-   program and program preprocessing buffers.
+1. After tracing, before PCS setup: the input, the trace output's buffers
+   other than the trace buffers that step 2 reserves, the program and program
+   preprocessing buffers, all at capacity, and the public-I/O clone's request
+   at the device buffers' lengths.
+2. Before PCS setup: the optimized prover's known eager reservation, which
+   is the trace buffer at its reserved capacity plus the largest stage-1–5
+   envelope over the trace's rows before its constant padding suffix.
 3. Under Akita, before the setup allocates its one-hot backend: the setup's
    flat public matrix.
 

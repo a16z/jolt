@@ -1,6 +1,7 @@
 import sys
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 SCRIPT_DIR = Path(__file__).resolve().parents[1]
@@ -153,6 +154,52 @@ class FinalBinaryProofSequenceTests(unittest.TestCase):
         self.assertIsNone(
             checker.unify_instruction_templates(expected, actual, "x86_64")
         )
+
+    def test_aarch64_templates_strip_the_two_instruction_constant_load(self) -> None:
+        fp128 = checker.fp128
+        words = fp128.AARCH64_ADD_WORDS
+        disassembly = "0000000000000000 <jolt_fp128_add_asm>:\n" + "\n".join(
+            f"    {4 * index:x}: {word:08x} instruction"
+            for index, word in enumerate(words)
+        )
+        with mock.patch.object(checker, "run_objdump", return_value=disassembly):
+            templates = checker.load_structural_templates(
+                ["objdump"], "aarch64", [("fp128", "add", Path("add.o"))]
+            )
+        body = templates["fp128"]["add"]
+        self.assertEqual(
+            [int.from_bytes(instruction.encoding, "little") for instruction in body],
+            fp128.AARCH64_ADD_BODY,
+        )
+
+    def test_x86_templates_strip_the_one_instruction_constant_load(self) -> None:
+        disassembly = """
+0000000000000000 <jolt_fp128_add_asm>:
+       0: 41 b8 1f 80 23 6a movl $0x6a23801f, %r8d
+       6: 48 01 d7 addq %rdx, %rdi
+       9: c3 retq
+"""
+        with mock.patch.object(checker, "run_objdump", return_value=disassembly):
+            templates = checker.load_structural_templates(
+                ["objdump"], "x86_64", [("fp128", "add", Path("add.o"))]
+            )
+        self.assertEqual(
+            [instruction.encoding for instruction in templates["fp128"]["add"]],
+            [bytes.fromhex("48 01 d7")],
+        )
+
+    def test_templates_reject_an_object_without_the_constant_load(self) -> None:
+        disassembly = """
+0000000000000000 <jolt_fp128_add_asm>:
+       0: 529003e4 mov w4, #0x801f
+       4: ab020005 adds x5, x0, x2
+       8: d65f03c0 ret
+"""
+        with mock.patch.object(checker, "run_objdump", return_value=disassembly):
+            with self.assertRaises(SystemExit):
+                checker.load_structural_templates(
+                    ["objdump"], "aarch64", [("fp128", "add", Path("add.o"))]
+                )
 
     def test_x86_numbered_register_aliases_have_one_family(self) -> None:
         self.assertEqual(checker.x86_register("r9"), ("r9", "64"))

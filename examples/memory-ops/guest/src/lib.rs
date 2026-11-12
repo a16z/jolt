@@ -35,42 +35,40 @@ impl Scratch {
     }
 }
 
-/// Folds the value `op` loads at each offset into `hash`.
-#[cfg(feature = "guest")]
-macro_rules! load {
-    ($hash:ident, $base:ident, $op:literal: $($offset:literal),+) => {$(
-        let value: u64;
-        asm!(
-            concat!($op, " {value}, ", $offset, "({base})"),
-            value = out(reg) value,
-            base = in(reg) $base,
-            options(nostack, readonly, preserves_flags),
-        );
-        $hash = $hash.rotate_left(7) ^ value;
-    )+};
-}
-
-/// Stores a fresh `value` with `op` at each offset, then folds the three
-/// doublewords into `hash`.
-#[cfg(feature = "guest")]
-macro_rules! store {
-    ($hash:ident, $base:ident, $value:ident, $op:literal: $($offset:literal),+) => {$(
-        $value = $value.rotate_left(13) ^ 0x9e37_79b9_7f4a_7c15;
-        asm!(
-            concat!($op, " {value}, ", $offset, "({base})"),
-            value = in(reg) $value,
-            base = in(reg) $base,
-            options(nostack, preserves_flags),
-        );
-        load!($hash, $base, "ld": "-8", "0", "8");
-    )+};
-}
-
 /// Every load and store width at every offset it may be aligned to, reached
 /// with negative and non-negative immediates. Returns the hash of every
 /// loaded value and the final scratch doublewords.
 #[jolt::provable(guest_only, heap_size = 65536, max_trace_length = 65536)]
 fn memory_ops() -> (u64, [u64; 3]) {
+    /// Folds the value `op` loads at each offset into `hash`.
+    macro_rules! load {
+        ($hash:ident, $base:ident, $op:literal: $($offset:literal),+) => {$(
+            let value: u64;
+            asm!(
+                concat!($op, " {value}, ", $offset, "({base})"),
+                value = out(reg) value,
+                base = in(reg) $base,
+                options(nostack, readonly, preserves_flags),
+            );
+            $hash = $hash.rotate_left(7) ^ value;
+        )+};
+    }
+
+    /// Stores a fresh `value` with `op` at each offset, then folds the three
+    /// doublewords into `hash`.
+    macro_rules! store {
+        ($hash:ident, $base:ident, $value:ident, $op:literal: $($offset:literal),+) => {$(
+            $value = $value.rotate_left(13) ^ 0x9e37_79b9_7f4a_7c15;
+            asm!(
+                concat!($op, " {value}, ", $offset, "({base})"),
+                value = in(reg) $value,
+                base = in(reg) $base,
+                options(nostack, preserves_flags),
+            );
+            load!($hash, $base, "ld": "-8", "0", "8");
+        )+};
+    }
+
     let mut scratch = Scratch::new();
     let base = scratch.base();
     let mut hash = 0u64;
