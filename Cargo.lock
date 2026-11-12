@@ -4090,6 +4090,7 @@ dependencies = [
  "postcard",
  "rand 0.8.7",
  "tracer",
+ "tracing",
 ]
 
 [[package]]

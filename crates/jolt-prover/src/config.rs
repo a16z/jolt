@@ -46,13 +46,17 @@ pub struct ProverConfig {
 }
 
 impl ProverConfig {
-    /// Reserve the final no-op row and select the protocol's padded trace domain.
+    /// Select the protocol's padded trace domain: the smallest power of two
+    /// holding every executed row, and at least `MIN_PADDED_TRACE_LENGTH`.
+    /// No final no-op row is reserved, for two reasons. At `T - 1` the shift
+    /// boundary already gives the final jump a no-op successor. The verifier
+    /// accepts any power of two up to `max_padded_trace_length`. Reserving a
+    /// row would therefore refuse executions that the verifier accepts.
     pub fn padded_trace_length<F: JoltField>(
         executed_rows: usize,
     ) -> Result<usize, ProverError<F>> {
         executed_rows
-            .checked_add(1)
-            .and_then(usize::checked_next_power_of_two)
+            .checked_next_power_of_two()
             .map(|length| length.max(MIN_PADDED_TRACE_LENGTH))
             .ok_or(ProverError::Unsupported {
                 reason: "trace length overflows the padded domain",
@@ -60,7 +64,7 @@ impl ProverConfig {
     }
 
     /// Derive the proof shape from execution facts without accessing trace rows.
-    /// Pad the trace length past its final no-op, size RAM to cover accessed
+    /// Pad the trace length to its power-of-two domain, size RAM to cover accessed
     /// addresses and the program image, and select chunking policies.
     #[tracing::instrument(skip_all, name = "ProverConfig::derive_from_dimensions", fields(rows = dimensions.trace_length))]
     pub fn derive_from_dimensions<F: JoltField>(
@@ -368,8 +372,12 @@ mod dimension_tests {
         assert_eq!(empty.trace_length, MIN_PADDED_TRACE_LENGTH);
         assert_eq!(empty.ram_K, 1);
         let touched = derive(MIN_PADDED_TRACE_LENGTH, Some(lowest + 8 * 513), 3);
-        assert_eq!(touched.trace_length, MIN_PADDED_TRACE_LENGTH * 2);
+        assert_eq!(touched.trace_length, MIN_PADDED_TRACE_LENGTH);
         assert_eq!(touched.ram_K, 1024);
+        assert_eq!(
+            derive(MIN_PADDED_TRACE_LENGTH + 1, None, 0).trace_length,
+            MIN_PADDED_TRACE_LENGTH * 2
+        );
         let image = derive(7, None, 1024);
         assert_eq!(image.ram_K, 2048);
         // A highest touched index that is itself a power of two needs the next one.
@@ -526,5 +534,22 @@ mod tests {
             let result = derive(&[addi(), last]);
             assert!(result.is_ok(), "{:?}: {result:?}", last.instruction_kind);
         }
+    }
+
+    /// The verifier accepts a proof whose trace length equals
+    /// `max_padded_trace_length`, so an execution that fills the maximum
+    /// domain exactly must be provable without a padding row.
+    #[test]
+    fn derive_accepts_a_trace_that_fills_the_maximum_domain() {
+        let mut trace = vec![addi(); (1 << 12) - 1];
+        trace.push(instruction(Kind::JAL, NormalizedOperands::default()));
+        assert_eq!(derive(&trace).unwrap().trace_length, 1 << 12);
+        trace.insert(0, addi());
+        assert!(matches!(
+            derive(&trace),
+            Err(ProverError::Unsupported {
+                reason: "trace exceeds the preprocessing's maximum padded trace length"
+            })
+        ));
     }
 }

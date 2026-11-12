@@ -1143,8 +1143,9 @@ impl<B: WitnessBundle + Copy + PartialEq> BundleAccess<'_, B> {
         match self {
             Self::View(view) => {
                 let prefix = view.physical_cycles().min(cycles);
-                // Only the final padding window lacks a next row. Compare it to
-                // the ordinary padding window before treating that suffix as constant.
+                // Only the final window lacks a next row; it is padding unless the
+                // trace fills its domain. Compare it to the ordinary padding window
+                // before treating that suffix as constant.
                 if prefix < cycles && self.row(prefix)? != self.row(cycles - 1)? {
                     Ok(cycles)
                 } else {

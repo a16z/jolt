@@ -1553,6 +1553,7 @@ dependencies = [
  "jolt-riscv",
  "libc",
  "tracer",
+ "tracing",
 ]
 
 [[package]]
