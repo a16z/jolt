@@ -393,6 +393,9 @@ pub mod xori;
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test;
 
+#[cfg(test)]
+mod system_semantics_tests;
+
 pub trait RISCVInstruction: Debug + Sized + Copy + Into<Instruction> {
     const MASK: u32;
     const MATCH: u32;

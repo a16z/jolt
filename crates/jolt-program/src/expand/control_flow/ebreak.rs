@@ -1,10 +1,12 @@
 use super::*;
 
-/// Lowers `EBREAK` to a self-jump that terminates the emulator trace.
+/// Lowers `EBREAK` to a self-jump that halts the hart.
 ///
-/// Jolt has no debugger trap target for `EBREAK`. The tracer treats unchanged
-/// PC as program termination, so `JAL +0` preserves that observable behavior
-/// while still producing a target-legal final row.
+/// Jolt's hart behaves as if an external debugger had set `dcsr.ebreakm`:
+/// `EBREAK` in M-mode enters Debug Mode, where the hart is halted (RISC-V
+/// Debug Specification, `dcsr.ebreakm`). Entering Debug Mode is not a trap,
+/// so no trap CSR changes. The tracer treats an unchanged PC as termination,
+/// so `JAL +0` ends the trace with a target-legal final row.
 pub(in crate::expand) fn expand_ebreak(
     instruction: &SourceInstructionRow,
 ) -> Result<ExpandedInstructionSequence, ExpansionError> {
