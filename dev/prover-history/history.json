@@ -48,6 +48,52 @@
       "raw": "runs/github-594a3d4880178e979d046b743dfb683ddcbc0bf8-43177225169-1.json"
     },
     {
+      "key": "github-04f7107918786faee3f1d8283737785497297666-43187915525-1",
+      "source": {
+        "type": "github",
+        "repository": "a16z/jolt",
+        "commit": "04f7107918786faee3f1d8283737785497297666",
+        "run_head_sha": "fd08fbb45daaa03939d14da1f81035c166750b27",
+        "run_id": 43187915525,
+        "run_attempt": 1,
+        "event": "push",
+        "workflow": "End-to-end benchmark ingest",
+        "workflow_file": ".github/workflows/e2e-bench-ingest.yml",
+        "url": "https://github.com/a16z/jolt/actions/runs/43187915525/attempts/1",
+        "conclusion": "success",
+        "artifact": {
+          "id": 13929137599,
+          "name": "jolt-e2e-43187915525-1",
+          "digest": "sha256:c3be7c27346fd4b79c8e3af5fbe26fb216e7230598275ef97a258993d3057d07"
+        },
+        "plan_run_id": 43168978576,
+        "plan_run_attempt": 1,
+        "plan_artifact_id": 13920779044,
+        "plan_sha256": "14044d02cb0c710203cfa7f66b448d87e54eedbfe7fbc25ba8f4ec6c733a3971",
+        "commit_index": 0,
+        "push_range": {
+          "producer_before": "9b5aed8afc0394f01821c41cec3a248ae2e7a1af",
+          "after": "04f7107918786faee3f1d8283737785497297666",
+          "ancestry_base": "9b5aed8afc0394f01821c41cec3a248ae2e7a1af",
+          "ancestry_verified": true,
+          "event_bound_verified": false,
+          "commits": 1
+        }
+      },
+      "started_at": "2026-11-12T06:33:37+00:00",
+      "tier": "main",
+      "kind": "history",
+      "status": "complete",
+      "publication_status": "ready",
+      "reason": null,
+      "benchmark_schema": 1,
+      "sha256": "7f99711bc37d912a59772386f8e36d52406f955fa11860b5bf6c91f5eb6d8767",
+      "push_index": "runs/github-04f7107918786faee3f1d8283737785497297666-43187915525-1.index.json",
+      "push_index_sha256": "9d68d33992c7924d3dd7c555c8cb12f8d19bb9f39defc2ac81c521f9659b7ee8",
+      "publisher_revision": "fd08fbb45daaa03939d14da1f81035c166750b27",
+      "raw": "runs/github-04f7107918786faee3f1d8283737785497297666-43187915525-1.json"
+    },
+    {
       "key": "github-9b5aed8afc0394f01821c41cec3a248ae2e7a1af-43174771540-1",
       "source": {
         "type": "github",
