@@ -30,21 +30,11 @@ declare_riscv_instr!(
 );
 
 impl CSRRSI {
-    fn csr_address(&self) -> u16 {
-        (self.operands.imm & 0xfff) as u16
-    }
-
-    fn exec(&self, cpu: &mut Cpu, _: &mut <CSRRSI as RISCVInstruction>::RamAccess) {
-        let csr_addr = self.csr_address();
-        let old_val = cpu.read_csr_raw(csr_addr);
-
-        if self.operands.rs1 != 0 {
-            cpu.write_csr_raw(csr_addr, old_val | u64::from(self.operands.rs1));
-        }
-
-        if self.operands.rd != 0 {
-            cpu.write_register(self.operands.rd as usize, cpu.sign_extend(old_val as i64));
-        }
+    /// CSRRSI has no single-step form. The CSRs live in virtual registers that
+    /// only the inline sequence updates, so a direct update of `cpu.csr` could
+    /// disagree with it. Callers must use `trace`.
+    fn exec(&self, _cpu: &mut Cpu, _: &mut <CSRRSI as RISCVInstruction>::RamAccess) {
+        panic!("CSRRSI must use trace(), not exec()");
     }
 }
 
