@@ -5703,8 +5703,8 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
 name = "reth-ethereum-primitives"
-version = "2.8.0"
-source = "git+https://github.com/paradigmxyz/reth#53bf066feb7d9c39a026f45651851909bb9c1c56"
+version = "2.11.0"
+source = "git+https://github.com/paradigmxyz/reth#1993b9d4f28f1f8987da80723ed0bb26ad68ba9d"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
