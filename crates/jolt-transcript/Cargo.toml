@@ -64,6 +64,11 @@ getrandom_v04 = { workspace = true, features = ["wasm_js"], optional = true }
 
 [dev-dependencies]
 jolt-transcript = { path = ".", features = ["prover-entropy"] }
+# A production field for the unit tests (`claim_domain`), without turning on
+# this crate's own `solinas` feature.
+jolt-field = { path = "../jolt-field", default-features = false, features = [
+  "solinas",
+] }
 criterion = { workspace = true }
 num-bigint = { workspace = true }
 
