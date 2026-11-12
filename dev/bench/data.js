@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794449239972,
+  "lastUpdate": 1794453789675,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -243562,6 +243562,270 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 888964,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "8365992+moodlezoup@users.noreply.github.com",
+            "name": "Michael Zhu",
+            "username": "moodlezoup"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "85366501e61204864266561c605f028bc8dd5e32",
+          "message": "test(jolt-prover): prove a ring-dimension-512 Akita trace in the e2e matrix (#2419)\n\n* test(jolt-prover): prove a ring-dimension-512 Akita trace in every e2e mode\n\nNo end-to-end test reached Akita's dimension-512 trace commitment. Every\ne2e matrix guest pads to at most 2^16 rows, and the default K16 one-hot\ncatalog commits the trace group at inner ring dimension 256 or below\nuntil 2^17 rows (2^18 for every group width). PreparedNttCommit and the\ndimension-512 commit and opening, the path production Akita proofs take\nfor traces of 2^17 cycles or more, ran only in jolt-akita unit tests over\nsynthetic rows that repeat every 32 rows.\n\nAdd fibonacci_ring_512, fib(20000) padded to 2^18 rows, to every mode of\nboth profiles. Its Akita arms resolve the schedule row their proof\nselected in the verifier's catalog and assert that the trace group's root\nfold commits at inner ring dimension 512, so the case fails if the guest\nshrinks or a regenerated catalog moves the threshold.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* test(jolt-prover): run fibonacci_ring_512 in Akita builds only\n\nRing dimension exists only in Akita. In the Dory modes the case only\nre-proved the fibonacci table row's guest at a larger size with no\ndistinct failure signal, at most of the added CI cost. Keep it in both\nAkita configurations, revert the rust.yml lane comment, and state in\ndocs only what the assertion enforces.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* test(jolt-prover): shrink fibonacci_ring_512 to 2^17 rows\n\nAkita's default one-hot catalog already commits a 2^17-row trace group\nat inner ring dimension 512 for every trace-group width except 48. The\nfibonacci guest's trace group has 39 polynomials in both profiles, so\nfib(10000) (100,729 cycles) reaches dimension 512 at half the trace\nlength. The test's assertion still fails if the width becomes 48, the\ntrace drops below 2^17 rows, or the catalog moves the threshold.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* Revert \"test(jolt-prover): shrink fibonacci_ring_512 to 2^17 rows\"\n\nThis reverts commit b83cd28703acd0cf90df0c31673e3c7314460ac1. At 2^17\nrows the case saved only about 10 s and 6 s in the two Akita CI lanes,\nwhere fixed setup dominates each test, while 2^18 rows reach ring\ndimension 512 for every trace-group width rather than all but 48.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-11T19:35:25-07:00",
+          "tree_id": "2f24a3090a86b098b5516ae56b82a92c4c6a7d48",
+          "url": "https://github.com/a16z/jolt/commit/85366501e61204864266561c605f028bc8dd5e32"
+        },
+        "date": 1794453783856,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 2.381,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 898672,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 0.9948,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 463928,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 464048,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 463836,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.4813,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 463560,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-mem",
+            "value": 907016,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 1.0263,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 463780,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 2.6958,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 463564,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 3.031,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 130320,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.1896,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 907388,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.3649,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 463752,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.2738,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 463956,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 14.2767,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 464136,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 3.0544,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 463884,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 20.3484,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 699084,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 10.4557,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 605144,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 41.0393,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 630196,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.0197,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 463736,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.214,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 463524,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 10.5586,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 917528,
             "unit": "KB",
             "extra": ""
           }
