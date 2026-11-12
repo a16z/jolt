@@ -44,6 +44,18 @@ impl<F: Field> OmittedConstantPoly<F> {
         self.coefficients.iter().copied().sum()
     }
 
+    /// Recovers `q0` from an equality-factored round check
+    /// `(1 - tau) q(0) + tau q(1) = claim`, as `claim - tau (q(1) - q0)`.
+    pub fn constant_from_claim(&self, claim: F, tau: F) -> F {
+        claim - tau * self.nonconstant_term_sum_at_one()
+    }
+
+    /// Returns `q(point)`, with `q0` recovered by
+    /// [`constant_from_claim`](Self::constant_from_claim).
+    pub fn evaluate_from_claim(&self, claim: F, tau: F, point: F) -> F {
+        self.constant_from_claim(claim, tau) + self.evaluate_nonconstant_terms(point)
+    }
+
     /// Returns `q(point) - q0` using Horner's method.
     pub fn evaluate_nonconstant_terms(&self, point: F) -> F {
         self.coefficients
