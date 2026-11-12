@@ -1,4 +1,9 @@
 //! Heap buffers of secret values that are zeroed when freed.
+//!
+//! Wiping is defense in depth, not a guarantee: callers can still read the
+//! pads (`CommittedPads::pads`) and the prover's decoded auxiliary values
+//! (`ValuesDomain::auxiliary`) in plain memory, and copies made outside a
+//! [`SecretVec`] are not wiped.
 
 use std::ops::{Deref, DerefMut};
 use std::slice::Iter;

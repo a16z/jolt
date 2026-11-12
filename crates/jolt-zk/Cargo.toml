@@ -22,13 +22,12 @@ parallel = [
   "jolt-claims?/parallel",
   "jolt-crypto?/parallel",
 ]
-# The prove side: `prove` and the proof-of-work search before its challenges,
-# which copies the sponge state. Verifier builds leave it off.
-prover = [
-  "blindfold",
-  "jolt-sumcheck/prover",
-  "jolt-transcript/prover-grinding",
-]
+# The masking prover: `MaskingRecorder`, the masked prover's round channel and
+# `ZkBackendProver`, with the proof-of-work search before each challenge,
+# which copies the sponge state. It pulls in none of BlindFold's dependencies.
+masking-prover = ["jolt-sumcheck/prover", "jolt-transcript/prover-grinding"]
+# The BlindFold prover and the masking prover. Verifier builds leave it off.
+prover = ["blindfold", "masking-prover"]
 # `CommittedPads::uncommitted`, for tests of protocols written over the
 # masked channel in other crates (Akita's masked levels).
 test-support = []

@@ -46,8 +46,8 @@ jolt-verifier::stages/stage8/verify.rs::verify::challenge_powers#0
 jolt-verifier::stages/stage8/verify.rs::verify::challenge_powers#3
 jolt-verifier::stages/uniskip.rs::draw_spartan_outer_tau::challenge_vector#0
 jolt-verifier::stages/uniskip.rs::draw_spartan_product_tau_high::challenge#0
-jolt-zk::masking/pads.rs::MaskedVerifier<'_,'_,F,C,T>::read_round::challenge#0
-jolt-zk::masking/recorder.rs::MaskingRecorder<'_,F,O>::absorb_round::challenge#0
+jolt-zk::masking/channels.rs::MaskedProver<'_,F,O,T>::round_challenge::challenge#0
+jolt-zk::masking/channels.rs::MaskedVerifier<'_,'_,F,C,T>::verify_round::challenge#0
 jolt-zk::verify.rs::BlindFoldProtocol<F,Com>::folded_instance_from_proof::challenge#3
 jolt-zk::verify.rs::BlindFoldProtocol<F,Com>::verify_inner_folded_r1cs::challenge#0
 jolt-zk::verify.rs::BlindFoldProtocol<F,Com>::verify_inner_folded_r1cs::challenge#1

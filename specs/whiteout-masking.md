@@ -18,7 +18,34 @@ residual witness) with the existing Nova fold. BlindFold stays curve-based
 commitments to pads committed up front. Other back ends live in Akita.
 Clear proofs, clear fixtures and Akita fixtures are byte-identical.
 
+## What lands where
+
+This note describes the whole switch to masked ZK. The stack that ends at
+#2342 lands only the shared front end; the Jolt integration and BlindFold as
+a back end land later. Each section below starts with the PRs that land it.
+
+- #2292: the `PrivateChannel` seam in `jolt-transcript`.
+- #2334: `ClaimDomain` and `ClearDomain`.
+- #2335: the single-instance sumcheck driver.
+- #2405: the round channels `ProverRoundChannel` and `VerifierRoundChannel`,
+  with `RoundSpec`.
+- #2336: `DegreeSchedule`, the per-round degree schedule.
+- #2340: masked batch rounds (`receive_masked_rounds`, `PadSlots`).
+- #2341: factored claim expressions in `jolt-claim-expr` and the factored
+  forms of the `jolt-claims` relations (merged products).
+- #2342: `jolt-zk::masking`: pads, the masked channels, `MaskingRecorder`,
+  the lowering domains, the residual relation, and the `ZkBackend` and
+  `ZkBackendProver` traits, with no implementation.
+- Later, not in this stack: `pad_layout` and the masked stage verifiers in
+  `jolt-verifier`, `JoltResidual::check_stages`, `ClaimRoutes::masked`, the
+  generated `verify_masked`, BlindFold as a `ZkBackend` (`BlindFold::OPERANDS`
+  and the BlindFold lowering), the deletions listed below, the `zk_e2e`
+  probe, and the measurements under "Cost".
+
 ## Pad accounting
+
+Lands in #2342 (the pad types and `MaskingRecorder`); `pad_layout` and the
+stage routes are later.
 
 Masked messages are exactly the `PrivateChannel` messages clear mode sends,
 at their clear positions, plus one auxiliary block:
@@ -35,11 +62,13 @@ ZK mode never aliases those cells: each gets its own slot, and when the
 runtime route says `Alias` the residual adds the equality row
 (cell − source = 0). Clear routing is untouched.
 
-Batch input claims are neither sent nor absorbed:
-`MaskingRecorder::absorb_input_claims` absorbs nothing. Every masked input
-claim is a function of values already absorbed as pad-masked sends (earlier
-`finish` outputs, the uni-skip output claims, the stage-6a address claims),
-challenges and public data. The stage-4 staged openings that the RAM value
+The caller of `MaskingRecorder::new` states how a batch binds its input
+claims. Under `InputClaims::Derived` they are neither sent nor absorbed:
+every masked input claim must be a function of values already absorbed as
+pad-masked sends (earlier `finish` outputs, the uni-skip output claims, the
+stage-6a address claims), challenges and public data. Under
+`InputClaims::Send` each goes out masked, as its own message, where the
+clear recorder absorbs it. Jolt's batches use `Derived`. The stage-4 staged openings that the RAM value
 check subtracts (advice and program image) are sent through
 `send_private`/`receive_private` before the stage-4 proof of work and γ
 draw. The clear recorder, by contrast, absorbs each input claim with
@@ -66,6 +95,9 @@ Pads are base-field coordinates: an extension element at slot `s` takes
 
 ## Masked transcript
 
+Lands in #2342 (pads and channels); the `PADS` site and the Jolt drivers
+are later.
+
 Preamble and trace commitments are unchanged. A new `PADS` site follows
 `absorb_public_commitments`, before stage 1's first challenge: ⌈P/L⌉
 Pedersen row commitments, each with its own independent blind (a shared
@@ -75,25 +107,33 @@ absorbed. L is `VC::capacity(setup)`, lower-bounded by
 value, with the clear challenges. Then stage 8, the checkpoint, the masked
 auxiliary block, and the BlindFold tail.
 
-Only `ZkBackend::commit_pads` builds `CommittedPads` (pads, cursor, pad
-opening data), and only `receive_pad_commitment` builds
-`CommittedPadsView<PadCommitment>` (no blind). The prover's masking
+`CommittedPads::commit` builds `CommittedPads` (pads, cursor, pad opening
+data) and absorbs the pad commitment; `CommittedPadsView::receive` builds
+`CommittedPadsView<PadCommitment>` (no blind) and absorbs the commitment at
+the same position. A back end calls them from
+`ZkBackendProver::commit_pads` and `ZkBackend::receive_pad_commitment`. The prover's masking
 `SumcheckRecorder` owns `&mut CommittedPads`, and the prover's other private
 sends (uni-skip, stage 4's staged openings, the auxiliary block) go through
 `CommittedPads::send`, which returns the masked values it sent. For
-protocols written once over both roles' channels (`prove_single`, Akita's
-masked levels), `CommittedPads::channel` is the prover's masked
-`PrivateChannel`, `MaskedProver`, over the same masking. A pad vector has
+protocols written once over both roles' channels (the single-instance
+drivers `prove_single_with` and `visit_single_rounds`, Akita's masked
+levels), `CommittedPads::channel` gives the prover's masked channel,
+`MaskedProver`, which implements `ProverRoundChannel`. A pad vector has
 one field: the prover masks base-field coordinates, and an extension element
 takes one pad per base coordinate (`CommittedPadsView::take_ext` on the
 verifier side). The verifier threads `&mut CommittedPadsView` through the ZK drivers
-only; its `MaskedVerifier` is the masked `PrivateChannel`. The recorder type,
+only; its `MaskedVerifier` implements `VerifierRoundChannel` with
+`Slots = PadSlots`. Neither masked channel can implement `PrivateChannel`,
+which is infallible and returns no pad slots. The recorder type,
 not a flag, decides the routes a proof sends on and which hidden-value checks
 are skipped. Clear `verify` signatures stay concrete; only the masked leaf
 readers are generic over `C: PrivateChannel` with `C::Error:
 From<TranscriptError>`.
 
 ## Residual rows for Jolt's stages
+
+The lowering and its domains land in #2342 and the factored forms in
+#2341; `jolt-verifier/src/stages/zk/` is later.
 
 `jolt-verifier/src/stages/zk/` implements `ResidualRows`. Checks are
 evaluated over affine forms in the pads; zero outputs become rows. A row
@@ -140,6 +180,8 @@ slots, and no base-protocol challenge depends on them.
 
 ## BlindFold lowering
 
+Later, not in this stack.
+
 `AffineRow` → A = Σa_k x_k + b·u, B = u, C = 0. `ProductRow` →
 A = u·m̂_x − p_x, B = y, C = z, where the constants of y and z also multiply
 u (homogenized for the folded u ≠ 1 instance). W = [pad rows | dedicated y
@@ -153,6 +195,8 @@ Other back ends implement `ZkBackend` in their own crates; one whose prover
 is not dyn-compatible reaches it through `Setup`.
 
 ## Deleted by the switch to masked ZK
+
+Later, not in this stack: nothing below is deleted yet.
 
 - `jolt-claims::r1cs` and its `claim_lowering_equivalence` fuzz workspace.
 - `jolt-zk`: `statements.rs`, `builder.rs`, `assignment.rs`, the stage
@@ -188,6 +232,8 @@ golden-shape test, the FS inventory, profiling spans.
 
 ## Security sketch
 
+The argument covers the full switch; the two tests it names are later.
+
 **Soundness.** PADS binding is computational (DLog): it fixes p before the
 first challenge, so each decoded m = m̂ − p precedes the next challenge
 (§4.1). BlindFold's extractor gives W satisfying the R1CS whose pad segment
@@ -210,6 +256,8 @@ Pre-existing leakage is unchanged: the `ProofHeader` fields, and preprocessing
 commitments are ZK only relative to themselves.
 
 ## Cost (muldiv, T = 2¹⁰)
+
+Measured on the full switch, later than this stack.
 
 | | clear | per-round Pedersen | masked |
 |---|---|---|---|
@@ -240,10 +288,14 @@ Rounds follow a public per-round degree schedule
 (`jolt_sumcheck::DegreeSchedule`): each batch round is sent at the largest
 degree its active members declare for that round
 (`SymbolicSumcheck::round_degree`), so stage 5's 128 instruction read-RAF
-address rounds go at degree 2 instead of 10. The table above predates it.
-With it, muldiv proofs are 64,895 B clear (−32,768) and 79,071 B masked
-(−34,880: the masked coefficients plus fewer pad-commitment rows), and the
-layout is 1,049 pads. Stage 2's RAM read-write address rounds (3
+address rounds go at degree 2 instead of 10 (#2336). The table above
+predates it. On Whiteout's prototype transcript, which sent every round at
+the full batch width, it shrank muldiv proofs to 64,895 B clear (−32,768)
+and 79,071 B masked (−34,880: the masked coefficients plus fewer
+pad-commitment rows), and the layout to 1,049 pads. On `main` the clear
+prover already trims zero leading coefficients, so Dory clear proofs are
+byte-identical (#2336); the masked saving remains, since masked rounds are
+sent at their scheduled width. Stage 2's RAM read-write address rounds (3
 coefficients) and stage 6a's bytecode address phase (20 coefficients) still
 send zero high coefficients on muldiv; declaring their phase degrees would
 save about 0.7 KB more.
@@ -256,6 +308,10 @@ Open size reductions, not implemented:
   messages: about 3.3 KB.
 
 ## Multi-pair product rows and merged products
+
+Merged products land in #2341, `products_into` in #2334, and the
+multi-pair lowering and `OperandRule` in #2342; `JoltResidual`, BlindFold's
+rule and the measurements are later.
 
 Muldiv's layout has 108 auxiliary slots: 106 product slots and 2 defining
 slots. The count does not depend on T, and it grows with the number of

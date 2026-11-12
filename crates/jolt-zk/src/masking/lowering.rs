@@ -18,14 +18,14 @@
 //! product row or defining affine row whose inputs are earlier slots.
 
 use std::collections::btree_map::Entry;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use jolt_claim_expr::{Expr, FactoredExpr, Source};
 use jolt_field::Field;
 use jolt_poly::{Point, LOW_TO_HIGH};
 use jolt_sumcheck::{
-    BooleanHypercube, DegreeSchedule, EqFactoredRound, MaskedRound, RoundWire, SumcheckDomain,
-    SumcheckDomainSpec,
+    BooleanHypercube, DegreeSchedule, EqFactoredRound, MaskedRound, PadSlots, RoundWire,
+    SumcheckDomain, SumcheckDomainSpec,
 };
 use jolt_transcript::{ClaimDomain, ClearDomain};
 
@@ -87,6 +87,7 @@ pub struct OperandShapeDomain {
     slots: AuxiliarySlots,
     rule: OperandRule,
     operands: Vec<PadIndex>,
+    recorded: BTreeSet<PadIndex>,
 }
 
 impl OperandShapeDomain {
@@ -97,6 +98,7 @@ impl OperandShapeDomain {
             slots: AuxiliarySlots::new(base),
             rule: OperandRule::MaskedSlot,
             operands: Vec::new(),
+            recorded: BTreeSet::new(),
         }
     }
 
@@ -123,7 +125,7 @@ impl OperandShapeDomain {
             return Ok(());
         }
         let x = x.ok_or(NOT_A_MASKED_SLOT)?;
-        if !self.operands.contains(&x) {
+        if self.recorded.insert(x) {
             self.operands.push(x);
         }
         Ok(())
@@ -247,36 +249,51 @@ impl<F: Field> ClaimDomain<F> for ValuesDomain<F> {
     }
 }
 
-/// The verifier's residual rows. Auxiliary slots are taken in order from the
-/// layout's auxiliary range, with their masked values from the received
-/// auxiliary block.
+/// The verifier's residual rows. Auxiliary slots are taken in order from
+/// the slots the masked channel returned with the received auxiliary block,
+/// with their masked values from that block.
 pub struct RowsDomain<'r, F> {
     relation: &'r mut ResidualRelation<F>,
     masked_auxiliary: &'r [F],
     slots: AuxiliarySlots,
+    /// One past the block's last slot.
+    end: usize,
     rule: OperandRule,
 }
 
 impl<'r, F: Field> RowsDomain<'r, F> {
-    pub fn new(relation: &'r mut ResidualRelation<F>, masked_auxiliary: &'r [F]) -> Self {
-        let first = relation.layout.auxiliary.start;
-        Self::from_slot(relation, masked_auxiliary, first)
-    }
-
-    /// Rows whose auxiliary values `masked_auxiliary` take the slots from
-    /// `first` on: a protocol whose auxiliary block follows another's in the
-    /// same relation.
-    pub fn from_slot(
+    /// Rows whose auxiliary values `masked_auxiliary` sit at `slots`, as the
+    /// masked channel returned them. A block that follows another protocol's
+    /// in the same relation starts past the auxiliary range's start.
+    ///
+    /// # Errors
+    ///
+    /// [`ZkError::InvalidLayout`] if `slots` and `masked_auxiliary` differ
+    /// in length, or `slots` leaves the layout's auxiliary range.
+    pub fn new(
         relation: &'r mut ResidualRelation<F>,
         masked_auxiliary: &'r [F],
-        first: usize,
-    ) -> Self {
-        Self {
+        slots: PadSlots,
+    ) -> Result<Self, ZkError> {
+        let auxiliary = &relation.layout.auxiliary;
+        let end = slots
+            .start
+            .checked_add(slots.len)
+            .filter(|&end| {
+                masked_auxiliary.len() == slots.len
+                    && slots.start >= auxiliary.start
+                    && end <= auxiliary.end
+            })
+            .ok_or(ZkError::InvalidLayout {
+                reason: "the auxiliary block's slots differ from its values or leave the auxiliary range",
+            })?;
+        Ok(Self {
             relation,
             masked_auxiliary,
-            slots: AuxiliarySlots::new(first),
+            slots: AuxiliarySlots::new(slots.start),
+            end,
             rule: OperandRule::MaskedSlot,
-        }
+        })
     }
 
     /// The same rows under `rule`.
@@ -321,7 +338,7 @@ impl<'r, F: Field> RowsDomain<'r, F> {
                 requested: 1,
                 remaining: 0,
             })?;
-        let pad = self.slots.take(Some(self.relation.layout.auxiliary.end))?;
+        let pad = self.slots.take(Some(self.end))?;
         Ok(AffineRow::masked(masked, pad))
     }
 }
@@ -511,10 +528,21 @@ impl<V: Clone> ProductSum<V> {
 ///
 /// Contract: one memo per lowering of one relation in one domain. Its values
 /// are that domain's slots, so another domain, or a second pass over the same
-/// relation, starts from a fresh memo.
+/// relation, starts from a fresh memo. Each opening id must resolve to one
+/// value for the memo's lifetime: a lowering that reuses ids for different
+/// openings, as level-local ids reused across levels would, needs one memo
+/// per id scope. A hit whose operands differ from the first use's is
+/// rejected ([`lower_factored`]).
 #[derive(Debug)]
 pub struct ProductMemo<O, V> {
-    products: BTreeMap<Vec<O>, V>,
+    products: BTreeMap<Vec<O>, MemoEntry<V>>,
+}
+
+/// A memoized product and the operands it was first taken for.
+#[derive(Debug)]
+struct MemoEntry<V> {
+    operands: (V, V),
+    product: V,
 }
 
 impl<O, V> Default for ProductMemo<O, V> {
@@ -525,9 +553,14 @@ impl<O, V> Default for ProductMemo<O, V> {
     }
 }
 
-impl<O: Ord + Clone, V: Clone> ProductMemo<O, V> {
+impl<O: Ord + Clone, V: Clone + PartialEq> ProductMemo<O, V> {
     /// `x · y`, with `key` the openings of `x · y` in chain order: the slot
     /// an earlier term took for the same key, or a new one.
+    ///
+    /// # Errors
+    ///
+    /// [`ZkError::InvalidRelation`] if an earlier term took the key for
+    /// other operands; then the domain's product errors.
     fn product<F, D>(&mut self, key: Option<&[O]>, x: V, y: V, domain: &mut D) -> Result<V, ZkError>
     where
         D: ClaimDomain<F, Value = V, Error = ZkError>,
@@ -536,8 +569,25 @@ impl<O: Ord + Clone, V: Clone> ProductMemo<O, V> {
             return domain.product(x, y);
         };
         match self.products.entry(key.to_vec()) {
-            Entry::Occupied(product) => Ok(product.get().clone()),
-            Entry::Vacant(slot) => Ok(slot.insert(domain.product(x, y)?).clone()),
+            Entry::Occupied(entry) => {
+                let entry = entry.get();
+                if entry.operands != (x, y) {
+                    return Err(ZkError::InvalidRelation {
+                        reason: "a memoized product's openings resolved to other values",
+                    });
+                }
+                Ok(entry.product.clone())
+            }
+            Entry::Vacant(slot) => {
+                let product = domain.product(x.clone(), y.clone())?;
+                Ok(slot
+                    .insert(MemoEntry {
+                        operands: (x, y),
+                        product,
+                    })
+                    .product
+                    .clone())
+            }
         }
     }
 }
@@ -568,6 +618,7 @@ where
     F: Field,
     O: Ord + Clone,
     D: LoweringDomain<F, Error = ZkError>,
+    D::Value: PartialEq,
 {
     let mut sum = ProductSum::zero(domain);
     for term in &expr.terms {
@@ -728,6 +779,11 @@ pub fn sumcheck_rows<F: Field>(
                 got: equality_point.len(),
             });
         }
+        if degrees.degrees().contains(&0) {
+            return Err(ZkError::InvalidRelation {
+                reason: "an eq-factored round has degree 0",
+            });
+        }
     }
     let mut claim = input;
     for (index, (round, &degree)) in rounds.iter().zip(degrees.degrees()).enumerate() {
@@ -749,9 +805,17 @@ pub fn sumcheck_rows<F: Field>(
             .iter()
             .enumerate()
             .map(|(offset, &masked)| {
-                AffineRow::masked(masked, PadIndex(round.slots.start + offset))
+                let pad =
+                    round
+                        .slots
+                        .start
+                        .checked_add(offset)
+                        .ok_or(ZkError::InvalidRelation {
+                            reason: "a round's pad slot overflows usize",
+                        })?;
+                Ok(AffineRow::masked(masked, PadIndex(pad)))
             })
-            .collect::<Vec<_>>();
+            .collect::<Result<Vec<_>, ZkError>>()?;
         if sent.len() != round.slots.len {
             return Err(ZkError::InvalidRelation {
                 reason: "round wire length differs from its pad slots",

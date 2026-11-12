@@ -5,22 +5,22 @@ use std::error::Error;
 
 use jolt_field::Field;
 use jolt_sumcheck::SumcheckError;
-#[cfg(feature = "prover")]
+#[cfg(feature = "masking-prover")]
 use jolt_transcript::ProverTranscript;
-use jolt_transcript::{ClaimMismatch, FieldTranscript, Transcript, VerificationError};
-#[cfg(feature = "prover")]
+use jolt_transcript::{ClaimMismatch, Encoding, FieldTranscript, Transcript, VerificationError};
+#[cfg(feature = "masking-prover")]
 use rand_core::{CryptoRng, RngCore};
 use thiserror::Error as ThisError;
 
-#[cfg(feature = "prover")]
+#[cfg(feature = "masking-prover")]
 use super::CommittedPads;
 use super::{CommittedPadsView, PadLayout, ResidualRelation};
 
-/// What [`ZkBackend::commit_pads`] returns: the prover's pads and the
+/// What [`ZkBackendProver::commit_pads`] returns: the prover's pads and the
 /// commitment the proof carries.
-#[cfg(feature = "prover")]
+#[cfg(feature = "masking-prover")]
 pub type CommittedPadsWith<F, B> = (
-    CommittedPads<F, <B as ZkBackend<F>>::PadOpening>,
+    CommittedPads<F, <B as ZkBackendProver<F>>::PadOpening>,
     <B as ZkBackend<F>>::PadCommitment,
 );
 
@@ -97,43 +97,26 @@ impl<F: Field> From<ZkError> for SumcheckError<F> {
     }
 }
 
-/// A zero-knowledge back end: commits the pads, then proves the residual
-/// relation over them and the residual witness. BlindFold is the in-repo
-/// implementation; a back end whose prover is not dyn-compatible reaches it
-/// through `Setup`.
+/// The verifier half of a zero-knowledge back end: receives the pad
+/// commitment, then verifies the back end's proof of the residual relation
+/// over it. This crate defines the seam only; no back end in it implements
+/// it. A back end whose prover is not dyn-compatible reaches it through
+/// `Setup`. The prover half is `ZkBackendProver`, so a verifier crate
+/// implements this trait whatever features its build turns on.
 pub trait ZkBackend<F> {
     /// The back end's public setup.
     type Setup;
     /// The pad commitment, carried in the proof and absorbed before the
     /// first challenge.
-    type PadCommitment;
-    /// The prover's opening data for the pad commitment.
-    type PadOpening;
+    type PadCommitment: Encoding;
     /// The residual commitment the relation's witness opens to.
     type ResidualCommitment;
-    /// The prover's residual witness.
-    type Witness;
     /// The back end's proof of the residual relation, carried in the proof.
     type Proof;
 
-    /// Samples and commits the pads of `layout`, absorbs the commitment, and
-    /// returns the pads with the commitment the proof carries.
-    ///
-    /// # Errors
-    ///
-    /// A layout the back end cannot commit.
-    #[cfg(feature = "prover")]
-    fn commit_pads<T: Transcript, R: RngCore + CryptoRng>(
-        setup: &Self::Setup,
-        layout: &PadLayout,
-        transcript: &mut T,
-        rng: &mut R,
-    ) -> Result<CommittedPadsWith<F, Self>, ZkError>
-    where
-        Self: Sized;
-
     /// Checks the proof's pad commitment against `layout` and absorbs it,
-    /// at the position [`commit_pads`](Self::commit_pads) absorbed it.
+    /// at the position `ZkBackendProver::commit_pads` absorbed it, with
+    /// [`CommittedPadsView::receive`].
     ///
     /// # Errors
     ///
@@ -145,12 +128,75 @@ pub trait ZkBackend<F> {
         transcript: &mut T,
     ) -> Result<CommittedPadsView<Self::PadCommitment>, ZkError>;
 
+    /// Verifies `proof` of the residual relation over the pad commitment,
+    /// after [`verify`](Self::verify) checked that `relation` and `pads`
+    /// share one layout. Callers use `verify`.
+    ///
+    /// # Errors
+    ///
+    /// Unused pads or a rejected proof.
+    fn verify_residual<T: FieldTranscript<F>>(
+        setup: &Self::Setup,
+        relation: &ResidualRelation<F>,
+        pads: &CommittedPadsView<Self::PadCommitment>,
+        residual: &Self::ResidualCommitment,
+        proof: &Self::Proof,
+        transcript: &mut T,
+    ) -> Result<(), ZkError>;
+
+    /// Verifies `proof` of the residual relation over the pad commitment.
+    ///
+    /// # Errors
+    ///
+    /// [`ZkError::InvalidLayout`] if the relation's layout differs from the
+    /// committed one, then as [`verify_residual`](Self::verify_residual).
+    fn verify<T: FieldTranscript<F>>(
+        setup: &Self::Setup,
+        relation: &ResidualRelation<F>,
+        pads: &CommittedPadsView<Self::PadCommitment>,
+        residual: &Self::ResidualCommitment,
+        proof: &Self::Proof,
+        transcript: &mut T,
+    ) -> Result<(), ZkError> {
+        if relation.layout != *pads.layout() {
+            return Err(ZkError::InvalidLayout {
+                reason: "the relation's pad layout differs from the committed one",
+            });
+        }
+        Self::verify_residual(setup, relation, pads, residual, proof, transcript)
+    }
+}
+
+/// The prover half of a zero-knowledge back end: commits the pads, then
+/// proves the residual relation over them and the residual witness.
+#[cfg(feature = "masking-prover")]
+pub trait ZkBackendProver<F>: ZkBackend<F> {
+    /// The prover's opening data for the pad commitment.
+    type PadOpening;
+    /// The prover's residual witness.
+    type Witness;
+
+    /// Samples and commits the pads of `layout`, absorbs the commitment
+    /// with [`CommittedPads::commit`], and returns the pads with the
+    /// commitment the proof carries.
+    ///
+    /// # Errors
+    ///
+    /// A layout the back end cannot commit.
+    fn commit_pads<T: Transcript, R: RngCore + CryptoRng>(
+        setup: &Self::Setup,
+        layout: &PadLayout,
+        transcript: &mut T,
+        rng: &mut R,
+    ) -> Result<CommittedPadsWith<F, Self>, ZkError>
+    where
+        Self: Sized;
+
     /// Proves the residual relation over the committed pads.
     ///
     /// # Errors
     ///
     /// Unused pads, a relation the pads do not satisfy, or a prover failure.
-    #[cfg(feature = "prover")]
     fn prove<T: FieldTranscript<F> + ProverTranscript, R: RngCore + CryptoRng>(
         setup: &Self::Setup,
         relation: &ResidualRelation<F>,
@@ -160,18 +206,4 @@ pub trait ZkBackend<F> {
         transcript: &mut T,
         rng: &mut R,
     ) -> Result<Self::Proof, ZkError>;
-
-    /// Verifies `proof` of the residual relation over the pad commitment.
-    ///
-    /// # Errors
-    ///
-    /// Unused pads or a rejected proof.
-    fn verify<T: FieldTranscript<F>>(
-        setup: &Self::Setup,
-        relation: &ResidualRelation<F>,
-        pads: &CommittedPadsView<Self::PadCommitment>,
-        residual: &Self::ResidualCommitment,
-        proof: &Self::Proof,
-        transcript: &mut T,
-    ) -> Result<(), ZkError>;
 }

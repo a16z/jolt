@@ -2,14 +2,14 @@
 //! closed by the product of the two output claims, plus a uni-skip round.
 //! The honest masked transcript satisfies its residual rows, and on this
 //! instance changing any one masked value breaks some row.
-#![cfg(feature = "prover")]
+#![cfg(feature = "masking-prover")]
 
 use jolt_claim_expr::{challenge, constant, opening, Expr, FactoredExpr, Source};
 use jolt_field::{Field, Fr, Ring};
 use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::{
-    receive_masked_rounds, DegreeSchedule, MaskedRound, MemberDegrees, RoundWire, SumcheckDomain,
-    SumcheckDomainSpec, SumcheckRecorder,
+    receive_masked_rounds, DegreeSchedule, MaskedRound, MemberDegrees, PadSlots, RoundWire,
+    SumcheckDomain, SumcheckDomainSpec, SumcheckRecorder,
 };
 use jolt_transcript::{
     protocol_tag, prover_transcript, verifier_transcript, Blake2b512, BytesMsg, ClaimDomain,
@@ -41,6 +41,14 @@ fn product() -> Product {
 
 fn fr(value: u64) -> Fr {
     Fr::from_u64(value)
+}
+
+/// The slots of `layout`'s whole auxiliary block.
+fn auxiliary_slots(layout: &PadLayout) -> PadSlots {
+    PadSlots {
+        start: layout.auxiliary.start,
+        len: layout.auxiliary.len(),
+    }
 }
 
 fn fold(table: &[Fr], r: Fr) -> Vec<Fr> {
@@ -130,7 +138,7 @@ fn prove() -> Proof {
     )
     .unwrap();
 
-    let mut recorder = MaskingRecorder::new(&mut committed, &mut tape);
+    let mut recorder = MaskingRecorder::new(&mut committed, &mut tape, InputClaims::Derived);
     let (mut a, mut b) = (a, b);
     for _ in 0..NUM_VARS {
         let r = recorder
@@ -175,6 +183,7 @@ struct Received {
     rounds: Vec<MaskedRound<Fr>>,
     claims: [(Fr, usize); 2],
     auxiliary: Vec<Fr>,
+    auxiliary_slots: PadSlots,
 }
 
 fn receive(tape: &MaskedMessages<Fr>) -> Received {
@@ -198,7 +207,7 @@ fn receive(tape: &MaskedMessages<Fr>) -> Received {
     )
     .unwrap();
     let (claims, slots) = channel.receive_private(2).unwrap();
-    let (auxiliary, _) = channel.receive_private(auxiliary_len).unwrap();
+    let (auxiliary, auxiliary_slots) = channel.receive_private(auxiliary_len).unwrap();
     reader.finish().unwrap();
     view.finish().unwrap();
     Received {
@@ -207,6 +216,7 @@ fn receive(tape: &MaskedMessages<Fr>) -> Received {
         rounds,
         claims: [(claims[0], slots.start), (claims[1], slots.start + 1)],
         auxiliary,
+        auxiliary_slots,
     }
 }
 
@@ -236,7 +246,8 @@ fn relation(received: &Received, claimed_sum: Fr) -> ResidualRelation<Fr> {
     )
     .unwrap();
     let [(a, slot_a), (b, slot_b)] = received.claims;
-    let mut rows = RowsDomain::new(&mut relation, &received.auxiliary);
+    let mut rows =
+        RowsDomain::new(&mut relation, &received.auxiliary, received.auxiliary_slots).unwrap();
     let output = lower_factored(
         &product(),
         &mut rows,
@@ -254,6 +265,39 @@ fn relation(received: &Received, claimed_sum: Fr) -> ResidualRelation<Fr> {
     output.check_equals(running, &mut rows).unwrap();
     rows.finish().unwrap();
     relation
+}
+
+/// Under [`InputClaims::Send`] each input claim goes out masked, as its own
+/// message, before the first round; a send that runs out of pads fails the
+/// next round.
+#[test]
+fn sent_input_claims_go_out_masked_before_the_rounds() {
+    let claims = [fr(7), fr(9)];
+    let poly = UnivariatePoly::new(vec![fr(1), fr(2), fr(3)]);
+    let layout = PadLayout::new(claims.len() + DEGREE, 0).unwrap();
+    let pads: Vec<Fr> = (0..layout.num_pads).map(|i| fr(100 + i as u64)).collect();
+    let mut committed = CommittedPads::new(layout, pads.clone(), ()).unwrap();
+    let mut tape = MaskedMessages::default();
+    let mut transcript = prover_transcript::<Blake2b512>(&PROTOCOL, &BytesMsg(LABEL));
+    let mut recorder = MaskingRecorder::new(&mut committed, &mut tape, InputClaims::Send);
+    recorder.absorb_input_claims(&claims, &mut transcript);
+    let _ = recorder
+        .absorb_round(&poly, DEGREE, &mut transcript)
+        .unwrap();
+    assert_eq!(tape.values[..2], [claims[0] + pads[0], claims[1] + pads[1]]);
+    committed.finish().unwrap();
+
+    let layout = PadLayout::new(1, 0).unwrap();
+    let mut committed = CommittedPads::new(layout, vec![fr(1)], ()).unwrap();
+    let mut tape = MaskedMessages::default();
+    let mut recorder = MaskingRecorder::new(&mut committed, &mut tape, InputClaims::Send);
+    recorder.absorb_input_claims(&claims, &mut transcript);
+    assert!(matches!(
+        recorder
+            .absorb_round(&poly, DEGREE, &mut transcript)
+            .map_err(ZkError::from),
+        Err(ZkError::PadsExhausted { .. })
+    ));
 }
 
 #[test]
@@ -524,8 +568,9 @@ fn lowering_domains_agree_on_random_formulas() {
             .zip(&pads[layout.auxiliary.clone()])
             .map(|(value, pad)| *value + *pad)
             .collect();
+        let slots = auxiliary_slots(&layout);
         let mut relation = ResidualRelation::new(layout, 0);
-        let mut rows = RowsDomain::new(&mut relation, &masked_auxiliary);
+        let mut rows = RowsDomain::new(&mut relation, &masked_auxiliary, slots).unwrap();
         let output = lower_factored(
             &expr,
             &mut rows,
@@ -595,7 +640,9 @@ fn operand_rules_decide_the_defining_slot() {
         let masked_auxiliary: Vec<Fr> = values.auxiliary.iter().map(|v| *v + pads[3]).collect();
 
         let mut relation = ResidualRelation::new(layout.clone(), 0);
-        let mut rows = RowsDomain::new(&mut relation, &masked_auxiliary).with_operands(rule);
+        let mut rows = RowsDomain::new(&mut relation, &masked_auxiliary, auxiliary_slots(&layout))
+            .unwrap()
+            .with_operands(rule);
         lower_factored(
             &expr,
             &mut rows,
@@ -616,11 +663,13 @@ fn operand_rules_decide_the_defining_slot() {
         if let ProductOperand::Affine(x) = operand {
             let mut relation = ResidualRelation::new(layout.clone(), 0);
             assert!(matches!(
-                RowsDomain::new(&mut relation, &[]).products_into(
-                    (x.clone(), AffineRow::constant(fr(1))),
-                    Vec::new(),
-                    AffineRow::constant(fr(0))
-                ),
+                RowsDomain::new(&mut relation, &[], auxiliary_slots(&layout))
+                    .unwrap()
+                    .products_into(
+                        (x.clone(), AffineRow::constant(fr(1))),
+                        Vec::new(),
+                        AffineRow::constant(fr(0))
+                    ),
                 Err(ZkError::InvalidRelation { .. })
             ));
         }
@@ -711,7 +760,9 @@ mod claim_checks {
         let rows_for = |claim: Fr| {
             let masked_auxiliary = [r * r + pads[2]];
             let mut relation = ResidualRelation::new(layout.clone(), 0);
-            let mut rows = RowsDomain::new(&mut relation, &masked_auxiliary);
+            let mut rows =
+                RowsDomain::new(&mut relation, &masked_auxiliary, auxiliary_slots(&layout))
+                    .unwrap();
             leaf(
                 &mut rows,
                 AffineRow::masked(r + pads[0], PadIndex(0)),
@@ -734,14 +785,19 @@ mod claim_checks {
 
 mod single_instance {
     //! Masked single-instance rounds as Akita's masked levels lower them
-    //! (Akita `specs/whiteout-akita.md` §4.5): the clear `prove_single`
-    //! fixes each round's wire and challenge, the wires and the output
-    //! claims a(r), b(r) go out masked, and `sumcheck_rows` lowers the
-    //! rounds. The product of the output claims lands on the running claim.
+    //! (Akita `specs/whiteout-akita.md` §4.5): `prove_single_with` sends
+    //! each round through the masked prover's round channel, the output
+    //! claims a(r), b(r) go out masked, `visit_single_rounds` reads the
+    //! rounds back through the masked verifier's round channel, and
+    //! `sumcheck_rows` lowers them. The product of the output claims lands
+    //! on the running claim.
 
     use jolt_field::{Ext2, ExtField, Prime128Offset275 as Fp};
     use jolt_poly::{Point, UnivariatePoly};
-    use jolt_sumcheck::{prove_single, ProveRounds, SingleFormat, SingleInstance, SumcheckError};
+    use jolt_sumcheck::{
+        prove_single_with, visit_single_rounds, FullRounds, ProveRounds, SingleFormat,
+        SingleInstance,
+    };
     use jolt_transcript::ClaimDomain;
 
     use super::*;
@@ -804,7 +860,7 @@ mod single_instance {
         }
     }
 
-    impl ProveRounds<Fp> for Kernel {
+    impl<Err> ProveRounds<Fp, Err> for Kernel {
         fn num_rounds(&self) -> usize {
             ROUNDS
         }
@@ -814,7 +870,7 @@ mod single_instance {
             bind_challenge: Option<Fp>,
             round: usize,
             _previous_claim: Fp,
-        ) -> Result<UnivariatePoly<Fp>, SumcheckError<Fp>> {
+        ) -> Result<UnivariatePoly<Fp>, Err> {
             if let Some(r) = bind_challenge {
                 bind(&mut self.a, r);
                 bind(&mut self.b, r);
@@ -834,7 +890,7 @@ mod single_instance {
             Ok(UnivariatePoly::new(coefficients))
         }
 
-        fn finish_rounds(&mut self, bind_challenge: Fp) -> Result<(), SumcheckError<Fp>> {
+        fn finish_rounds(&mut self, bind_challenge: Fp) -> Result<(), Err> {
             bind(&mut self.a, bind_challenge);
             bind(&mut self.b, bind_challenge);
             Ok(())
@@ -851,33 +907,45 @@ mod single_instance {
             .collect()
     }
 
-    /// The masked rounds and the masked output claims with their slots.
+    /// Proves one instance over the masked prover's round channel and sends
+    /// the output claims masked, then reads both back over the masked
+    /// verifier's round channel: the received rounds and the masked output
+    /// claims with their slots.
     fn prove(eq_factored: bool) -> (Vec<MaskedRound<Fp>>, [(Fp, usize); 2]) {
         let mut kernel = Kernel::new(eq_factored);
         let instance = kernel.instance();
-        let mut transcript = prover_transcript::<H>(&PROTOCOL, &BytesMsg(LABEL));
-        let (proof, reduction) =
-            prove_single::<Fp, _, SumcheckError<Fp>>(&mut kernel, &instance, &mut transcript)
-                .unwrap();
         let mut committed = CommittedPads::new(layout(), pads(), ()).unwrap();
-        let rounds = proof
-            .rounds
-            .iter()
-            .zip(&reduction.challenges)
-            .map(|(wire, &challenge)| {
-                let (slots, wire) = committed.mask(wire).unwrap();
-                MaskedRound {
-                    wire,
+        let mut tape = MaskedMessages::default();
+        let mut transcript = prover_transcript::<H>(&PROTOCOL, &BytesMsg(LABEL));
+        let mut channel = committed.channel(&mut tape, &mut transcript);
+        let reduction =
+            prove_single_with(&mut FullRounds::new(&mut kernel), &instance, &mut channel).unwrap();
+        let _: PadSlots = channel.send_private(&[kernel.a[0], kernel.b[0]]).unwrap();
+        committed.finish().unwrap();
+
+        let mut transcript = verifier_transcript::<H>(&PROTOCOL, &BytesMsg(LABEL), &[]);
+        let mut view = CommittedPadsView::new(layout(), ());
+        let mut reader = MaskedReader::new(&tape);
+        let mut channel = view.channel(&mut reader, &mut transcript);
+        let mut rounds = Vec::new();
+        visit_single_rounds(
+            instance.shape().unwrap(),
+            &mut channel,
+            |_, wire, slots, challenge| {
+                rounds.push(MaskedRound {
+                    wire: wire.into_owned(),
                     slots,
                     challenge,
-                }
-            })
-            .collect();
-        let (slots, claims) = committed.mask(&[kernel.a[0], kernel.b[0]]).unwrap();
-        ValuesDomain::default()
-            .product_into(kernel.a[0], kernel.b[0], kernel.a[0] * kernel.b[0])
-            .unwrap();
-        committed.finish().unwrap();
+                });
+                Ok(())
+            },
+        )
+        .unwrap();
+        let (claims, slots) = channel.receive_private(2).unwrap();
+        reader.finish().unwrap();
+        view.finish().unwrap();
+        let challenges: Vec<Fp> = rounds.iter().map(|round| round.challenge).collect();
+        assert_eq!(challenges, reduction.challenges);
         (
             rounds,
             [(claims[0], slots.start), (claims[1], slots.start + 1)],
@@ -903,7 +971,7 @@ mod single_instance {
             &format,
         )
         .unwrap();
-        let mut rows = RowsDomain::new(&mut relation, &[]);
+        let mut rows = RowsDomain::new(&mut relation, &[], auxiliary_slots(&layout())).unwrap();
         rows.product_into(
             AffineRow::masked(a, PadIndex(slot_a)),
             AffineRow::masked(b, PadIndex(slot_b)),

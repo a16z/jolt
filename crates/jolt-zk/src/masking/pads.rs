@@ -4,13 +4,11 @@
 use std::ops::Range;
 
 use jolt_field::Field;
-use jolt_sumcheck::{round_pow_bits, MaskedRound, MaskedRoundReader, SumcheckError};
-#[cfg(feature = "prover")]
-use jolt_transcript::ProverTranscript;
-use jolt_transcript::{Encoding, FieldTranscript, PadSlots, PrivateChannel};
+use jolt_sumcheck::PadSlots;
+use jolt_transcript::{Encoding, PrivateChannel, Transcript};
 use serde::{Deserialize, Serialize};
 
-use super::ZkError;
+use super::{MaskedProver, MaskedReader, MaskedVerifier, ZkError};
 use crate::secret::SecretVec;
 
 /// The position of one pad (one base-field coordinate) in the schedule.
@@ -111,9 +109,10 @@ pub struct MaskedMessages<F> {
 }
 
 /// Pads committed before the first challenge, with the back end's opening
-/// data `O`. Only a [`ZkBackend`](super::ZkBackend) builds one, so masking
-/// cannot run before the commitment exists. The pads are zeroed when it is
-/// dropped; `O` wipes its own secrets.
+/// data `O`. A back end builds one with [`commit`](Self::commit), which
+/// absorbs the commitment, so masking cannot run before the commitment is in
+/// the transcript. The pads are zeroed when it is dropped; `O` wipes its own
+/// secrets.
 pub struct CommittedPads<F, O> {
     pads: SecretVec<F>,
     cursor: Cursor,
@@ -121,21 +120,39 @@ pub struct CommittedPads<F, O> {
 }
 
 impl<F: Field, O> CommittedPads<F, O> {
-    #[cfg_attr(
-        not(any(all(test, feature = "prover"), feature = "test-support")),
-        expect(
-            dead_code,
-            reason = "only a back end's commit_pads builds pads; the first caller is a masking back end in the Akita ZK crates"
-        )
-    )]
+    /// The pads of `layout` under `commitment`: absorbs `commitment`, the
+    /// one absorb [`CommittedPadsView::receive`] mirrors, and returns the
+    /// pads ready to mask. A back end's
+    /// `ZkBackendProver::commit_pads` calls it before
+    /// the first challenge.
+    ///
+    /// # Errors
+    ///
+    /// [`ZkError::InvalidLayout`] if `pads` does not fill `layout`; nothing
+    /// is absorbed then.
+    pub fn commit<C: Encoding + ?Sized, T: Transcript>(
+        layout: PadLayout,
+        pads: Vec<F>,
+        opening: O,
+        commitment: &C,
+        transcript: &mut T,
+    ) -> Result<Self, ZkError> {
+        let pads = Self::new(layout, pads, opening)?;
+        transcript.append(commitment);
+        Ok(pads)
+    }
+
+    /// `pads` under `layout`, with nothing absorbed. The pads are wiped on
+    /// every path, the length mismatch included.
     pub(crate) fn new(layout: PadLayout, pads: Vec<F>, opening: O) -> Result<Self, ZkError> {
+        let pads = SecretVec::from(pads);
         if pads.len() != layout.num_pads {
             return Err(ZkError::InvalidLayout {
                 reason: "pad vector length differs from the layout",
             });
         }
         Ok(Self {
-            pads: pads.into(),
+            pads,
             cursor: Cursor { layout, next: 0 },
             opening,
         })
@@ -201,11 +218,7 @@ impl<F: Field, O> CommittedPads<F, O> {
         tape: &'a mut MaskedMessages<F>,
         transcript: &'a mut T,
     ) -> MaskedProver<'a, F, O, T> {
-        MaskedProver {
-            pads: self,
-            tape,
-            transcript,
-        }
+        MaskedProver::new(self, tape, transcript)
     }
 
     /// The decoded value m̂ − p of a masked value at `pad`.
@@ -247,14 +260,27 @@ impl<F: Field> CommittedPads<F, ()> {
 }
 
 /// The verifier's view of the pad commitment `C`: the commitment and a
-/// cursor, no opening data. Only a [`ZkBackend`](super::ZkBackend) builds
-/// one, at the transcript position of the commitment.
+/// cursor, no opening data. A back end builds one with
+/// [`receive`](Self::receive), at the transcript position of the commitment.
 pub struct CommittedPadsView<C> {
     commitment: C,
     cursor: Cursor,
 }
 
 impl<C> CommittedPadsView<C> {
+    /// The view of `commitment` under `layout`: absorbs `commitment` where
+    /// [`CommittedPads::commit`] absorbed it. A back end's
+    /// [`receive_pad_commitment`](super::ZkBackend::receive_pad_commitment)
+    /// checks the commitment's shape against `layout`, then calls it.
+    pub fn receive<T: Transcript>(layout: PadLayout, commitment: C, transcript: &mut T) -> Self
+    where
+        C: Encoding,
+    {
+        transcript.append(&commitment);
+        Self::new(layout, commitment)
+    }
+
+    /// The view of `commitment` under `layout`, with nothing absorbed.
     pub(crate) fn new(layout: PadLayout, commitment: C) -> Self {
         Self {
             commitment,
@@ -299,11 +325,7 @@ impl<C> CommittedPadsView<C> {
         tape: &'a mut MaskedReader<'m, F>,
         transcript: &'a mut T,
     ) -> MaskedVerifier<'a, 'm, F, C, T> {
-        MaskedVerifier {
-            view: self,
-            tape,
-            transcript,
-        }
+        MaskedVerifier::new(self, tape, transcript)
     }
 
     /// Checks that every scheduled pad was used.
@@ -335,257 +357,5 @@ impl CommittedPadsView<()> {
             },
             (),
         )
-    }
-}
-
-/// The verifier's cursor over a proof's [`MaskedMessages`].
-#[derive(Clone, Debug)]
-pub struct MaskedReader<'m, F> {
-    source: TapeSource<'m, F>,
-    next_value: usize,
-    next_nonce: usize,
-}
-
-#[derive(Clone, Debug)]
-enum TapeSource<'m, F> {
-    Proof(&'m MaskedMessages<F>),
-    /// An unbounded tape of zeros, for a layout replay over a shape-correct
-    /// proof (`ShapeTranscript` prices away every nonce).
-    Zeros,
-}
-
-impl<'m, F: Field> MaskedReader<'m, F> {
-    pub fn new(messages: &'m MaskedMessages<F>) -> Self {
-        Self {
-            source: TapeSource::Proof(messages),
-            next_value: 0,
-            next_nonce: 0,
-        }
-    }
-
-    /// An unbounded tape of zero values and zero nonces, for counting a pad
-    /// layout. [`finish`](Self::finish) always succeeds on it.
-    pub fn zeros() -> Self {
-        Self {
-            source: TapeSource::Zeros,
-            next_value: 0,
-            next_nonce: 0,
-        }
-    }
-
-    /// The next `len` masked values.
-    ///
-    /// # Errors
-    ///
-    /// [`ZkError::MaskedTapeExhausted`] if fewer remain.
-    pub fn values(&mut self, len: usize) -> Result<Vec<F>, ZkError> {
-        let end = self
-            .next_value
-            .checked_add(len)
-            .ok_or(ZkError::MaskedTapeExhausted)?;
-        let values = match self.source {
-            TapeSource::Proof(messages) => messages
-                .values
-                .get(self.next_value..end)
-                .ok_or(ZkError::MaskedTapeExhausted)?
-                .to_vec(),
-            TapeSource::Zeros => vec![F::zero(); len],
-        };
-        self.next_value = end;
-        Ok(values)
-    }
-
-    /// The next proof-of-work nonce.
-    ///
-    /// # Errors
-    ///
-    /// [`ZkError::MaskedTapeExhausted`] if none remains.
-    pub fn nonce(&mut self) -> Result<u64, ZkError> {
-        let nonce = match self.source {
-            TapeSource::Proof(messages) => *messages
-                .nonces
-                .get(self.next_nonce)
-                .ok_or(ZkError::MaskedTapeExhausted)?,
-            TapeSource::Zeros => 0,
-        };
-        self.next_nonce += 1;
-        Ok(nonce)
-    }
-
-    /// Checks that every masked value and nonce was read.
-    ///
-    /// # Errors
-    ///
-    /// [`ZkError::MaskedTapeTrailing`] otherwise.
-    pub fn finish(&self) -> Result<(), ZkError> {
-        match self.source {
-            TapeSource::Proof(messages)
-                if self.next_value != messages.values.len()
-                    || self.next_nonce != messages.nonces.len() =>
-            {
-                Err(ZkError::MaskedTapeTrailing)
-            }
-            TapeSource::Proof(_) | TapeSource::Zeros => Ok(()),
-        }
-    }
-}
-
-/// The verifier's masked channel: it reads m̂ in place of each private value
-/// from the proof's masked tape, absorbs it where the clear verifier absorbs
-/// the value, and returns the pad slots the prover used. Derived claims bind
-/// nothing, since the masked messages they derive from already do.
-pub struct MaskedVerifier<'a, 'm, F, C, T> {
-    view: &'a mut CommittedPadsView<C>,
-    tape: &'a mut MaskedReader<'m, F>,
-    transcript: &'a mut T,
-}
-
-impl<F, C, T> MaskedVerifier<'_, '_, F, C, T>
-where
-    F: Field + Encoding + 'static,
-    T: FieldTranscript<F>,
-{
-    /// Reads, absorbs and places one private message of `len` values.
-    ///
-    /// # Errors
-    ///
-    /// [`ZkError::MaskedTapeExhausted`] or [`ZkError::PadsExhausted`].
-    pub fn receive_private(&mut self, len: usize) -> Result<(Vec<F>, PadSlots), ZkError> {
-        let values = self.tape.values(len)?;
-        self.transcript.append_private(&values);
-        let slots = self.view.take(len)?;
-        Ok((values, slots))
-    }
-
-    /// The transcript, for the public absorbs and challenges a masked stage
-    /// interleaves with its private messages.
-    pub fn transcript(&mut self) -> &mut T {
-        self.transcript
-    }
-
-    /// Checks one round's proof of work at degree bound `degree`, its nonce
-    /// read from the tape when the challenge set needs one.
-    ///
-    /// # Errors
-    ///
-    /// [`ZkError::MaskedTapeExhausted`] or a rejected proof of work.
-    pub fn check_round_pow(&mut self, round: usize, degree: usize) -> Result<(), ZkError> {
-        let bits = round_pow_bits::<F, T>(degree).map_err(ZkError::from)?;
-        let nonce = if bits > 0 {
-            Some(self.tape.nonce()?)
-        } else {
-            None
-        };
-        self.transcript
-            .check_public_grind(bits, nonce)
-            .map_err(|_| ZkError::from(SumcheckError::<F>::ProofOfWorkRejected { round }))
-    }
-}
-
-impl<F, C, T> MaskedRoundReader<F> for MaskedVerifier<'_, '_, F, C, T>
-where
-    F: Field + Encoding + 'static,
-    T: FieldTranscript<F>,
-{
-    type Error = ZkError;
-
-    fn read_round(
-        &mut self,
-        round: usize,
-        width: usize,
-        degree: usize,
-    ) -> Result<MaskedRound<F>, ZkError> {
-        let (wire, slots) = self.receive_private(width)?;
-        self.check_round_pow(round, degree)?;
-        let challenge = self
-            .transcript
-            .challenge()
-            .map_err(|_| ZkError::ChallengeRejected)?;
-        Ok(MaskedRound {
-            wire,
-            slots,
-            challenge,
-        })
-    }
-}
-
-/// The prover's masked channel: each private message goes out as
-/// m̂ = m + p, absorbed where the clear prover absorbs the value and written
-/// to the proof's masked tape, in the order [`MaskedVerifier`] reads them.
-pub struct MaskedProver<'a, F, O, T> {
-    pads: &'a mut CommittedPads<F, O>,
-    tape: &'a mut MaskedMessages<F>,
-    transcript: &'a mut T,
-}
-
-impl<F, O, T> MaskedProver<'_, F, O, T>
-where
-    F: Field + Encoding,
-    T: FieldTranscript<F>,
-{
-    /// Masks, absorbs and records one private message.
-    ///
-    /// # Errors
-    ///
-    /// [`ZkError::PadsExhausted`] past the end of the schedule.
-    pub fn send_private(&mut self, values: &[F]) -> Result<PadSlots, ZkError> {
-        self.pads.send(values, self.tape, self.transcript)
-    }
-
-    /// The transcript, for public absorbs and challenges.
-    pub fn transcript(&mut self) -> &mut T {
-        self.transcript
-    }
-}
-
-#[cfg(feature = "prover")]
-impl<F, O, T> MaskedProver<'_, F, O, T>
-where
-    F: Field + Encoding + 'static,
-    T: FieldTranscript<F> + ProverTranscript,
-{
-    /// Grinds one round's proof of work at degree bound `degree` and records
-    /// its nonce on the tape when the challenge set needs one.
-    ///
-    /// # Errors
-    ///
-    /// When the nonce search fails.
-    pub fn grind_round(&mut self, round: usize, degree: usize) -> Result<(), ZkError> {
-        let bits = round_pow_bits::<F, T>(degree).map_err(ZkError::from)?;
-        let nonce = self
-            .transcript
-            .public_grind(bits)
-            .map_err(|_| ZkError::from(SumcheckError::<F>::ProofOfWorkRejected { round }))?;
-        self.tape.nonces.extend(nonce);
-        Ok(())
-    }
-}
-
-/// A masked verifier's state across one proof: its view of the pad
-/// commitment and its cursor over the proof's masked tape. The masked stage
-/// verifiers borrow one [`MaskedVerifier`] from it per stage.
-pub struct MaskedSession<'m, F, C> {
-    pub pads: CommittedPadsView<C>,
-    pub tape: MaskedReader<'m, F>,
-}
-
-impl<'m, F: Field, C> MaskedSession<'m, F, C> {
-    pub fn new(pads: CommittedPadsView<C>, tape: MaskedReader<'m, F>) -> Self {
-        Self { pads, tape }
-    }
-
-    /// The masked channel over `transcript`.
-    pub fn channel<'a, T>(&'a mut self, transcript: &'a mut T) -> MaskedVerifier<'a, 'm, F, C, T> {
-        self.pads.channel(&mut self.tape, transcript)
-    }
-
-    /// Checks that every scheduled pad and every masked message was used.
-    ///
-    /// # Errors
-    ///
-    /// [`ZkError::PadCountMismatch`] or [`ZkError::MaskedTapeTrailing`].
-    pub fn finish(&self) -> Result<(), ZkError> {
-        self.pads.finish()?;
-        self.tape.finish()
     }
 }
