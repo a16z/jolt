@@ -42,6 +42,8 @@
 mod challenge;
 mod claim_domain;
 mod codec;
+#[cfg(feature = "prover-coins")]
+mod coins;
 mod digest_hash;
 mod grind_bits;
 #[cfg(feature = "transcript-poseidon")]
@@ -67,6 +69,8 @@ pub use grind_bits::{
 #[cfg(feature = "transcript-poseidon")]
 pub use poseidon::PoseidonSponge;
 pub use private::PrivateChannel;
+#[cfg(feature = "prover-coins")]
+pub use prover::{OwnedCoins, ProverCoins};
 pub use prover::{ProverInit, ProverTranscript};
 #[cfg(feature = "test-utils")]
 pub use scripted::{Script, ScriptedTranscript, TranscriptEvent};
