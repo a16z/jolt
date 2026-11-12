@@ -53,7 +53,7 @@ impl Invariant for SplitEqBindLowHighInvariant {
     }
 
     fn description(&self) -> String {
-        "GruenSplitEqPolynomial::bind (LowToHigh) must match \
+        "GruenRoundMut::bind (LowToHigh) must match \
          Polynomial::bind_with_order at every round."
             .to_string()
     }
@@ -80,8 +80,13 @@ impl Invariant for SplitEqBindLowHighInvariant {
         }
 
         for (round, r) in rs.iter().enumerate() {
+            let gruen_round = split_eq.round_mut().ok_or_else(|| {
+                CheckError::InvalidInput(format!(
+                    "round {round}: split equality exhausted after {num_vars} binds"
+                ))
+            })?;
             regular_eq.bind_with_order(*r, BindingOrder::LowToHigh);
-            split_eq.bind(*r);
+            gruen_round.bind(*r);
 
             let merged = split_eq.merge();
             if regular_eq.evals() != merged.evals() {
@@ -126,7 +131,7 @@ impl Invariant for SplitEqBindHighLowInvariant {
     }
 
     fn description(&self) -> String {
-        "GruenSplitEqPolynomial::bind (HighToLow) must match \
+        "GruenRoundMut::bind (HighToLow) must match \
          Polynomial::bind_with_order at every round."
             .to_string()
     }
@@ -153,8 +158,13 @@ impl Invariant for SplitEqBindHighLowInvariant {
         }
 
         for (round, r) in rs.iter().enumerate() {
+            let gruen_round = split_eq.round_mut().ok_or_else(|| {
+                CheckError::InvalidInput(format!(
+                    "round {round}: split equality exhausted after {num_vars} binds"
+                ))
+            })?;
             regular_eq.bind_with_order(*r, BindingOrder::HighToLow);
-            split_eq.bind(*r);
+            gruen_round.bind(*r);
 
             let merged = split_eq.merge();
             if regular_eq.evals() != merged.evals() {

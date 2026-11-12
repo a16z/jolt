@@ -3415,6 +3415,7 @@ dependencies = [
  "cc",
  "criterion",
  "jolt-riscv",
+ "jolt-utils",
  "num-bigint",
  "num-traits",
  "rand 0.8.7",
@@ -3427,12 +3428,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "jolt-claim-expr"
+version = "0.1.0"
+dependencies = [
+ "jolt-algebra",
+ "serde",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "jolt-claims"
 version = "0.1.0"
 dependencies = [
  "allocative",
  "bincode 2.0.1",
  "derive_more",
+ "jolt-claim-expr",
  "jolt-claims-derive",
  "jolt-field",
  "jolt-lookup-tables",
@@ -3545,6 +3556,7 @@ dependencies = [
  "libc",
  "postcard",
  "rand 0.8.7",
+ "rayon",
  "rust-code-analysis",
  "schemars 1.2.3",
  "serde",
@@ -4080,6 +4092,7 @@ dependencies = [
  "postcard",
  "rand 0.8.7",
  "tracer",
+ "tracing",
 ]
 
 [[package]]

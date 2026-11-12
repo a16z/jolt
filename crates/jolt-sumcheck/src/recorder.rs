@@ -24,7 +24,7 @@ use jolt_field::JoltField;
 use jolt_poly::CompressedPoly;
 #[cfg(feature = "prover")]
 use jolt_poly::UnivariatePoly;
-use jolt_transcript::{Encoding, Transcript};
+use jolt_transcript::{Encoding, PrivateChannel, Transcript};
 #[cfg(feature = "prover")]
 use jolt_transcript::{FieldTranscript, ProverTranscript};
 #[cfg(all(feature = "committed", feature = "prover"))]
@@ -53,7 +53,11 @@ pub trait SumcheckRecorder<F: Field> {
     type Proof;
 
     /// Absorb the batch's per-member input claims (present members, in
-    /// declaration order). Clear: each appended in that order.
+    /// declaration order). Clear: each absorbed as its own private message
+    /// ([`PrivateChannel::append_private`]) in that order. An input claim is
+    /// not always derivable from earlier absorbs: stage 4's RAM value check
+    /// subtracts advice and program-image openings that stage 4 itself
+    /// outputs, so the claim must be bound before the batch's rounds.
     /// Committed: no-op — the claims' commitments were already absorbed by the
     /// stage that produced them, so the transcript never sees the scalars.
     fn absorb_input_claims<T: Transcript>(&mut self, input_claims: &[F], transcript: &mut T);
@@ -75,7 +79,8 @@ pub trait SumcheckRecorder<F: Field> {
         T: FieldTranscript<F> + ProverTranscript;
 
     /// Record the flattened output-claim values (canonical absorb order) and
-    /// assemble the proof. Clear: each value appended in that order.
+    /// assemble the proof. Clear: the values as one private message
+    /// ([`PrivateChannel::append_private`]).
     /// Committed: values are row-committed and only the
     /// commitments are absorbed.
     #[cfg(feature = "prover")]
@@ -130,7 +135,7 @@ impl<F: Field + Encoding> SumcheckRecorder<F> for ClearSumcheckRecorder<F> {
 
     fn absorb_input_claims<T: Transcript>(&mut self, input_claims: &[F], transcript: &mut T) {
         for input_claim in input_claims {
-            transcript.append(input_claim);
+            transcript.append_private(std::slice::from_ref(input_claim));
         }
     }
 
@@ -166,9 +171,7 @@ impl<F: Field + Encoding> SumcheckRecorder<F> for ClearSumcheckRecorder<F> {
     where
         T: FieldTranscript<F> + ProverTranscript,
     {
-        for opening_claim in output_claim_values {
-            transcript.append(opening_claim);
-        }
+        transcript.append_private(output_claim_values);
         Ok(RecordedSumcheck {
             proof: CompressedSumcheckProof {
                 round_polynomials: self.round_polynomials,

@@ -5,6 +5,8 @@
 //! both sides share: public messages, field challenges through each field's
 //! [`ChallengeCodec`], and proof-of-work steps whose nonce the proof carries.
 //! [`ProverTranscript`] and [`VerifierTranscript`] add the NARG string.
+//! [`PrivateChannel`] absorbs witness-dependent values, which a masked mode
+//! hides behind pads; on a clear transcript they are public messages.
 //! `prover_transcript` (under `prover-entropy`) and [`verifier_transcript`] bind
 //! the session and public statement before the first message.
 //!
@@ -44,6 +46,7 @@ mod grind_bits;
 #[cfg(feature = "transcript-poseidon")]
 mod poseidon;
 mod pow;
+mod private;
 mod prover;
 #[cfg(feature = "test-utils")]
 mod scripted;
@@ -61,6 +64,7 @@ pub use grind_bits::{
 };
 #[cfg(feature = "transcript-poseidon")]
 pub use poseidon::PoseidonSponge;
+pub use private::PrivateChannel;
 #[cfg(feature = "prover-coins")]
 pub use prover::{OwnedCoins, ProverCoins};
 pub use prover::{ProverInit, ProverTranscript};

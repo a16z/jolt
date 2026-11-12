@@ -23,16 +23,16 @@ impl VirtualHostIO {
         if call_id == JOLT_ADVICE_WRITE_CALL_ID {
             let ptr = cpu.x[11] as u64;
             let len = cpu.x[12] as u64;
-            let _ = cpu.handle_advice_write(ptr, len);
+            cpu.handle_advice_write(ptr, len);
         } else {
             let ptr = cpu.x[11] as u32;
             let len = cpu.x[12] as u32;
             let event = cpu.x[13] as u32;
 
             if call_id == JOLT_CYCLE_TRACK_CALL_ID {
-                let _ = cpu.handle_jolt_cycle_marker(ptr, len, event);
+                cpu.handle_jolt_cycle_marker(ptr, len, event);
             } else if call_id == JOLT_PRINT_CALL_ID {
-                let _ = cpu.handle_jolt_print(ptr, len, event);
+                cpu.handle_jolt_print(ptr, len, event);
             }
         }
     }
