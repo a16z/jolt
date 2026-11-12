@@ -2575,7 +2575,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5703,8 +5703,8 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
 name = "reth-ethereum-primitives"
-version = "2.8.0"
-source = "git+https://github.com/paradigmxyz/reth#53bf066feb7d9c39a026f45651851909bb9c1c56"
+version = "2.11.0"
+source = "git+https://github.com/paradigmxyz/reth#1993b9d4f28f1f8987da80723ed0bb26ad68ba9d"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -5957,7 +5957,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -6847,7 +6847,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
