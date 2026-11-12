@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794469528088,
+  "lastUpdate": 1794504120720,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -245938,6 +245938,270 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 888068,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "qvd@andrew.cmu.edu",
+            "name": "Quang Dao",
+            "username": "quangvdao"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "207ff0ffd2bc3c20ffe1725acf3a643c7f857456",
+          "message": "feat(jolt-transcript): private prover coins (#2399)\n\n* build: verifier-safe defaults; parallel, BlindFold and OS entropy behind features\n\n* fix(build): enable transcript entropy for Akita tests\n\n* feat(jolt-transcript): ProverCoins, OwnedCoins, prover-streams child coins\n\n* fix(build): declare features for isolated library builds\n\n* chore: update nested lockfiles for the feature changes\n\n* chore: update nested lockfiles for the new dependencies\n\n* style: taplo format the root manifest\n\n* fix(jolt-transcript): rename prover-streams to prover-coins and gate zeroize on it\n\nmoodlezoup asked for the name `prover-coins` so the feature is not\nconfused with the streaming prover. This commit renames the Cargo\nfeature in jolt-transcript and jolt-prover and in every cfg.\n\nThe `zeroize` features of spongefish and shake now sit under\n`prover-coins` instead of being enabled unconditionally. Only the\nprover's private sponge needs wipe-on-drop, so verifier builds keep the\ndependency features they had on main. `cargo tree -e normal,features` for\njolt-verifier, jolt-spartan-verifier, jolt-sumcheck, jolt-zk, jolt-dory\nand jolt-akita now matches the merge base. The fuzz and external-consumer\nlockfiles drop the shake, turboshake and zeroize entries the old\nunconditional features pulled in.\n\n* refactor(jolt-transcript): replace ChildCoins with ProverCoins::split\n\nsplit() draws 32 fresh bytes from the private sponge and returns them as a\nnew OwnedCoins, a private SHAKE128 sponge the caller owns. Samplers that\ncannot hold the transcript borrow, such as parallel chunks, get their own\nSend stream from the same primitive as the parent. The crate no longer\ndepends on chacha20 and adds no PRG assumption beyond SHAKE128.\n\n* refactor(jolt-transcript): wipe private sponges under prover-entropy and gate coins on prover-coins\n\nThe private SHAKE128 sponge is seeded under prover-entropy, but its wipe came\nfrom shake/zeroize under prover-coins, so builds with only prover-entropy never\nwiped it. shake/zeroize now sits under prover-entropy.\n\nspongefish/zeroize is dropped. Its XOF impls need the hasher to implement\nZeroize, and Shake128Hasher does not, so it only wiped the public sponges.\n\nprover-coins now turns on prover-entropy and gates the whole coin API:\nProverCoins, OwnedCoins, ProverTranscript::coins and its scripted forwarding.\nrand_core becomes optional, so verifier graphs match main exactly. jolt-akita\nenables prover-entropy in normal builds and gains zeroize features on shake,\ndigest, block-buffer and sponge-cursor; those add only Drop bodies and trait\nimpls.\n\nSuggested by Michael Zhu in review.",
+          "timestamp": "2026-11-12T08:13:34-08:00",
+          "tree_id": "2119a077b9d36cdb7373f8b83913b66a2432c632",
+          "url": "https://github.com/a16z/jolt/commit/207ff0ffd2bc3c20ffe1725acf3a643c7f857456"
+        },
+        "date": 1794504112888,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 4.219,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 888748,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.6586,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 462948,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 463356,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 463448,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.8367,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 463140,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-mem",
+            "value": 888472,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 1.8628,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 463408,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 4.9789,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 463464,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 4.8503,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 132920,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.9426,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 888524,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.646,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 463596,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.4934,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 463532,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 25.7489,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 463368,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 5.6151,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 463860,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 36.5128,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 699436,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 18.5949,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 620644,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 74.8301,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 680488,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.8492,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 463276,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 2.1254,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 463384,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 19.6755,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 888964,
             "unit": "KB",
             "extra": ""
           }
