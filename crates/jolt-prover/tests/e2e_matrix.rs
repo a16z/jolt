@@ -183,17 +183,17 @@ mod matrix {
         b
     }
 
-    /// A trace padded to 2^17 rows, which Akita commits at inner ring dimension
+    /// A trace padded to 2^18 rows, which Akita commits at inner ring dimension
     /// 512; the test asserts the dimension its proof selected.
     #[cfg(feature = "akita")]
     fn fibonacci_ring_512() -> GuestCase {
-        const N: u32 = 10_000;
+        const N: u32 = 20_000;
         GuestCase {
             inputs: postcard::to_stdvec(&N).expect("serialize guest input"),
             expected_output: Some(
                 postcard::to_stdvec(&fibonacci_reference(N)).expect("serialize guest output"),
             ),
-            max_padded_trace_length: Some(1 << 17),
+            max_padded_trace_length: Some(1 << 18),
             ..GuestCase::new("fibonacci-guest")
         }
     }
