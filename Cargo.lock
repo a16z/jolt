@@ -1398,6 +1398,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cdd35008169921d80bc60d3d0ab416eecb028c4cd653352907921d95084790be"
 dependencies = [
  "hybrid-array",
+ "zeroize",
 ]
 
 [[package]]
@@ -2257,6 +2258,7 @@ dependencies = [
  "const-oid 0.10.2",
  "crypto-common 0.2.2",
  "ctutils",
+ "zeroize",
 ]
 
 [[package]]
@@ -4107,9 +4109,11 @@ dependencies = [
  "jolt-transcript",
  "light-poseidon",
  "num-bigint",
+ "rand_core 0.6.4",
  "sha3 0.12.0",
  "shake",
  "spongefish",
+ "zeroize",
 ]
 
 [[package]]
@@ -6623,6 +6627,9 @@ name = "sponge-cursor"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3a0219bd7d979d58245a4f41f695e1ac9f8befdffadd7f61f1bae9e39abc6620"
+dependencies = [
+ "zeroize",
+]
 
 [[package]]
 name = "spongefish"
