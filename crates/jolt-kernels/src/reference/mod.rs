@@ -9,13 +9,21 @@
 //! impl; the seam (the traits, [`JoltBackend`], `ProofSession`, the wire
 //! types) never depends on this directory. The reference tier is the
 //! equivalence anchor optimized backends are tested against and the
-//! fallback partial backends compose over; it is eager-dense throughout — a
-//! test oracle at harness scale, never a performance path.
+//! fallback partial backends compose over. Its eager-dense compute-slot
+//! implementations are test oracles at harness scale, and
+//! `JoltBackend::optimized` replaces every one of them.
 //!
-//! The one exception is `akita/`. Under the `akita` feature,
-//! `JoltBackend::optimized` replaces only the compute slots and keeps this
-//! tier's commit slot, so `akita/` is the production Akita witness-commitment
-//! path and is tuned for performance.
+//! Other reference code runs in production proofs, so its cost matters:
+//!
+//! - `reference/akita/` serves the commit slot under the `akita` feature,
+//!   which `JoltBackend::optimized` keeps.
+//! - The round scheduler stays `ReferenceBackend` in every mode.
+//! - `NaiveSumcheckProver` drives the optimized RAM RAF-evaluation kernel.
+//! - Optimized kernels call helpers in `views`, such as `eq_table`.
+//! - Without `akita`, the optimized commit slot delegates advice commits,
+//!   field-inline witness commits and non-cycle-major grids to
+//!   `commitment.rs`, and the optimized field-inline opening delegates to
+//!   `opening.rs`.
 
 #[cfg(feature = "akita")]
 use jolt_akita::TraceOneHotCommitment;
