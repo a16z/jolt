@@ -164,8 +164,8 @@ pub use round_proof::{append_compressed_round, ClearRound, RoundMessage};
 #[cfg(feature = "prover")]
 pub use single::{prove_single, prove_single_with, ClearProverRounds, ProverRoundChannel};
 pub use single::{
-    verify_single, verify_single_with, visit_single_rounds, BindScalarClaim, ClearVerifierRounds,
-    RoundSpec, SingleFormat, SingleInstance, SingleReduction, SingleSumcheckProof, SumcheckShape,
-    SumcheckShapeError, VerifierRoundChannel,
+    verify_single, verify_single_with, visit_single_rounds, BindScalarClaim, RoundSpec,
+    SingleFormat, SingleInstance, SingleReduction, SingleSumcheckProof, SumcheckShape,
+    VerifierRoundChannel,
 };
 pub use verifier::SumcheckVerifier;

@@ -471,7 +471,12 @@ use allocation::Counting;
 static ALLOCATOR: Counting = Counting;
 
 /// Replays a four-round fixture under the counting allocator.
-fn verify_counted(factored: bool) -> ((usize, usize), [u8; 32], [u8; 32]) {
+/// Counts for `verify_single` and for the same transcript operations issued
+/// directly, without the driver.
+type Counts = (usize, usize);
+
+fn verify_fixture_counted(factored: bool) -> (Counts, Counts, [u8; 32], [u8; 32]) {
+    use jolt_transcript::{FieldTranscript, PrivateChannel};
     let mut kernel = ProductKernel::<Fr>::sampled(4, 71, factored, Fr::from_u64);
     let instance = instance(&kernel);
     let (proof, proved, state) = prove(&mut kernel, &instance);
@@ -479,15 +484,35 @@ fn verify_counted(factored: bool) -> ((usize, usize), [u8; 32], [u8; 32]) {
     let (replayed, counts) =
         allocation::measure(|| verify_single(&instance, &proof, &mut transcript).unwrap());
     assert_eq!(replayed, proved);
-    (counts, state, transcript.verifier_message::<[u8; 32]>())
+    let mut direct = verifier_transcript::<Blake2b512>(&session(), b"", &[]);
+    let ((), transcript_only) = allocation::measure(|| {
+        direct.bind_derived(&instance.input_claim);
+        for wire in &proof.rounds {
+            direct.append_private(wire.as_slice());
+            let _: Fr = direct.challenge().unwrap();
+        }
+    });
+    (
+        counts,
+        transcript_only,
+        state,
+        transcript.verifier_message::<[u8; 32]>(),
+    )
 }
 
-/// The verifier borrows each round's wire from the proof; a per-round copy
-/// adds one allocation per round.
+/// Beyond the transcript's own allocations, the verifier allocates only the
+/// challenge vector: it borrows each round's wire from the proof.
 #[test]
-fn verifier_allocations_are_pinned() {
+fn verifier_allocates_only_its_challenges() {
     for factored in [false, true] {
-        assert_eq!(verify_counted(factored).0, (18, 896));
+        let (driver, transcript_only, _, _) = verify_fixture_counted(factored);
+        assert_eq!(
+            driver,
+            (
+                transcript_only.0 + 1,
+                transcript_only.1 + 4 * std::mem::size_of::<Fr>()
+            )
+        );
     }
 }
 
@@ -496,7 +521,7 @@ fn verifier_allocations_are_pinned() {
 #[test]
 fn verifier_transcript_digest_is_frozen() {
     for factored in [false, true] {
-        let (_, prover_state, verifier_state) = verify_counted(factored);
+        let (_, _, prover_state, verifier_state) = verify_fixture_counted(factored);
         let expected = if factored {
             [
                 97, 113, 63, 193, 220, 197, 166, 119, 64, 24, 22, 35, 5, 37, 249, 171, 2, 17, 145,
@@ -515,30 +540,20 @@ fn verifier_transcript_digest_is_frozen() {
 
 #[test]
 fn checked_shape_boundaries() {
-    use jolt_sumcheck::{SumcheckShape, SumcheckShapeError};
-    assert_eq!(
-        SumcheckShape::new(1, 0),
-        Err(SumcheckShapeError::ZeroDegree)
-    );
+    use jolt_sumcheck::SumcheckShape;
     assert!(matches!(
-        SumcheckShape::new(0, usize::MAX),
-        Err(SumcheckShapeError::DegreeOverflow { .. })
+        SumcheckShape::new::<Fr>(1, 0),
+        Err(SumcheckError::ZeroDegreeBound)
     ));
     assert!(matches!(
-        SumcheckShape::new(2, usize::MAX),
-        Err(SumcheckShapeError::Overflow { .. })
+        SumcheckShape::new::<Fr>(0, usize::MAX),
+        Err(SumcheckError::DegreeOverflow { .. })
     ));
-    assert_eq!(
-        SumcheckShape::new(u32::MAX as usize, 1)
-            .unwrap()
-            .num_rounds(),
-        u32::MAX as usize
-    );
     assert!(matches!(
-        SumcheckShape::new(u32::MAX as usize + 1, 1),
-        Err(SumcheckShapeError::RoundCountOutOfRange { .. })
+        SumcheckShape::new::<Fr>(2, usize::MAX),
+        Err(SumcheckError::ShapeOverflow { .. })
     ));
-    assert_eq!(SumcheckShape::new(0, 1).unwrap().degree_bound(), 1);
+    assert_eq!(SumcheckShape::new::<Fr>(0, 1).unwrap().degree_bound(), 1);
 }
 
 #[test]
@@ -621,17 +636,21 @@ impl<Err> ProveRounds<Fr, Err> for OneRound {
 /// Counts transport calls and draws the challenge 3.
 #[derive(Default)]
 struct Transport {
+    binds: usize,
     sends: usize,
     draws: usize,
     fail: bool,
+    wires: Vec<Vec<Fr>>,
 }
 impl ProverRoundChannel<Fr> for Transport {
     type Error = ChannelError;
     fn bind_input_claim(&mut self, _claim: &Fr) -> Result<(), ChannelError> {
+        self.binds += 1;
         Ok(())
     }
-    fn send_round(&mut self, _round: usize, _wire: &[Fr]) -> Result<(), ChannelError> {
+    fn send_round(&mut self, _round: usize, wire: &[Fr]) -> Result<(), ChannelError> {
         self.sends += 1;
+        self.wires.push(wire.to_vec());
         if self.fail {
             Err(ChannelError::Transport)
         } else {
@@ -667,7 +686,22 @@ fn prover_checks_each_round_before_sending_it() {
         let reduction = prove_one(&compressed, coefficients, &mut channel).unwrap();
         assert_eq!(reduction.output_claim, Fr::from_u64(16));
         assert_eq!((channel.sends, channel.draws), (1, 1));
+        assert_eq!(channel.wires, [vec![Fr::from_u64(1), Fr::from_u64(1)]]);
     }
+    // The kernel proves one round; the instance asks for two.
+    let two = SingleInstance {
+        rounds: 2,
+        ..compressed.clone()
+    };
+    let mut channel = Transport::default();
+    assert!(matches!(
+        prove_one(&two, &[1, 2, 1], &mut channel),
+        Err(ChannelError::Sumcheck(SumcheckError::RoundCountMismatch {
+            expected: 2,
+            got: 1
+        }))
+    ));
+    assert_eq!((channel.binds, channel.sends, channel.draws), (0, 0, 0));
     let mut channel = Transport::default();
     assert!(matches!(
         prove_one(&compressed, &[1, 1, 1], &mut channel),
@@ -703,6 +737,15 @@ fn prover_checks_each_round_before_sending_it() {
         },
         ..compressed
     };
+    for instance in [&compressed, &factored] {
+        let zero = SingleInstance {
+            input_claim: Fr::zero(),
+            ..instance.clone()
+        };
+        let mut channel = Transport::default();
+        let _ = prove_one(&zero, &[], &mut channel).unwrap();
+        assert_eq!(channel.wires, [vec![Fr::zero(); 2]]);
+    }
     // q = 1 + X fails q(0) + 7 (q(1) - q(0)) = 5.
     let mut channel = Transport::default();
     assert!(matches!(
@@ -726,9 +769,6 @@ fn streaming_visitor_borrows_wires_and_stops_on_failure() {
     impl VerifierRoundChannel<Fr> for Borrowed {
         type Error = ChannelError;
         type Slots = usize;
-        fn validate_shape(&self, _shape: SumcheckShape) -> Result<(), ChannelError> {
-            Ok(())
-        }
         fn verify_round<R>(
             &mut self,
             round: usize,
@@ -746,7 +786,7 @@ fn streaming_visitor_borrows_wires_and_stops_on_failure() {
     let pointer = channel.wire.as_ptr();
     let mut visits = 0;
     let result = visit_single_rounds(
-        SumcheckShape::new(4, 2).unwrap(),
+        SumcheckShape::new::<Fr>(4, 2).unwrap(),
         &mut channel,
         |round, wire, slot, challenge| {
             assert!(matches!(wire, Cow::Borrowed(_)));
@@ -761,7 +801,7 @@ fn streaming_visitor_borrows_wires_and_stops_on_failure() {
     assert_eq!((channel.calls, visits), (1, 1));
     channel.calls = 0;
     let result = visit_single_rounds(
-        SumcheckShape::new(4, 1).unwrap(),
+        SumcheckShape::new::<Fr>(4, 1).unwrap(),
         &mut channel,
         |_, _, _, _| {
             visits += 1;
@@ -776,117 +816,6 @@ fn streaming_visitor_borrows_wires_and_stops_on_failure() {
         }))
     ));
     assert_eq!((channel.calls, visits), (1, 1));
-}
-
-#[test]
-fn verifier_rejects_channel_shape_mismatch_before_claim_binding() {
-    use jolt_sumcheck::{
-        verify_single_with, visit_single_rounds, ClearVerifierRounds, RoundSpec, SumcheckShape,
-        VerifierRoundChannel,
-    };
-    for factored in [false, true] {
-        let mut kernel = ProductKernel::<Fr>::sampled(2, 101, factored, Fr::from_u64);
-        let original = instance(&kernel);
-        let (proof, _, _) = prove(&mut kernel, &original);
-        for (rounds, degree) in [(0, 2), (1, 2), (3, 2), (2, 1)] {
-            let mut wrong = original.clone();
-            wrong.rounds = rounds;
-            wrong.degree = degree;
-            if factored {
-                wrong.format = SingleFormat::EqFactored {
-                    equality_point: Point::low_to_high(vec![Fr::from_u64(7); rounds]),
-                };
-            }
-            let mut transcript = verifier_transcript::<Blake2b512>(&session(), b"", &[]);
-            let mut untouched = verifier_transcript::<Blake2b512>(&session(), b"", &[]);
-            let result = {
-                let mut channel =
-                    ClearVerifierRounds::new(original.shape().unwrap(), &proof, &mut transcript)
-                        .unwrap();
-                verify_single_with(&wrong, &mut channel)
-            };
-            if factored && rounds == 0 {
-                assert!(matches!(result, Err(SumcheckError::EqFactoredZeroRounds)));
-            } else {
-                assert!(matches!(
-                    result,
-                    Err(SumcheckError::ChannelShapeMismatch { .. })
-                ));
-            }
-            assert_eq!(
-                transcript.verifier_message::<[u8; 32]>(),
-                untouched.verifier_message::<[u8; 32]>()
-            );
-        }
-        // Shape checks also protect the raw visitor, including an empty loop.
-        let mut transcript = verifier_transcript::<Blake2b512>(&session(), b"", &[]);
-        let mut channel =
-            ClearVerifierRounds::new(original.shape().unwrap(), &proof, &mut transcript).unwrap();
-        let mut visits = 0;
-        for shape in [
-            SumcheckShape::new(0, 2).unwrap(),
-            SumcheckShape::new(1, 2).unwrap(),
-            SumcheckShape::new(2, 1).unwrap(),
-        ] {
-            let result = visit_single_rounds(shape, &mut channel, |_, _, (), _| {
-                visits += 1;
-                Ok(())
-            });
-            assert!(matches!(
-                result,
-                Err(SumcheckError::ChannelShapeMismatch { .. })
-            ));
-        }
-        assert_eq!(visits, 0);
-        // A direct caller cannot price a round's proof of work at another
-        // degree than the channel's nonces were checked for.
-        let mut transcript = verifier_transcript::<Blake2b512>(&session(), b"", &[]);
-        let mut untouched = verifier_transcript::<Blake2b512>(&session(), b"", &[]);
-        let mut channel =
-            ClearVerifierRounds::new(original.shape().unwrap(), &proof, &mut transcript).unwrap();
-        let result = channel.verify_round(
-            0,
-            RoundSpec {
-                width: 2,
-                degree: 1,
-            },
-            |_, (), _| Ok(()),
-        );
-        assert!(matches!(
-            result,
-            Err(SumcheckError::RoundDegreeMismatch {
-                round: 0,
-                expected: 2,
-                got: 1
-            })
-        ));
-        assert_eq!(
-            transcript.verifier_message::<[u8; 32]>(),
-            untouched.verifier_message::<[u8; 32]>()
-        );
-    }
-    for format in [
-        SingleFormat::Compressed,
-        SingleFormat::EqFactored {
-            equality_point: Point::low_to_high(vec![Fr::one()]),
-        },
-    ] {
-        let empty = SingleSumcheckProof::<Fr>::default();
-        let mut transcript = verifier_transcript::<Blake2b512>(&session(), b"", &[]);
-        let mut channel =
-            ClearVerifierRounds::new(SumcheckShape::new(0, 2).unwrap(), &empty, &mut transcript)
-                .unwrap();
-        let instance = SingleInstance {
-            input_claim: Fr::one(),
-            rounds: 1,
-            degree: 2,
-            format,
-        };
-        assert!(matches!(
-            verify_single_with(&instance, &mut channel),
-            Err(SumcheckError::ChannelShapeMismatch { .. })
-        ));
-    }
 }
 
 #[test]

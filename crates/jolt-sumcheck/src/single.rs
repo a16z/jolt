@@ -79,10 +79,11 @@ mod channels;
 #[cfg(feature = "prover")]
 mod prover;
 mod shape;
-pub use channels::{BindScalarClaim, ClearVerifierRounds, RoundSpec, VerifierRoundChannel};
+use channels::ClearVerifierRounds;
+pub use channels::{BindScalarClaim, RoundSpec, VerifierRoundChannel};
 #[cfg(feature = "prover")]
 pub use prover::{ClearProverRounds, ProverRoundChannel};
-pub use shape::{SumcheckShape, SumcheckShapeError};
+pub use shape::SumcheckShape;
 
 impl<E: Field> SingleInstance<E> {
     pub fn shape(&self) -> Result<SumcheckShape, SumcheckError<E>> {
@@ -101,15 +102,15 @@ impl<E: Field> SingleInstance<E> {
         Ok(shape)
     }
 
-    #[cfg(feature = "prover")]
-    fn tau(&self, round: usize) -> Result<Option<E>, SumcheckError<E>> {
+    /// Round `round`'s wire format; [`shape`](Self::shape) gives eq-factored
+    /// instances one equality coordinate per round.
+    fn wire_format(&self, round: usize) -> Result<WireFormat<E>, SumcheckError<E>> {
         match &self.format {
-            SingleFormat::Compressed => Ok(None),
+            SingleFormat::Compressed => Ok(WireFormat::Compressed),
             SingleFormat::EqFactored { equality_point } => equality_point
                 .as_slice()
                 .get(round)
-                .copied()
-                .map(Some)
+                .map(|&tau| WireFormat::EqFactored { tau })
                 .ok_or(SumcheckError::EqualityPointLengthMismatch {
                     expected: self.rounds,
                     got: equality_point.len(),
@@ -139,17 +140,20 @@ impl<E: Field> SingleInstance<E> {
             .fold(false, |acc, c| acc | !c.is_zero());
         if excess {
             return Err(SumcheckError::DegreeBoundExceeded {
-                got: coefficients.len() - 1,
+                got: coefficients.iter().rposition(|c| !c.is_zero()).unwrap_or(0),
                 max: self.degree,
             });
         }
-        let tau = self.tau(round)?;
-        match tau {
-            None => BooleanHypercube.check_round_sum(round, claim, &poly)?,
-            Some(tau) => EqFactoredRound { tau }.check_round_sum(round, claim, &poly)?,
-        }
-        // Compressed omits the linear coefficient; eq-factored the constant.
-        let omitted = usize::from(tau.is_none());
+        let omitted = match self.wire_format(round)? {
+            WireFormat::Compressed => {
+                BooleanHypercube.check_round_sum(round, claim, &poly)?;
+                1
+            }
+            WireFormat::EqFactored { tau } => {
+                EqFactoredRound { tau }.check_round_sum(round, claim, &poly)?;
+                0
+            }
+        };
         let mut wire = poly.into_coefficients();
         if omitted < wire.len() {
             let _ = wire.remove(omitted);
@@ -158,19 +162,19 @@ impl<E: Field> SingleInstance<E> {
         Ok(wire)
     }
 
-    // Both drivers validate shape before entering their bounded round loops.
-    #[expect(
-        clippy::indexing_slicing,
-        reason = "shape validates the equality-point length and drivers bound round by that shape"
-    )]
-    fn next_claim(&self, round: usize, claim: E, wire: &[E], challenge: E) -> E {
-        let format = match &self.format {
-            SingleFormat::Compressed => WireFormat::Compressed,
-            SingleFormat::EqFactored { equality_point } => WireFormat::EqFactored {
-                tau: equality_point.as_slice()[round],
-            },
-        };
-        eval_round_wire(format, wire, claim, challenge)
+    fn next_claim(
+        &self,
+        round: usize,
+        claim: E,
+        wire: &[E],
+        challenge: E,
+    ) -> Result<E, SumcheckError<E>> {
+        Ok(eval_round_wire(
+            self.wire_format(round)?,
+            wire,
+            claim,
+            challenge,
+        ))
     }
 }
 
@@ -203,7 +207,7 @@ where
         let wire = instance.wire_coefficients(round, claim, poly)?;
         channel.send_round(round, &wire)?;
         let challenge = channel.round_challenge(round, shape.degree_bound())?;
-        claim = instance.next_claim(round, claim, &wire, challenge);
+        claim = instance.next_claim(round, claim, &wire, challenge)?;
         channel.finish_round(wire);
         challenges.push(challenge);
     }
@@ -218,6 +222,10 @@ where
 
 /// Streams each wire directly to the visitor. The channel may lend a reused
 /// buffer or transfer ownership; the driver never collects round messages.
+///
+/// Reads rounds `0..shape.num_rounds()` in order, once each. The caller binds
+/// the input claim beforehand, and the channel must reject a proof that holds
+/// more rounds than `shape`.
 pub fn visit_single_rounds<E, C>(
     shape: SumcheckShape,
     channel: &mut C,
@@ -227,7 +235,6 @@ where
     E: Field,
     C: VerifierRoundChannel<E>,
 {
-    channel.validate_shape(shape)?;
     let spec = RoundSpec {
         width: shape.degree_bound(),
         degree: shape.degree_bound(),
@@ -258,12 +265,11 @@ where
     C: BindScalarClaim<E>,
 {
     let shape = instance.shape()?;
-    channel.validate_shape(shape)?;
     channel.bind_input_claim(&instance.input_claim)?;
     let mut claim = instance.input_claim;
     let mut challenges = Vec::with_capacity(shape.num_rounds());
     visit_single_rounds(shape, channel, |round, wire, (), challenge| {
-        claim = instance.next_claim(round, claim, &wire, challenge);
+        claim = instance.next_claim(round, claim, &wire, challenge)?;
         challenges.push(challenge);
         Ok(())
     })?;

@@ -18,9 +18,6 @@ pub struct RoundSpec {
 pub trait VerifierRoundChannel<E: Field> {
     type Error: From<SumcheckError<E>>;
     type Slots;
-    /// Reject any mismatch with a transport's predeclared shape before absorption.
-    /// Transports whose shape is supplied solely by the driver may accept it directly.
-    fn validate_shape(&self, shape: SumcheckShape) -> Result<(), Self::Error>;
     /// Reads one round of `spec.width` values, checks its proof of work at
     /// `spec.degree`, draws its challenge, and lends the wire to `visit`.
     fn verify_round<R>(
@@ -36,16 +33,18 @@ pub trait BindScalarClaim<E: Field>: VerifierRoundChannel<E, Slots = ()> {
     fn bind_input_claim(&mut self, claim: &E) -> Result<(), Self::Error>;
 }
 
-pub struct ClearVerifierRounds<'a, E, T> {
+/// The clear transport over a stored proof. Built only by `verify_single`
+/// from the same instance shape the driver reads with, so every round's
+/// width and proof-of-work degree are the ones checked here.
+pub(crate) struct ClearVerifierRounds<'a, E, T> {
     transcript: &'a mut T,
     proof: &'a SingleSumcheckProof<E>,
     pow: RoundNonces<'a>,
-    shape: SumcheckShape,
 }
 
 impl<'a, E: Field + Encoding, T: FieldTranscript<E>> ClearVerifierRounds<'a, E, T> {
     /// Checks all proof widths and nonce counts before touching the transcript.
-    pub fn new(
+    pub(crate) fn new(
         shape: SumcheckShape,
         proof: &'a SingleSumcheckProof<E>,
         transcript: &'a mut T,
@@ -71,7 +70,6 @@ impl<'a, E: Field + Encoding, T: FieldTranscript<E>> ClearVerifierRounds<'a, E, 
             transcript,
             proof,
             pow,
-            shape,
         })
     }
 }
@@ -81,28 +79,12 @@ impl<E: Field + Encoding, T: FieldTranscript<E>> VerifierRoundChannel<E>
 {
     type Error = SumcheckError<E>;
     type Slots = ();
-    fn validate_shape(&self, shape: SumcheckShape) -> Result<(), Self::Error> {
-        if self.shape != shape {
-            return Err(SumcheckError::ChannelShapeMismatch {
-                expected: shape,
-                got: self.shape,
-            });
-        }
-        Ok(())
-    }
     fn verify_round<R>(
         &mut self,
         round: usize,
-        spec: RoundSpec,
+        _spec: RoundSpec,
         visit: impl FnOnce(Cow<'_, [E]>, (), E) -> Result<R, Self::Error>,
     ) -> Result<R, Self::Error> {
-        if spec.degree != self.shape.degree_bound() {
-            return Err(SumcheckError::RoundDegreeMismatch {
-                round,
-                expected: self.shape.degree_bound(),
-                got: spec.degree,
-            });
-        }
         let wire = self
             .proof
             .rounds
@@ -111,13 +93,6 @@ impl<E: Field + Encoding, T: FieldTranscript<E>> VerifierRoundChannel<E>
                 expected: round.saturating_add(1),
                 got: self.proof.rounds.len(),
             })?;
-        if wire.len() != spec.width {
-            return Err(SumcheckError::WrongRoundWidth {
-                round,
-                expected: spec.width,
-                got: wire.len(),
-            });
-        }
         self.transcript.append_private(wire);
         self.pow.check(round, self.transcript)?;
         let challenge = self.transcript.challenge()?;
