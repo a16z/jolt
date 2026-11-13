@@ -100,15 +100,20 @@ where
         input.stage2.challenges.ram_read_write.gamma,
     )?;
     values.public(JoltDerivedId::from(RamReadWritePublic::EqCycle), eq_cycle)?;
-    let mask = jolt_poly::interval_mask_mle_msb(
-        &input.checked.write_protected_word_intervals,
-        &ram_read_write_opening.r_address,
-    )
-    .map_err(|error| public_error(JoltRelationId::RamReadWriteChecking, error))?;
-    values.public(
-        JoltDerivedId::from(RamReadWritePublic::CodeEqCycle),
-        eq_cycle * mask,
-    )?;
+    for (id, intervals) in [
+        (
+            RamReadWritePublic::CodeEqCycle,
+            &input.checked.ram_word_masks.write_protected,
+        ),
+        (
+            RamReadWritePublic::UnmappedEqCycle,
+            &input.checked.ram_word_masks.unmapped,
+        ),
+    ] {
+        let mask = jolt_poly::interval_mask_mle_msb(intervals, &ram_read_write_opening.r_address)
+            .map_err(|error| public_error(JoltRelationId::RamReadWriteChecking, error))?;
+        values.public(JoltDerivedId::from(id), eq_cycle * mask)?;
+    }
 
     let product_point = input
         .stage2

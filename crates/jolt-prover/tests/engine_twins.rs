@@ -16,6 +16,7 @@ use jolt_claims::protocols::jolt::relations::registers::RegistersValEvaluationIn
 use jolt_crypto::{Bn254, Bn254G1, JoltGroup, Pedersen, PedersenSetup};
 use jolt_field::{Fr, JoltField, One, Ring, Zero};
 use jolt_poly::{UnivariatePoly, UnivariatePolynomial};
+use jolt_program::preprocess::ram::RamWordMasks;
 use jolt_sumcheck::{
     prove_batch, prove_uniskip_clear, CenteredIntegerDomain, ClearRound, ClearSumcheckRecorder,
     CommittedSumcheckRecorder, ProveRounds, SequentialRounds, SumcheckDomain, SumcheckError,
@@ -356,7 +357,10 @@ fn ram_guard_fixture() -> (RamGuardTwinSumchecks<Fr>, RamGuardTwinInputClaims<Fr
                 ReadWriteDimensions::new(1, 1, 1, 1),
                 1,
                 vec![Fr::from_u64(2)],
-                vec![(0, 1)],
+                RamWordMasks {
+                    write_protected: vec![(0, 1)],
+                    unmapped: Vec::new(),
+                },
             ),
         },
         RamGuardTwinInputClaims {

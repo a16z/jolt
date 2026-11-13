@@ -1,8 +1,8 @@
 //! The stage 2 `RamReadWriteChecking` sumcheck instance.
 //!
-//! Owns the RAM read-write opening-point derivation and the `EqCycle` public-value
-//! computation, in lockstep with the BlindFold constraint's
-//! `ram::read_write_checking` formula.
+//! Owns the RAM read-write opening-point derivation and the `EqCycle`,
+//! `CodeEqCycle` and `UnmappedEqCycle` public-value computations, in lockstep
+//! with the BlindFold constraint's `ram::read_write_checking` formula.
 
 use jolt_claims::protocols::jolt::relations;
 pub use jolt_claims::protocols::jolt::relations::ram::{
@@ -14,6 +14,7 @@ use jolt_claims::protocols::jolt::{
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::JoltField;
 use jolt_poly::{interval_mask_mle_msb, try_eq_mle};
+use jolt_program::preprocess::ram::RamWordMasks;
 
 use crate::stages::relations::ConcreteSumcheck;
 use crate::stages::stage1::Stage1ClearOutput;
@@ -39,7 +40,7 @@ pub struct RamReadWriteChecking<F: JoltField> {
     dimensions: ReadWriteDimensions,
     ram_log_k: usize,
     product_tau_low: Vec<F>,
-    write_protected_word_intervals: Vec<(usize, usize)>,
+    masks: RamWordMasks,
 }
 
 impl<F: JoltField> RamReadWriteChecking<F> {
@@ -47,14 +48,14 @@ impl<F: JoltField> RamReadWriteChecking<F> {
         dimensions: ReadWriteDimensions,
         ram_log_k: usize,
         product_tau_low: Vec<F>,
-        write_protected_word_intervals: Vec<(usize, usize)>,
+        masks: RamWordMasks,
     ) -> Self {
         Self {
             symbolic: relations::ram::ReadWriteChecking::new(dimensions),
             dimensions,
             ram_log_k,
             product_tau_low,
-            write_protected_word_intervals,
+            masks,
         }
     }
 }
@@ -68,7 +69,11 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
 
 impl<F: JoltField> RamReadWriteChecking<F> {
     pub fn write_protected_word_intervals(&self) -> &[(usize, usize)] {
-        &self.write_protected_word_intervals
+        &self.masks.write_protected
+    }
+
+    pub fn unmapped_word_intervals(&self) -> &[(usize, usize)] {
+        &self.masks.unmapped
     }
 
     pub fn dimensions(&self) -> ReadWriteDimensions {
@@ -121,7 +126,9 @@ impl<F: JoltField> ConcreteSumcheck<F> for RamReadWriteChecking<F> {
         match public_id {
             // The opening point is `[r_address(log_k) || r_cycle(log_t)]`, so the
             // cycle sub-point is the suffix past the address bits.
-            RamReadWritePublic::EqCycle | RamReadWritePublic::CodeEqCycle => {
+            RamReadWritePublic::EqCycle
+            | RamReadWritePublic::CodeEqCycle
+            | RamReadWritePublic::UnmappedEqCycle => {
                 let r_cycle = output_points.val().get(self.ram_log_k..).ok_or_else(|| {
                     public_input_failed(format!(
                         "RAM read-write opening point is too short: expected at least {}, got {}",
@@ -131,19 +138,18 @@ impl<F: JoltField> ConcreteSumcheck<F> for RamReadWriteChecking<F> {
                 })?;
                 let eq_cycle =
                     try_eq_mle(&self.product_tau_low, r_cycle).map_err(public_input_failed)?;
-                match public_id {
-                    RamReadWritePublic::EqCycle => Ok(eq_cycle),
-                    RamReadWritePublic::CodeEqCycle => {
-                        let r_address = output_points
-                            .val()
-                            .get(..self.ram_log_k)
-                            .ok_or_else(|| public_input_failed("RAM address point is too short"))?;
-                        let mask =
-                            interval_mask_mle_msb(&self.write_protected_word_intervals, r_address)
-                                .map_err(public_input_failed)?;
-                        Ok(eq_cycle * mask)
-                    }
-                }
+                let intervals = match public_id {
+                    RamReadWritePublic::EqCycle => return Ok(eq_cycle),
+                    RamReadWritePublic::CodeEqCycle => &self.masks.write_protected,
+                    RamReadWritePublic::UnmappedEqCycle => &self.masks.unmapped,
+                };
+                let r_address = output_points
+                    .val()
+                    .get(..self.ram_log_k)
+                    .ok_or_else(|| public_input_failed("RAM address point is too short"))?;
+                let mask =
+                    interval_mask_mle_msb(intervals, r_address).map_err(public_input_failed)?;
+                Ok(eq_cycle * mask)
             }
         }
     }

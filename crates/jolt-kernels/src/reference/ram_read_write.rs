@@ -1,7 +1,7 @@
 //! The RAM read/write-checking (stage 2) kernel: a naive member over the
 //! joint `(address ‖ cycle)` domain.
 //!
-//! The summand `eq(τ_low,j)·ra(k,j)·[(1+γ)val(k,j)+(γ+γ²C(k))inc(j)+γ³]`
+//! The summand `eq(τ_low,j)·ra(k,j)·[(1+γ)val(k,j)+(γ+γ²C(k))inc(j)+γ³+γ⁴N(k)]`
 //! is one `Expr` over dense tables of size `2^(log_K + log_T)` in
 //! address-major layout (`index = k·2^log_T + j`), reordered to bind
 //! `LowToHigh` in the configured phase order. The cycle-indexed `inc` and
@@ -47,16 +47,17 @@ impl<F: JoltField> PrepareKernel<F, RamReadWriteChecking<F>> for ReferenceBacken
             ),
         ]);
         let eq = eq_table(tau_low);
-        let intervals = relation.write_protected_word_intervals();
-        let protected_eq = (0..copies)
-            .flat_map(|address| {
-                let protected = intervals
-                    .iter()
-                    .any(|&(start, end)| start <= address && address < end);
-                eq.iter()
-                    .map(move |&weight| if protected { weight } else { F::zero() })
-            })
-            .collect();
+        let masked_eq = |intervals: &[(usize, usize)]| -> Vec<F> {
+            (0..copies)
+                .flat_map(|address| {
+                    let inside = intervals
+                        .iter()
+                        .any(|&(start, end)| start <= address && address < end);
+                    eq.iter()
+                        .map(move |&weight| if inside { weight } else { F::zero() })
+                })
+                .collect()
+        };
         let derived_tables = BTreeMap::from([
             (
                 JoltDerivedId::from(RamReadWritePublic::EqCycle),
@@ -64,7 +65,11 @@ impl<F: JoltField> PrepareKernel<F, RamReadWriteChecking<F>> for ReferenceBacken
             ),
             (
                 JoltDerivedId::from(RamReadWritePublic::CodeEqCycle),
-                layout.table(protected_eq)?,
+                layout.table(masked_eq(relation.write_protected_word_intervals()))?,
+            ),
+            (
+                JoltDerivedId::from(RamReadWritePublic::UnmappedEqCycle),
+                layout.table(masked_eq(relation.unmapped_word_intervals()))?,
             ),
         ]);
 

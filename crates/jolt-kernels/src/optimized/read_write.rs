@@ -43,11 +43,17 @@ impl ReadWriteOrder {
 }
 
 /// Fixed batch coefficients, shared by every sparse-matrix phase.
+///
+/// The RAM relation batches read, write, code (`C`), count and unmapped
+/// (`N`) claims with powers `1, γ, γ², γ³, γ⁴`. Both address masks enter the
+/// per-entry factor linearly: `C` scales the increment and `N` adds to the
+/// count coefficient.
 #[derive(Clone, Copy)]
 pub(super) struct ReadWriteBatch<F> {
     gamma: F,
     code: F,
     count: F,
+    unmapped: F,
 }
 
 #[derive(Clone, Copy)]
@@ -60,26 +66,36 @@ pub(super) struct ReadWriteCoefficients<F> {
 impl<F: JoltField> ReadWriteBatch<F> {
     pub(super) fn new(gamma: F) -> Self {
         let code = gamma * gamma;
+        let count = code * gamma;
         Self {
             gamma,
             code,
-            count: code * gamma,
+            count,
+            unmapped: count * gamma,
         }
     }
 
-    pub(super) fn unbound(&self, protected: bool) -> ReadWriteCoefficients<F> {
+    pub(super) fn unbound(&self, masks: AddressMaskBits) -> ReadWriteCoefficients<F> {
         ReadWriteCoefficients {
             gamma: self.gamma,
-            code_increment: if protected { self.code } else { F::zero() },
-            count: self.count,
+            code_increment: if masks.protected {
+                self.code
+            } else {
+                F::zero()
+            },
+            count: if masks.unmapped {
+                self.count + self.unmapped
+            } else {
+                self.count
+            },
         }
     }
 
-    pub(super) fn bound(&self, mask: F) -> ReadWriteCoefficients<F> {
+    pub(super) fn bound(&self, masks: AddressMaskValues<F>) -> ReadWriteCoefficients<F> {
         ReadWriteCoefficients {
             gamma: self.gamma,
-            code_increment: self.code * mask,
-            count: self.count,
+            code_increment: self.code * masks.protected,
+            count: self.count + self.unmapped * masks.unmapped,
         }
     }
 }
@@ -102,10 +118,83 @@ impl<F: JoltField> ReadWriteCoefficients<F> {
     }
 }
 
+/// The RAM relation's two public address masks: `C` over write-protected
+/// words and `N` over unmapped words. They bind in lockstep with the address
+/// variables.
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
+pub(super) struct AddressMasks<F: JoltField> {
+    protected: IntervalMask<F>,
+    unmapped: IntervalMask<F>,
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct AddressMaskBits {
+    protected: bool,
+    unmapped: bool,
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct AddressMaskValues<F> {
+    protected: F,
+    unmapped: F,
+}
+
+impl<F: JoltField> AddressMaskValues<F> {
+    pub(super) fn protected(&self) -> F {
+        self.protected
+    }
+
+    pub(super) fn unmapped(&self) -> F {
+        self.unmapped
+    }
+
+    /// The masks' values at `X = 2` on the line through `even` (`X = 0`) and
+    /// `odd` (`X = 1`).
+    pub(super) fn at_two(even: Self, odd: Self) -> Self {
+        Self {
+            protected: odd.protected + odd.protected - even.protected,
+            unmapped: odd.unmapped + odd.unmapped - even.unmapped,
+        }
+    }
+}
+
+impl<F: JoltField> AddressMasks<F> {
+    pub(super) fn new(protected: &[(usize, usize)], unmapped: &[(usize, usize)]) -> Self {
+        Self {
+            protected: IntervalMask::new(protected),
+            unmapped: IntervalMask::new(unmapped),
+        }
+    }
+
+    pub(super) fn contains_unbound(&self, index: usize) -> AddressMaskBits {
+        AddressMaskBits {
+            protected: self.protected.contains_unbound(index),
+            unmapped: self.unmapped.contains_unbound(index),
+        }
+    }
+
+    pub(super) fn value(&self, index: usize) -> AddressMaskValues<F> {
+        AddressMaskValues {
+            protected: self.protected.value(index),
+            unmapped: self.unmapped.value(index),
+        }
+    }
+
+    pub(super) fn bind(&mut self, r: F) {
+        self.protected.bind(r);
+        self.unmapped.bind(r);
+    }
+
+    pub(super) fn finish_address(&mut self) {
+        self.protected.finish_address();
+        self.unmapped.finish_address();
+    }
+}
+
 /// A low-bit-bound interval has full interior blocks and at most two boundary
 /// blocks. This stores O(s) endpoints/weights rather than a K-element table.
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
-pub(super) struct IntervalMask<F: JoltField> {
+struct IntervalMask<F: JoltField> {
     intervals: Vec<MaskInterval<F>>,
 }
 
@@ -134,7 +223,7 @@ impl<F: JoltField> MaskInterval<F> {
 }
 
 impl<F: JoltField> IntervalMask<F> {
-    pub(super) fn new(intervals: &[(usize, usize)]) -> Self {
+    fn new(intervals: &[(usize, usize)]) -> Self {
         Self {
             intervals: intervals
                 .iter()
@@ -150,7 +239,7 @@ impl<F: JoltField> IntervalMask<F> {
 
     /// Only used before any address bind. The sorted original intervals admit
     /// one binary search per surviving entry, with no additional trace storage.
-    pub(super) fn contains_unbound(&self, index: usize) -> bool {
+    fn contains_unbound(&self, index: usize) -> bool {
         let next = self
             .intervals
             .partition_point(|interval| interval.start <= index);
@@ -158,14 +247,14 @@ impl<F: JoltField> IntervalMask<F> {
             .is_some_and(|previous| index < self.intervals[previous].end)
     }
 
-    pub(super) fn value(&self, index: usize) -> F {
+    fn value(&self, index: usize) -> F {
         self.intervals
             .iter()
             .map(|interval| interval.value(index))
             .sum()
     }
 
-    pub(super) fn finish_address(&mut self) {
+    fn finish_address(&mut self) {
         let value = self.value(0);
         if let Some(interval) = self.intervals.first_mut() {
             interval.start = 0;
@@ -176,7 +265,7 @@ impl<F: JoltField> IntervalMask<F> {
         }
     }
 
-    pub(super) fn bind(&mut self, r: F) {
+    fn bind(&mut self, r: F) {
         for interval in &mut self.intervals {
             let start = interval.start / 2;
             let end = interval.end.div_ceil(2);

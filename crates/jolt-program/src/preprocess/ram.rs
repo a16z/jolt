@@ -201,6 +201,74 @@ pub fn write_protected_word_intervals(
     Ok(intervals)
 }
 
+/// The public RAM word masks of one proof's address domain, the `ram_K` words
+/// from the lowest mapped address. The RAM read-write sumcheck weights one claim
+/// by each mask.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RamWordMasks {
+    /// Mask C: code, canary, input and advice words, whose value every access
+    /// must preserve. See [`write_protected_word_intervals`].
+    pub write_protected: Vec<(usize, usize)>,
+    /// Mask N: words no access may touch. See [`unmapped_word_intervals`].
+    pub unmapped: Vec<(usize, usize)>,
+}
+
+impl RamWordMasks {
+    pub fn new(
+        code_intervals: &[(usize, usize)],
+        memory_layout: &MemoryLayout,
+        ram_k: usize,
+    ) -> Result<Self, PreprocessingError> {
+        Ok(Self {
+            write_protected: write_protected_word_intervals(code_intervals, memory_layout, ram_k)?,
+            unmapped: unmapped_word_intervals(memory_layout, ram_k)?,
+        })
+    }
+}
+
+/// The words of the proof's domain that every tracer refuses to access: the
+/// padding between `io_end` and `RAM_START_ADDRESS`, and the words from
+/// `heap_end` to the end of the domain. The tracers fault on an access starting
+/// at or above `io_end` below RAM, or at or above `heap_end` in RAM (see
+/// `tracer::emulator::mmu::address_fault` and the x86 helpers' guest-load
+/// bounds). Both bounds are doubleword aligned, so each tracer bound falls on a
+/// word boundary of this mask. The panic and termination flag words lie below
+/// `io_end` and are outside the mask.
+pub fn unmapped_word_intervals(
+    memory_layout: &MemoryLayout,
+    ram_k: usize,
+) -> Result<Vec<(usize, usize)>, PreprocessingError> {
+    let lowest = memory_layout.get_lowest_address();
+    let word = |address: u64| -> Result<usize, PreprocessingError> {
+        let offset =
+            address
+                .checked_sub(lowest)
+                .ok_or(PreprocessingError::InvalidUnmappedIntervals(
+                    "bound is below lowest RAM address",
+                ))?;
+        if !offset.is_multiple_of(8) {
+            return Err(PreprocessingError::InvalidUnmappedIntervals(
+                "bound is not doubleword aligned",
+            ));
+        }
+        usize::try_from(offset / 8)
+            .map_err(|_| PreprocessingError::InvalidUnmappedIntervals("bound exceeds usize range"))
+    };
+    let io_gap = (word(memory_layout.io_end)?, word(RAM_START_ADDRESS)?);
+    let heap_padding = (word(memory_layout.heap_end)?, ram_k);
+    if io_gap.0 > io_gap.1 || io_gap.1 > heap_padding.0 {
+        return Err(PreprocessingError::InvalidUnmappedIntervals(
+            "regions are out of order",
+        ));
+    }
+    let mut intervals = merge_word_intervals(vec![io_gap, heap_padding]);
+    intervals.retain_mut(|(start, end)| {
+        *end = (*end).min(ram_k);
+        *start < *end
+    });
+    Ok(intervals)
+}
+
 fn source_word_intervals(
     source_extents: impl IntoIterator<Item = (u64, bool)>,
     lowest_address: u64,

@@ -47,6 +47,8 @@ pub enum RamReadWriteChallenge {
 pub enum RamReadWritePublic {
     EqCycle,
     CodeEqCycle,
+    /// Cycle equality times the unmapped-word mask N.
+    UnmappedEqCycle,
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]

@@ -24,6 +24,7 @@ The changes are:
 3. **Termination at a repeatable self-jump.** A new bytecode circuit flag `CanEnd` marks jumps at which a trace may end (direct JAL; JALR whose target provably repeats). One new R1CS row, `(Jump − ShouldJump)·(LookupOutput − UnexpandedPC + 2^64·(1 − CanEnd)) = 0`, fills the spare slot in the second uni-skip group. The prover sizes the trace to the next power of two of the executed length, so a real row can occupy the last index.
 4. **Selected address on every memory row.** RAM read-write checking gains a γ³ claim, `(Load + Store)(r0) = Σ_{k,j} eq(r0,j)·ra(k,j)`, using the Load and Store openings that stage 1 already produces. The tracer rejects loads below `lowest_address`.
 5. **Admission checks.** Layout and preprocessing admission check `heap_end ≤ 2^64 − 8`, `lowest_address + 8·K_max ≤ 2^64` for the maximum admitted RAM domain, and even addresses for every decoded instruction.
+6. **Unmapped words.** RAM read-write checking gains a γ⁴ claim, `0 = Σ_{k,j} eq(r0,j)·N(k)·ra(k,j)`, where `N` is the public mask of the I/O padding `[io_end, RAM_START_ADDRESS)` and the heap padding `[heap_end, lowest_address + 8·K)`, clipped to the proof's RAM domain. Layout construction rounds `heap_end` up to a doubleword, which matches the linker's 8-aligned `__heap_end`, and admission rejects an unaligned `heap_end`, so both bounds fall on word boundaries. The verifier evaluates `Ñ` like `C̃`. The interpreter and native tracer fault on any access at or above `io_end` below DRAM and at or above `heap_end` in DRAM.
 
 ### Invariants
 
@@ -31,6 +32,7 @@ The changes are:
 - **Soundness of Change 1.** `Inc` and the committed `ra` chunks are fixed before `r0` is drawn. With `ra` zero-or-one-hot on each cycle, `Inc(j)·Σ_k C(k)·ra(k,j)` is a fixed vector; its multilinear extension vanishes at random `r0` only if the vector is zero, except with probability `log T/|F|`.
 - **Soundness of Change 3.** The row needs field characteristic greater than 2^65. BN254 `Fr` and Akita's `fp128` qualify; the row's definition asserts it.
 - **Soundness of Change 4.** Together with one-hotness, the count claim forces exactly one selected address on memory rows and none on other rows. RAF then places every access at or above `lowest_address`.
+- **Soundness of Change 6.** With `ra` zero-or-one-hot on each cycle, `Σ_k N(k)·ra(k,j)` is a fixed 0/1 vector; its multilinear extension vanishes at random `r0` only if no cycle selects an unmapped word, except with probability `log T/|F|`. Together with Change 4 and RAF, every access lands on a mapped word in `[lowest_address, io_end)` or `[RAM_START_ADDRESS, heap_end)`.
 - **Completeness.** Honest SDK guests prove as before: their exits write the canonical flag pair and end at `j .`; they never store into text; their loads stay in mapped memory.
 - **Tracer agreement.** The interpreter, parallel replay and native x86 tracer apply the same store, load and stopping rules.
 
@@ -51,6 +53,7 @@ The changes are:
 - [ ] Changing the public memory layout changes the protection mask and preprocessing digest in full and committed program modes.
 - [ ] Same-value stores into code words are accepted.
 - [ ] A memory row whose `ra` is all zero is rejected by the verifier; a non-memory row with zero `ra` is accepted; a load of the lowest mapped word is accepted.
+- [ ] Verifier witnesses that load or store at `io_end`, at `heap_end`, or at the last word of the domain are rejected; an honest guest that uses its whole heap, including a partial final word, proves.
 - [ ] Byte, half, word and doubleword loads and stores to every lane of both flag words behave as plain memory; a run ending with a noncanonical flag pair is rejected by the tracer.
 - [ ] Truncation after an arbitrary jump, after `jalr x5,0(x5)`, after `c.jalr ra`, or inside an expansion is rejected; SDK exits, stable JALR exits, compressed jumps and complete EBREAK expansions are accepted.
 - [ ] A guest whose executed length is exactly a power of two proves in a domain of that size.
@@ -63,7 +66,7 @@ The existing e2e matrix, engine twin tests and verifier soundness suites must pa
 
 ### Performance
 
-Measured on the optimized backend against `main` with interleaved runs; see the PR description for the numbers. Expected movement: stage 2 (RAM read-write) prover time rises by the extra coefficient work in the existing pass; stage 1 (outer sumcheck) rises by the guard extraction and one folded coefficient; proof size grows by one opening (`CanEnd`); verifier time grows by the interval-mask evaluation and the extra R1CS row. Traces whose executed length is a power of two get a domain half the size they had.
+Measured on the optimized backend against `main` with interleaved runs; see the PR description for the numbers. Expected movement: stage 2 (RAM read-write) prover time rises by the extra coefficient work in the existing pass, including one more interval mask for `N`; stage 1 (outer sumcheck) rises by the guard extraction and one folded coefficient; proof size grows by one opening (`CanEnd`); verifier time grows by the two interval-mask evaluations, one more claim in the stage 2 batch, and the extra R1CS row. Traces whose executed length is a power of two get a domain half the size they had.
 
 ## Design
 
@@ -75,6 +78,7 @@ Measured on the optimized backend against `main` with interleaved runs; see the 
 | Plain flag words | `common` (device), `tracer`, `jolt-tracer-x86`, `jolt-witness` |
 | Termination | `jolt-riscv` (`CanEnd`), `jolt-claims` (R1CS row), `jolt-kernels` (outer sumcheck), `jolt-witness`, `jolt-prover` (trace sizing), `z3-verifier`, `zklean-extractor` |
 | Selected address | `jolt-claims` (RAM relation), kernels, verifier, `tracer`, `jolt-tracer-x86` |
+| Unmapped words | `common` (aligned `heap_end`), `jolt-claims` (RAM relation), `jolt-program` (`RamWordMasks`), kernels, verifier, `tracer`, `jolt-tracer-x86` |
 | Admission | `common`, `jolt-program`, `jolt-verifier` |
 
 The PR's v3/v2 preprocessing digest domains already bind the code intervals, `CanEnd` and the entire memory layout in full and committed program modes. Deriving the enlarged mask from those fields requires no additional digest input or domain change.

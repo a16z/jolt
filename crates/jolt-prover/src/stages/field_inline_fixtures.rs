@@ -33,6 +33,7 @@ use jolt_program::execution::{FieldEvent, JoltProgram, MemoryImage, TraceData, T
 use jolt_program::field_inline::{
     FieldEncodedValue, FieldInlineTraceData, FieldRegisterRead, FieldRegisterWrite,
 };
+use jolt_program::preprocess::ram::RamWordMasks;
 use jolt_program::preprocess::JoltProgramPreprocessing;
 use jolt_riscv::{
     JoltInstructionKind, JoltInstructionProfile, JoltInstructionRow, JoltTraceRow,
@@ -415,9 +416,7 @@ pub(crate) fn addi_only_preprocessing() -> JoltProverPreprocessing<DoryScheme, P
 /// The stage-4+ recipes' checked-inputs carrier for the fixture traces,
 /// mirroring what shape validation derives for a field-inline proof at this scale
 /// (no advice, no precommitted objects, full program).
-pub(crate) fn test_checked_inputs(
-    write_protected_word_intervals: &[(usize, usize)],
-) -> CheckedInputs {
+pub(crate) fn test_checked_inputs(ram_word_masks: &RamWordMasks) -> CheckedInputs {
     CheckedInputs {
         public_io: test_public_io(),
         zk: cfg!(feature = "zk"),
@@ -425,7 +424,7 @@ pub(crate) fn test_checked_inputs(
         ram_K: 1 << RAM_LOG_K,
         entry_address: ENTRY,
         preprocessing_digest: [0u8; 32],
-        write_protected_word_intervals: write_protected_word_intervals.to_vec(),
+        ram_word_masks: ram_word_masks.clone(),
         untrusted_advice_commitment_present: false,
         trusted_advice_commitment_present: false,
         vc_capacity: cfg!(feature = "zk").then_some(MAX_BLINDFOLD_GENERATORS),
@@ -616,7 +615,7 @@ pub(crate) mod twins {
         public_io: &JoltDevice,
         stage1: &Stage1ProverOutput<Fr, C>,
         stage2: &Stage2ProverOutput<Fr, C>,
-        write_protected_word_intervals: &[(usize, usize)],
+        ram_word_masks: &RamWordMasks,
     ) {
         let log_t = LOG_T;
         let log_k = config.ram_K.ilog2() as usize;
@@ -648,7 +647,7 @@ pub(crate) mod twins {
                 read_write_dimensions,
                 log_k,
                 tau_low.clone(),
-                write_protected_word_intervals.to_vec(),
+                ram_word_masks.clone(),
             ),
             product_remainder: ProductRemainder::new(
                 product_dimensions,
