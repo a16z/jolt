@@ -25,7 +25,7 @@ use std::collections::BTreeSet;
 
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::JoltField;
-use jolt_transcript::FieldTranscript;
+use jolt_transcript::{FieldTranscript, PrivateChannel};
 
 use crate::stages::ids::{VerifierChallengeId, VerifierDerivedId};
 use crate::VerifierError;
@@ -48,9 +48,7 @@ pub trait OutputAppend<F: JoltField>: OutputClaims<F> {
     /// and MUST match the order in which the
     /// prover commits the openings.
     fn append_openings<T: FieldTranscript<F>>(&self, transcript: &mut T) {
-        for value in self.opening_values() {
-            transcript.append(&value);
-        }
+        transcript.append_private(&self.opening_values());
     }
 }
 
@@ -622,7 +620,10 @@ mod tests {
             via_values.append(&value);
         }
 
-        assert_eq!(via_append.absorbed(), via_values.absorbed());
+        assert_eq!(
+            via_append.absorbed().concat(),
+            via_values.absorbed().concat()
+        );
     }
 
     #[derive(OutputClaims)]

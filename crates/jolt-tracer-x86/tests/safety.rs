@@ -332,6 +332,8 @@ fn device_load_failures_report_io_overflow() {
         .expect("load error")
         .contains("I/O overflow"));
 
+    // A host call never fails: it ignores a range a guest load would reject,
+    // as the interpreter does.
     let program = single_row_program(row(Kind::VirtualHostIO(VirtualHostIO(())), None, None, 0));
     for call in [JOLT_ADVICE_WRITE_CALL_ID, JOLT_PRINT_CALL_ID] {
         pre[10] = u64::from(call);
@@ -339,43 +341,37 @@ fn device_load_failures_report_io_overflow() {
         pre[12] = 1;
         pre[13] = u64::from(JOLT_PRINT_STRING);
         let read = run_program(&program, &pre, &[], &[]).expect("run overflowing host read");
-        assert_eq!(read.exit, 4);
-        assert!(read
-            .helper_error
-            .expect("host-read error")
-            .contains("I/O overflow"));
+        assert_eq!(read.exit, 1, "{:?}", read.helper_error);
+        assert_eq!(read.advice_tape, [] as [u8; 0]);
     }
 }
 
 #[test]
-fn advice_write_enforces_guest_load_bounds() {
+fn advice_write_follows_guest_load_bounds() {
     let layout = JoltDeviceMemory::new(&memory_config()).memory_layout;
     let program = single_row_program(row(Kind::VirtualHostIO(VirtualHostIO(())), None, None, 0));
-    for (address, error) in [
-        (layout.get_lowest_address() - 1, Some("I/O underflow")),
-        (layout.heap_end, Some("Illegal Memory Access")),
-        (layout.get_lowest_address(), None),
-        (SCRATCH_START, None),
+    // A rejected range leaves the tape empty and the run continues.
+    for (address, tape) in [
+        (layout.get_lowest_address() - 1, None),
+        (layout.heap_end, None),
+        (layout.get_lowest_address(), Some(0)),
+        (SCRATCH_START, Some(0xab)),
     ] {
         let mut pre = [0u64; REGS];
         pre[10] = u64::from(JOLT_ADVICE_WRITE_CALL_ID);
         pre[11] = address;
         pre[12] = 1;
         let outcome = run_program(&program, &pre, &[0xab], &[]).expect("run advice write");
-        if let Some(error) = error {
-            assert_eq!(outcome.exit, 4, "address {address:#x}");
-            assert!(outcome
-                .helper_error
-                .expect("advice-write error")
-                .contains(error));
-            assert_eq!(outcome.advice_tape, [] as [u8; 0]);
-        } else {
-            assert_eq!(outcome.exit, 1, "{:?}", outcome.helper_error);
-            assert_eq!(
-                outcome.advice_tape,
-                [if address == SCRATCH_START { 0xab } else { 0 }]
-            );
-        }
+        assert_eq!(
+            outcome.exit, 1,
+            "address {address:#x}: {:?}",
+            outcome.helper_error
+        );
+        assert_eq!(
+            outcome.advice_tape,
+            Vec::from_iter(tape),
+            "address {address:#x}"
+        );
     }
 }
 
