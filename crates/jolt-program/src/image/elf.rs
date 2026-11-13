@@ -1,6 +1,6 @@
 use common::constants::RAM_START_ADDRESS;
 use jolt_riscv::{uncompress_rv64_instruction, JoltInstructionProfile, SourceInstruction};
-use object::{Object, ObjectSection, ObjectSymbol, SectionKind};
+use object::{Object, ObjectSection, ObjectSymbol, SectionKind, SymbolKind};
 use std::{
     collections::{BTreeMap, HashMap},
     ops::Range,
@@ -54,6 +54,11 @@ pub fn decode_elf(
     let mut text_ranges = Vec::new();
     let mut mapping_symbols: HashMap<_, Vec<_>> = HashMap::new();
     for symbol in obj.symbols() {
+        // Mapping symbols are local STT_NOTYPE; a global or typed `$x...`
+        // label is an ordinary symbol.
+        if !symbol.is_local() || symbol.kind() != SymbolKind::Unknown {
+            continue;
+        }
         let (Some(section), Ok(name)) = (symbol.section_index(), symbol.name()) else {
             continue;
         };
@@ -91,7 +96,9 @@ pub fn decode_elf(
             text_ranges.push((start, end));
             if let Some(symbols) = mapping_symbols.get_mut(&section.index()) {
                 symbols.retain(|(address, _)| (start..end).contains(address));
-                symbols.sort_by_key(|(address, _)| *address);
+                // At a shared address the code symbol sorts last and wins.
+                symbols
+                    .sort_by_key(|&(address, kind)| (address, matches!(kind, MappingSymbol::Code)));
                 for (index, &(address, kind)) in symbols.iter().enumerate() {
                     let next = symbols.get(index + 1).map_or(end, |(address, _)| *address);
                     if address < next && matches!(kind, MappingSymbol::Data) {
@@ -348,18 +355,30 @@ mod tests {
         out
     }
 
-    fn build_elf64_with_symbols(
+    const STB_GLOBAL_NOTYPE: u8 = 0x10;
+    const STB_LOCAL_FUNC: u8 = 0x02;
+
+    fn build_elf64_with_symbols(sections: Vec<TestSection>, symbols: &[(u64, &str)]) -> Vec<u8> {
+        let local: Vec<_> = symbols
+            .iter()
+            .map(|&(address, name)| (address, name, 0, 1))
+            .collect();
+        build_elf64_with_symbol_table(sections, &local)
+    }
+
+    /// Symbols are `(address, name, st_info, st_shndx)`.
+    fn build_elf64_with_symbol_table(
         mut sections: Vec<TestSection>,
-        symbols: &[(u64, &str)],
+        symbols: &[(u64, &str, u8, u16)],
     ) -> Vec<u8> {
         let strtab_index = sections.len() as u32 + 1;
         let symtab_index = strtab_index + 1;
         let mut strings = vec![0];
         let mut entries = vec![0; 24];
-        for &(address, name) in symbols {
+        for &(address, name, info, shndx) in symbols {
             push_u32(&mut entries, strings.len() as u32);
-            entries.extend_from_slice(&[0, 0]);
-            push_u16(&mut entries, 1);
+            entries.extend_from_slice(&[info, 0]);
+            push_u16(&mut entries, shndx);
             push_u64(&mut entries, address);
             push_u64(&mut entries, 0);
             strings.extend_from_slice(name.as_bytes());
@@ -655,5 +674,42 @@ mod tests {
             vec![RAM_START_ADDRESS as usize, RAM_START_ADDRESS as usize + 10]
         );
         assert!(image.memory_init.contains(&(RAM_START_ADDRESS + 14, 0x13)));
+    }
+
+    #[test]
+    fn decode_elf_mapping_symbols_ignore_foreign_and_out_of_range_symbols() {
+        let text = RAM_START_ADDRESS;
+        let elf = build_elf64_with_symbol_table(
+            vec![
+                text_section(
+                    text,
+                    &[
+                        0x13, 0x05, 0x10, 0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x13, 0x05,
+                        0x20, 0x00, 0x13, 0x05, 0x30, 0x00,
+                    ],
+                ),
+                data_section(text + 0x100, &[0; 4]),
+            ],
+            &[
+                // Unsorted, and a tie at 10 resolves to code regardless of order.
+                (text + 10, "$x.1", 0, 1),
+                (text + 10, "$d", 0, 1),
+                (text + 4, "$d.1", 0, 1),
+                // Outside the section, or not mapping symbols of this section.
+                (text - 4, "$d", 0, 1),
+                (text + 18, "$d", 0, 1),
+                (text + 14, "$d", STB_GLOBAL_NOTYPE, 1),
+                (text + 14, "$d", STB_LOCAL_FUNC, 1),
+                (text + 14, "$d", 0, 2),
+            ],
+        );
+        let image = decode_elf(&elf, RV64IMAC_JOLT).expect("data must not reject the image");
+        let addresses: Vec<_> = image
+            .instructions
+            .iter()
+            .map(|row| row.row().address)
+            .collect();
+        let text = text as usize;
+        assert_eq!(addresses, vec![text, text + 10, text + 14]);
     }
 }
