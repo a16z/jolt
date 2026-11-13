@@ -72,7 +72,6 @@ fn env_rows(name: &str, default: usize) -> usize {
 ///
 /// Tracing is serial by default. Setting `TRACER_PARALLEL=<workers>` opts
 /// into two-pass parallel tracing (bit-identical output); see [`parallel`].
-#[tracing::instrument(skip_all)]
 pub fn trace(
     elf_contents: &[u8],
     elf_path: Option<&PathBuf>,
@@ -100,6 +99,7 @@ pub fn trace(
     .expect("guest execution violated the I/O contract")
 }
 
+#[tracing::instrument(skip_all, name = "trace")]
 pub(crate) fn try_trace(
     elf_contents: &[u8],
     elf_path: Option<&PathBuf>,

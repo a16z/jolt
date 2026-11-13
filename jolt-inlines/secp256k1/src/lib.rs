@@ -53,6 +53,8 @@ pub const SECP256K1_DIVR_NAME: &str = "SECP256K1_DIVR";
 pub const SECP256K1_GLVR_ADV_FUNCT3: u32 = 0x07;
 pub const SECP256K1_GLVR_ADV_NAME: &str = "SECP256K1_GLVR_ADV";
 
+mod fq_arithmetic;
+
 pub mod sdk;
 pub use sdk::*;
 
@@ -68,3 +70,6 @@ pub use host::*;
 
 #[cfg(all(test, feature = "host"))]
 mod tests;
+
+#[cfg(all(test, feature = "host"))]
+mod fq_arithmetic_tests;
