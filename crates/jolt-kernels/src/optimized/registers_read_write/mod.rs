@@ -37,6 +37,7 @@ mod address_first;
 use address::{OperandEq, RegisterAddressState};
 mod rows;
 pub(crate) mod sparse;
+mod streaming;
 #[cfg(test)]
 #[expect(clippy::unwrap_used, reason = "test support module")]
 pub(crate) mod test_support;
@@ -45,6 +46,7 @@ pub(crate) mod test_support;
 mod tests;
 
 pub(crate) use rows::{RegisterCycleRow, SharedRdIndices};
+pub use streaming::StreamingRegistersReadWrite;
 
 use address_first::AddressFirstKernel;
 use rows::CollectRegisterEntries;
@@ -91,6 +93,21 @@ impl<F: JoltField> PrepareKernel<F, RegistersReadWriteChecking<F>> for Optimized
         inputs: ProverInputs<'_, F, RegistersReadWriteChecking<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = RegistersReadWriteChecking<F>>>, KernelError<F>>
     {
+        Self::prepare_kernel(Some(session), witness, inputs)
+    }
+}
+
+impl OptimizedRegistersReadWrite {
+    /// The default kernel for `inputs`. `rd_carry` is the session that
+    /// receives the per-cycle `rd` indices the default stage-5 kernel
+    /// reclaims ([`SharedRdIndices`]); `None` when stage 5 reads the rows
+    /// itself.
+    fn prepare_kernel<F: JoltField>(
+        rd_carry: Option<&mut ProofSession>,
+        witness: &dyn JoltWitnessPlane<F>,
+        inputs: ProverInputs<'_, F, RegistersReadWriteChecking<F>>,
+    ) -> Result<Box<dyn SumcheckKernel<F, Relation = RegistersReadWriteChecking<F>>>, KernelError<F>>
+    {
         let dimensions = inputs.relation.register_dimensions();
         let order = ReadWriteOrder::new::<F>(dimensions)?;
         let log_t = dimensions.log_t();
@@ -113,7 +130,7 @@ impl<F: JoltField> PrepareKernel<F, RegistersReadWriteChecking<F>> for Optimized
         }
         if order == ReadWriteOrder::AddressFirst {
             return Ok(Box::new(AddressFirstKernel::prepare(
-                session, witness, &inputs,
+                rd_carry, witness, &inputs,
             )?));
         }
         let cycles = 1usize << log_t;
@@ -130,8 +147,9 @@ impl<F: JoltField> PrepareKernel<F, RegistersReadWriteChecking<F>> for Optimized
         } = CollectRegisterEntries::collect(witness, cycles)?;
         let cycle = CycleState::new(entries, inputs.challenges.gamma, rd_inc);
 
-        // Park the rd hot indices for the stage-5 val-evaluation kernel.
-        session.park(SharedRdIndices::new(rd_indices, cycles));
+        if let Some(session) = rd_carry {
+            session.park(SharedRdIndices::new(rd_indices, cycles));
+        }
 
         Ok(Box::new(ReadWriteKernel {
             dimensions,

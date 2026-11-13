@@ -127,8 +127,10 @@ impl<F: JoltField> AddressFirstKernel<F> {
         )
     }
 
+    /// `rd_carry` is the session that receives the rows' `rd` indices for the
+    /// default stage-5 kernel, if any.
     pub(super) fn prepare(
-        session: &mut ProofSession,
+        rd_carry: Option<&mut ProofSession>,
         witness: &dyn JoltWitnessPlane<F>,
         inputs: &ProverInputs<'_, F, RegistersReadWriteChecking<F>>,
     ) -> Result<Self, KernelError<F>> {
@@ -152,20 +154,19 @@ impl<F: JoltField> AddressFirstKernel<F> {
             .collect::<Result<_, _>>()?;
         let mut checkpoints = Vec::with_capacity(rows.len().div_ceil(CHUNK));
         let mut values = [0i128; 1 << REGISTER_ADDRESS_BITS];
-        let rd_indices = rows
-            .iter()
-            .enumerate()
-            .map(|(cycle, row)| {
-                if cycle % CHUNK == 0 {
-                    checkpoints.push(values);
-                }
-                if let Some(rd) = row.rd {
-                    values[usize::from(rd)] += row.inc;
-                }
-                row.rd
-            })
-            .collect();
-        session.park(SharedRdIndices::new(rd_indices, cycles));
+        let rd_indices = rows.iter().enumerate().map(|(cycle, row)| {
+            if cycle % CHUNK == 0 {
+                checkpoints.push(values);
+            }
+            if let Some(rd) = row.rd {
+                values[usize::from(rd)] += row.inc;
+            }
+            row.rd
+        });
+        match rd_carry {
+            Some(session) => session.park(SharedRdIndices::new(rd_indices.collect(), cycles)),
+            None => rd_indices.for_each(drop),
+        }
         let gruen =
             GruenSplitEqPolynomial::new(&inputs.points.rd_write_value, BindingOrder::LowToHigh);
         Ok(Self {
