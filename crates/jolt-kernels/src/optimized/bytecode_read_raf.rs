@@ -1094,12 +1094,13 @@ struct CycleGrouping {
 }
 
 impl CycleGrouping {
+    const SHORT_ENTRIES: usize = 64;
     const LONG_ENTRIES: usize = 2048;
     const LONG_BATCH: usize = 16384;
 
     const SHORT: Self = Self {
-        entries: 64,
-        sample_groups: 64,
+        entries: Self::SHORT_ENTRIES,
+        sample_groups: Self::SHORT_ENTRIES,
         #[cfg(feature = "parallel")]
         batch: CYCLE_CHUNK,
         min_groups: 0,
@@ -1141,9 +1142,9 @@ impl BytecodePcChunks {
         [CycleGrouping::SHORT, CycleGrouping::LONG]
             .into_iter()
             .find(|plan| {
-                // Four-factor products have a cheaper ungrouped path. Longer
-                // samples are useful for expensive products when a complete
-                // batch can run on each worker.
+                // Use full-window samples only for more than four factors and,
+                // in parallel builds, at least one batch per worker. Smaller
+                // products or fewer batches retain cache-sized samples.
                 let long_sample = self.selectors.len() > 4;
                 #[cfg(feature = "parallel")]
                 let long_sample =

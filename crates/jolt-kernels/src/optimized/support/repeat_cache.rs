@@ -88,9 +88,8 @@ pub(crate) fn repeats_often(
     repeats_often_in_window(len, block_len, block_len, hash, same)
 }
 
-/// Samples complete windows with the caller's cache capacity. A cache can
-/// recognize loops longer than its nominal entry budget because it has four
-/// slots per entry; clearing the sample sooner hides those repeats.
+/// Samples complete windows with the caller's cache capacity; clearing the
+/// sample sooner can hide repeats that the execution window would merge.
 pub(crate) fn repeats_often_in_window(
     len: usize,
     entries: usize,
