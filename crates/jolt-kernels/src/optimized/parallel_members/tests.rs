@@ -6,6 +6,7 @@
 use std::cell::Cell;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::Duration;
 
 use jolt_field::{Fr, Ring};
 use jolt_poly::{BindingOrder, Polynomial, UnivariatePoly};
@@ -282,7 +283,7 @@ impl OccupancyMember<'_> {
         let active = self.active.fetch_add(1, Ordering::SeqCst) + 1;
         let _ = self.peak.fetch_max(active, Ordering::SeqCst);
         // Keep transient owners live long enough for other worker calls to overlap.
-        std::thread::sleep(std::time::Duration::from_millis(2));
+        std::thread::sleep(Duration::from_millis(2));
         let _ = self.visits.fetch_add(1, Ordering::SeqCst);
         let _ = self.active.fetch_sub(1, Ordering::SeqCst);
     }
