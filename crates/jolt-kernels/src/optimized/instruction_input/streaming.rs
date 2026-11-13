@@ -77,11 +77,24 @@ fn dense_table_bytes<F: JoltField>(prefix: usize, round: usize) -> usize {
     (NUM_TABLES * size_of::<F>()).saturating_mul(prefix.div_ceil(1 << round))
 }
 
+/// Whether `2^rounds` cycles with `prefix` cycles before the constant suffix
+/// keep the eager kernel: when its whole reservation is no larger than the
+/// dense tables streaming would fill under [`DENSE_TABLE_CAP`], the streamed
+/// rounds would cost time and save no memory. A one-cycle domain has no
+/// round whose pass could fill the tables. A reservation past `usize::MAX`
+/// streams.
+fn prefers_eager<F: JoltField>(rounds: usize, prefix: usize) -> bool {
+    let streamed_bytes = dense_table_bytes::<F>(
+        prefix,
+        crossover_round::<F>(rounds, prefix, DENSE_TABLE_CAP),
+    );
+    rounds == 0
+        || OptimizedInstructionInput::peak_bytes::<F>(prefix)
+            .is_some_and(|bytes| bytes <= streamed_bytes)
+}
+
 impl<F: JoltField> PrepareKernel<F, InstructionInput<F>> for StreamingInstructionInput {
-    /// The eager kernel when its whole reservation is no larger than the
-    /// dense tables streaming would fill under [`DENSE_TABLE_CAP`]: the
-    /// streamed rounds would cost time and save no memory. A one-cycle
-    /// domain has no round whose pass could fill the tables.
+    /// The eager kernel where [`prefers_eager`], else the streaming kernel.
     fn prepare(
         &self,
         _session: &mut ProofSession,
@@ -92,14 +105,7 @@ impl<F: JoltField> PrepareKernel<F, InstructionInput<F>> for StreamingInstructio
         let rows = BundleStore::resident(witness, r_product.len(), "instruction input trace rows")?;
         let rounds = r_product.len();
         let prefix = rows.access().constant_suffix_start(1 << rounds)?;
-        let streamed_bytes = dense_table_bytes::<F>(
-            prefix,
-            crossover_round::<F>(rounds, prefix, DENSE_TABLE_CAP),
-        );
-        if rounds == 0
-            || OptimizedInstructionInput::peak_bytes::<F>(prefix)
-                .is_some_and(|bytes| bytes <= streamed_bytes)
-        {
+        if prefers_eager::<F>(rounds, prefix) {
             return Ok(Box::new(OptimizedInstructionInputKernel::new(
                 r_product,
                 rows,
@@ -813,6 +819,41 @@ mod tests {
                 VISIT_ROWS,
             );
         }
+    }
+
+    /// Zero product coordinates at the first-bound and a middle round over
+    /// rows with a constant suffix: the exceptional rounds' explicit q(1),
+    /// streamed and filling, carries the suffix's weight.
+    #[test]
+    fn exceptional_rounds_include_the_constant_suffix() {
+        let log_t = 4;
+        let challenges: Vec<Fr> = (0..log_t).map(challenge).collect();
+        let mut point = product_point(log_t);
+        point[log_t - 1] = fr(0);
+        point[1] = fr(0);
+        for prefix in [3, 5, 9, 12] {
+            let mut rows = synthetic_rows(log_t, 4040 + prefix as u64);
+            let tail = rows[rows.len() - 1];
+            rows[prefix..].fill(tail);
+            for depth in 1..log_t {
+                assert_parity(rows.clone(), &point, &challenges, depth, VISIT_ROWS);
+            }
+        }
+    }
+
+    /// The trait path keeps the eager kernel exactly while its reservation
+    /// fits the streamed dense tables (full Fr domains switch at 2^25), on a
+    /// one-cycle domain, and streams when the reservation overflows.
+    #[test]
+    fn prepare_streams_only_where_it_saves_memory() {
+        assert!(prefers_eager::<Fr>(0, 1));
+        assert!(prefers_eager::<Fr>(20, 1 << 20));
+        assert!(prefers_eager::<Fr>(24, 1 << 24));
+        assert!(!prefers_eager::<Fr>(25, 1 << 25));
+        assert!(prefers_eager::<Fr>(26, 1 << 24));
+        assert!(!prefers_eager::<Fr>(30, 1 << 30));
+        assert!(OptimizedInstructionInput::peak_bytes::<Fr>(usize::MAX).is_none());
+        assert!(!prefers_eager::<Fr>(63, usize::MAX));
     }
 
     /// One [`trace_rows_match_reference_at_every_crossover`] case: the tables

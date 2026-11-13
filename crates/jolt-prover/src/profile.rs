@@ -389,10 +389,14 @@ const STREAMING_FAMILIES: [(&str, FamilyFlag); 1] = [("instruction-input", |fami
     &mut families.instruction_input
 })];
 
-/// `--streaming`: comma-separated family names; empty selects none.
+/// `--streaming`: comma-separated family names; an empty value (the
+/// default) selects none, and empty names are rejected.
 fn parse_streaming_families(value: &str) -> StdResult<StreamingFamilies, String> {
     let mut families = StreamingFamilies::default();
-    for family in value.split(',').filter(|family| !family.is_empty()) {
+    if value.is_empty() {
+        return Ok(families);
+    }
+    for family in value.split(',') {
         let (_, flag) = STREAMING_FAMILIES
             .iter()
             .find(|(name, _)| *name == family)

@@ -33,7 +33,12 @@ fn streaming_option_selects_the_requested_families() {
     let options = ["jolt-prover", "--name", "fibonacci"];
     let unselected = Cli::try_parse_from(options).unwrap();
     assert_eq!(unselected.args.streaming, StreamingFamilies::default());
-    assert!(Cli::try_parse_from(options.into_iter().chain(["--streaming", "ram"])).is_err());
+    for invalid in ["ram", ",", "instruction-input,", ",instruction-input"] {
+        assert!(
+            Cli::try_parse_from(options.into_iter().chain(["--streaming", invalid])).is_err(),
+            "{invalid:?}"
+        );
+    }
 }
 
 #[test]
