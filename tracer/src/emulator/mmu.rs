@@ -5,7 +5,7 @@ pub const DRAM_BASE: u64 = RAM_START_ADDRESS;
 use crate::emulator::decode_cache::DecodeCache;
 use crate::emulator::memory::Memory;
 use common::constants::{RAM_START_ADDRESS, STACK_CANARY_SIZE};
-use common::jolt_device::{JoltDeviceMemory, MemoryLayout};
+use common::jolt_device::{JoltDevice, MemoryLayout};
 use jolt_program::preprocess::ram::is_code_word;
 use jolt_riscv::{RamRead, RamWrite};
 use std::sync::Arc;
@@ -27,7 +27,7 @@ pub struct Mmu {
 
     pub(crate) code_word_intervals: Arc<[(usize, usize)]>,
 
-    pub jolt_device: Option<JoltDeviceMemory>,
+    pub jolt_device: Option<JoltDevice>,
 
     /// Address translation can be affected `mstatus` (MPRV, MPP in machine mode)
     /// then `Mmu` has copy of it.
@@ -101,7 +101,7 @@ impl AddressFault {
 /// Checks a guest access at effective address `ea` against the Jolt memory
 /// layout.
 #[inline]
-fn address_fault(jolt_device: &JoltDeviceMemory, ea: u64, is_write: bool) -> Option<AddressFault> {
+fn address_fault(jolt_device: &JoltDevice, ea: u64, is_write: bool) -> Option<AddressFault> {
     let layout = &jolt_device.memory_layout;
     if ea < DRAM_BASE {
         if ea > layout.io_end {
@@ -135,10 +135,10 @@ fn address_fault(jolt_device: &JoltDeviceMemory, ea: u64, is_write: bool) -> Opt
     }
 }
 
-/// Whether [`JoltDeviceMemory::load`] serves the byte at `address` (it asserts on
+/// Whether [`JoltDevice::load`] serves the byte at `address` (it asserts on
 /// any other address below RAM).
 #[inline]
-fn device_readable(jolt_device: &JoltDeviceMemory, address: u64) -> bool {
+fn device_readable(jolt_device: &JoltDevice, address: u64) -> bool {
     jolt_device.is_input(address)
         || jolt_device.is_trusted_advice(address)
         || jolt_device.is_untrusted_advice(address)
@@ -168,7 +168,7 @@ fn unsupported_peripheral(address: u64) -> Option<&'static str> {
 /// every RAM address below one it holds at. Every tracer backend checks
 /// host-call reads with this, so all of them reject the same calls.
 pub fn identity_loads_succeed(
-    jolt_device: Option<&JoltDeviceMemory>,
+    jolt_device: Option<&JoltDevice>,
     start: u64,
     end: u64,
     ram_holds: impl FnOnce(u64) -> bool,
@@ -179,7 +179,7 @@ pub fn identity_loads_succeed(
         && (end <= DRAM_BASE || ram_load_succeeds(jolt_device, end - 1, ram_holds))
 }
 
-fn device_load_succeeds(jolt_device: Option<&JoltDeviceMemory>, ea: u64) -> bool {
+fn device_load_succeeds(jolt_device: Option<&JoltDevice>, ea: u64) -> bool {
     let Some(jolt_device) = jolt_device else {
         return false;
     };
@@ -192,7 +192,7 @@ fn device_load_succeeds(jolt_device: Option<&JoltDeviceMemory>, ea: u64) -> bool
 }
 
 fn ram_load_succeeds(
-    jolt_device: Option<&JoltDeviceMemory>,
+    jolt_device: Option<&JoltDevice>,
     ea: u64,
     ram_holds: impl FnOnce(u64) -> bool,
 ) -> bool {
@@ -595,7 +595,7 @@ impl Mmu {
     /// Read a doubleword from the memory-mapped device region.
     #[expect(clippy::expect_used)]
     fn device_doubleword(&self, address: u64) -> u64 {
-        let jolt_device = self.jolt_device.as_ref().expect("JoltDeviceMemory not set");
+        let jolt_device = self.jolt_device.as_ref().expect("JoltDevice not set");
         let mut value_bytes = [0u8; 8];
         for (i, byte) in value_bytes.iter_mut().enumerate() {
             *byte = jolt_device.load(address + i as u64);
@@ -694,6 +694,8 @@ impl Mmu {
                     self.assert_effective_store_address(effective_address);
                     self.assert_write_protected_store(effective_address, value as u64, 1);
                     if let Some(jolt_device) = self.jolt_device.as_mut() {
+                        // The protected-store check kept this input or advice byte;
+                        // `JoltDevice::store` writes only outputs and the flag latch.
                         if jolt_device.is_input(effective_address)
                             || jolt_device.is_trusted_advice(effective_address)
                             || jolt_device.is_untrusted_advice(effective_address)
@@ -1171,7 +1173,7 @@ mod test_mmu {
             program_size: Some(1024),
             ..Default::default()
         };
-        mmu.jolt_device = Some(JoltDeviceMemory::new(&memory_config));
+        mmu.jolt_device = Some(JoltDevice::new(&memory_config));
         let capacity = mmu
             .jolt_device
             .as_ref()
@@ -1200,7 +1202,7 @@ mod test_mmu {
         let mut mmus = vec![setup_mmu(), Mmu::new(Box::new(DummyTerminal::default()))];
         mmus[1].init_memory(64);
         let mut device_mmu = Mmu::new(Box::new(DummyTerminal::default()));
-        let device = JoltDeviceMemory::new(&small_io);
+        let device = JoltDevice::new(&small_io);
         device_mmu.init_memory(device.memory_layout.get_total_memory_size());
         device_mmu.jolt_device = Some(device);
         mmus.push(device_mmu);
@@ -1266,48 +1268,6 @@ mod test_mmu {
             }
         }
         set_hook(panic_hook);
-    }
-
-    #[test]
-    fn flag_words_preserve_every_naturally_aligned_lane() {
-        let mut mmu = setup_mmu();
-        let layout = mmu.jolt_device.as_ref().unwrap().memory_layout.clone();
-        for base in [layout.panic, layout.termination] {
-            for width in [1u64, 2, 4, 8] {
-                for lane in (0..8).step_by(width as usize) {
-                    mmu.store_doubleword(base, 0).unwrap();
-                    let address = base + lane;
-                    let value = 0x8877_6655_4433_2211u64;
-                    let write = match width {
-                        1 => mmu.store(address, value as u8),
-                        2 => mmu.store_halfword(address, value as u16),
-                        4 => mmu.store_word(address, value as u32),
-                        8 => mmu.store_doubleword(address, value),
-                        _ => unreachable!(),
-                    }
-                    .unwrap();
-                    let read = match width {
-                        1 => u64::from(mmu.load(address).unwrap().0),
-                        2 => u64::from(mmu.load_halfword(address).unwrap().0),
-                        4 => u64::from(mmu.load_word(address).unwrap().0),
-                        8 => mmu.load_doubleword(address).unwrap().0,
-                        _ => unreachable!(),
-                    };
-                    let mask = u64::MAX >> (64 - 8 * width);
-                    assert_eq!(read, value & mask);
-                    let expected = (value & mask) << (8 * lane);
-                    assert_eq!(write.pre_value, 0);
-                    assert_eq!(write.post_value, expected);
-                    assert_eq!(mmu.load_doubleword(base).unwrap().0, expected);
-                }
-            }
-        }
-        mmu.store_doubleword(layout.panic, 0).unwrap();
-        for value in [7, 0, 1, 1] {
-            mmu.store_doubleword(layout.termination, value).unwrap();
-            assert_eq!(mmu.load_doubleword(layout.termination).unwrap().0, value);
-        }
-        assert!(!mmu.jolt_device.take().unwrap().into_public().unwrap().panic);
     }
 
     #[test]
@@ -1565,8 +1525,6 @@ mod test_mmu {
 
     #[test]
     fn protected_code_stores_preserve_every_lane_before_mutation() {
-        use std::panic::{catch_unwind, AssertUnwindSafe};
-
         const OLD: u64 = 0x8877_6655_4433_2211;
         for width in [1u64, 2, 4, 8] {
             for offset in (0..8).step_by(width as usize) {
@@ -1603,8 +1561,6 @@ mod test_mmu {
 
     #[test]
     fn protected_layout_stores_preserve_every_lane_before_mutation() {
-        use std::panic::{catch_unwind, AssertUnwindSafe};
-
         const OLD: u64 = 0x8877_6655_4433_2211;
         for region in 0..4 {
             for width in [1u64, 2, 4, 8] {
@@ -1642,11 +1598,9 @@ mod test_mmu {
 
     #[test]
     fn canary_protection_covers_the_entire_overlapping_doublewords() {
-        use std::panic::{catch_unwind, AssertUnwindSafe};
-
         for program_size in [1025, 1031] {
             let mut mmu = setup_mmu();
-            mmu.jolt_device = Some(JoltDeviceMemory::new(&MemoryConfig {
+            mmu.jolt_device = Some(JoltDevice::new(&MemoryConfig {
                 program_size: Some(program_size),
                 ..Default::default()
             }));
@@ -1663,15 +1617,13 @@ mod test_mmu {
 
     #[test]
     fn final_partial_canary_word_accepts_only_unchanged_stores() {
-        use std::panic::{catch_unwind, AssertUnwindSafe};
-
         let config = MemoryConfig {
             program_size: Some(1025),
             stack_size: 0,
             heap_size: 0,
             ..Default::default()
         };
-        let device = JoltDeviceMemory::new(&config);
+        let device = JoltDevice::new(&config);
         assert_eq!(device.memory_layout.heap_end, RAM_START_ADDRESS + 1153);
         let mut mmu = Mmu::new(Box::new(DummyTerminal::default()));
         mmu.init_memory(device.memory_layout.get_total_memory_size());
@@ -1763,8 +1715,6 @@ mod test_mmu {
 
     #[test]
     fn raw_code_store_paths_reject_changes() {
-        use std::panic::{catch_unwind, AssertUnwindSafe};
-
         for width in [1, 2, 4, 8] {
             let mut mmu = setup_mmu();
             let lowest = mmu
@@ -1792,7 +1742,6 @@ mod test_mmu {
     fn atomic_and_successful_conditional_stores_obey_code_protection() {
         use crate::emulator::cpu::Cpu;
         use crate::instruction::Instruction;
-        use std::panic::{catch_unwind, AssertUnwindSafe};
 
         for conditional in [false, true] {
             for trace in [false, true] {
@@ -1863,8 +1812,6 @@ mod test_mmu {
 
     #[test]
     fn loads_admit_the_lowest_mapped_word_and_reject_lower_addresses() {
-        use std::panic::{catch_unwind, AssertUnwindSafe};
-
         let mut mmu = setup_mmu();
         let lowest = mmu
             .jolt_device
@@ -1890,7 +1837,7 @@ mod test_mmu {
             program_size: Some(1024),
             ..Default::default()
         };
-        let device = JoltDeviceMemory::new(&config);
+        let device = JoltDevice::new(&config);
         let io_end = device.memory_layout.io_end;
         assert_eq!(io_end, RAM_START_ADDRESS - 24);
         mmu.jolt_device = Some(device);
@@ -1904,6 +1851,7 @@ mod test_mmu {
         let mut mmu = setup_mmu();
         mmu.setup_bytecode(DRAM_BASE - 1, 0x77);
     }
+
     #[test]
     fn final_partial_heap_word_accepts_stores() {
         use std::panic::{catch_unwind, AssertUnwindSafe};
@@ -1914,7 +1862,7 @@ mod test_mmu {
             heap_size: 8,
             ..Default::default()
         };
-        let device = JoltDeviceMemory::new(&config);
+        let device = JoltDevice::new(&config);
         assert_eq!(device.memory_layout.heap_end, RAM_START_ADDRESS + 1161);
         let mut mmu = Mmu::new(Box::new(DummyTerminal::default()));
         mmu.init_memory(device.memory_layout.get_total_memory_size());

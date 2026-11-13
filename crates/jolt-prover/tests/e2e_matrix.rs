@@ -1,12 +1,14 @@
 //! End-to-end acceptance: one guest table per instruction profile, across all modes.
 //!
-//! Table cases check native expected output, prove with the optimized backend,
-//! and verify through the public verifier API. Field-inline builds select the
-//! active field-ops and field-limbs cases and the inactive muldiv case; ordinary
-//! builds select the general guest table. Akita builds also prove
-//! `fibonacci_ring_512` and assert the ring dimension of its trace commitment.
-//! Specialized suites retain tampering, reference-backend parity,
-//! committed programs, and other mode-specific checks.
+//! Table cases check native expected output and the halt that ends the run,
+//! prove with the optimized backend, and verify through the public verifier
+//! API. Field-inline builds select the active field-ops and field-limbs cases
+//! and the inactive muldiv case; ordinary builds select the general guest
+//! table. Both tables also prove `exact_domain`, a run that fills its padded
+//! domain with no padding row, and `panic_halt`, a guest panic proved with
+//! `panic = true`. Akita builds also prove `fibonacci_ring_512` and assert the
+//! ring dimension of its trace commitment. Specialized suites retain tampering,
+//! reference-backend parity, committed programs, and other mode-specific checks.
 
 #[cfg(feature = "prover-fixtures")]
 mod support;
@@ -162,13 +164,42 @@ mod matrix {
         (map.len() as u128).wrapping_add(u128::from(range_sum))
     }
 
-    #[cfg(not(feature = "field-inline"))]
-    fn muldiv_full_domain() -> GuestCase {
+    /// Akita's padding floor (`MIN_PADDED_TRACE_LENGTH`), and a power of two
+    /// above Dory's, so both prove the exact-domain case with no padding row.
+    const EXACT_DOMAIN_ROWS: usize = 1 << 12;
+
+    /// The memory-ops guest's `exact_rows` entry, padded so that its run fills
+    /// exactly `EXACT_DOMAIN_ROWS` rows: the proof has no padding row and the
+    /// halt sits at T−1. The pad is calibrated by running the entry with
+    /// `pad = 0`.
+    fn exact_domain() -> GuestCase {
+        let case = |pad: u16| {
+            let bytes = postcard::to_stdvec(&pad.to_le_bytes()).expect("serialize the pad");
+            GuestCase {
+                func: Some("exact_rows"),
+                inputs: bytes.clone(),
+                expected_output: Some(bytes),
+                max_padded_trace_length: None,
+                ..GuestCase::new("memory-ops-guest")
+            }
+        };
+        let probe = case(0);
+        let fixed_rows = crate::support::program(&probe).execute(&probe.inputs, &[], &[]);
+        let pad = EXACT_DOMAIN_ROWS
+            .checked_sub(fixed_rows)
+            .expect("the prologue and epilogue fit the domain");
+        case(u16::try_from(pad).expect("the pad fits u16"))
+    }
+
+    /// The memory-ops guest's `panic_halt` entry with the panic requested: the
+    /// run ends at `ebreak` without writing an output.
+    fn panic_halt() -> GuestCase {
         GuestCase {
-            inputs: encode(&[9u32, 5, 3]),
-            expected_output: Some(encode(&15u32)),
-            max_padded_trace_length: None,
-            ..GuestCase::new("muldiv-guest")
+            func: Some("panic_halt"),
+            inputs: postcard::to_stdvec(&true).expect("serialize the trigger"),
+            expected_output: Some(Vec::new()),
+            panics: true,
+            ..GuestCase::new("memory-ops-guest")
         }
     }
 
@@ -207,7 +238,8 @@ mod matrix {
                     expected_output: Some(encode(&15u32)),
                     ..GuestCase::new("muldiv-guest")
                 };
-                muldiv_full_domain => super::muldiv_full_domain();
+                exact_domain => super::exact_domain();
+                panic_halt => super::panic_halt();
                 fibonacci => GuestCase {
                     inputs: encode(&100u32),
                     expected_output: Some(encode(&354_224_848_179_261_915_075u128)),
@@ -305,22 +337,13 @@ mod matrix {
         }
     }
 
-    /// The field-ops guest with no fixed padded bound: the harness repeats the
-    /// final `j .` stall until the trace fills its padded domain exactly.
-    #[cfg(feature = "field-inline")]
-    fn field_ops_full_domain() -> GuestCase {
-        GuestCase {
-            max_padded_trace_length: None,
-            ..crate::support::field_inline::field_ops()
-        }
-    }
-
     #[cfg(feature = "field-inline")]
     macro_rules! guests {
         ($emit:ident) => {
             $emit! {
                 field_ops => crate::support::field_inline::field_ops();
-                field_ops_full_domain => super::field_ops_full_domain();
+                exact_domain => super::exact_domain();
+                panic_halt => super::panic_halt();
                 field_limbs => super::field_limbs();
                 muldiv => crate::support::field_inline::muldiv();
             }
@@ -360,11 +383,11 @@ mod matrix {
 
         #[cfg(not(feature = "field-inline"))]
         #[test]
-        fn muldiv_full_domain_cycle_first() {
+        fn exact_domain_cycle_first() {
             use jolt_prover::JoltBackend;
 
             super::mode::prove_with_config(
-                &super::muldiv_full_domain(),
+                &super::exact_domain(),
                 JoltBackend::optimized(),
                 |_| {},
             );
@@ -372,11 +395,11 @@ mod matrix {
 
         #[cfg(not(feature = "field-inline"))]
         #[test]
-        fn muldiv_full_domain_reference() {
+        fn exact_domain_reference() {
             use jolt_prover::JoltBackend;
 
             super::mode::prove_with_config(
-                &super::muldiv_full_domain(),
+                &super::exact_domain(),
                 JoltBackend::reference(),
                 |_| {},
             );

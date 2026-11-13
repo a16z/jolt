@@ -84,7 +84,7 @@ pub enum ProverError<F: JoltField> {
     /// constraint is waived for a no-op successor, so any other final row (a
     /// taken self-branch, or the row before a trap that emitted none) makes
     /// the honest witness fail R1CS.
-    #[error("trace does not end in a jump; only a jump to itself terminates a provable trace")]
+    #[error("trace does not end in a jump; tracers end every run at a halt row (jolt.success or ebreak), which carries the jump flag")]
     TraceDoesNotEndInJump,
 
     /// A cross-stage carry or kernel contract the prover itself must uphold

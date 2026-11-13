@@ -15,7 +15,6 @@ use crate::emulator::mmu::ChunkMmuState;
 use crate::emulator::terminal::DummyTerminal;
 use crate::emulator::Emulator;
 use crate::instruction::Cycle;
-use common::jolt_device::{FlagWords, JoltDeviceMemory};
 use std::sync::{Arc, OnceLock};
 
 /// Everything needed to seed a bit-exact trace-mode replay from a tick
@@ -28,13 +27,14 @@ pub struct ChunkCheckpoint {
     /// JoltDevice outputs at the boundary: the guest can read outputs back,
     /// so they are live per-chunk state (inputs/advice regions are static).
     outputs: Vec<u8>,
-    flags: FlagWords,
+    panic: bool,
 }
 
 impl ChunkCheckpoint {
     /// Capture at a tick boundary of a pass-1 emulator. Workers replay by
-    /// tick count, never by stall detection, so no termination-heuristic
-    /// state is carried.
+    /// tick count, never by stall detection, so the stall flag is not
+    /// carried; the halt state is architectural and travels with the CPU
+    /// state.
     #[expect(clippy::expect_used)]
     pub fn capture(emulator: &Emulator) -> Self {
         let cpu = emulator.get_cpu();
@@ -47,7 +47,7 @@ impl ChunkCheckpoint {
             cpu: cpu.capture_chunk_state(),
             mmu: cpu.mmu.capture_chunk_state(),
             outputs: device.outputs.clone(),
-            flags: device.flags,
+            panic: device.panic,
         }
     }
 
@@ -67,10 +67,10 @@ impl ChunkCheckpoint {
                         device.outputs.len()
                     ));
                 }
-                if self.flags != device.flags {
+                if self.panic != device.panic {
                     return Some(format!(
-                        "jolt_device.flags: {:?} vs {:?}",
-                        self.flags, device.flags
+                        "jolt_device.panic: {} vs {}",
+                        self.panic, device.panic
                     ));
                 }
             }
@@ -142,7 +142,7 @@ pub struct ChunkWorker {
 impl ChunkWorker {
     /// Build a worker from the pass-1 emulator's static parts (JoltDevice
     /// inputs/advice/layout, program text range). Independent of pass-1
-    /// progress; outputs and flag words are patched per chunk.
+    /// progress; outputs and panic are patched per chunk.
     pub fn new(emulator: &Emulator) -> Self {
         let src = emulator.get_cpu();
         Self::from_seed(
@@ -156,7 +156,7 @@ impl ChunkWorker {
     /// pipeline takes the seed before pass-1 starts mutating the emulator
     /// and each worker thread builds its own CPU from it.
     pub fn from_seed(
-        jolt_device: Option<JoltDeviceMemory>,
+        jolt_device: Option<common::jolt_device::JoltDevice>,
         decode_template: DecodeCache,
         code_word_intervals: Arc<[(usize, usize)]>,
     ) -> Self {
@@ -173,7 +173,7 @@ impl ChunkWorker {
 
     /// Install a chunk: seed CPU+MMU state, adopt `image` as the working
     /// memory (returns the previous buffer for the pool), patch device
-    /// outputs and flag words, and reset the decode cache.
+    /// outputs/panic, and reset the decode cache.
     #[expect(clippy::expect_used)]
     pub fn install_chunk(&mut self, checkpoint: &ChunkCheckpoint, image: Vec<u64>) -> Vec<u64> {
         self.cpu.install_chunk_state(&checkpoint.cpu);
@@ -186,7 +186,7 @@ impl ChunkWorker {
             .as_mut()
             .expect("worker device installed at construction");
         device.outputs.clone_from(&checkpoint.outputs);
-        device.flags = checkpoint.flags;
+        device.panic = checkpoint.panic;
         self.cpu.mmu.decode_cache = self.decode_template.clone();
         previous
     }
@@ -250,18 +250,20 @@ impl PassOne {
     }
 
     /// Execute one tick. Returns `false` (without ticking further) once the
-    /// program has terminated. Termination matches `trace()` exactly: a PC
-    /// stall, or a step that would emit zero rows (trap/WFI tick — observed
-    /// here as a zero `trace_len` delta, which the execute path shares).
+    /// program has stopped. Stopping matches `trace()` exactly: a halt, a PC
+    /// stall, or a step that emits zero rows (trap/WFI tick — observed here as
+    /// a zero `trace_len` delta, which the execute path shares). Only a halt
+    /// ends a Jolt run; `finish_emulator` rejects the others.
     pub fn step(&mut self) -> bool {
         if self.done {
             return false;
         }
-        if self.emulator.get_cpu().has_stalled() {
+        let cpu = self.emulator.get_cpu();
+        if cpu.halted().is_some() || cpu.has_stalled() {
             self.done = true;
             return false;
         }
-        let ticks_before = self.emulator.get_cpu().trace_len;
+        let ticks_before = cpu.trace_len;
         self.emulator.tick(None);
         if self.emulator.get_cpu().trace_len == ticks_before {
             self.done = true;

@@ -1,8 +1,8 @@
-//! Where the native backend ends a guest at a JALR that jumps to its own
-//! address. One that overwrites its own base with the link leaves on its
-//! second run, as RISC-V executes it; one whose link leads back to itself is
-//! a fixed point and ends the guest after one run. The interpreter's
-//! counterparts are in `tracer`'s `Cpu` tests.
+//! Where the native backend stops at a JALR that jumps to its own address.
+//! One that overwrites its own base with the link leaves on its second run,
+//! as RISC-V executes it, and the guest ends at the next halt; one whose link
+//! leads back to itself is a fixed point, a PC stall after one run. The
+//! interpreter's counterparts are in `tracer`'s `Cpu` tests.
 
 #![cfg(all(target_arch = "x86_64", target_os = "linux"))]
 #![expect(clippy::unwrap_used)]
@@ -10,7 +10,7 @@
 use common::constants::{RAM_START_ADDRESS, REGISTER_COUNT};
 use jolt_program::execution::JoltProgram;
 use jolt_riscv::{JoltInstructionKind, JoltInstructionRow, NormalizedOperands};
-use jolt_tracer_x86::harness::{run_program, terminal_row, TEST_ADDR};
+use jolt_tracer_x86::harness::{run_program, terminal_row, ExitReason, TEST_ADDR};
 
 struct SelfJump {
     is_compressed: bool,
@@ -21,16 +21,18 @@ struct SelfJump {
     base: u64,
 }
 
-/// Where a guest ended: rows traced, final PC, and the jump's register.
+/// Where a guest stopped: rows traced, final PC, the jump's register, and the
+/// exit reason.
 #[derive(Debug, PartialEq, Eq)]
 struct End {
     rows: u64,
     pc: u64,
     register: u64,
+    exit: u64,
 }
 
 impl SelfJump {
-    /// Runs the jump at `TEST_ADDR`, followed by a terminal self-branch.
+    /// Runs the jump at `TEST_ADDR`, followed by a terminal halt.
     fn end(&self) -> End {
         let jump = JoltInstructionRow {
             instruction_kind: JoltInstructionKind::JALR,
@@ -56,11 +58,11 @@ impl SelfJump {
         let mut regs = [0u64; REGISTER_COUNT as usize];
         regs[self.register as usize] = self.base;
         let outcome = run_program(&program, &regs, &[], &[]).unwrap();
-        assert_eq!(outcome.exit, 1, "native run did not terminate");
         End {
             rows: outcome.trace_len,
             pc: outcome.pc,
             register: outcome.regs[self.register as usize],
+            exit: outcome.exit,
         }
     }
 }
@@ -80,6 +82,7 @@ fn jalr_overwriting_its_base_runs_again() {
             rows: 3,
             pc: TEST_ADDR + 4,
             register: TEST_ADDR + 4,
+            exit: ExitReason::HaltedSuccess as u64,
         }
     );
 
@@ -96,6 +99,7 @@ fn jalr_overwriting_its_base_runs_again() {
             rows: 3,
             pc: TEST_ADDR + 2,
             register: TEST_ADDR + 2,
+            exit: ExitReason::HaltedSuccess as u64,
         }
     );
 }
@@ -116,6 +120,7 @@ fn jalr_at_its_fixed_point_stops_after_one_run() {
             rows: 1,
             pc: TEST_ADDR,
             register: TEST_ADDR + 4,
+            exit: ExitReason::Stalled as u64,
         }
     );
 }

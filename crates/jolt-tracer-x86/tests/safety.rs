@@ -10,7 +10,7 @@
 #![expect(clippy::expect_used, clippy::panic)]
 
 use common::constants::{RAM_START_ADDRESS, STACK_CANARY_SIZE};
-use common::jolt_device::{JoltDevice, JoltDeviceMemory, MemoryConfig};
+use common::jolt_device::{JoltDevice, MemoryConfig};
 use jolt_platform::{JOLT_ADVICE_WRITE_CALL_ID, JOLT_PRINT_CALL_ID, JOLT_PRINT_STRING};
 use jolt_program::execution::{
     ChunkedExecutionBackend, ExecutionBackend, JoltProgram, TraceError, TraceInputs,
@@ -21,8 +21,8 @@ use jolt_riscv::{
     JoltInstructionKind as Kind, JoltInstructionRow, NormalizedOperands, RV64IMAC_JOLT,
 };
 use jolt_tracer_x86::harness::{
-    compile_program, memory_config, run_program, single_row_program, terminal_row, Outcome,
-    SCRATCH_START, TEST_ADDR,
+    compile_program, memory_config, run_program, single_row_program, terminal_row, ExitReason,
+    Outcome, SCRATCH_START, TEST_ADDR,
 };
 use jolt_tracer_x86::X86TracerBackend;
 use tracer::instruction::Instruction;
@@ -103,9 +103,11 @@ fn out_of_bounds_load_reports_a_fault() {
 
     let outcome = run_program(&program, &pre, &[], &[]).expect("run should not error");
     assert_eq!(
-        outcome.exit, 2,
+        outcome.exit,
+        ExitReason::FaultOutOfBounds as u64,
         "expected the out-of-bounds exit reason, got {} ({:?})",
-        outcome.exit, outcome.helper_error
+        outcome.exit,
+        outcome.helper_error
     );
     assert_eq!(
         outcome.fault_addr, pre[1],
@@ -126,9 +128,11 @@ fn out_of_bounds_store_reports_a_fault() {
 
     let outcome = run_program(&program, &pre, &[], &[]).expect("run should not error");
     assert_eq!(
-        outcome.exit, 2,
+        outcome.exit,
+        ExitReason::FaultOutOfBounds as u64,
         "expected the out-of-bounds exit reason, got {} ({:?})",
-        outcome.exit, outcome.helper_error
+        outcome.exit,
+        outcome.helper_error
     );
 }
 
@@ -144,9 +148,7 @@ fn store_to(address: u64) -> Outcome {
 }
 
 fn harness_stack_end() -> u64 {
-    JoltDeviceMemory::new(&memory_config())
-        .memory_layout
-        .stack_end
+    JoltDevice::new(&memory_config()).memory_layout.stack_end
 }
 
 /// A value-changing store into the canary must fault before mutation.
@@ -157,9 +159,11 @@ fn store_into_stack_canary_reports_a_fault() {
     for address in [stack_end, stack_end + 8, last_doubleword] {
         let outcome = store_to(address);
         assert_eq!(
-            outcome.exit, 4,
+            outcome.exit,
+            ExitReason::FaultHelper as u64,
             "store to {address:#x}: expected the helper-fault exit reason, got {} ({:?})",
-            outcome.exit, outcome.helper_error
+            outcome.exit,
+            outcome.helper_error
         );
         let message = outcome.helper_error.expect("a helper error message");
         assert!(
@@ -179,9 +183,11 @@ fn stores_next_to_stack_canary_succeed() {
     for address in [stack_end - 8, stack_end + STACK_CANARY_SIZE] {
         let outcome = store_to(address);
         assert_eq!(
-            outcome.exit, 1,
-            "store to {address:#x}: expected a clean termination, got {} ({:?})",
-            outcome.exit, outcome.helper_error
+            outcome.exit,
+            ExitReason::HaltedSuccess as u64,
+            "store to {address:#x}: expected the terminal halt, got {} ({:?})",
+            outcome.exit,
+            outcome.helper_error
         );
     }
 }
@@ -196,9 +202,11 @@ fn in_range_unmapped_jump_reports_bad_target() {
 
     let outcome = run_program(&program, &pre, &[], &[]).expect("run should not error");
     assert_eq!(
-        outcome.exit, 3,
+        outcome.exit,
+        ExitReason::FaultBadJumpTarget as u64,
         "expected the bad-jump exit reason, got {} ({:?})",
-        outcome.exit, outcome.helper_error
+        outcome.exit,
+        outcome.helper_error
     );
     assert_eq!(outcome.fault_addr, TEST_ADDR + 2);
 }
@@ -209,16 +217,19 @@ fn in_range_unmapped_jump_reports_bad_target() {
 fn static_branch_to_unmapped_target_faults_only_when_taken() {
     let target = TEST_ADDR + 12;
     let program = single_row_program(row(Kind::BEQ, Some(1), None, (target - TEST_ADDR).into()));
-    for (x1, exit) in [(1, 1), (0, 3)] {
+    for (x1, exit) in [
+        (1, ExitReason::HaltedSuccess),
+        (0, ExitReason::FaultBadJumpTarget),
+    ] {
         let mut pre = [0u64; REGS];
         pre[1] = x1;
         let outcome = run_program(&program, &pre, &[], &[]).expect("run should not error");
         assert_eq!(
-            outcome.exit, exit,
+            outcome.exit, exit as u64,
             "x1 = {x1}: unexpected exit reason ({:?})",
             outcome.helper_error
         );
-        if exit == 3 {
+        if exit == ExitReason::FaultBadJumpTarget {
             assert_eq!(outcome.fault_addr, target);
         }
     }
@@ -233,10 +244,10 @@ fn code_stores_accept_the_old_value_and_reject_changes() {
     pre[1] = TEST_ADDR;
     // The synthetic harness initializes this word to zero.
     let unchanged = run_program(&program, &pre, &[], &[]).expect("run unchanged code store");
-    assert_eq!(unchanged.exit, 1);
+    assert_eq!(unchanged.exit, ExitReason::HaltedSuccess as u64);
     pre[3] = 1;
     let changed = run_program(&program, &pre, &[], &[]).expect("run changed code store");
-    assert_eq!(changed.exit, 4);
+    assert_eq!(changed.exit, ExitReason::FaultHelper as u64);
     assert!(changed
         .helper_error
         .expect("code-store error")
@@ -252,12 +263,12 @@ fn slow_load_rejects_addresses_below_the_lowest_mapped_word() {
         .get_lowest_address();
     pre[1] = lowest;
     let accepted = run_program(&program, &pre, &[], &[]).expect("run lowest load");
-    assert_eq!(accepted.exit, 1);
+    assert_eq!(accepted.exit, ExitReason::HaltedSuccess as u64);
     assert_eq!(accepted.regs[2], 0);
     for address in [0, lowest - 8] {
         pre[1] = address;
         let rejected = run_program(&program, &pre, &[], &[]).expect("run low load");
-        assert_eq!(rejected.exit, 4);
+        assert_eq!(rejected.exit, ExitReason::FaultHelper as u64);
         assert!(rejected
             .helper_error
             .expect("low-load error")
@@ -274,7 +285,7 @@ fn loads_reject_the_padding_between_io_end_and_ram() {
         max_untrusted_advice_size: 0,
         ..memory_config()
     };
-    let layout = JoltDeviceMemory::new(&config).memory_layout;
+    let layout = JoltDevice::new(&config).memory_layout;
     assert_eq!(layout.io_end, RAM_START_ADDRESS - 24);
     for kind in [
         Kind::LD,
@@ -306,7 +317,7 @@ fn loads_reject_the_padding_between_io_end_and_ram() {
                 TEST_ADDR,
             );
             let inputs = TraceInputs::new(Vec::new(), Vec::new(), Vec::new(), config);
-            let result = X86TracerBackend::new().run_machine(&program, inputs);
+            let result = X86TracerBackend::new().fast_run(&program, inputs);
             if accepted {
                 let _ = result.expect("load of the final I/O word");
             } else {
@@ -321,12 +332,12 @@ fn loads_reject_the_padding_between_io_end_and_ram() {
 
 #[test]
 fn device_load_failures_report_io_overflow() {
-    let layout = JoltDeviceMemory::new(&memory_config()).memory_layout;
+    let layout = JoltDevice::new(&memory_config()).memory_layout;
     let mut pre = [0u64; REGS];
     pre[1] = layout.io_end + 8;
     let program = single_row_program(row(Kind::LD, Some(1), Some(2), 0));
     let load = run_program(&program, &pre, &[], &[]).expect("run overflowing load");
-    assert_eq!(load.exit, 4);
+    assert_eq!(load.exit, ExitReason::FaultHelper as u64);
     assert!(load
         .helper_error
         .expect("load error")
@@ -341,14 +352,19 @@ fn device_load_failures_report_io_overflow() {
         pre[12] = 1;
         pre[13] = u64::from(JOLT_PRINT_STRING);
         let read = run_program(&program, &pre, &[], &[]).expect("run overflowing host read");
-        assert_eq!(read.exit, 1, "{:?}", read.helper_error);
+        assert_eq!(
+            read.exit,
+            ExitReason::HaltedSuccess as u64,
+            "{:?}",
+            read.helper_error
+        );
         assert_eq!(read.advice_tape, [] as [u8; 0]);
     }
 }
 
 #[test]
 fn advice_write_follows_guest_load_bounds() {
-    let layout = JoltDeviceMemory::new(&memory_config()).memory_layout;
+    let layout = JoltDevice::new(&memory_config()).memory_layout;
     let program = single_row_program(row(Kind::VirtualHostIO(VirtualHostIO(())), None, None, 0));
     // A rejected range leaves the tape empty and the run continues.
     for (address, tape) in [
@@ -363,7 +379,8 @@ fn advice_write_follows_guest_load_bounds() {
         pre[12] = 1;
         let outcome = run_program(&program, &pre, &[0xab], &[]).expect("run advice write");
         assert_eq!(
-            outcome.exit, 1,
+            outcome.exit,
+            ExitReason::HaltedSuccess as u64,
             "address {address:#x}: {:?}",
             outcome.helper_error
         );
@@ -377,7 +394,7 @@ fn advice_write_follows_guest_load_bounds() {
 
 #[test]
 fn layout_region_stores_accept_the_old_value_and_reject_changes() {
-    let layout = JoltDeviceMemory::new(&memory_config()).memory_layout;
+    let layout = JoltDevice::new(&memory_config()).memory_layout;
     let mut store = row(Kind::SD, Some(1), None, 0);
     store.operands.rs2 = Some(3);
     let program = single_row_program(store);
@@ -394,7 +411,11 @@ fn layout_region_stores_accept_the_old_value_and_reject_changes() {
             let outcome = run_program(&program, &pre, &[], &[]).expect("run protected store");
             assert_eq!(
                 outcome.exit,
-                if changed { 4 } else { 1 },
+                (if changed {
+                    ExitReason::FaultHelper
+                } else {
+                    ExitReason::HaltedSuccess
+                }) as u64,
                 "{:?}",
                 outcome.helper_error
             );
@@ -409,7 +430,7 @@ fn layout_region_stores_accept_the_old_value_and_reject_changes() {
 }
 
 fn partial_word_program(config: &MemoryConfig, offset: u64, value: u64) -> JoltProgram {
-    let layout = JoltDeviceMemory::new(config).memory_layout;
+    let layout = JoltDevice::new(config).memory_layout;
     let mut store = row(Kind::SD, Some(1), None, offset.into());
     store.operands.rs2 = Some(3);
     let mut terminate = row(
@@ -515,7 +536,7 @@ fn final_partial_heap_word_preserves_backing_bytes_across_checkpoints() {
         .as_ref()
         .expect("final memory")
         .bytes
-        .contains(&(RAM_START_ADDRESS + 1161, 1)));
+        .contains(&(1161, 1)));
     let summary = backend
         .execute(&program, inputs, 1)
         .expect("checkpoint heap word");
@@ -527,15 +548,13 @@ fn final_partial_heap_word_preserves_backing_bytes_across_checkpoints() {
     for offset in [1161, 1168] {
         let outside = partial_word_program(&config, offset, 0);
         let inputs = TraceInputs::new(Vec::new(), Vec::new(), Vec::new(), config);
-        assert!(X86TracerBackend::new()
-            .run_machine(&outside, inputs)
-            .is_err());
+        assert!(X86TracerBackend::new().fast_run(&outside, inputs).is_err());
     }
 }
 
 #[test]
 fn conditional_stores_preserve_code_and_canary_words() {
-    let layout = JoltDeviceMemory::new(&memory_config()).memory_layout;
+    let layout = JoltDevice::new(&memory_config()).memory_layout;
     for address in [TEST_ADDR, layout.stack_end] {
         for word in [false, true] {
             for success in [false, true] {
@@ -574,12 +593,36 @@ fn conditional_stores_preserve_code_and_canary_words() {
                 pre[1] = address;
                 pre[2] = u64::from(!success);
                 let outcome = run_program(&program, &pre, &[], &[]).expect("run conditional store");
-                assert_eq!(outcome.exit, 1, "{:?}", outcome.helper_error);
+                assert_eq!(
+                    outcome.exit,
+                    ExitReason::HaltedSuccess as u64,
+                    "{:?}",
+                    outcome.helper_error
+                );
                 assert_eq!(outcome.regs[5], u64::from(!success));
                 assert_eq!(outcome.regs[6], 0);
             }
         }
     }
+}
+
+/// A Jolt run must end at a halt: chunked `execute` rejects a PC stall.
+#[test]
+fn chunked_execute_rejects_a_stall() {
+    let mut stall = row(Kind::BEQ, Some(0), None, 0);
+    stall.operands.rs2 = Some(0);
+    let program = JoltProgram::from_parts(
+        minimal_elf(TEST_ADDR),
+        vec![stall],
+        Vec::new(),
+        RAM_START_ADDRESS + 1024,
+        TEST_ADDR,
+    );
+    let inputs = TraceInputs::new(Vec::new(), Vec::new(), Vec::new(), memory_config());
+    assert!(matches!(
+        X86TracerBackend::new().execute(&program, inputs, 1),
+        Err(TraceError::EndedWithoutHalt { pc: TEST_ADDR })
+    ));
 }
 
 fn minimal_elf(entry: u64) -> Vec<u8> {

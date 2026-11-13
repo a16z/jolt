@@ -12,7 +12,7 @@ use common::constants::{RAM_START_ADDRESS, STACK_CANARY_SIZE};
 
 use super::state::{AdviceCompute, ExitReason, GuestState, HostContext};
 
-use common::jolt_device::JoltDeviceMemory;
+use common::jolt_device::JoltDevice;
 use jolt_platform::{
     JOLT_ADVICE_WRITE_CALL_ID, JOLT_CYCLE_MARKER_END, JOLT_CYCLE_MARKER_START,
     JOLT_CYCLE_TRACK_CALL_ID, JOLT_PRINT_CALL_ID,
@@ -35,32 +35,27 @@ fn fail(state: &mut GuestState, host: &mut HostContext, message: String) -> u64 
     0
 }
 
-/// Read one guest byte for a guest load, routing RAM to the plane and lower
-/// addresses to the device (mirrors `Mmu::load`). Host calls read through
-/// [`HostIoMemory`] instead.
-fn read_guest_byte(state: &GuestState, host: &HostContext, address: u64) -> Result<u8, String> {
-    if address >= RAM_START_ADDRESS {
-        if address >= host.device.memory_layout.heap_end {
-            return Err(format!(
-                "Illegal Memory Access: Attempted to read from {address:#X}"
-            ));
-        }
-        let offset = address - RAM_START_ADDRESS;
-        if offset < state.mem_size {
-            // SAFETY: offset bounds-checked against the plane size.
-            return Ok(unsafe { (state.mem_base as *const u8).add(offset as usize).read() });
-        }
-        return Ok(0);
-    }
-    if address > host.device.memory_layout.io_end {
-        return Err(format!("I/O overflow: Attempted to read from {address:#X}"));
-    }
-    if address < host.device.memory_layout.get_lowest_address() {
+/// The device doubleword at an aligned `address` below RAM, under the
+/// interpreter's guest-load bounds (`Mmu::load`): bytes below
+/// `lowest_address` or past `io_end` fail.
+fn load_device_doubleword(device: &JoltDevice, address: u64) -> Result<u64, String> {
+    let layout = &device.memory_layout;
+    if address < layout.get_lowest_address() {
         return Err(format!(
             "I/O underflow: Attempted to read from {address:#X}"
         ));
     }
-    Ok(host.device.load(address))
+    let mut value = 0u64;
+    for i in 0..8 {
+        if address + i > layout.io_end {
+            return Err(format!(
+                "I/O overflow: Attempted to read from {:#X}",
+                address + i
+            ));
+        }
+        value |= u64::from(device.load(address + i)) << (i * 8);
+    }
+    Ok(value)
 }
 
 /// Guest memory as `host_io` reads it. Readability follows the tracer's
@@ -68,7 +63,7 @@ fn read_guest_byte(state: &GuestState, host: &HostContext, address: u64) -> Resu
 /// the interpreter rejects.
 struct HostIoMemory<'a> {
     state: &'a GuestState,
-    device: &'a JoltDeviceMemory,
+    device: &'a JoltDevice,
 }
 
 impl HostMemory for HostIoMemory<'_> {
@@ -97,7 +92,7 @@ impl HostMemory for HostIoMemory<'_> {
 /// rules, logging a rejected range.
 fn read_host_call_bytes(
     state: &GuestState,
-    device: &JoltDeviceMemory,
+    device: &JoltDevice,
     ptr: u64,
     len: u64,
     address_limit: u64,
@@ -197,22 +192,10 @@ pub extern "sysv64" fn slow_load_doubleword(state: *mut GuestState, address: u64
         state.exit = ExitReason::FaultOutOfBounds as u64;
         return 0;
     }
-    if address < host.device.memory_layout.get_lowest_address() {
-        return fail(
-            state,
-            host,
-            format!("I/O underflow: Attempted to read from {address:#X}"),
-        );
+    match load_device_doubleword(&host.device, address) {
+        Ok(value) => value,
+        Err(message) => fail(state, host, message),
     }
-    let mut value = 0u64;
-    for i in 0..8 {
-        let byte = match read_guest_byte(state, host, address + i) {
-            Ok(byte) => byte,
-            Err(message) => return fail(state, host, message),
-        };
-        value |= (byte as u64) << (i * 8);
-    }
-    value
 }
 
 /// A generated interval guard sends only aligned, in-bounds protected words here.
@@ -252,7 +235,7 @@ pub extern "sysv64" fn protected_store_doubleword(
 
 /// Record the pre-value of a device-region store into the current row's
 /// observation slot. The fast RAM path captures this inline; the device path
-/// cannot (the bytes live in `JoltDeviceMemory`), so the helper does it.
+/// cannot (the bytes live in `JoltDevice`), so the helper does it.
 fn record_device_store_pre(state: &mut GuestState, host: &HostContext, address: u64) {
     if state.obs_cursor.is_null() || state.obs_cursor >= state.obs_end {
         return;
@@ -267,8 +250,8 @@ fn record_device_store_pre(state: &mut GuestState, host: &HostContext, address: 
 }
 
 /// `Sd`/`VirtualStore*` slow path: device-region, unaligned, or
-/// out-of-bounds addresses. `JoltDeviceMemory::store` also updates the
-/// panic and termination bytes.
+/// out-of-bounds addresses. `JoltDevice::store` also handles the
+/// panic/termination bits.
 pub extern "sysv64" fn slow_store_doubleword(
     state: *mut GuestState,
     address: u64,
@@ -384,18 +367,13 @@ impl tracer::InlineAdviceContext for GuestAdviceContext<'_> {
             }
             return Some(u64::from_le_bytes(bytes));
         }
-        let mut value = 0u64;
-        for i in 0..8 {
-            let byte = match read_guest_byte(self.state, self.host, address + i) {
-                Ok(byte) => byte,
-                Err(message) => {
-                    let _ = fail(self.state, self.host, message);
-                    return None;
-                }
-            };
-            value |= (byte as u64) << (i * 8);
+        match load_device_doubleword(&self.host.device, address) {
+            Ok(value) => Some(value),
+            Err(message) => {
+                let _ = fail(self.state, self.host, message);
+                None
+            }
         }
-        Some(value)
     }
 }
 

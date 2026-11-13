@@ -252,9 +252,9 @@ mod tests {
     use crate::ReferenceBackend;
 
     /// A witness plane whose `RamValFinal` is nontrivial on both sides of the
-    /// IO-mask boundary: public inputs/outputs and a stored successful
-    /// termination word make `val_final = val_io` inside the mask, while the
-    /// final-memory image also carries post-execution DRAM bytes.
+    /// IO-mask boundary: real inputs/outputs (the oracle synthesizes the IO
+    /// region from the device, so `val_final = val_io` there by construction)
+    /// plus a final-memory image carrying post-execution DRAM bytes.
     fn with_output_check_plane<R>(
         log_t: usize,
         ram_k: usize,
@@ -314,7 +314,6 @@ mod tests {
         // nontrivial while the Boolean-point sum stays zero.
         let final_memory = MemoryImage {
             bytes: vec![
-                (device.memory_layout.termination, 1),
                 (RAM_START_ADDRESS, 0xAB),
                 (RAM_START_ADDRESS + 8, 0x13),
                 (RAM_START_ADDRESS + 17, 0x07),

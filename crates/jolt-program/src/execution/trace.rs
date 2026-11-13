@@ -192,7 +192,6 @@ impl TraceInputs {
     derive(serde::Serialize, serde::Deserialize)
 )]
 pub struct MemoryImage {
-    /// Stored bytes at absolute guest addresses, including the final flag words.
     pub bytes: Vec<(u64, u8)>,
 }
 

@@ -10,10 +10,10 @@ use std::thread::Builder;
 use common::jolt_device::{JoltDevice, MemoryConfig, MemoryLayout};
 use jolt_field::Fr;
 use jolt_host::{JoltProgramSource, Program};
-use jolt_program::execution::{ExecutionBackend, JoltProgram, TraceData, TraceInputs, TraceOutput};
+use jolt_program::execution::{ExecutionBackend, JoltProgram, TraceInputs, TraceOutput};
 use jolt_program::preprocess::JoltProgramPreprocessing;
 use jolt_prover::ProverConfig;
-use jolt_riscv::{JoltInstructionKind, JoltTraceRow};
+use jolt_riscv::JoltInstructionKind;
 use tracer::execution_backend::TracerBackend;
 
 #[cfg(feature = "field-inline")]
@@ -34,10 +34,12 @@ pub struct GuestCase {
     /// Checked against the guest's output buffer before proving, so a wrong
     /// result fails as a broken guest rather than proving a wrong claim.
     pub expected_output: Option<Vec<u8>>,
+    /// Whether the guest panics: its run ends at `ebreak` and proves the
+    /// public panic flag. Otherwise it ends at `jolt.success`.
+    pub panics: bool,
     /// Padded trace maximum baked into preprocessing. `None` bakes in the
-    /// execution's own padded domain and re-executes the guest's terminal `j .`
-    /// stall until the trace fills it, so the proof has no padding row and its
-    /// length equals the maximum.
+    /// execution's own padded domain, which the execution must fill exactly
+    /// (no padding row), as the e2e matrix's `exact_domain` case does.
     pub max_padded_trace_length: Option<usize>,
     #[cfg(feature = "field-inline")]
     pub field_inline_active: bool,
@@ -54,6 +56,7 @@ impl GuestCase {
             untrusted_advice: Vec::new(),
             trusted_advice: Vec::new(),
             expected_output: None,
+            panics: false,
             max_padded_trace_length: Some(1 << 16),
             #[cfg(feature = "field-inline")]
             field_inline_active: false,
@@ -61,7 +64,7 @@ impl GuestCase {
     }
 
     fn assert_output(&self, device: &JoltDevice) {
-        assert!(!device.panic, "{} panicked during execution", self.name);
+        assert_eq!(device.panic, self.panics, "{}: panic flag", self.name);
         if let Some(expected) = &self.expected_output {
             let (head, tail) = device
                 .outputs
@@ -95,10 +98,9 @@ pub fn memory_config(layout: &MemoryLayout) -> MemoryConfig {
     }
 }
 
-/// Builds, sizes, preprocesses, and traces `case`. A guest panic, a wrong
-/// output, or a trace over the padded bound is a broken case rather than a
-/// prover result, so all three fail here before any proving starts.
-pub fn prepare(case: &GuestCase) -> PreparedGuest {
+/// The guest build `case` runs: its example crate, entry point, profile,
+/// standard library, and stack size.
+pub fn program(case: &GuestCase) -> Program {
     let mut source = Program::new(case.name);
     #[cfg(feature = "field-inline")]
     source.enable_field_inline();
@@ -109,22 +111,36 @@ pub fn prepare(case: &GuestCase) -> PreparedGuest {
     if let Some(bytes) = case.stack_size {
         source.set_stack_size(bytes);
     }
+    source
+}
+
+/// Builds, sizes, preprocesses, and traces `case`. A wrong panic flag, a wrong
+/// output, a trace over the padded bound, or a run that does not end at the
+/// expected halt is a broken case rather than a prover result, so each fails
+/// here before any proving starts.
+pub fn prepare(case: &GuestCase) -> PreparedGuest {
+    let mut source = program(case);
     let (_, sizing_trace, _, device) =
         source.trace(&case.inputs, &case.untrusted_advice, &case.trusted_advice);
     case.assert_output(&device);
     let padded_trace_length =
         ProverConfig::padded_trace_length::<Fr>(sizing_trace.len()).expect("padded trace domain");
-    let max_padded_trace_length = match case.max_padded_trace_length {
-        Some(max) => {
-            assert!(
-                padded_trace_length <= max,
-                "{}: {} cycles exceed the padded trace bound {max}",
-                case.name,
-                sizing_trace.len(),
-            );
-            max
-        }
-        None => padded_trace_length,
+    let max_padded_trace_length = if let Some(max) = case.max_padded_trace_length {
+        assert!(
+            padded_trace_length <= max,
+            "{}: {} cycles exceed the padded trace bound {max}",
+            case.name,
+            sizing_trace.len(),
+        );
+        max
+    } else {
+        assert_eq!(
+            sizing_trace.len(),
+            padded_trace_length,
+            "{}: a full-domain case must fill its padded domain exactly",
+            case.name,
+        );
+        padded_trace_length
     };
     let layout = device.memory_layout;
     let program = Arc::new(source.build_jolt_program().expect("build Jolt program"));
@@ -143,13 +159,23 @@ pub fn prepare(case: &GuestCase) -> PreparedGuest {
         case.trusted_advice.clone(),
         memory_config(&layout),
     );
-    let mut trace = TracerBackend::new()
+    let trace = TracerBackend::new()
         .trace(&program, inputs)
         .expect("modular trace");
     case.assert_output(&trace.device);
-    if case.max_padded_trace_length.is_none() {
-        trace = fill_trace_domain(trace, max_padded_trace_length);
-    }
+    let last = trace
+        .trace
+        .proof_rows()
+        .last()
+        .expect("a guest run executes at least one row")
+        .instruction()
+        .instruction_kind;
+    let halt = if case.panics {
+        JoltInstructionKind::JoltPanic
+    } else {
+        JoltInstructionKind::JoltSuccess
+    };
+    assert_eq!(last, halt, "{}: run must end at its halt", case.name);
     #[cfg(feature = "field-inline")]
     assert_eq!(
         !trace.trace.field_events().is_empty(),
@@ -162,45 +188,6 @@ pub fn prepare(case: &GuestCase) -> PreparedGuest {
         preprocessing,
         trace,
     }
-}
-
-/// Extends an execution by re-executing its final row, which must be the
-/// guest's `j .` stall. That continues the execution and does not pad it: every
-/// added row is a taken jump to itself, which R1CS and the shift relation check
-/// like any other row. The tracer rewrites `j .`'s `rd = x0` to a virtual
-/// register, which already holds the link value on every re-execution.
-fn fill_trace_domain(trace: TraceOutput, rows: usize) -> TraceOutput {
-    let mut filled = trace.trace.proof_rows().to_vec();
-    assert!(
-        filled.len() <= rows,
-        "the execution exceeds its padded domain"
-    );
-    let stall = *filled
-        .last()
-        .expect("a traced guest ends in its stall jump");
-    let instruction = stall.instruction();
-    assert!(
-        instruction.instruction_kind == JoltInstructionKind::JAL && instruction.operands.imm == 0,
-        "full-domain trace must end in a JAL jump to its own PC"
-    );
-    let mut registers = stall.registers();
-    if let Some(link) = registers.rd.as_mut() {
-        link.pre_value = link.post_value;
-    }
-    let repeat = JoltTraceRow::new(
-        instruction,
-        registers,
-        stall.ram_access(),
-        u32::try_from(stall.pc()).expect("bytecode PC fits u32"),
-    )
-    .expect("re-executed stall row");
-    filled.resize(rows, repeat);
-    #[cfg(feature = "field-inline")]
-    let data = TraceData::from_parts(filled, trace.trace.field_events().to_vec())
-        .expect("field events index executed rows");
-    #[cfg(not(feature = "field-inline"))]
-    let data = TraceData::new(filled);
-    TraceOutput::new(data, trace.device, trace.final_memory, trace.advice_tape)
 }
 
 /// BlindFold verification recurses over a large folded R1CS, so ZK tests run

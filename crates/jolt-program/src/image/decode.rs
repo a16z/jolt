@@ -9,7 +9,7 @@ use jolt_riscv::{
 };
 use jolt_riscv::{
     JoltInstructionProfile, NormalizedOperands, SourceExtension, SourceInlineKey,
-    SourceInstruction, SourceInstructionKind, SourceInstructionRow,
+    SourceInstruction, SourceInstructionKind, SourceInstructionRow, JOLT_SUCCESS_WORD,
 };
 
 use crate::ProgramError;
@@ -220,6 +220,9 @@ fn decode_custom(word: u32) -> Result<SourceInstructionKind, ProgramError> {
         (0b010, _) => Ok(SourceInstructionKind::VirtualHostIO(
             jolt_riscv::instructions::VirtualHostIO(()),
         )),
+        // jolt.success: rd, rs1 and the immediate are reserved and must be zero.
+        (0b011, _) if word != JOLT_SUCCESS_WORD => invalid("invalid jolt.success operands"),
+        (0b011, _) => Ok(SourceInstructionKind::JoltSuccess),
         _ => invalid("invalid custom instruction"),
     }
 }
@@ -346,7 +349,8 @@ fn operands(instruction_kind: SourceInstructionKind, word: u32) -> NormalizedOpe
         SourceInstructionKind::Inline => format_inline_operands(word),
         SourceInstructionKind::ECALL
         | SourceInstructionKind::EBREAK
-        | SourceInstructionKind::MRET => format_i_operands(word),
+        | SourceInstructionKind::MRET
+        | SourceInstructionKind::JoltSuccess => format_i_operands(word),
         SourceInstructionKind::FENCE
         | SourceInstructionKind::VirtualHostIO(_)
         | SourceInstructionKind::NoOp

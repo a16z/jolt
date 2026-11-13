@@ -7,13 +7,14 @@ use jolt_program::execution::ExecutionBackend;
 use jolt_inlines_keccak256 as _;
 use jolt_inlines_sha2 as _;
 use jolt_program::preprocess::BytecodePreprocessing;
+use jolt_riscv::JoltInstructionKind;
 use jolt_tracer_x86::X86TracerBackend;
 use tracer::TracerBackend;
 
 mod common;
 use common::setup;
 
-fn assert_fast_run_matches(package: &str, func: &str, input: Vec<u8>) {
+fn assert_fast_run_matches(package: &str, func: &str, input: Vec<u8>, panics: bool) {
     // Pin the reference to serial mode (the tracer env-dispatches to the
     // parallel pipeline).
     std::env::remove_var("TRACER_PARALLEL");
@@ -24,6 +25,10 @@ fn assert_fast_run_matches(package: &str, func: &str, input: Vec<u8>) {
     let reference = TracerBackend::new()
         .trace(&program, inputs.clone())
         .expect("reference trace failed");
+    assert_eq!(
+        reference.device.panic, panics,
+        "{package}: reference panic flag"
+    );
     let reference_rows = reference.trace.rows();
 
     let mut backend = X86TracerBackend::new();
@@ -56,7 +61,7 @@ fn assert_fast_run_matches(package: &str, func: &str, input: Vec<u8>) {
 /// reference interpreter's, row for row. This is the strongest equivalence
 /// statement the backend can make (spec invariant 1) and what proof
 /// byte-equality rests on.
-fn assert_record_matches(package: &str, func: &str, input: Vec<u8>) {
+fn assert_record_matches(package: &str, func: &str, input: Vec<u8>, panics: bool) {
     std::env::remove_var("TRACER_PARALLEL");
     let Some((program, inputs)) = setup(package, func, input) else {
         return;
@@ -65,6 +70,24 @@ fn assert_record_matches(package: &str, func: &str, input: Vec<u8>) {
     let reference = TracerBackend::new()
         .trace(&program, inputs.clone())
         .expect("reference trace failed");
+    assert_eq!(
+        reference.device.panic, panics,
+        "{package}: reference panic flag"
+    );
+    let halt = if panics {
+        JoltInstructionKind::JoltPanic
+    } else {
+        JoltInstructionKind::JoltSuccess
+    };
+    assert_eq!(
+        reference
+            .trace
+            .proof_rows()
+            .last()
+            .map(|row| row.instruction().instruction_kind),
+        Some(halt),
+        "{package}: reference run must end at its halt"
+    );
     let expected = reference.trace.rows();
 
     let mut backend = X86TracerBackend::new();
@@ -100,6 +123,10 @@ fn assert_record_matches(package: &str, func: &str, input: Vec<u8>) {
         "{package}: outputs"
     );
     assert_eq!(
+        actual_output.device.panic, reference.device.panic,
+        "{package}: panic flag"
+    );
+    assert_eq!(
         actual_output.final_memory, reference.final_memory,
         "{package}: final memory"
     );
@@ -111,25 +138,36 @@ fn fibonacci_record_matches_reference() {
         "fibonacci-guest",
         "fib",
         postcard::to_stdvec(&50u32).unwrap(),
+        false,
     );
 }
 
 #[test]
 fn muldiv_record_matches_reference() {
     // DIV/REM advice groups plus RAM traffic.
-    assert_record_matches("muldiv-guest", "muldiv", {
-        let mut bytes = postcard::to_stdvec(&7u32).unwrap();
-        bytes.extend(postcard::to_stdvec(&11u32).unwrap());
-        bytes.extend(postcard::to_stdvec(&3u32).unwrap());
-        bytes
-    });
+    let mut input = postcard::to_stdvec(&7u32).unwrap();
+    input.extend(postcard::to_stdvec(&11u32).unwrap());
+    input.extend(postcard::to_stdvec(&3u32).unwrap());
+    assert_record_matches("muldiv-guest", "muldiv", input, false);
+}
+
+/// A guest panic ends at EBREAK's `Panic` row: the only real guest that runs
+/// the JIT's panic halt.
+#[test]
+fn panic_halt_record_matches_reference() {
+    assert_record_matches(
+        "memory-ops-guest",
+        "panic_halt",
+        postcard::to_stdvec(&true).unwrap(),
+        true,
+    );
 }
 
 #[test]
 fn sha2_chain_record_matches_reference() {
     let mut input = postcard::to_stdvec(&[5u8; 32]).unwrap();
     input.append(&mut postcard::to_stdvec(&2u32).unwrap());
-    assert_record_matches("sha2-chain-guest", "sha2_chain", input);
+    assert_record_matches("sha2-chain-guest", "sha2_chain", input, false);
 }
 
 #[test]
@@ -139,6 +177,7 @@ fn fibonacci_scale_record_matches_reference() {
         "fibonacci-guest",
         "fib",
         postcard::to_stdvec(&400_000_u32).unwrap(),
+        false,
     );
 }
 
@@ -147,7 +186,7 @@ fn fibonacci_scale_record_matches_reference() {
 fn sha2_chain_scale_record_matches_reference() {
     let mut input = postcard::to_stdvec(&[5u8; 32]).unwrap();
     input.append(&mut postcard::to_stdvec(&256u32).unwrap());
-    assert_record_matches("sha2-chain-guest", "sha2_chain", input);
+    assert_record_matches("sha2-chain-guest", "sha2_chain", input, false);
 }
 
 #[test]
@@ -156,6 +195,17 @@ fn fibonacci_fast_run_matches_reference() {
         "fibonacci-guest",
         "fib",
         postcard::to_stdvec(&100u32).unwrap(),
+        false,
+    );
+}
+
+#[test]
+fn panic_halt_fast_run_matches_reference() {
+    assert_fast_run_matches(
+        "memory-ops-guest",
+        "panic_halt",
+        postcard::to_stdvec(&true).unwrap(),
+        true,
     );
 }
 
@@ -163,14 +213,14 @@ fn fibonacci_fast_run_matches_reference() {
 fn sha2_chain_fast_run_matches_reference() {
     let mut input = postcard::to_stdvec(&[5u8; 32]).unwrap();
     input.append(&mut postcard::to_stdvec(&8u32).unwrap());
-    assert_fast_run_matches("sha2-chain-guest", "sha2_chain", input);
+    assert_fast_run_matches("sha2-chain-guest", "sha2_chain", input, false);
 }
 
 #[test]
 fn sha3_chain_fast_run_matches_reference() {
     let mut input = postcard::to_stdvec(&[5u8; 32]).unwrap();
     input.append(&mut postcard::to_stdvec(&4u32).unwrap());
-    assert_fast_run_matches("sha3-chain-guest", "sha3_chain", input);
+    assert_fast_run_matches("sha3-chain-guest", "sha3_chain", input, false);
 }
 
 #[test]
@@ -180,6 +230,7 @@ fn muldiv_fast_run_matches_reference() {
         "muldiv-guest",
         "muldiv",
         vec![0xbd, 0xaa, 0xde, 0x5, 0x11, 0x5c],
+        false,
     );
 }
 
@@ -189,5 +240,6 @@ fn btreemap_fast_run_matches_reference() {
         "btreemap-guest",
         "btreemap",
         postcard::to_stdvec(&20u32).unwrap(),
+        false,
     );
 }
