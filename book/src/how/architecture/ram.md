@@ -55,11 +55,15 @@ An access misaligned for its width, such as an `LH` at an odd address or any mis
 
 ## Read-write checking and protected words
 
-RAM read-write checking enforces both value consistency and address selection.
+RAM read-write checking enforces value consistency, address selection, value
+preservation on protected words and the exclusion of unmapped words.
 Let $E(j)=\widetilde{\textsf{eq}}(r_0,j)$, where $r_0$ is the outer sumcheck's
 cycle point, and let $C(k)$ select words containing real source instructions,
 program input, trusted advice, untrusted advice or the stack canary
 `[stack_end, stack_end + STACK_CANARY_SIZE)`.
+Let $N(k)$ select the unmapped words of the proof's domain: the padding
+`[io_end, RAM_START_ADDRESS)` between the I/O region and DRAM, and the words
+from `heap_end` to `lowest_address + 8K`.
 Stage 2 proves
 
 $$
@@ -67,7 +71,7 @@ $$
  +\gamma^3(\textsf{Load}+\textsf{Store})(r_0)
  =\sum_{k,j}E(j)\textsf{ra}(k,j)
  \left[(1+\gamma)\textsf{Val}(k,j)
- +(\gamma+\gamma^2 C(k))\textsf{Inc}(j)+\gamma^3\right].
+ +(\gamma+\gamma^2 C(k))\textsf{Inc}(j)+\gamma^3+\gamma^4 N(k)\right].
 $$
 
 The $\gamma^2$ identity forces zero increments on protected words. It rejects
@@ -79,12 +83,22 @@ and Store flags. Together with Booleanity of every committed RAM chunk, it
 requires one selected address on memory rows and none on other rows. It is the
 only RAM one-hotness check (see [No-op cycles](#no-op-cycles)). Virtual memory
 rows and the field-inline memory accumulator carry these same flags.
+The $\gamma^4$ identity, $0=\sum_{k,j}E(j)N(k)\textsf{ra}(k,j)$, forbids
+selecting an unmapped word on any row. With `ra` zero-or-one-hot on each
+cycle (the $\gamma^3$ identity with Booleanity), its terms are nonnegative
+integers fixed before $r_0$ is drawn, so the
+sum vanishes at a random $r_0$ only if no cycle selects an unmapped word,
+except with probability $\log T/|\mathbb{F}|$. Layout construction rounds
+`heap_end` up to a doubleword, matching the linker's aligned `__heap_end`, and
+admission rejects an unaligned `heap_end`, so a guest that uses the whole heap
+never touches a word in $N$. The panic and termination words lie below
+`io_end` and are outside $N$.
 
 Preprocessing rounds each real source instruction's two- or four-byte extent
 outward to doublewords, merges adjacent intervals and excludes synthetic
 address-zero padding and intermediate virtual rows. It combines these intervals
 with the input, advice and canary extents from the public memory layout,
-rounds them outward to doublewords and merges overlaps and neighbors. The mask
+rounds them outward to doublewords and merges overlaps and neighbors. $C$
 uses RAM indices relative to the lowest mapped address, including I/O below
 DRAM and index zero, and restricts the union to the proof's RAM domain. Both
 the source intervals and the memory layout enter the program digest in both
@@ -94,9 +108,10 @@ key's coverage and checks the public interval shape and bounds. ELF admission
 rejects writable sections sharing a protected word. Read-only data sharing a
 code word is frozen with that word; text padding alone does not protect a word.
 
-At the final opening point, the verifier evaluates the multilinear extension
-of the mask, rather than testing membership at a field-valued address. For
-$s$ intervals this takes $O(s\log K)$ arithmetic. The optimized prover uses
+At the final opening point, the verifier evaluates the multilinear extensions
+of both masks, rather than testing membership at a field-valued address. For
+$s$ intervals this takes $O(s\log K)$ arithmetic; $N$ has at most two
+intervals. The optimized prover uses
 interval endpoints and at most two boundary weights per interval while binding
 address bits. It adds no dense mask, trace pass, commitment, opening point or
 sumcheck round; the maximum degree remains three.
@@ -108,10 +123,12 @@ value throughout execution. Equality of initial and final RAM alone would permit
 a temporary modification.
 
 The interpreter, replay tracer and native tracer reject a changed protected
-word before writing it, and reject loads below `lowest_address`. The
+word before writing it, reject loads below `lowest_address`, and reject any
+access at or above `io_end` below DRAM or at or above `heap_end` in DRAM. The
 constraints reject the same accesses: the $\gamma^2$ identity rejects the
-store, and the $\gamma^3$ identity with RAF evaluation rejects any address below
-`lowest_address`. The rest of the tracer's store-permission policy has no
+store, the $\gamma^3$ identity with RAF evaluation rejects any address outside
+the proof's domain `[lowest_address, lowest_address + 8K)`, and the
+$\gamma^4$ identity rejects any access to a word in $N$. The rest of the tracer's store-permission policy has no
 matching constraint. Host calls (prints, cycle
 markers and advice writes) never stop the run: a call whose buffer has a byte
 below `lowest_address`, or any other byte a guest load would reject, is logged

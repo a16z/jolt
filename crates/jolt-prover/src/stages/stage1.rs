@@ -226,6 +226,7 @@ mod field_inline_zk {
     use jolt_crypto::{Bn254G1, Pedersen, PedersenSetup};
     use jolt_dory::DoryScheme;
     use jolt_field::Fr;
+    use jolt_program::preprocess::ram::RamWordMasks;
     use jolt_transcript::{prover_transcript, Keccak, ProverState};
     use jolt_verifier::stages::uniskip::{self, UniskipParams};
     use jolt_verifier::stages::PrecommittedSchedule;
@@ -296,7 +297,7 @@ mod field_inline_zk {
             ram_K: 1 << 4,
             entry_address: ENTRY,
             preprocessing_digest: [0u8; 32],
-            write_protected_word_intervals: Vec::new(),
+            ram_word_masks: RamWordMasks::default(),
             untrusted_advice_commitment_present: false,
             trusted_advice_commitment_present: false,
             vc_capacity: Some(CAPACITY),

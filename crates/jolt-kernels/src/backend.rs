@@ -26,7 +26,7 @@ use jolt_poly::MultilinearPoly;
 #[cfg(feature = "allocative")]
 use jolt_poly::Polynomial;
 use jolt_poly::UnivariatePoly;
-use jolt_program::preprocess::ram::write_protected_word_intervals;
+use jolt_program::preprocess::ram::RamWordMasks;
 use jolt_verifier::stages::relations::{ConcreteSumcheck, SumcheckInputClaims};
 use jolt_verifier::stages::stage1::outer_remainder::OuterRemainder;
 #[cfg(feature = "field-inline")]
@@ -240,19 +240,16 @@ impl<'a, F: JoltField, B: ?Sized> KernelContext<'a, F, B> {
         &self.session
     }
 
-    /// Public value-preserving regions in the proof's RAM domain.
-    pub fn write_protected_word_intervals(
-        &self,
-        ram_k: usize,
-    ) -> Result<Vec<(usize, usize)>, KernelError<F>> {
+    /// Public value-preserving and unmapped word masks in the proof's RAM domain.
+    pub fn ram_word_masks(&self, ram_k: usize) -> Result<RamWordMasks, KernelError<F>> {
         let program = self.witness.program_preprocessing();
-        write_protected_word_intervals(
+        RamWordMasks::new(
             &program.ram.code_word_intervals,
             &program.memory_layout,
             ram_k,
         )
         .map_err(|_| KernelError::InvariantViolation {
-            reason: "invalid write-protected RAM intervals",
+            reason: "invalid RAM word masks",
         })
     }
 

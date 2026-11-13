@@ -53,6 +53,8 @@ pub enum PreprocessingError {
     InvalidWriteProtectedIntervals(&'static str),
     #[error("bytecode length overflows the packed PC index (u32)")]
     BytecodeTooLarge,
+    #[error("invalid unmapped RAM intervals: {0}")]
+    InvalidUnmappedIntervals(&'static str),
     #[cfg(feature = "field-inline")]
     #[error("invalid field-inline instruction: {0}")]
     InvalidFieldInlineInstruction(#[from] FieldInlineInstructionError),

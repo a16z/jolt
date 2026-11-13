@@ -1,8 +1,10 @@
 //! The stage 2 `RamReadWriteChecking` sumcheck instance.
 //!
-//! Owns the RAM read-write opening-point derivation and the `EqCycle` public-value
-//! computation, in lockstep with the BlindFold constraint's
-//! `ram::read_write_checking` formula.
+//! Owns the RAM read-write opening-point derivation and the `EqCycle`,
+//! `CodeEqCycle` and `UnmappedEqCycle` public-value computations, in lockstep
+//! with the BlindFold constraint's `ram::read_write_checking` formula. The
+//! output check evaluates the cycle equality once and each mask once, in
+//! O(log T + s·log K) field operations for `s` mask intervals.
 
 use jolt_claims::protocols::jolt::relations;
 pub use jolt_claims::protocols::jolt::relations::ram::{
@@ -11,9 +13,10 @@ pub use jolt_claims::protocols::jolt::relations::ram::{
 use jolt_claims::protocols::jolt::{
     geometry::dimensions::ReadWriteDimensions, JoltDerivedId, JoltRelationId, RamReadWritePublic,
 };
-use jolt_claims::SymbolicSumcheck;
+use jolt_claims::{OutputClaims, SumcheckChallenges, SymbolicSumcheck};
 use jolt_field::JoltField;
 use jolt_poly::{interval_mask_mle_msb, try_eq_mle};
+use jolt_program::preprocess::ram::RamWordMasks;
 
 use crate::stages::relations::ConcreteSumcheck;
 use crate::stages::stage1::Stage1ClearOutput;
@@ -39,7 +42,7 @@ pub struct RamReadWriteChecking<F: JoltField> {
     dimensions: ReadWriteDimensions,
     ram_log_k: usize,
     product_tau_low: Vec<F>,
-    write_protected_word_intervals: Vec<(usize, usize)>,
+    masks: RamWordMasks,
 }
 
 impl<F: JoltField> RamReadWriteChecking<F> {
@@ -47,14 +50,14 @@ impl<F: JoltField> RamReadWriteChecking<F> {
         dimensions: ReadWriteDimensions,
         ram_log_k: usize,
         product_tau_low: Vec<F>,
-        write_protected_word_intervals: Vec<(usize, usize)>,
+        masks: RamWordMasks,
     ) -> Self {
         Self {
             symbolic: relations::ram::ReadWriteChecking::new(dimensions),
             dimensions,
             ram_log_k,
             product_tau_low,
-            write_protected_word_intervals,
+            masks,
         }
     }
 }
@@ -66,9 +69,34 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
     }
 }
 
+/// A mask's multilinear extension at the address point, in O(log K) per
+/// interval.
+fn mask_mle<F: JoltField>(
+    intervals: &[(usize, usize)],
+    r_address: &[F],
+) -> Result<F, VerifierError> {
+    interval_mask_mle_msb(intervals, r_address).map_err(public_input_failed)
+}
+
 impl<F: JoltField> RamReadWriteChecking<F> {
+    /// Splits the opening point `[r_address(log_k) || r_cycle(log_t)]`.
+    fn split_opening_point<'a>(&self, point: &'a [F]) -> Result<(&'a [F], &'a [F]), VerifierError> {
+        if point.len() < self.ram_log_k {
+            return Err(public_input_failed(format!(
+                "RAM read-write opening point is too short: expected at least {}, got {}",
+                self.ram_log_k,
+                point.len()
+            )));
+        }
+        Ok(point.split_at(self.ram_log_k))
+    }
+
     pub fn write_protected_word_intervals(&self) -> &[(usize, usize)] {
-        &self.write_protected_word_intervals
+        &self.masks.write_protected
+    }
+
+    pub fn unmapped_word_intervals(&self) -> &[(usize, usize)] {
+        &self.masks.unmapped
     }
 
     pub fn dimensions(&self) -> ReadWriteDimensions {
@@ -108,6 +136,45 @@ impl<F: JoltField> ConcreteSumcheck<F> for RamReadWriteChecking<F> {
         })
     }
 
+    /// Evaluates the cycle equality once and each mask once. The generic
+    /// evaluator calls [`derive_output_term`](Self::derive_output_term) per
+    /// leaf, and `EqCycle` weights three of the five claims, so it would
+    /// evaluate the cycle equality five times.
+    fn expected_output(
+        &self,
+        _input_points: &RamReadWriteInputClaims<Vec<F>>,
+        output_values: &RamReadWriteOutputClaims<F>,
+        output_points: &RamReadWriteOutputClaims<Vec<F>>,
+        challenges: &RamReadWriteChallenges<F>,
+    ) -> Result<F, VerifierError> {
+        let (r_address, r_cycle) = self.split_opening_point(output_points.val())?;
+        let eq_cycle = try_eq_mle(&self.product_tau_low, r_cycle).map_err(public_input_failed)?;
+        let code_eq_cycle = eq_cycle * mask_mle(&self.masks.write_protected, r_address)?;
+        let unmapped_eq_cycle = eq_cycle * mask_mle(&self.masks.unmapped, r_address)?;
+        self.symbolic().output_expression::<F>().try_evaluate(
+            |id| {
+                output_values
+                    .resolve_output(id)
+                    .ok_or(VerifierError::MissingOpeningClaim { id: (*id).into() })
+            },
+            |id| {
+                challenges
+                    .resolve_challenge(id)
+                    .ok_or(VerifierError::MissingStageClaimChallenge { id: (*id).into() })
+            },
+            |id| {
+                let JoltDerivedId::RamReadWrite(public_id) = id else {
+                    return Err(VerifierError::MissingStageClaimDerived { id: (*id).into() });
+                };
+                Ok(match public_id {
+                    RamReadWritePublic::EqCycle => eq_cycle,
+                    RamReadWritePublic::CodeEqCycle => code_eq_cycle,
+                    RamReadWritePublic::UnmappedEqCycle => unmapped_eq_cycle,
+                })
+            },
+        )
+    }
+
     fn derive_output_term(
         &self,
         id: &JoltDerivedId,
@@ -118,33 +185,121 @@ impl<F: JoltField> ConcreteSumcheck<F> for RamReadWriteChecking<F> {
         let JoltDerivedId::RamReadWrite(public_id) = id else {
             return Err(VerifierError::MissingStageClaimDerived { id: (*id).into() });
         };
-        match public_id {
-            // The opening point is `[r_address(log_k) || r_cycle(log_t)]`, so the
-            // cycle sub-point is the suffix past the address bits.
-            RamReadWritePublic::EqCycle | RamReadWritePublic::CodeEqCycle => {
-                let r_cycle = output_points.val().get(self.ram_log_k..).ok_or_else(|| {
-                    public_input_failed(format!(
-                        "RAM read-write opening point is too short: expected at least {}, got {}",
-                        self.ram_log_k,
-                        output_points.val().len()
-                    ))
-                })?;
-                let eq_cycle =
-                    try_eq_mle(&self.product_tau_low, r_cycle).map_err(public_input_failed)?;
-                match public_id {
-                    RamReadWritePublic::EqCycle => Ok(eq_cycle),
-                    RamReadWritePublic::CodeEqCycle => {
-                        let r_address = output_points
-                            .val()
-                            .get(..self.ram_log_k)
-                            .ok_or_else(|| public_input_failed("RAM address point is too short"))?;
-                        let mask =
-                            interval_mask_mle_msb(&self.write_protected_word_intervals, r_address)
-                                .map_err(public_input_failed)?;
-                        Ok(eq_cycle * mask)
-                    }
+        let (r_address, r_cycle) = self.split_opening_point(output_points.val())?;
+        let eq_cycle = try_eq_mle(&self.product_tau_low, r_cycle).map_err(public_input_failed)?;
+        let intervals = match public_id {
+            RamReadWritePublic::EqCycle => return Ok(eq_cycle),
+            RamReadWritePublic::CodeEqCycle => &self.masks.write_protected,
+            RamReadWritePublic::UnmappedEqCycle => &self.masks.unmapped,
+        };
+        Ok(eq_cycle * mask_mle(intervals, r_address)?)
+    }
+}
+
+#[cfg(test)]
+#[expect(
+    clippy::unwrap_used,
+    clippy::arithmetic_side_effects,
+    reason = "brute-force field sums over test fixtures"
+)]
+mod tests {
+    use super::*;
+    use jolt_field::{Fr, One, Ring};
+
+    fn fr(value: u64) -> Fr {
+        Fr::from_u64(value)
+    }
+
+    /// `eq(bits, r)` for an index whose most significant bit pairs with `r[0]`.
+    fn eq_at_index(index: usize, r: &[Fr]) -> Fr {
+        r.iter()
+            .enumerate()
+            .map(|(j, &r_j)| {
+                if (index >> (r.len() - 1 - j)) & 1 == 1 {
+                    r_j
+                } else {
+                    Fr::one() - r_j
                 }
-            }
-        }
+            })
+            .product()
+    }
+
+    /// A mask's multilinear extension as a sum over the Boolean hypercube.
+    fn mask_by_hypercube_sum(intervals: &[(usize, usize)], r_address: &[Fr]) -> Fr {
+        (0..1 << r_address.len())
+            .filter(|&k| {
+                intervals
+                    .iter()
+                    .any(|&(start, end)| (start..end).contains(&k))
+            })
+            .map(|k| eq_at_index(k, r_address))
+            .sum()
+    }
+
+    /// The output check equals the relation's output expression with each
+    /// public term computed by brute force: the cycle equality as a product of
+    /// per-variable factors and each mask as a sum over all `2^log_k` addresses.
+    #[test]
+    fn expected_output_matches_brute_force_public_terms() {
+        let (log_t, log_k) = (4, 5);
+        let tau: Vec<Fr> = (11..).take(log_t).map(fr).collect();
+        let masks = RamWordMasks {
+            write_protected: vec![(0, 2), (3, 6)],
+            unmapped: vec![(6, 9), (20, 32)],
+        };
+        let relation = RamReadWriteChecking::new(
+            ReadWriteDimensions::new(log_t, log_k, 2, 1),
+            log_k,
+            tau.clone(),
+            masks.clone(),
+        );
+        let point: Vec<Fr> = (0..).take(log_k + log_t).map(|i| fr(3 + 2 * i)).collect();
+        let (r_address, r_cycle) = point.split_at(log_k);
+        let eq_cycle: Fr = tau
+            .iter()
+            .zip(r_cycle)
+            .map(|(&t, &r)| t * r + (Fr::one() - t) * (Fr::one() - r))
+            .product();
+        let code = mask_by_hypercube_sum(&masks.write_protected, r_address);
+        let unmapped = mask_by_hypercube_sum(&masks.unmapped, r_address);
+
+        let output_points = RamReadWriteOutputClaims {
+            val: point.clone(),
+            ra: point.clone(),
+            inc: point.clone(),
+        };
+        let output_values = RamReadWriteOutputClaims {
+            val: fr(5),
+            ra: fr(7),
+            inc: fr(9),
+        };
+        let challenges = RamReadWriteChallenges { gamma: fr(13) };
+        let expected = relation
+            .symbolic()
+            .output_expression::<Fr>()
+            .try_evaluate(
+                |id| Ok::<_, VerifierError>(output_values.resolve_output(id).unwrap()),
+                |id| Ok(challenges.resolve_challenge(id).unwrap()),
+                |id| {
+                    let JoltDerivedId::RamReadWrite(public_id) = id else {
+                        return Err(VerifierError::MissingStageClaimDerived { id: (*id).into() });
+                    };
+                    Ok(match public_id {
+                        RamReadWritePublic::EqCycle => eq_cycle,
+                        RamReadWritePublic::CodeEqCycle => eq_cycle * code,
+                        RamReadWritePublic::UnmappedEqCycle => eq_cycle * unmapped,
+                    })
+                },
+            )
+            .unwrap();
+        let actual = relation
+            .expected_output(
+                &RamReadWriteInputClaims::default(),
+                &output_values,
+                &output_points,
+                &challenges,
+            )
+            .unwrap();
+        assert_eq!(actual, expected);
     }
 }

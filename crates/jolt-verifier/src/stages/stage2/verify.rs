@@ -138,7 +138,7 @@ where
             read_write_dimensions,
             log_k,
             uniskip.tau_low.clone(),
-            checked.write_protected_word_intervals.clone(),
+            checked.ram_word_masks.clone(),
         ),
         product_remainder: ProductRemainder::new(
             product_dimensions,

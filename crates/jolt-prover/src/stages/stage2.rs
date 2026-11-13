@@ -139,7 +139,7 @@ where
             read_write_dimensions,
             log_k,
             tau_low.clone(),
-            backend.write_protected_word_intervals(config.ram_K)?,
+            backend.ram_word_masks(config.ram_K)?,
         ),
         product_remainder: ProductRemainder::new(
             product_dimensions,
@@ -286,9 +286,7 @@ mod field_inline_round_trip {
             &public_io,
             &stage1,
             &out,
-            &context
-                .write_protected_word_intervals(config.ram_K)
-                .unwrap(),
+            &context.ram_word_masks(config.ram_K).unwrap(),
         );
 
         assert_eq!(
@@ -370,9 +368,7 @@ mod field_inline_zk {
             ram_K: config.ram_K,
             entry_address: ENTRY,
             preprocessing_digest: [0u8; 32],
-            write_protected_word_intervals: context
-                .write_protected_word_intervals(config.ram_K)
-                .unwrap(),
+            ram_word_masks: context.ram_word_masks(config.ram_K).unwrap(),
             untrusted_advice_commitment_present: false,
             trusted_advice_commitment_present: false,
             vc_capacity: Some(CAPACITY),
@@ -430,9 +426,7 @@ mod field_inline_zk {
                 read_write_dimensions,
                 log_k,
                 tau_low.clone(),
-                context
-                    .write_protected_word_intervals(config.ram_K)
-                    .unwrap(),
+                context.ram_word_masks(config.ram_K).unwrap(),
             ),
             product_remainder: ProductRemainder::new(
                 product_dimensions,

@@ -43,11 +43,17 @@ impl ReadWriteOrder {
 }
 
 /// Fixed batch coefficients, shared by every sparse-matrix phase.
+///
+/// The RAM relation batches read, write, code (`C`), count and unmapped
+/// (`N`) claims with powers `1, γ, γ², γ³, γ⁴`. Both address masks enter the
+/// per-entry factor linearly: `C` scales the increment and `N` adds to the
+/// count coefficient.
 #[derive(Clone, Copy)]
 pub(super) struct ReadWriteBatch<F> {
     gamma: F,
     code: F,
     count: F,
+    unmapped: F,
 }
 
 #[derive(Clone, Copy)]
@@ -60,26 +66,42 @@ pub(super) struct ReadWriteCoefficients<F> {
 impl<F: JoltField> ReadWriteBatch<F> {
     pub(super) fn new(gamma: F) -> Self {
         let code = gamma * gamma;
+        let count = code * gamma;
         Self {
             gamma,
             code,
-            count: code * gamma,
+            count,
+            unmapped: count * gamma,
         }
     }
 
-    pub(super) fn unbound(&self, protected: bool) -> ReadWriteCoefficients<F> {
+    pub(super) fn unbound(&self, masks: AddressMaskBits) -> ReadWriteCoefficients<F> {
         ReadWriteCoefficients {
             gamma: self.gamma,
-            code_increment: if protected { self.code } else { F::zero() },
-            count: self.count,
+            code_increment: if masks.protected {
+                self.code
+            } else {
+                F::zero()
+            },
+            count: if masks.unmapped {
+                self.count + self.unmapped
+            } else {
+                self.count
+            },
         }
     }
 
-    pub(super) fn bound(&self, mask: F) -> ReadWriteCoefficients<F> {
+    pub(super) fn bound(&self, masks: AddressMaskValues<F>) -> ReadWriteCoefficients<F> {
         ReadWriteCoefficients {
             gamma: self.gamma,
-            code_increment: self.code * mask,
-            count: self.count,
+            code_increment: self.code * masks.protected,
+            // Honest accesses touch no unmapped word, so `N` is zero on every
+            // occupied column pair except at an interval's boundary block.
+            count: if masks.unmapped.is_zero() {
+                self.count
+            } else {
+                self.count + self.unmapped * masks.unmapped
+            },
         }
     }
 }
@@ -102,17 +124,157 @@ impl<F: JoltField> ReadWriteCoefficients<F> {
     }
 }
 
-/// A low-bit-bound interval has full interior blocks and at most two boundary
-/// blocks. This stores O(s) endpoints/weights rather than a K-element table.
+/// The RAM relation's two public address masks: `C` over write-protected
+/// words and `N` over unmapped words. They bind in lockstep with the address
+/// variables.
+///
+/// Both masks share one interval list sorted by start, each interval tagged
+/// with its mask. `C` and `N` are disjoint, so before any address bind one
+/// binary search classifies an index for both masks, the same cost as `C`
+/// alone. The list holds O(s) endpoints and weights, never a K-element table.
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
-pub(super) struct IntervalMask<F: JoltField> {
+pub(super) struct AddressMasks<F: JoltField> {
     intervals: Vec<MaskInterval<F>>,
 }
 
+#[derive(Clone, Copy)]
+pub(super) struct AddressMaskBits {
+    protected: bool,
+    unmapped: bool,
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct AddressMaskValues<F> {
+    protected: F,
+    unmapped: F,
+}
+
+impl<F: JoltField> AddressMaskValues<F> {
+    pub(super) fn protected(&self) -> F {
+        self.protected
+    }
+
+    pub(super) fn unmapped(&self) -> F {
+        self.unmapped
+    }
+
+    /// The masks' values at `X = 2` on the line through `even` (`X = 0`) and
+    /// `odd` (`X = 1`).
+    pub(super) fn at_two(even: Self, odd: Self) -> Self {
+        Self {
+            protected: odd.protected + odd.protected - even.protected,
+            unmapped: odd.unmapped + odd.unmapped - even.unmapped,
+        }
+    }
+}
+
+impl<F: JoltField> AddressMasks<F> {
+    /// Merges the canonical (sorted, disjoint) `C` and `N` interval lists.
+    /// Rejects lists that overlap each other, since one binary search would
+    /// then misclassify the shared words.
+    pub(super) fn new(
+        protected: &[(usize, usize)],
+        unmapped: &[(usize, usize)],
+    ) -> Result<Self, KernelError<F>> {
+        let tagged = |intervals: &[(usize, usize)], unmapped: bool| {
+            intervals
+                .iter()
+                .map(move |&(start, end)| MaskInterval {
+                    start,
+                    end,
+                    unmapped,
+                    first: F::one(),
+                    last: F::one(),
+                })
+                .collect::<Vec<_>>()
+        };
+        let mut intervals = tagged(protected, false);
+        intervals.extend(tagged(unmapped, true));
+        intervals.sort_unstable_by_key(|interval| interval.start);
+        if intervals
+            .windows(2)
+            .any(|pair| pair[0].start >= pair[0].end || pair[1].start < pair[0].end)
+            || intervals.last().is_some_and(|last| last.start >= last.end)
+        {
+            return Err(KernelError::InvariantViolation {
+                reason: "RAM address masks are empty, unsorted or overlapping",
+            });
+        }
+        Ok(Self { intervals })
+    }
+
+    /// Only used before any address bind. One binary search per surviving
+    /// entry, with no additional trace storage.
+    pub(super) fn contains_unbound(&self, index: usize) -> AddressMaskBits {
+        let next = self
+            .intervals
+            .partition_point(|interval| interval.start <= index);
+        match next
+            .checked_sub(1)
+            .map(|previous| &self.intervals[previous])
+        {
+            Some(interval) if index < interval.end => AddressMaskBits {
+                protected: !interval.unmapped,
+                unmapped: interval.unmapped,
+            },
+            _ => AddressMaskBits {
+                protected: false,
+                unmapped: false,
+            },
+        }
+    }
+
+    /// Binding keeps the list sorted by start, so the scan stops at the first
+    /// interval past `index`.
+    pub(super) fn value(&self, index: usize) -> AddressMaskValues<F> {
+        let mut values = AddressMaskValues {
+            protected: F::zero(),
+            unmapped: F::zero(),
+        };
+        for interval in &self.intervals {
+            if interval.start > index {
+                break;
+            }
+            let value = interval.value(index);
+            if interval.unmapped {
+                values.unmapped += value;
+            } else {
+                values.protected += value;
+            }
+        }
+        values
+    }
+
+    pub(super) fn bind(&mut self, r: F) {
+        for interval in &mut self.intervals {
+            interval.bind(r);
+        }
+    }
+
+    /// Collapses the fully bound masks to one point interval per mask.
+    pub(super) fn finish_address(&mut self) {
+        let values = self.value(0);
+        self.intervals = [(values.protected, false), (values.unmapped, true)]
+            .into_iter()
+            .map(|(value, unmapped)| MaskInterval {
+                start: 0,
+                end: 1,
+                unmapped,
+                first: value,
+                last: value,
+            })
+            .collect();
+    }
+}
+
+/// A low-bit-bound interval has full interior blocks and at most two boundary
+/// blocks, so it stores two endpoints and two boundary weights.
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct MaskInterval<F: JoltField> {
     start: usize,
     end: usize,
+    /// Whether the interval belongs to `N` rather than `C`.
+    unmapped: bool,
     #[cfg_attr(feature = "allocative", allocative(skip))]
     first: F,
     #[cfg_attr(feature = "allocative", allocative(skip))]
@@ -131,64 +293,18 @@ impl<F: JoltField> MaskInterval<F> {
             F::one()
         }
     }
-}
 
-impl<F: JoltField> IntervalMask<F> {
-    pub(super) fn new(intervals: &[(usize, usize)]) -> Self {
-        Self {
-            intervals: intervals
-                .iter()
-                .map(|&(start, end)| MaskInterval {
-                    start,
-                    end,
-                    first: F::one(),
-                    last: F::one(),
-                })
-                .collect(),
-        }
-    }
-
-    /// Only used before any address bind. The sorted original intervals admit
-    /// one binary search per surviving entry, with no additional trace storage.
-    pub(super) fn contains_unbound(&self, index: usize) -> bool {
-        let next = self
-            .intervals
-            .partition_point(|interval| interval.start <= index);
-        next.checked_sub(1)
-            .is_some_and(|previous| index < self.intervals[previous].end)
-    }
-
-    pub(super) fn value(&self, index: usize) -> F {
-        self.intervals
-            .iter()
-            .map(|interval| interval.value(index))
-            .sum()
-    }
-
-    pub(super) fn finish_address(&mut self) {
-        let value = self.value(0);
-        if let Some(interval) = self.intervals.first_mut() {
-            interval.start = 0;
-            interval.end = 1;
-            interval.first = value;
-            interval.last = value;
-            self.intervals.truncate(1);
-        }
-    }
-
-    pub(super) fn bind(&mut self, r: F) {
-        for interval in &mut self.intervals {
-            let start = interval.start / 2;
-            let end = interval.end.div_ceil(2);
-            let even = interval.value(2 * start);
-            let first = even + r * (interval.value(2 * start + 1) - even);
-            let even = interval.value(2 * (end - 1));
-            let last = even + r * (interval.value(2 * (end - 1) + 1) - even);
-            interval.start = start;
-            interval.end = end;
-            interval.first = first;
-            interval.last = last;
-        }
+    fn bind(&mut self, r: F) {
+        let start = self.start / 2;
+        let end = self.end.div_ceil(2);
+        let even = self.value(2 * start);
+        let first = even + r * (self.value(2 * start + 1) - even);
+        let even = self.value(2 * (end - 1));
+        let last = even + r * (self.value(2 * (end - 1) + 1) - even);
+        self.start = start;
+        self.end = end;
+        self.first = first;
+        self.last = last;
     }
 }
 
@@ -333,10 +449,35 @@ impl<F: JoltField, R: ConcreteSumcheck<F>> SumcheckKernel<F> for RamAddressKerne
 }
 
 #[cfg(test)]
+#[expect(clippy::unwrap_used, reason = "test module")]
 mod tests {
     use jolt_field::{Fr, One, Zero};
 
     use super::*;
+
+    /// A mask's value on `block` after binding the low `bindings.len()` bits:
+    /// the sum, over the indices of the block that lie in an interval, of the
+    /// equality polynomial between their low bits and the bindings.
+    fn block_sum(intervals: &[(usize, usize)], bindings: &[Fr], block: usize) -> Fr {
+        intervals
+            .iter()
+            .flat_map(|&(start, end)| start..end)
+            .filter(|index| index >> bindings.len() == block)
+            .map(|index| {
+                bindings
+                    .iter()
+                    .enumerate()
+                    .map(|(bit, &r)| {
+                        if (index >> bit) & 1 == 0 {
+                            Fr::one() - r
+                        } else {
+                            r
+                        }
+                    })
+                    .product::<Fr>()
+            })
+            .sum()
+    }
 
     #[test]
     fn distinguishes_invalid_splits_from_unsupported_mixed_orders() {
@@ -369,42 +510,95 @@ mod tests {
             let bindings: Vec<_> = (0..log_k).map(|bit| Fr::from_u64(3 + bit as u64)).collect();
             for start in 0..size {
                 for end in start + 1..=size {
-                    let mut mask = IntervalMask::new(&[(start, end)]);
+                    // The same interval as `C` alone and as `N` alone.
+                    let mut masks = [
+                        AddressMasks::new(&[(start, end)], &[]).unwrap(),
+                        AddressMasks::new(&[], &[(start, end)]).unwrap(),
+                    ];
                     for bound in 0..=log_k {
                         for block in 0..size >> bound {
-                            let expected: Fr = (start..end)
-                                .filter(|index| index >> bound == block)
-                                .map(|index| {
-                                    bindings[..bound]
-                                        .iter()
-                                        .enumerate()
-                                        .map(|(bit, &r)| {
-                                            if (index >> bit) & 1 == 0 {
-                                                Fr::one() - r
-                                            } else {
-                                                r
-                                            }
-                                        })
-                                        .product::<Fr>()
-                                })
-                                .sum();
-                            assert_eq!(
-                                mask.value(block),
-                                expected,
-                                "[{start},{end}), bound={bound}, block={block}"
-                            );
+                            let expected = block_sum(&[(start, end)], &bindings[..bound], block);
+                            let [protected, unmapped] = &masks;
+                            let label = format!("[{start},{end}), bound={bound}, block={block}");
+                            assert_eq!(protected.value(block).protected(), expected, "{label}");
+                            assert_eq!(protected.value(block).unmapped(), Fr::zero(), "{label}");
+                            assert_eq!(unmapped.value(block).unmapped(), expected, "{label}");
+                            assert_eq!(unmapped.value(block).protected(), Fr::zero(), "{label}");
                         }
                         if let Some(&r) = bindings.get(bound) {
-                            mask.bind(r);
+                            for mask in &mut masks {
+                                mask.bind(r);
+                            }
                         }
                     }
                 }
             }
         }
-        let mut mask = IntervalMask::new(&[(1, 3), (5, 8)]);
+        let mut mask = AddressMasks::new(&[(1, 3)], &[(5, 8)]).unwrap();
         mask.bind(Fr::zero());
         mask.bind(Fr::one());
         mask.bind(Fr::zero());
-        assert_eq!(mask.value(0), Fr::one());
+        assert_eq!(mask.value(0).protected(), Fr::one());
+        assert_eq!(mask.value(0).unmapped(), Fr::zero());
+    }
+
+    /// With interleaved intervals of both masks in one list, each mask keeps
+    /// its own value: membership before any bind, and the brute-force block sum
+    /// after every bind and after the address phase ends.
+    #[test]
+    fn interleaved_masks_match_brute_force_sums() {
+        use jolt_field::Ring;
+
+        let log_k = 5;
+        let protected = [(0, 2), (3, 6), (11, 12), (20, 27)];
+        let unmapped = [(2, 3), (7, 11), (12, 13), (27, 32)];
+        let mut masks = AddressMasks::<Fr>::new(&protected, &unmapped).unwrap();
+        let contains = |intervals: &[(usize, usize)], index| {
+            intervals
+                .iter()
+                .any(|&(start, end)| (start..end).contains(&index))
+        };
+        for index in 0..1 << log_k {
+            let bits = masks.contains_unbound(index);
+            assert_eq!(bits.protected, contains(&protected, index), "{index}");
+            assert_eq!(bits.unmapped, contains(&unmapped, index), "{index}");
+        }
+        let bindings: Vec<Fr> = (0..log_k).map(|bit| Fr::from_u64(7 + bit as u64)).collect();
+        for bound in 0..=log_k {
+            for block in 0..1 << (log_k - bound) {
+                let values = masks.value(block);
+                let label = format!("bound={bound}, block={block}");
+                assert_eq!(
+                    values.protected(),
+                    block_sum(&protected, &bindings[..bound], block),
+                    "{label}"
+                );
+                assert_eq!(
+                    values.unmapped(),
+                    block_sum(&unmapped, &bindings[..bound], block),
+                    "{label}"
+                );
+            }
+            if let Some(&r) = bindings.get(bound) {
+                masks.bind(r);
+            }
+        }
+        masks.finish_address();
+        assert_eq!(
+            masks.value(0).protected(),
+            block_sum(&protected, &bindings, 0)
+        );
+        assert_eq!(
+            masks.value(0).unmapped(),
+            block_sum(&unmapped, &bindings, 0)
+        );
+
+        for (protected, unmapped) in [
+            (&[(0, 4)][..], &[(3, 5)][..]),
+            (&[(2, 4)][..], &[(0, 3)][..]),
+            (&[(2, 2)][..], &[][..]),
+        ] {
+            assert!(AddressMasks::<Fr>::new(protected, unmapped).is_err());
+        }
     }
 }
