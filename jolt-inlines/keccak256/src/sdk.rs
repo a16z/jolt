@@ -205,11 +205,16 @@ pub unsafe fn keccak256_absorb_permute(state: *mut u64, block: *const u8) {
 }
 
 /// Computes only the first four output lanes of the final Keccak-f permutation.
-/// The remaining 21 input lanes are left unchanged, not updated as a sponge state.
 /// No padding is applied.
+///
+/// This entry point supports external consumers such as Jeth that absorb and pad
+/// the final block themselves before requesting the 32-byte digest.
 ///
 /// # Safety
 /// `state` must point to 25 initialized, writable, 8-byte-aligned `u64` words.
+/// Only lanes 0..3 are valid permutation outputs. Lanes 4..24 retain their input
+/// values, so the result must not be used to continue absorbing or to extract
+/// more than the first 32 bytes as a digest.
 #[inline(always)]
 pub unsafe fn keccak256_digest(state: *mut u64) {
     #[cfg(all(
@@ -245,13 +250,15 @@ pub unsafe fn keccak256_digest(state: *mut u64) {
 }
 
 /// Computes only the first four output lanes of the final Keccak-f permutation.
-/// The remaining 21 input lanes are left unchanged, not updated as a sponge state.
 /// No padding is applied.
 ///
 /// # Safety
 /// `state` must point to 25 initialized, writable, 8-byte-aligned `u64` words.
 /// `block` must point to 136 readable, 8-byte-aligned bytes, disjoint from `state`.
 /// Its 17 little-endian lanes are XORed into the state before permutation.
+/// Only lanes 0..3 are valid permutation outputs. Lanes 4..24 retain their input
+/// values, so the result must not be used to continue absorbing or to extract
+/// more than the first 32 bytes as a digest.
 #[inline(always)]
 pub unsafe fn keccak256_absorb_digest(state: *mut u64, block: *const u8) {
     #[cfg(all(

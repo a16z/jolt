@@ -64,6 +64,9 @@ Both SHA-256 entries read a raw 64-byte block in SHA-256's big-endian byte order
 | SHA256        | 0x0B   | 0x00   | 0x00   | SHA-256 compression with existing state and big-endian input block    |
 | SHA256INIT    | 0x0B   | 0x00   | 0x01   | SHA-256 compression with initial constants and big-endian input block |
 | KECCAK256     | 0x0B   | 0x01   | 0x00   | Keccak-256 permutation                     |
+| KECCAK256_ABSORB_PERMUTE | 0x0B | 0x01 | 0x01 | Absorb a 136-byte block and permute the full state |
+| KECCAK256_DIGEST | 0x0B | 0x01 | 0x02 | Final permutation with only the 32-byte digest output |
+| KECCAK256_ABSORB_DIGEST | 0x0B | 0x01 | 0x03 | Absorb the final padded block and compute only the 32-byte digest |
 | BLAKE2B       | 0x0B   | 0x02   | 0x00   | BLAKE2b compression                        |
 | BLAKE3        | 0x0B   | 0x03   | 0x00   | BLAKE3 compression                         |
 | BLAKE3KEYED64 | 0x0B   | 0x03   | 0x01   | BLAKE3 compression keyed                   |
@@ -73,6 +76,10 @@ Both SHA-256 entries read a raw 64-byte block in SHA-256's big-endian byte order
 | P256_*        | 0x0B   | 0x07   | 0x00–0x07 | P-256 field ops + Fake GLV advice       |
 | NTT64_I32_FORWARD | 0x0B | 0x08 | 0x00 | 64-point negacyclic i32 Montgomery NTT |
 | NTT64_I32_POINTWISE_DOT6 | 0x0B | 0x09 | 0x00 | Six-product pointwise dot of NTT rows |
+
+The Keccak digest-only operations leave state lanes 4..24 unchanged. Only the
+first four lanes are valid outputs; the resulting buffer must not be used to
+continue a sponge or extract a longer digest. Neither operation applies padding.
 
 ```rust
 unsafe {
