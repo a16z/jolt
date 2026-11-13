@@ -109,3 +109,39 @@ fn misaligned_access(kind: u8) -> u64 {
     }
     value ^ scratch.words()[1]
 }
+
+/// Runs `pad` single-row no-ops (`pad <= 4096`) between a fixed prologue and
+/// epilogue, so the trace length is affine in `pad` with slope one. The e2e
+/// harness solves for the `pad` whose execution fills a power-of-two domain
+/// exactly.
+#[jolt::provable(guest_only, heap_size = 65536, max_trace_length = 65536)]
+fn exact_rows(pad: [u8; 2]) -> [u8; 2] {
+    let rows = usize::from(u16::from_le_bytes(pad));
+    assert!(rows <= 4096, "the no-op sled holds 4096 rows");
+    // SAFETY: jumps `rows` 4-byte no-ops before the end of a sled that falls
+    // through to `2:`.
+    unsafe {
+        asm!(
+            "lla {target}, 2f",
+            "slli {rows}, {rows}, 2",
+            "sub {target}, {target}, {rows}",
+            "jr {target}",
+            ".rept 4096",
+            ".4byte 0x00000013", // addi x0, x0, 0: one ADDI row each
+            ".endr",
+            "2:",
+            target = out(reg) _,
+            rows = inout(reg) rows => _,
+            options(nostack, nomem),
+        );
+    }
+    pad
+}
+
+/// Panics when `trigger` is set: the SDK's panic path writes the panic byte
+/// and halts at `ebreak`, so the run proves with `panic = true`.
+#[jolt::provable(guest_only, heap_size = 65536, max_trace_length = 65536)]
+fn panic_halt(trigger: bool) -> u8 {
+    assert!(!trigger, "panic_halt was asked to panic");
+    7
+}

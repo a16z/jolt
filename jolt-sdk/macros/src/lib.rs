@@ -935,26 +935,24 @@ impl MacroBuilder {
                 unsafe {
                     ::core::ptr::write_volatile(#termination_bit as *mut u8, 1);
                 }
-                // Never return - loop forever for clean termination
-                // The emulator detects termination via PC stall
-                loop {
-                    unsafe { ::core::arch::asm!("j .", options(noreturn)); }
-                }
+                // `jolt.success` (custom-2, funct3 3) ends the run; the epilogue is its only emitter.
+                unsafe { ::core::arch::asm!(".insn i 0x5B, 3, x0, x0, 0", options(noreturn)); }
             }
 
             #panic_fn
         }
     }
 
-    /// Generate `jolt_panic()` function that writes to the panic address.
-    /// This is called by the runtime's `#[panic_handler]` to signal panics to the prover.
+    /// Generate `jolt_panic()`: writes 1 to the panic byte, then halts at `ebreak`, Jolt's
+    /// failure halt. The runtime's abort path (`__platform_abort`) calls it.
     fn make_panic(&self, panic_address: u64) -> TokenStream2 {
         quote! {
             #[cfg(feature = "guest")]
             #[no_mangle]
-            pub extern "C" fn jolt_panic() {
+            pub extern "C" fn jolt_panic() -> ! {
                 unsafe {
                     ::core::ptr::write_volatile(#panic_address as *mut u8, 1);
+                    ::core::arch::asm!("ebreak", options(noreturn));
                 }
             }
         }
