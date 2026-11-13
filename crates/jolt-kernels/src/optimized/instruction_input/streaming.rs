@@ -933,6 +933,7 @@ mod tests {
             assert!(matches!(
                 prepare(JoltBackend::optimized().with_streaming(StreamingFamilies {
                     instruction_input: true,
+                    ..StreamingFamilies::default()
                 })),
                 Err(KernelError::Witness(WitnessError::UnavailableView { .. }))
             ));

@@ -247,9 +247,11 @@ mod tests {
         }
     }
 
-    /// On a trace this small the instruction-input kernel reads the rows in
-    /// rounds 0 and 1 and fills its dense tables in round 1; the parity tests
-    /// in `jolt-kernels` cover later crossovers.
+    /// Every streaming family is selected. On a trace this small the
+    /// instruction-input kernel reads the rows in rounds 0 and 1 and fills its
+    /// dense tables in round 1, and the Spartan outer remainder fills its
+    /// tables in the pass that yields round 0's endpoints; the parity tests in
+    /// `jolt-kernels` cover later crossovers.
     #[test]
     fn streaming_kernels_reproduce_the_default_proof() {
         let Fixture {
@@ -269,6 +271,7 @@ mod tests {
             .expect("Dory proof")
         };
         let streamed = prove(JoltBackend::optimized().with_streaming(StreamingFamilies {
+            spartan: true,
             instruction_input: true,
         }));
         jolt_verifier::verify::<Fr, DoryScheme, Pedersen<Bn254G1>, VerifierState<'_, Keccak>>(

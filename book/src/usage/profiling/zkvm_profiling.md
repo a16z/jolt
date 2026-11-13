@@ -60,12 +60,14 @@ tier, slotting into the same instrumented seams.
 
 `profile --backend optimized --streaming instruction-input` opts into the
 stage-3 instruction-input streaming kernel, for either Dory or Akita. The
-`--streaming` option accepts comma-separated family names. Early rounds
+`spartan` family selects the stage-1 outer remainder. Combine families with
+`--streaming instruction-input,spartan`. Early rounds
 recompute from the resident trace until the dense tables fit a fixed 4 GiB
 cap; the full trace remains resident. This is not a process-memory cap, and
 streaming can use more memory than eager kernels on small or padded traces.
-Streaming workload, CSV and trace names append `_streaming_instruction_input`,
-so their run directories and `latest_` links stay separate from eager runs.
+Streaming workload, CSV and trace names append `_streaming_<families>` in
+canonical order (`instruction_input`, then `spartan`), so their run directories
+and `latest_` links stay separate from eager runs.
 The option belongs to `profile` only: `benchmark` sweeps have no streaming
 selection, and a resumed sweep ignores streaming profile artifacts.
 `summary.json` records the selection in `run.streaming_families`;

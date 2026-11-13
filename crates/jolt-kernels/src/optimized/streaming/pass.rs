@@ -1,6 +1,7 @@
 //! Task-partitioned row passes: a pass splits the cycle domain into tasks of
 //! whole split-eq groups, at most [`TASKS_PER_THREAD`] per pool thread, and
-//! each task visits its rows once, serially, off the witness's resident rows.
+//! each task visits its rows once, serially
+//! ([`BundleStore::visit`](crate::optimized::support::BundleStore::visit)).
 
 use std::ops::Range;
 
@@ -62,12 +63,14 @@ pub(crate) fn split_at_tasks<'a, T, const N: usize>(
         .collect()
 }
 
-/// The first bind depth `k` at which tables of `table_bytes` before any bind
-/// fit `cap` bytes (`⌈table_bytes / 2^k⌉ ≤ cap`), or `rounds` when none of
-/// the `rounds` depths does.
-pub(crate) fn dense_crossover(table_bytes: usize, cap: usize, rounds: usize) -> usize {
+/// The first bind depth `k` at which tables over `cycles` cycles before any
+/// bind fit a cap of `cap_cycles` cycles (`⌈cycles / 2^k⌉ ≤ cap_cycles`), or
+/// `rounds` when none of the `rounds` depths does. Both arguments count
+/// cycles: a caller divides its byte cap by its tables' bytes per cycle, so
+/// the byte size of the whole domain is never formed.
+pub(crate) fn dense_crossover(cycles: usize, cap_cycles: usize, rounds: usize) -> usize {
     (0..rounds)
-        .find(|&depth| table_bytes.div_ceil(1 << depth) <= cap)
+        .find(|&depth| cycles.div_ceil(1 << depth) <= cap_cycles)
         .unwrap_or(rounds)
 }
 
@@ -230,6 +233,12 @@ where
         .try_fold([F::zero(); N], |sum, task_input| {
             Ok(add(sum, task(task_input)?))
         })
+}
+
+/// `(q(0), q(∞))` terms of one pair of a two-factor product summand `a·b`,
+/// from the factors' `[low, high]` halves.
+pub(crate) fn product_endpoint_terms<F: JoltField>([a, b]: [[F; 2]; 2]) -> [F; 2] {
+    [a[0] * b[0], (a[1] - a[0]) * (b[1] - b[0])]
 }
 
 #[cfg(test)]
