@@ -167,6 +167,7 @@ impl<F: JoltField> OneHotCoeff<F> for LutIndex {
 
 pub(crate) mod layout;
 pub(crate) mod ops;
+mod stream;
 
 use layout::{
     load_indexed, merge_bind, split_pair_group, Cell, IndexedMeta, MatrixEntry, SparseEntry,
@@ -177,6 +178,7 @@ use ops::{
     bind_sparse_entries_in_place, block_count, sparse_quadratic, sparse_quadratic_fused,
     sparse_quadratic_soa, FUSED_SCRATCH_LEN, IN_PLACE_SCRATCH_LEN,
 };
+pub(super) use stream::StreamedCycleState;
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 enum CyclePhase<F: JoltField> {
     Seed {
