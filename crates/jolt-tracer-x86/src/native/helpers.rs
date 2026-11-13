@@ -52,7 +52,7 @@ fn read_guest_byte(state: &GuestState, host: &HostContext, address: u64) -> Resu
         }
         return Ok(0);
     }
-    if address > host.device.memory_layout.io_end {
+    if address >= host.device.memory_layout.io_end {
         return Err(format!("I/O overflow: Attempted to read from {address:#X}"));
     }
     if address < host.device.memory_layout.get_lowest_address() {
