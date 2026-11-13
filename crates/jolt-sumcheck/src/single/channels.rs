@@ -16,12 +16,11 @@ pub struct RoundSpec {
 /// Receive, absorb, check proof of work, then draw the challenge and visit the
 /// wire. A borrowed decode buffer need only live for the visitor invocation.
 pub trait VerifierRoundChannel<E: Field> {
-    type Error;
+    type Error: From<SumcheckError<E>>;
     type Slots;
     /// Reject any mismatch with a transport's predeclared shape before absorption.
     /// Transports whose shape is supplied solely by the driver may accept it directly.
     fn validate_shape(&self, shape: SumcheckShape) -> Result<(), Self::Error>;
-    fn map_sumcheck_error(&self, error: SumcheckError<E>) -> Self::Error;
     /// Reads one round of `spec.width` values, checks its proof of work at
     /// `spec.degree`, draws its challenge, and lends the wire to `visit`.
     fn verify_round<R>(
@@ -90,9 +89,6 @@ impl<E: Field + Encoding, T: FieldTranscript<E>> VerifierRoundChannel<E>
             });
         }
         Ok(())
-    }
-    fn map_sumcheck_error(&self, error: SumcheckError<E>) -> Self::Error {
-        error
     }
     fn verify_round<R>(
         &mut self,

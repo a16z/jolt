@@ -27,6 +27,10 @@ use std::borrow::Cow;
 use crate::error::SumcheckError;
 #[cfg(feature = "prover")]
 use crate::prover::ProveRounds;
+#[cfg(feature = "prover")]
+use crate::{BooleanHypercube, EqFactoredRound, SumcheckDomain};
+#[cfg(feature = "prover")]
+use jolt_poly::UnivariatePoly;
 
 /// How each round of a single instance is factored and sent.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -74,14 +78,10 @@ pub struct SingleReduction<E> {
 mod channels;
 #[cfg(feature = "prover")]
 mod prover;
-#[cfg(feature = "prover")]
-mod rounds;
 mod shape;
 pub use channels::{BindScalarClaim, ClearVerifierRounds, RoundSpec, VerifierRoundChannel};
 #[cfg(feature = "prover")]
 pub use prover::{ClearProverRounds, ProverRoundChannel};
-#[cfg(feature = "prover")]
-pub use rounds::{FullRounds, ProveSingleRounds, ProverRound};
 pub use shape::{SumcheckShape, SumcheckShapeError};
 
 impl<E: Field> SingleInstance<E> {
@@ -117,6 +117,47 @@ impl<E: Field> SingleInstance<E> {
         }
     }
 
+    /// Self-checks the kernel's round polynomial against `claim` and returns
+    /// its `degree` wire coefficients, reusing the kernel's buffer.
+    #[cfg(feature = "prover")]
+    fn wire_coefficients(
+        &self,
+        round: usize,
+        claim: E,
+        poly: UnivariatePoly<E>,
+    ) -> Result<Vec<E>, SumcheckError<E>>
+    where
+        E: Encoding,
+    {
+        // Kernels may sample a polynomial at more points than its degree
+        // needs, leaving zero leading coefficients. Visit every excess
+        // coefficient: length is public, only invalid kernel output errs.
+        let coefficients = poly.coefficients();
+        let excess = coefficients
+            .iter()
+            .skip(self.degree + 1)
+            .fold(false, |acc, c| acc | !c.is_zero());
+        if excess {
+            return Err(SumcheckError::DegreeBoundExceeded {
+                got: coefficients.len() - 1,
+                max: self.degree,
+            });
+        }
+        let tau = self.tau(round)?;
+        match tau {
+            None => BooleanHypercube.check_round_sum(round, claim, &poly)?,
+            Some(tau) => EqFactoredRound { tau }.check_round_sum(round, claim, &poly)?,
+        }
+        // Compressed omits the linear coefficient; eq-factored the constant.
+        let omitted = usize::from(tau.is_none());
+        let mut wire = poly.into_coefficients();
+        if omitted < wire.len() {
+            let _ = wire.remove(omitted);
+        }
+        wire.resize(self.degree, E::zero());
+        Ok(wire)
+    }
+
     // Both drivers validate shape before entering their bounded round loops.
     #[expect(
         clippy::indexing_slicing,
@@ -133,8 +174,8 @@ impl<E: Field> SingleInstance<E> {
     }
 }
 
-/// Drives a kernel through a privacy-aware transport. Channel errors and kernel
-/// errors pass through unchanged; the channel classifies driver errors.
+/// Drives a kernel through a privacy-aware transport. Channel and kernel
+/// errors pass through unchanged; driver errors convert into the channel's.
 #[cfg(feature = "prover")]
 pub fn prove_single_with<E, C, K>(
     kernel: &mut K,
@@ -142,30 +183,25 @@ pub fn prove_single_with<E, C, K>(
     channel: &mut C,
 ) -> Result<SingleReduction<E>, C::Error>
 where
-    E: Field,
+    E: Field + Encoding,
     C: ProverRoundChannel<E>,
-    K: ProveSingleRounds<E, C::Error> + ?Sized,
+    K: ProveRounds<E, C::Error> + ?Sized,
 {
-    let shape = instance
-        .shape()
-        .map_err(|e| channel.map_sumcheck_error(e))?;
+    let shape = instance.shape()?;
     if kernel.num_rounds() != shape.num_rounds() {
-        return Err(
-            channel.map_sumcheck_error(SumcheckError::RoundCountMismatch {
-                expected: shape.num_rounds(),
-                got: kernel.num_rounds(),
-            }),
-        );
+        return Err(SumcheckError::RoundCountMismatch {
+            expected: shape.num_rounds(),
+            got: kernel.num_rounds(),
+        }
+        .into());
     }
     channel.bind_input_claim(&instance.input_claim)?;
     let mut claim = instance.input_claim;
     let mut challenges = Vec::with_capacity(shape.num_rounds());
     for round in 0..shape.num_rounds() {
-        let output = kernel.prove_round(challenges.last().copied(), round, claim)?;
-        let mut wire = instance
-            .wire_coefficients(round, claim, output)
-            .map_err(|e| channel.map_sumcheck_error(e))?;
-        channel.send_round(round, &mut wire)?;
+        let poly = kernel.prove_round(challenges.last().copied(), round, claim)?;
+        let wire = instance.wire_coefficients(round, claim, poly)?;
+        channel.send_round(round, &wire)?;
         let challenge = channel.round_challenge(round, shape.degree_bound())?;
         claim = instance.next_claim(round, claim, &wire, challenge);
         channel.finish_round(wire);
@@ -197,18 +233,17 @@ where
         degree: shape.degree_bound(),
     };
     for round in 0..shape.num_rounds() {
-        channel
-            .verify_round(round, spec, |wire, slots, challenge| {
-                if wire.len() != shape.degree_bound() {
-                    return Ok(Err(SumcheckError::WrongRoundWidth {
-                        round,
-                        expected: shape.degree_bound(),
-                        got: wire.len(),
-                    }));
+        channel.verify_round(round, spec, |wire, slots, challenge| {
+            if wire.len() != shape.degree_bound() {
+                return Err(SumcheckError::WrongRoundWidth {
+                    round,
+                    expected: shape.degree_bound(),
+                    got: wire.len(),
                 }
-                visit(round, wire, slots, challenge).map(Ok)
-            })?
-            .map_err(|error| channel.map_sumcheck_error(error))?;
+                .into());
+            }
+            visit(round, wire, slots, challenge)
+        })?;
     }
     Ok(())
 }
@@ -222,9 +257,7 @@ where
     E: Field,
     C: BindScalarClaim<E>,
 {
-    let shape = instance
-        .shape()
-        .map_err(|e| channel.map_sumcheck_error(e))?;
+    let shape = instance.shape()?;
     channel.validate_shape(shape)?;
     channel.bind_input_claim(&instance.input_claim)?;
     let mut claim = instance.input_claim;
@@ -265,8 +298,8 @@ where
     T: FieldTranscript<E> + ProverTranscript,
     Err: From<SumcheckError<E>>,
 {
-    let mut channel = ClearProverRounds::new(instance.shape()?, transcript);
-    let reduction = prove_single_with(&mut FullRounds::new(member), instance, &mut channel)?;
+    let mut channel = ClearProverRounds::new(transcript);
+    let reduction = prove_single_with(member, instance, &mut channel)?;
     Ok((channel.into_proof(), reduction))
 }
 

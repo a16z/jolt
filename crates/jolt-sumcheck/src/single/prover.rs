@@ -1,19 +1,16 @@
-use super::{SingleSumcheckProof, SumcheckError, SumcheckShape};
+use super::{SingleSumcheckProof, SumcheckError};
 use crate::pow::grind_round;
 use jolt_field::Field;
 use jolt_transcript::{Encoding, FieldTranscript, PrivateChannel, ProverTranscript};
 use std::marker::PhantomData;
 
-/// Transport for clear or masked prover messages. Errors are classified by the
-/// channel, without requiring a foreign error type to implement `From`.
+/// Transport for clear or masked prover messages.
 pub trait ProverRoundChannel<E: Field> {
-    type Error;
-    fn map_sumcheck_error(&self, error: SumcheckError<E>) -> Self::Error;
+    type Error: From<SumcheckError<E>>;
     /// Use the channel's derived-claim operation; masked transports must not
     /// absorb the private scalar into a clear sub-channel.
     fn bind_input_claim(&mut self, claim: &E) -> Result<(), Self::Error>;
-    /// Preserve the clear values in `wire`: the driver evaluates them after sending.
-    fn send_round(&mut self, round: usize, wire: &mut [E]) -> Result<(), Self::Error>;
+    fn send_round(&mut self, round: usize, wire: &[E]) -> Result<(), Self::Error>;
     fn round_challenge(&mut self, round: usize, degree: usize) -> Result<E, Self::Error>;
     /// Take the evaluated wire for proof storage, or drop it for streaming transports.
     fn finish_round(&mut self, wire: Vec<E>) {
@@ -28,11 +25,11 @@ pub struct ClearProverRounds<'a, E: Field, T, Err = SumcheckError<E>> {
 }
 
 impl<'a, E: Field, T, Err> ClearProverRounds<'a, E, T, Err> {
-    pub fn new(shape: SumcheckShape, transcript: &'a mut T) -> Self {
+    pub fn new(transcript: &'a mut T) -> Self {
         Self {
             transcript,
             proof: SingleSumcheckProof {
-                rounds: Vec::with_capacity(shape.num_rounds()),
+                rounds: Vec::new(),
                 pow_nonces: Vec::new(),
             },
             error: PhantomData,
@@ -50,14 +47,11 @@ impl<
     > ProverRoundChannel<E> for ClearProverRounds<'_, E, T, Err>
 {
     type Error = Err;
-    fn map_sumcheck_error(&self, error: SumcheckError<E>) -> Err {
-        error.into()
-    }
     fn bind_input_claim(&mut self, claim: &E) -> Result<(), Err> {
         self.transcript.bind_derived(claim);
         Ok(())
     }
-    fn send_round(&mut self, _round: usize, wire: &mut [E]) -> Result<(), Err> {
+    fn send_round(&mut self, _round: usize, wire: &[E]) -> Result<(), Err> {
         self.transcript.append_private(wire);
         Ok(())
     }

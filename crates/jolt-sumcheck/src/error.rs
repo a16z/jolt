@@ -297,9 +297,6 @@ pub enum SumcheckError<F: Field> {
     #[error("sumcheck round count {rounds} exceeds u32::MAX")]
     RoundCountOutOfRange { rounds: usize },
 
-    #[error("invalid sumcheck input: {reason}")]
-    InvalidInput { reason: &'static str },
-
     #[error("sumcheck channel shape {got:?} does not match instance shape {expected:?}")]
     ChannelShapeMismatch {
         expected: SumcheckShape,

@@ -51,8 +51,8 @@ impl<F: Field> OmittedConstantPoly<F> {
         claim - tau * self.nonconstant_term_sum_at_one()
     }
 
-    /// Returns `q(point)`, with `q0` recovered by
-    /// [`constant_from_claim`](Self::constant_from_claim).
+    /// Returns `q(point)`, recovering `q0` from `claim` as the eq-factored
+    /// round wire does ([`eval_round_wire`]).
     pub fn evaluate_from_claim(&self, claim: F, tau: F, point: F) -> F {
         eval_round_wire(
             WireFormat::EqFactored { tau },
