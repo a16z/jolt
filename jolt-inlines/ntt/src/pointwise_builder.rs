@@ -3,10 +3,11 @@ use jolt_inlines_sdk::host::{
     InlineOp, InlineOperands, InlineRegister, NoAdvice, SourceKind as Kind,
 };
 
-use crate::pointwise::{DOT_FUNCT7, DOT_PRODUCTS};
+use crate::pointwise::{DOT_FUNCT7, DOT_NONNEGATIVE_FUNCT7, DOT_PRODUCTS};
 use crate::{DEGREE, OPCODE};
 
 pub struct PointwiseDot64;
+pub struct NonnegativePointwiseDot64;
 
 struct DotBuilder {
     asm: InlineExpansionBuilder,
@@ -18,7 +19,30 @@ struct DotBuilder {
 }
 
 impl DotBuilder {
-    fn build(mut self) -> Result<ExpandedInstructionSequence, ExpansionError> {
+    fn new(
+        mut asm: InlineExpansionBuilder,
+        operands: InlineOperands,
+    ) -> Result<Self, ExpansionError> {
+        let sums = asm.allocate_inline_array::<{ DEGREE / 2 }>()?;
+        let pointers = asm.allocate_inline_array::<{ 2 * DOT_PRODUCTS }>()?;
+        let primes = asm.allocate_inline_array::<2>()?;
+        let scratch = asm.allocate_inline_array::<6>()?;
+        Ok(Self {
+            asm,
+            operands,
+            sums,
+            pointers,
+            primes,
+            scratch,
+        })
+    }
+
+    fn build(mut self, nonnegative: bool) -> Result<ExpandedInstructionSequence, ExpansionError> {
+        let reduce = if nonnegative {
+            reduce_nonnegative
+        } else {
+            reduce_signed
+        };
         let [p, pinv] = self.primes.map(|r| *r);
         let [a_lo, a_hi, b_lo, b_hi, temp, mask] = self.scratch.map(|r| *r);
         for (index, pointer) in self.pointers.iter().enumerate() {
@@ -99,26 +123,29 @@ impl InlineOp for PointwiseDot64 {
     const NAME: &'static str = "NTT64_I32_POINTWISE_DOT6";
 
     fn build_sequence(
-        mut asm: InlineExpansionBuilder,
+        asm: InlineExpansionBuilder,
         operands: InlineOperands,
     ) -> Result<ExpandedInstructionSequence, ExpansionError> {
-        let sums = asm.allocate_inline_array::<{ DEGREE / 2 }>()?;
-        let pointers = asm.allocate_inline_array::<{ 2 * DOT_PRODUCTS }>()?;
-        let primes = asm.allocate_inline_array::<2>()?;
-        let scratch = asm.allocate_inline_array::<6>()?;
-        DotBuilder {
-            asm,
-            operands,
-            sums,
-            pointers,
-            primes,
-            scratch,
-        }
-        .build()
+        DotBuilder::new(asm, operands)?.build(false)
     }
 }
 
-fn reduce(asm: &mut InlineExpansionBuilder, value: u8, p: u8, diff: u8, mask: u8) {
+impl InlineOp for NonnegativePointwiseDot64 {
+    type Advice = NoAdvice;
+    const OPCODE: u32 = OPCODE;
+    const FUNCT3: u32 = 0;
+    const FUNCT7: u32 = DOT_NONNEGATIVE_FUNCT7;
+    const NAME: &'static str = "NTT64_I32_POINTWISE_DOT6_NONNEGATIVE";
+
+    fn build_sequence(
+        asm: InlineExpansionBuilder,
+        operands: InlineOperands,
+    ) -> Result<ExpandedInstructionSequence, ExpansionError> {
+        DotBuilder::new(asm, operands)?.build(true)
+    }
+}
+
+fn reduce_signed(asm: &mut InlineExpansionBuilder, value: u8, p: u8, diff: u8, mask: u8) {
     asm.emit_r(Kind::SUB, diff, value, p);
     asm.emit_i(Kind::SRAI, mask, diff, 63);
     asm.emit_r(Kind::AND, mask, mask, p);
@@ -126,4 +153,15 @@ fn reduce(asm: &mut InlineExpansionBuilder, value: u8, p: u8, diff: u8, mask: u8
     asm.emit_i(Kind::SRAI, mask, diff, 63);
     asm.emit_r(Kind::AND, mask, mask, p);
     asm.emit_r(Kind::ADDW, value, diff, mask);
+}
+
+fn reduce_nonnegative(asm: &mut InlineExpansionBuilder, value: u8, p: u8, diff: u8, mask: u8) {
+    // For every signed word x and p >= 0, two-sided correction is
+    // x + p * ([x < p] - (x >> 63) - 1). The wrapper enforces p >= 0.
+    asm.emit_r(Kind::SLT, diff, value, p);
+    asm.emit_i(Kind::SRAI, mask, value, 63);
+    asm.emit_r(Kind::SUB, diff, diff, mask);
+    asm.emit_i(Kind::ADDI, diff, diff, u64::MAX);
+    asm.emit_r(Kind::MUL, diff, diff, p);
+    asm.emit_r(Kind::ADDW, value, value, diff);
 }
