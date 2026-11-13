@@ -1491,8 +1491,11 @@ mod test_mmu {
         let _ = mmu.load_doubleword(io_end + 8);
     }
 
+    /// A program size that is not a multiple of eight leaves the heap's end
+    /// unaligned before rounding. The layout rounds `heap_end` up to a
+    /// doubleword, so the whole last word is heap.
     #[test]
-    fn final_partial_heap_word_accepts_stores() {
+    fn last_heap_word_accepts_stores_when_program_size_is_unaligned() {
         use std::panic::{catch_unwind, AssertUnwindSafe};
 
         let config = MemoryConfig {
@@ -1502,7 +1505,7 @@ mod test_mmu {
             ..Default::default()
         };
         let device = JoltDeviceMemory::new(&config);
-        assert_eq!(device.memory_layout.heap_end, RAM_START_ADDRESS + 1161);
+        assert_eq!(device.memory_layout.heap_end, RAM_START_ADDRESS + 1168);
         let mut mmu = Mmu::new(Box::new(DummyTerminal::default()));
         mmu.init_memory(device.memory_layout.get_total_memory_size());
         mmu.jolt_device = Some(device);
@@ -1514,7 +1517,7 @@ mod test_mmu {
             assert_eq!(write.post_value, value);
             assert_eq!(mmu.load_doubleword(address).unwrap().0, value);
         }
-        for offset in [1161, 1168] {
+        for offset in [1168, 1176] {
             assert!(catch_unwind(AssertUnwindSafe(|| {
                 mmu.store_doubleword(RAM_START_ADDRESS + offset, 0)
             }))
