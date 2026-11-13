@@ -737,6 +737,7 @@ impl Mmu {
             {
                 continue;
             }
+            let stack_size = layout.stack_size;
             let old = self.load_doubleword_raw(word);
             let start = address.max(word);
             let end = (address + width).min(word + 8);
@@ -748,9 +749,12 @@ impl Mmu {
                 replacement & mask,
                 "Store changes protected doubleword at {word:#x}{}",
                 if canary {
-                    " (Stack overflow in stack canary region)"
+                    format!(
+                        " (Stack overflow in stack canary region; increase stack_size in \
+                         MemoryConfig, currently {stack_size} bytes)"
+                    )
                 } else {
-                    ""
+                    String::new()
                 },
             );
         }

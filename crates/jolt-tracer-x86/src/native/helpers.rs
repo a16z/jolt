@@ -217,13 +217,17 @@ pub extern "sysv64" fn protected_store_doubleword(
     };
     let old = u64::from_le_bytes(bytes);
     if old != value {
-        let message = if offset.wrapping_add(7).wrapping_sub(state.canary_offset)
-            < STACK_CANARY_SIZE + 7
-        {
-            format!("Stack overflow: store changes protected doubleword at {address:#X} in stack canary region")
-        } else {
-            format!("Store changes protected doubleword at {address:#x}")
-        };
+        let message =
+            if offset.wrapping_add(7).wrapping_sub(state.canary_offset) < STACK_CANARY_SIZE + 7 {
+                let stack_size = host.device.memory_layout.stack_size;
+                format!(
+                    "Stack overflow: store changes protected doubleword at {address:#X} in stack \
+                     canary region; increase stack_size in MemoryConfig (currently \
+                     {stack_size} bytes)"
+                )
+            } else {
+                format!("Store changes protected doubleword at {address:#x}")
+            };
         return fail(state, host, message);
     }
     if !state.obs_cursor.is_null() && state.obs_cursor < state.obs_end {
