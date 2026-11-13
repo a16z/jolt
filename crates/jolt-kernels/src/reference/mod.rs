@@ -11,6 +11,11 @@
 //! equivalence anchor optimized backends are tested against and the
 //! fallback partial backends compose over; it is eager-dense throughout — a
 //! test oracle at harness scale, never a performance path.
+//!
+//! The one exception is `akita/`. Under the `akita` feature,
+//! `JoltBackend::optimized` replaces only the compute slots and keeps this
+//! tier's commit slot, so `akita/` is the production Akita witness-commitment
+//! path and is tuned for performance.
 
 #[cfg(feature = "akita")]
 use jolt_akita::TraceOneHotCommitment;
