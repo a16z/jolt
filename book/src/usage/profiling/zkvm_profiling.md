@@ -61,9 +61,11 @@ tier, slotting into the same instrumented seams.
 `profile --backend optimized --streaming instruction-input` opts into the
 stage-3 instruction-input streaming kernel, for either Dory or Akita. The
 `--streaming` option accepts comma-separated family names. Early rounds
-recompute from the resident trace until the dense tables fit a fixed 4 GiB
-cap; the full trace remains resident. This is not a process-memory cap, and
-streaming can use more memory than eager kernels on small or padded traces.
+recompute from the resident trace, up to the padding suffix, until the dense
+tables fit a fixed 4 GiB cap; the full trace remains resident. This is not a
+process-memory cap. When the eager kernel's reservation is no larger than
+those dense tables (traces below about 2^25 cycles), the slot keeps the eager
+kernel.
 Streaming workload, CSV and trace names append `_streaming_instruction_input`,
 so their run directories and `latest_` links stay separate from eager runs.
 The option belongs to `profile` only: `benchmark` sweeps have no streaming

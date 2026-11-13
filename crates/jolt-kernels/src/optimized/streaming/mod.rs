@@ -8,7 +8,7 @@
 mod pass;
 
 pub(crate) use pass::{
-    dense_crossover, gruen_pair_pass, task_ranges, PairHalves, DENSE_TABLE_CAP, VISIT_ROWS,
+    gruen_pair_pass, pass_cycles, task_ranges, PairHalves, DENSE_TABLE_CAP, VISIT_ROWS,
 };
 
 use jolt_field::JoltField;

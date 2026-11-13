@@ -1,6 +1,7 @@
 use clap::Parser;
 #[cfg(feature = "akita")]
 use jolt_akita::AkitaChunkProfile;
+use jolt_kernels::optimized::StreamingFamilies;
 
 #[cfg(feature = "akita")]
 use super::{parse_akita_chunk_profile, OutputFormat, Workload};
@@ -8,8 +9,6 @@ use super::{BackendKind, MemoryBudget, ProfileArgs};
 
 #[test]
 fn streaming_option_selects_the_requested_families() {
-    use jolt_kernels::optimized::StreamingFamilies;
-
     #[derive(Parser)]
     struct Cli {
         #[command(flatten)]
@@ -27,10 +26,14 @@ fn streaming_option_selects_the_requested_families() {
     .unwrap();
     assert_eq!(
         cli.args.streaming,
-        Some(StreamingFamilies {
+        StreamingFamilies {
             instruction_input: true
-        })
+        }
     );
+    let options = ["jolt-prover", "--name", "fibonacci"];
+    let unselected = Cli::try_parse_from(options).unwrap();
+    assert_eq!(unselected.args.streaming, StreamingFamilies::default());
+    assert!(Cli::try_parse_from(options.into_iter().chain(["--streaming", "ram"])).is_err());
 }
 
 #[test]
@@ -227,7 +230,7 @@ fn chunk_profiles_have_distinct_artifact_and_csv_names() {
             scale: Some(20),
             format: OutputFormat::None,
             backend: BackendKind::Optimized,
-            streaming: None,
+            streaming: StreamingFamilies::default(),
             guest_elf: None,
             input_file: None,
             result_json: None,

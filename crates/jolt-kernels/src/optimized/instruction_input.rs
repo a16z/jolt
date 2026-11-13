@@ -15,7 +15,7 @@ mod streaming;
 
 use flags::PackedFlags;
 use native::NativePairSums;
-pub use streaming::StreamingInstructionInput;
+pub(crate) use streaming::StreamingInstructionInput;
 
 use jolt_claims::protocols::jolt::relations::instruction::InstructionInputOutputClaims;
 use jolt_claims::protocols::jolt::{InstructionInputPublic, JoltDerivedId};
@@ -199,6 +199,30 @@ fn operand_product<F: JoltField>(values: &[F; NUM_TABLES], gamma: F) -> F {
     right + gamma * left
 }
 
+/// Adds one pair's quadratic lanes, `pair_at(i)` giving table `i`'s low and
+/// high entries: `lanes[t]` holds the left and right operand sums
+/// `Σ flag·value` of the constant (`t = 0`) and leading (`t = 1`)
+/// coefficients and, with three terms, of the value at one. Separate
+/// left/right lanes let gamma be applied once per block, not per pair.
+#[inline]
+fn add_pair_lanes<F: JoltField, const TERMS: usize>(
+    lanes: &mut [[F::Accumulator; 2]; TERMS],
+    pair_at: impl Fn(usize) -> (F, F),
+) {
+    const { assert!(TERMS == 2 || TERMS == 3) };
+    for operand in 0..NUM_TABLES / 2 {
+        let (flag_0, flag_1) = pair_at(2 * operand);
+        let (value_0, value_1) = pair_at(2 * operand + 1);
+        // Operands rs1 and pc are left, the rest right.
+        let side = usize::from(operand >= 2);
+        lanes[0][side].fmadd(flag_0, value_0);
+        lanes[1][side].fmadd(flag_1 - flag_0, value_1 - value_0);
+        if let Some(at_one) = lanes.get_mut(2) {
+            at_one[side].fmadd(flag_1, value_1);
+        }
+    }
+}
+
 impl<F: JoltField> OptimizedInstructionInputKernel<F> {
     pub(crate) fn new(
         r_product: &[F],
@@ -225,6 +249,26 @@ impl<F: JoltField> OptimizedInstructionInputKernel<F> {
             state: InputState::Native(rows),
             gruen: GruenSplitEqPolynomial::new(r_product, BindingOrder::LowToHigh),
         })
+    }
+
+    /// The eager kernel over `tables` bound by `progress`'s challenges, each
+    /// holding its column's entries before the constant suffix, whose
+    /// entries all equal `tail`.
+    fn from_dense(
+        progress: RoundProgress,
+        gamma: F,
+        tables: [Vec<F>; NUM_TABLES],
+        tail: [F; NUM_TABLES],
+        gruen: GruenSplitEqPolynomial<F>,
+    ) -> Self {
+        Self {
+            progress,
+            gamma,
+            prefix_len: tables[0].len(),
+            state: InputState::Dense(tables.into()),
+            tail,
+            gruen,
+        }
     }
 
     /// Constant and leading coefficients of the native quadratic, with its
@@ -287,30 +331,20 @@ impl<F: JoltField> OptimizedInstructionInputKernel<F> {
         let pairs = self.prefix_len.div_ceil(2);
         let coefficients = self.gruen.par_fold_out_in_prefix(
             pairs,
-            || [F::Accumulator::default(); 4],
+            || [[F::Accumulator::default(); 2]; 2],
             |lanes, row, _x_in, e_in| {
-                // Separate left/right lanes let gamma be applied once per
-                // block, rather than once per row or evaluation point.
-                let mut inner = [F::Accumulator::default(); 4];
-                for pair in 0..5 {
-                    let (flag_0, flag_1) = pair_at(2 * pair, row);
-                    let (value_0, value_1) = pair_at(2 * pair + 1, row);
-                    let flag_m = flag_1 - flag_0;
-                    let value_m = value_1 - value_0;
-                    let offset = if pair < 2 { 0 } else { 2 };
-                    inner[offset].fmadd(flag_0, value_0);
-                    inner[offset + 1].fmadd(flag_m, value_m);
-                }
-                for (lane, inner) in lanes.iter_mut().zip(inner) {
+                let mut inner = [[F::Accumulator::default(); 2]; 2];
+                add_pair_lanes(&mut inner, |i| pair_at(i, row));
+                for (lane, inner) in lanes
+                    .as_flattened_mut()
+                    .iter_mut()
+                    .zip(inner.into_iter().flatten())
+                {
                     lane.fmadd(e_in, inner.reduce());
                 }
             },
             |_x_out, e_out, lanes| {
-                let [left_0, left_2, right_0, right_2] = lanes;
-                [
-                    e_out * (right_0.reduce() + self.gamma * left_0.reduce()),
-                    e_out * (right_2.reduce() + self.gamma * left_2.reduce()),
-                ]
+                lanes.map(|[left, right]| e_out * (right.reduce() + self.gamma * left.reduce()))
             },
             |a, b| [a[0] + b[0], a[1] + b[1]],
         );

@@ -247,9 +247,10 @@ mod tests {
         }
     }
 
-    /// On a trace this small the instruction-input kernel reads the rows in
-    /// rounds 0 and 1 and fills its dense tables in round 1; the parity tests
-    /// in `jolt-kernels` cover later crossovers.
+    /// On a trace this small the streaming slot prepares the eager kernel,
+    /// whose reservation is below the streamed dense tables; this pins the
+    /// slot's wiring end to end. The parity tests in `jolt-kernels` cover the
+    /// streamed rounds at every crossover.
     #[test]
     fn streaming_kernels_reproduce_the_default_proof() {
         let Fixture {

@@ -19,10 +19,10 @@ fn fixture_events() -> Vec<Value> {
 
 fn fixture_context() -> SummaryContext {
     SummaryContext {
-        workload: "fibonacci_streaming_instruction_input".to_string(),
+        workload: "fibonacci".to_string(),
         scale_log2: 16,
-        backend: "optimized".to_string(),
-        streaming_families: vec!["instruction-input".to_string()],
+        backend: "reference".to_string(),
+        streaming_families: Vec::new(),
     }
 }
 
@@ -109,9 +109,13 @@ fn fixture_peak() -> PeakMemory {
 }
 
 fn fixture_summary(events: &[Value]) -> ProfileSummary {
+    fixture_summary_in(events, &fixture_context())
+}
+
+fn fixture_summary_in(events: &[Value], ctx: &SummaryContext) -> ProfileSummary {
     build_summary(
         events,
-        &fixture_context(),
+        ctx,
         &fixture_samples(),
         fixture_peak(),
         1_700_000_000,
@@ -455,26 +459,29 @@ fn finalize_trace_rewrites_and_summarizes_atomically() {
 /// instance-level schema validation used by the smoke test.
 #[test]
 fn summary_round_trips_through_strict_schema_structs() {
-    let summary = fixture_summary(&fixture_events());
-    assert_eq!(summary.run.streaming_families, ["instruction-input"]);
-    let json = serde_json::to_string(&summary).unwrap();
-    let reparsed: ProfileSummary = serde_json::from_str(&json).unwrap();
-    assert_eq!(
-        serde_json::to_value(&reparsed).unwrap(),
-        serde_json::to_value(&summary).unwrap()
-    );
-}
-
-/// A run without a streaming selection omits `run.streaming_families`, as
-/// summaries did before the field existed; a selection is written out.
-#[test]
-fn summary_omits_empty_streaming_families() {
-    let mut summary = fixture_summary(&fixture_events());
-    let selected = serde_json::to_value(&summary.run).unwrap();
-    assert_eq!(selected["streaming_families"][0], "instruction-input");
-    summary.run.streaming_families.clear();
-    let ordinary = serde_json::to_value(&summary.run).unwrap();
-    assert!(ordinary.get("streaming_families").is_none());
+    let streaming = SummaryContext {
+        workload: "fibonacci_streaming_instruction_input".to_string(),
+        backend: "optimized".to_string(),
+        streaming_families: vec!["instruction-input".to_string()],
+        ..fixture_context()
+    };
+    for ctx in [fixture_context(), streaming] {
+        let summary = fixture_summary_in(&fixture_events(), &ctx);
+        assert_eq!(summary.run.streaming_families, ctx.streaming_families);
+        let json = serde_json::to_string(&summary).unwrap();
+        let reparsed: ProfileSummary = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            serde_json::to_value(&reparsed).unwrap(),
+            serde_json::to_value(&summary).unwrap()
+        );
+        // A run without a streaming selection omits the field, as summaries
+        // did before it existed.
+        let run = serde_json::to_value(&summary.run).unwrap();
+        assert_eq!(
+            run.get("streaming_families").is_some(),
+            !ctx.streaming_families.is_empty()
+        );
+    }
 }
 
 #[test]

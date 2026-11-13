@@ -4,7 +4,7 @@
 
 use std::ops::Range;
 
-use jolt_field::JoltField;
+use jolt_field::{Accumulator as _, JoltField};
 use jolt_poly::GruenSplitEqPolynomial;
 use jolt_witness::WitnessError;
 #[cfg(feature = "parallel")]
@@ -14,7 +14,7 @@ use rayon::prelude::*;
 pub(crate) const VISIT_ROWS: usize = 1 << 12;
 
 /// Byte cap on one streaming kernel's dense tables: its rounds recompute
-/// their pairs from the rows until the tables fit ([`dense_crossover`]).
+/// their pairs from the rows until the tables fit.
 /// 4 GiB, or every representable size where `usize` cannot hold 4 GiB.
 pub(crate) const DENSE_TABLE_CAP: usize = 4usize.saturating_mul(1 << 30);
 
@@ -23,12 +23,12 @@ pub(crate) const DENSE_TABLE_CAP: usize = 4usize.saturating_mul(1 << 30);
 #[cfg(feature = "parallel")]
 const TASKS_PER_THREAD: usize = 8;
 
-/// The task partition of one pass over the cycle domain `0..cycles`: units of
+/// The task partition of one pass over the cycles `0..cycles`: units of
 /// `group` cycles and `min(TASKS_PER_THREAD · pool threads, cycles / group)`
 /// tasks, task `i` holding units `⌊i·n/tasks⌋..⌊(i+1)·n/tasks⌋` of the
-/// `n = cycles / group`. Both sizes are powers of two, with `group ≤ cycles`,
-/// so every task covers whole `group`-cycle kernel groups. Per-task state
-/// allocated before the pass is held `tasks` times at once.
+/// `n = cycles / group`. `cycles` is a multiple of `group`, so every task
+/// covers whole `group`-cycle kernel groups. Per-task state allocated before
+/// the pass is held `tasks` times at once.
 pub(crate) fn task_ranges(cycles: usize, group: usize) -> Vec<Range<usize>> {
     let unit = group;
     let units = cycles / unit;
@@ -43,7 +43,8 @@ pub(crate) fn task_ranges(cycles: usize, group: usize) -> Vec<Range<usize>> {
 
 /// Splits every table at the task boundaries of `ranges`, where `entry(cycle)`
 /// is the table index at which a boundary cycle's entries start, so each task
-/// fills only its own slices of the final tables.
+/// fills only its own slices of the final tables. Tables shorter than the
+/// ranges' entries leave the last tasks' slices short or empty.
 pub(crate) fn split_at_tasks<'a, T, const N: usize>(
     mut tables: [&'a mut [T]; N],
     ranges: &[Range<usize>],
@@ -54,6 +55,7 @@ pub(crate) fn split_at_tasks<'a, T, const N: usize>(
         .map(|range| {
             let len = entry(range.end) - entry(range.start);
             tables.each_mut().map(|table| {
+                let len = len.min(table.len());
                 let (head, tail) = std::mem::take(table).split_at_mut(len);
                 *table = tail;
                 head
@@ -62,13 +64,15 @@ pub(crate) fn split_at_tasks<'a, T, const N: usize>(
         .collect()
 }
 
-/// The first bind depth `k` at which tables of `table_bytes` before any bind
-/// fit `cap` bytes (`⌈table_bytes / 2^k⌉ ≤ cap`), or `rounds` when none of
-/// the `rounds` depths does.
-pub(crate) fn dense_crossover(table_bytes: usize, cap: usize, rounds: usize) -> usize {
-    (0..rounds)
-        .find(|&depth| table_bytes.div_ceil(1 << depth) <= cap)
-        .unwrap_or(rounds)
+/// The cycles a pass with pairs of `2^log_pair_cycles` cycles visits:
+/// `prefix` rounded up to whole split-eq groups, so the pairs past them,
+/// `pass_cycles(..) >> log_pair_cycles` onward, lie in the constant suffix.
+pub(crate) fn pass_cycles<F: JoltField>(
+    split_eq: &GruenSplitEqPolynomial<F>,
+    log_pair_cycles: usize,
+    prefix: usize,
+) -> usize {
+    prefix.next_multiple_of(split_eq.e_in_current_len() << log_pair_cycles)
 }
 
 /// Contracts consecutive rows into the halves of `2^(log_half + 1)`-row
@@ -112,11 +116,12 @@ impl<F: JoltField, const M: usize> PairHalves<F, M> {
 }
 
 /// One task's Gruen-grouped sums
-/// `Σ_x_out e_out[x_out] · Σ_x_in e_in[x_in] · terms(x_out·|e_in| + x_in)`.
-pub(crate) struct GruenSums<'a, F, const N: usize> {
+/// `Σ_x_out e_out[x_out] · Σ_x_in e_in[x_in] · terms(x_out·|e_in| + x_in)`,
+/// each group's inner sum accumulated unreduced.
+pub(crate) struct GruenSums<'a, F: JoltField, const N: usize> {
     e_out: &'a [F],
     e_in: &'a [F],
-    inner: [F; N],
+    inner: [F::Accumulator; N],
     pub(crate) total: [F; N],
 }
 
@@ -125,7 +130,7 @@ impl<'a, F: JoltField, const N: usize> GruenSums<'a, F, N> {
         Self {
             e_out,
             e_in,
-            inner: [F::zero(); N],
+            inner: [F::Accumulator::default(); N],
             total: [F::zero(); N],
         }
     }
@@ -135,13 +140,12 @@ impl<'a, F: JoltField, const N: usize> GruenSums<'a, F, N> {
     pub(crate) fn add(&mut self, pair: usize, terms: [F; N]) {
         let x_in = pair & (self.e_in.len() - 1);
         for (inner, term) in self.inner.iter_mut().zip(terms) {
-            *inner += self.e_in[x_in] * term;
+            inner.fmadd(self.e_in[x_in], term);
         }
         if x_in + 1 == self.e_in.len() {
             let e_out = self.e_out[pair / self.e_in.len()];
             for (total, inner) in self.total.iter_mut().zip(&mut self.inner) {
-                *total += e_out * *inner;
-                *inner = F::zero();
+                *total += e_out * std::mem::take(inner).reduce();
             }
         }
     }
@@ -150,7 +154,7 @@ impl<'a, F: JoltField, const N: usize> GruenSums<'a, F, N> {
 /// One task's receiver of a [`gruen_pair_pass`]: writes each completed
 /// pair's halves into the task's slices of the tables being filled, if any,
 /// and folds the pair's summand terms into the task's Gruen sums.
-pub(crate) struct PairSink<'a, F, T, const M: usize, const N: usize> {
+pub(crate) struct PairSink<'a, F: JoltField, T, const M: usize, const N: usize> {
     slices: Option<[&'a mut [F]; M]>,
     first_pair: usize,
     terms: &'a T,
@@ -163,12 +167,16 @@ where
     T: Fn([[F; 2]; M]) -> [F; N],
 {
     /// `halves[m]` is table `m`'s `[low, high]` pair; every pair of the
-    /// task's range must arrive once, in order.
+    /// task's range must arrive once, in order. Entries past the tables' end
+    /// are dropped.
     pub(crate) fn emit(&mut self, pair: usize, halves: [[F; 2]; M]) {
         if let Some(slices) = &mut self.slices {
             let entry = 2 * (pair - self.first_pair);
             for (slice, pair_halves) in slices.iter_mut().zip(&halves) {
-                slice[entry..entry + 2].copy_from_slice(pair_halves);
+                let end = slice.len().min(entry + 2);
+                if let Some(entries) = slice.get_mut(entry..end) {
+                    entries.copy_from_slice(&pair_halves[..entries.len()]);
+                }
             }
         }
         self.sums.add(pair, (self.terms)(halves));
@@ -176,16 +184,18 @@ where
 }
 
 /// One pass of a streamed round of the split-eq summand
-/// `Σ_pair E(pair) · terms(pair)`, its pairs spanning `2^log_pair_cycles`
-/// cycles each: the cycle domain (`|e_out| · |e_in|` pairs) splits into
-/// [`task_ranges`] of whole Gruen groups, and each task's `walk` visits its
-/// range once, serially, in callbacks of at most `chunk` rows, passing every
-/// completed pair to its [`PairSink`] in order. A filling pass splits
-/// `tables` (pair `z` at entries `2z, 2z + 1`) at the task boundaries, so
-/// each task writes only its own slices.
+/// `Σ_pair E(pair) · terms(pair)` over the pairs before the constant suffix
+/// starting at cycle `prefix`, its pairs spanning `2^log_pair_cycles` cycles
+/// each: the [`pass_cycles`] split into [`task_ranges`] of whole Gruen
+/// groups, and each task's `walk` visits its range once, serially, in
+/// callbacks of at most `chunk` rows, passing every completed pair to its
+/// [`PairSink`] in order. The caller adds the pairs past the pass. A filling
+/// pass splits `tables` (pair `z` at entries `2z, 2z + 1`) at the task
+/// boundaries, so each task writes only its own slices.
 pub(crate) fn gruen_pair_pass<F, T, const M: usize, const N: usize>(
     split_eq: &GruenSplitEqPolynomial<F>,
     log_pair_cycles: usize,
+    prefix: usize,
     tables: Option<[&mut [F]; M]>,
     terms: T,
     walk: impl Fn(Range<usize>, usize, &mut PairSink<'_, F, T, M, N>) -> Result<(), WitnessError> + Sync,
@@ -197,7 +207,7 @@ where
     let e_out = split_eq.e_out_current();
     let e_in = split_eq.e_in_current();
     let group = e_in.len() << log_pair_cycles;
-    let ranges = task_ranges(e_out.len() * group, group);
+    let ranges = task_ranges(pass_cycles(split_eq, log_pair_cycles, prefix), group);
     let slices: Vec<Option<[&mut [F]; M]>> = match tables {
         Some(tables) => split_at_tasks(tables, &ranges, |cycle| 2 * (cycle >> log_pair_cycles))
             .into_iter()

@@ -324,8 +324,14 @@ pub struct ProfileArgs {
     /// --backend optimized. Recomputes early rounds from resident trace rows;
     /// the fixed table cap is not a process-memory limit. Cannot be combined
     /// with --memory-budget: its reservations price only eager kernels.
-    #[clap(long, value_parser = parse_streaming_families, conflicts_with = "memory_budget")]
-    pub streaming: Option<StreamingFamilies>,
+    #[clap(
+        long,
+        value_parser = parse_streaming_families,
+        default_value = "",
+        hide_default_value = true,
+        conflicts_with = "memory_budget"
+    )]
+    pub streaming: StreamingFamilies,
 
     /// Prebuilt guest ELF; bypasses guest compilation in this process.
     #[clap(long)]
@@ -375,28 +381,41 @@ fn parse_memory_budget(value: &str) -> StdResult<MemoryBudget, String> {
         })
 }
 
+/// A [`StreamingFamilies`] selection flag.
+type FamilyFlag = fn(&mut StreamingFamilies) -> &mut bool;
+
+/// `--streaming` family names, each with its selection flag.
+const STREAMING_FAMILIES: [(&str, FamilyFlag); 1] = [("instruction-input", |families| {
+    &mut families.instruction_input
+})];
+
+/// `--streaming`: comma-separated family names; empty selects none.
 fn parse_streaming_families(value: &str) -> StdResult<StreamingFamilies, String> {
     let mut families = StreamingFamilies::default();
-    for family in value.split(',') {
-        match family {
-            "instruction-input" => families.instruction_input = true,
-            _ => {
-                return Err(format!(
-                    "unknown streaming family {family:?}; expected instruction-input"
-                ))
-            }
-        }
+    for family in value.split(',').filter(|family| !family.is_empty()) {
+        let (_, flag) = STREAMING_FAMILIES
+            .iter()
+            .find(|(name, _)| *name == family)
+            .ok_or_else(|| {
+                let names: Vec<&str> = STREAMING_FAMILIES.iter().map(|(name, _)| *name).collect();
+                format!(
+                    "unknown streaming family {family:?}; expected {}",
+                    names.join(", ")
+                )
+            })?;
+        *flag(&mut families) = true;
     }
     Ok(families)
 }
 
 impl ProfileArgs {
     fn streaming_families(&self) -> Vec<String> {
-        let mut names = Vec::new();
-        if self.streaming.unwrap_or_default().instruction_input {
-            names.push("instruction-input".to_string());
-        }
-        names
+        let mut families = self.streaming;
+        STREAMING_FAMILIES
+            .iter()
+            .filter(|(_, flag)| *flag(&mut families))
+            .map(|(name, _)| (*name).to_string())
+            .collect()
     }
 
     fn streaming_suffix(&self) -> String {
@@ -546,7 +565,7 @@ type ProfileResult<T> = StdResult<T, Box<dyn Error + Send + Sync>>;
 /// subscriber-installing format (the global tracing subscriber can only be
 /// set once).
 pub fn run(args: &ProfileArgs) -> ProfileResult<ProfileArtifacts> {
-    if args.streaming.is_some() {
+    if args.streaming != StreamingFamilies::default() {
         if args.memory_budget.is_some() {
             return Err("--streaming cannot be combined with --memory-budget: streaming kernels are not priced".into());
         }
@@ -1077,8 +1096,9 @@ fn prove_workload(
 
     let backend = match args.backend {
         BackendKind::Reference => JoltBackend::<Fr, DoryScheme>::reference(),
-        BackendKind::Optimized => JoltBackend::<Fr, DoryScheme>::optimized()
-            .with_streaming(args.streaming.unwrap_or_default()),
+        BackendKind::Optimized => {
+            JoltBackend::<Fr, DoryScheme>::optimized().with_streaming(args.streaming)
+        }
     };
 
     // --- The measured window: the full modular prove (witness
@@ -1156,9 +1176,7 @@ fn prove_workload(
 
     let backend = match args.backend {
         BackendKind::Reference => JoltBackend::reference(),
-        BackendKind::Optimized => {
-            JoltBackend::optimized().with_streaming(args.streaming.unwrap_or_default())
-        }
+        BackendKind::Optimized => JoltBackend::optimized().with_streaming(args.streaming),
     };
 
     let memory_layout = program_preprocessing.memory_layout.clone();

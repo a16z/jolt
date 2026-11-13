@@ -5,12 +5,13 @@
 //! flag words). Round 0 evaluates native integer row pairs. Round `j ≥ 1`
 //! contracts each column over the low and high halves of its
 //! `2^(j+1)`-cycle pairs with `eq(r_1..r_j, ·)` (LowToHigh binding gives
-//! `f^(j)(y) = Σ_b eq(r, b)·f(2^j·y + b)`). The first round whose tables fit
-//! [`DENSE_TABLE_CAP`] fills them in the pass that yields its message, and the
-//! eager kernel binds them from there.
+//! `f^(j)(y) = Σ_b eq(r, b)·f(2^j·y + b)`). Passes stop at the constant
+//! suffix, which contributes its summed equality weight. The first round
+//! whose tables fit [`DENSE_TABLE_CAP`] fills them in the pass that yields
+//! its message, and the eager kernel binds them from there.
 
 use jolt_claims::protocols::jolt::relations::instruction::InstructionInputOutputClaims;
-use jolt_field::JoltField;
+use jolt_field::{Accumulator as _, JoltField};
 use jolt_poly::{BindingOrder, EqPolynomial, GruenSplitEqPolynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_utils::unsafe_allocate_zero_vec;
@@ -21,11 +22,11 @@ use jolt_verifier::stages::stage3::outputs::InstructionInput;
 use jolt_witness::{JoltWitnessPlane, WitnessError};
 
 use super::{
-    operand_product, row_extraction_error, InputState, InstructionInputRow, NativePairSums,
-    OptimizedInstructionInputKernel, NUM_TABLES,
+    add_pair_lanes, operand_product, row_extraction_error, InstructionInputRow, NativePairSums,
+    OptimizedInstructionInput, OptimizedInstructionInputKernel, NUM_TABLES,
 };
 use crate::optimized::streaming::{
-    dense_crossover, gruen_pair_pass, task_ranges, PairHalves, DENSE_TABLE_CAP, VISIT_ROWS,
+    gruen_pair_pass, pass_cycles, task_ranges, PairHalves, DENSE_TABLE_CAP, VISIT_ROWS,
 };
 use crate::optimized::support::{
     eq_round_error, try_par_sum_vecs, BundleStore, GruenRoundMessage, RoundChallenges,
@@ -34,45 +35,53 @@ use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
 
-const TERMS: usize = 3;
-
 // Round 0 (`native_q_terms`) weights each visit callback by one `e_out`
 // entry and pairs its rows in place, so its callbacks must tile every
 // split-eq group in whole pairs; `gruen_pair_pass` has no such requirement.
 const _: () = assert!(VISIT_ROWS.is_power_of_two() && VISIT_ROWS >= 2);
 
-/// The quadratic's constant and leading coefficients, then its value at one.
+/// One pair's quadratic terms `right + γ·left` in [`add_pair_lanes`] order:
+/// constant and leading coefficients, then the value at one when
+/// `TERMS = 3`.
 #[inline]
-fn pair_q_terms<F: JoltField>(
-    values: [F; NUM_TABLES],
-    steps: [F; NUM_TABLES],
+fn pair_q_terms<F: JoltField, const TERMS: usize>(
+    halves: [[F; 2]; NUM_TABLES],
     gamma: F,
 ) -> [F; TERMS] {
-    let high = core::array::from_fn(|i| values[i] + steps[i]);
-    [
-        operand_product(&values, gamma),
-        operand_product(&steps, gamma),
-        operand_product(&high, gamma),
-    ]
+    let mut lanes = [[F::Accumulator::default(); 2]; TERMS];
+    add_pair_lanes(&mut lanes, |i| (halves[i][0], halves[i][1]));
+    lanes.map(|[left, right]| right.reduce() + gamma * left.reduce())
 }
 
 pub struct StreamingInstructionInput;
 
-/// The round whose pass fills the dense tables over `2^rounds` cycles: the
-/// first whose tables fit `cap`, at least round 1 when there are two or more
-/// rounds, and at most the last round, so openings are always table entries.
-/// Sizes are compared in cycles against the cycles `cap` holds, which is the
-/// same test as bytes against `cap` and cannot overflow where the byte count
-/// of `2^rounds` cycles would, for `rounds < usize::BITS` (`prepare` gets that
-/// from [`BundleStore::resident`]).
-fn crossover_round<F: JoltField>(rounds: usize, cap: usize) -> usize {
+/// The round whose pass fills the dense tables over `prefix` cycles before
+/// the constant suffix of `2^rounds`: the first whose tables fit `cap`, at
+/// least round 1 when there are two or more rounds, and at most the last
+/// round, so openings are always table entries. Sizes are compared in
+/// cycles against the cycles `cap` holds, which is the same test as bytes
+/// against `cap` and cannot overflow where the byte count of `prefix`
+/// cycles would.
+fn crossover_round<F: JoltField>(rounds: usize, prefix: usize, cap: usize) -> usize {
     let cap_cycles = cap / (NUM_TABLES * size_of::<F>());
-    dense_crossover(1 << rounds, cap_cycles, rounds)
+    (0..rounds)
+        .find(|&depth| prefix.div_ceil(1 << depth) <= cap_cycles)
+        .unwrap_or(rounds)
         .max(1)
         .min(rounds.saturating_sub(1))
 }
 
+/// Bytes of the ten dense tables that `round` fills over `prefix` cycles,
+/// saturating at `usize::MAX`.
+fn dense_table_bytes<F: JoltField>(prefix: usize, round: usize) -> usize {
+    (NUM_TABLES * size_of::<F>()).saturating_mul(prefix.div_ceil(1 << round))
+}
+
 impl<F: JoltField> PrepareKernel<F, InstructionInput<F>> for StreamingInstructionInput {
+    /// The eager kernel when its whole reservation is no larger than the
+    /// dense tables streaming would fill under [`DENSE_TABLE_CAP`]: the
+    /// streamed rounds would cost time and save no memory. A one-cycle
+    /// domain has no round whose pass could fill the tables.
     fn prepare(
         &self,
         _session: &mut ProofSession,
@@ -81,9 +90,16 @@ impl<F: JoltField> PrepareKernel<F, InstructionInput<F>> for StreamingInstructio
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = InstructionInput<F>>>, KernelError<F>> {
         let r_product = inputs.relation.product_remainder_opening_point();
         let rows = BundleStore::resident(witness, r_product.len(), "instruction input trace rows")?;
-        // A one-cycle domain has no round whose pass could fill the tables:
-        // the eager kernel opens its single row without any.
-        if r_product.is_empty() {
+        let rounds = r_product.len();
+        let prefix = rows.access().constant_suffix_start(1 << rounds)?;
+        let streamed_bytes = dense_table_bytes::<F>(
+            prefix,
+            crossover_round::<F>(rounds, prefix, DENSE_TABLE_CAP),
+        );
+        if rounds == 0
+            || OptimizedInstructionInput::peak_bytes::<F>(prefix)
+                .is_some_and(|bytes| bytes <= streamed_bytes)
+        {
             return Ok(Box::new(OptimizedInstructionInputKernel::new(
                 r_product,
                 rows,
@@ -96,15 +112,23 @@ impl<F: JoltField> PrepareKernel<F, InstructionInput<F>> for StreamingInstructio
             inputs.challenges.gamma,
             DENSE_TABLE_CAP,
             VISIT_ROWS,
-        )))
+        )?))
     }
 }
+
+/// The ten tables the crossover round fills, in table order.
+type DenseTables<F> = [Vec<F>; NUM_TABLES];
 
 /// The rounds before the crossover.
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct StreamedRounds<F: JoltField> {
     #[cfg_attr(feature = "allocative", allocative(skip))]
     gamma: F,
+    /// The cycle at which the constant suffix starts.
+    prefix: usize,
+    /// The constant suffix's ten column values.
+    #[cfg_attr(feature = "allocative", allocative(skip))]
+    tail: [F; NUM_TABLES],
     /// The round whose pass fills the tables ([`crossover_round`]).
     dense_round: usize,
     /// Rows per callback of round 0's visit: a power of two of at least two
@@ -147,14 +171,28 @@ impl InstructionInputRow {
 }
 
 impl<F: JoltField> StreamedRounds<F> {
-    /// Round 0's quadratic terms over native integer row pairs. A callback of
-    /// at most `group` aligned rows lies in one `e_out` block and holds whole
-    /// even/odd pairs ([`task_ranges`] starts every task on a group boundary).
-    fn native_q_terms(&self) -> Result<[F; TERMS], WitnessError> {
+    /// The current round's pairs span `2^log_pair_cycles` cycles.
+    fn log_pair_cycles(&self) -> usize {
+        self.challenges.bound() + 1
+    }
+
+    /// The constant suffix's share of the current round's constant term and
+    /// value at one: the pairs past the pass, each with the tail's product.
+    fn suffix_term(&self) -> F {
+        let log_pair_cycles = self.log_pair_cycles();
+        let pairs = pass_cycles(&self.gruen, log_pair_cycles, self.prefix) >> log_pair_cycles;
+        self.gruen.suffix_weight(pairs) * operand_product(&self.tail, self.gamma)
+    }
+
+    /// Round 0's quadratic terms over native integer row pairs before the
+    /// constant suffix. A callback of at most `group` aligned rows lies in
+    /// one `e_out` block and holds whole even/odd pairs ([`task_ranges`]
+    /// starts every task on a group boundary).
+    fn native_q_terms<const TERMS: usize>(&self) -> Result<[F; TERMS], WitnessError> {
         let e_out = self.gruen.e_out_current();
         let e_in = self.gruen.e_in_current();
         let group = 2 * e_in.len();
-        let ranges = task_ranges(e_out.len() * group, group);
+        let ranges = task_ranges(pass_cycles(&self.gruen, 1, self.prefix), group);
         try_par_sum_vecs(ranges.len(), TERMS, |task| {
             let mut q_terms = vec![F::zero(); TERMS];
             self.rows.visit(
@@ -183,12 +221,13 @@ impl<F: JoltField> StreamedRounds<F> {
     }
 
     /// One pass of the current round `j` over its pairs of `2^(j+1)` cycles
-    /// ([`gruen_pair_pass`]), filling `tables` when given: each row's ten
-    /// column values, weighted by `eq(r_1..r_j, c)` for its offset `c` within
-    /// its half (offset bit `i` pairing `r_{i+1}`), add to the low or high
-    /// half of its pair ([`PairHalves`]), and every completed pair contributes
-    /// its quadratic terms in `pair_q_terms` order.
-    fn round_pass(
+    /// before the constant suffix ([`gruen_pair_pass`]), filling `tables`
+    /// when given: each row's ten column values, weighted by
+    /// `eq(r_1..r_j, c)` for its offset `c` within its half (offset bit `i`
+    /// pairing `r_{i+1}`), add to the low or high half of its pair
+    /// ([`PairHalves`]), and every completed pair contributes its
+    /// [`pair_q_terms`].
+    fn round_pass<const TERMS: usize>(
         &self,
         tables: Option<[&mut [F]; NUM_TABLES]>,
     ) -> Result<[F; TERMS], WitnessError> {
@@ -198,15 +237,10 @@ impl<F: JoltField> StreamedRounds<F> {
         let gamma = self.gamma;
         gruen_pair_pass(
             &self.gruen,
-            log_half + 1,
+            self.log_pair_cycles(),
+            self.prefix,
             tables,
-            |halves: [[F; 2]; NUM_TABLES]| {
-                pair_q_terms(
-                    halves.map(|[low, _]| low),
-                    halves.map(|[low, high]| high - low),
-                    gamma,
-                )
-            },
+            |halves| pair_q_terms(halves, gamma),
             |range, chunk, sink| {
                 let mut halves = PairHalves::new(log_half);
                 self.rows.visit(range, chunk, |start, bundles| {
@@ -222,15 +256,25 @@ impl<F: JoltField> StreamedRounds<F> {
         )
     }
 
-    /// The crossover round's pass, filling the ten tables of `T / 2^j`
-    /// entries each, allocated once at their final capacity and written in
-    /// disjoint task slices.
-    fn fill_tables(&self) -> Result<(Vec<Vec<F>>, [F; TERMS]), WitnessError> {
-        let len = (1usize << self.challenges.total()) >> self.challenges.bound();
-        let mut tables: [Vec<F>; NUM_TABLES] =
-            core::array::from_fn(|_| unsafe_allocate_zero_vec(len));
-        let q_terms = self.round_pass(Some(tables.each_mut().map(|table| table.as_mut_slice())))?;
-        Ok((tables.into_iter().collect(), q_terms))
+    /// The current round's quadratic terms, with the dense tables when this
+    /// is the crossover round: ten tables of `⌈prefix / 2^j⌉` entries each,
+    /// allocated once at their final capacity and written in disjoint task
+    /// slices.
+    fn q_terms<const TERMS: usize>(
+        &self,
+    ) -> Result<([F; TERMS], Option<DenseTables<F>>), WitnessError> {
+        let bound = self.challenges.bound();
+        if bound == self.dense_round {
+            let len = self.prefix.div_ceil(1 << bound);
+            let mut tables: DenseTables<F> =
+                core::array::from_fn(|_| unsafe_allocate_zero_vec(len));
+            let q_terms = self.round_pass(Some(tables.each_mut().map(Vec::as_mut_slice)))?;
+            Ok((q_terms, Some(tables)))
+        } else if bound == 0 {
+            Ok((self.native_q_terms()?, None))
+        } else {
+            Ok((self.round_pass(None)?, None))
+        }
     }
 
     /// The error of reading opening values before the crossover, which every
@@ -256,18 +300,27 @@ impl<F: JoltField> StreamingInstructionInputKernel<F> {
         gamma: F,
         dense_cap: usize,
         native_visit_rows: usize,
-    ) -> Self {
+    ) -> Result<Self, WitnessError> {
         let rounds = r_product.len();
-        Self {
+        let (prefix, tail) = {
+            let access = rows.access();
+            (
+                access.constant_suffix_start(1 << rounds)?,
+                access.row((1 << rounds) - 1)?.field_values(),
+            )
+        };
+        Ok(Self {
             phase: Phase::Streamed(StreamedRounds {
                 gamma,
-                dense_round: crossover_round::<F>(rounds, dense_cap),
+                prefix,
+                tail,
+                dense_round: crossover_round::<F>(rounds, prefix, dense_cap),
                 native_visit_rows,
                 gruen: GruenSplitEqPolynomial::new(r_product, BindingOrder::LowToHigh),
                 challenges: RoundChallenges::new(rounds),
                 rows,
             }),
-        }
+        })
     }
 
     /// The current round's message. The crossover round hands its tables,
@@ -281,35 +334,47 @@ impl<F: JoltField> StreamingInstructionInputKernel<F> {
             Phase::Dense(kernel) => return kernel.message(round, previous_claim),
             Phase::Streamed(streamed) => streamed,
         };
-        let bound = streamed.challenges.bound();
-        let (q_terms, tables) = if bound == streamed.dense_round {
-            let (tables, q_terms) = streamed.fill_tables().map_err(row_extraction_error)?;
-            (q_terms, Some(tables))
-        } else if bound == 0 {
-            let q_terms = streamed.native_q_terms().map_err(row_extraction_error)?;
-            (q_terms, None)
-        } else {
-            let q_terms = streamed.round_pass(None).map_err(row_extraction_error)?;
-            (q_terms, None)
-        };
-        let poly = streamed
+        let gruen_round = streamed
             .gruen
             .round()
-            .ok_or_else(|| eq_round_error(round))?
-            .checked_cubic(q_terms[0], q_terms[1], previous_claim, round, || q_terms[2])?;
+            .ok_or_else(|| eq_round_error(round))?;
+        let suffix = streamed.suffix_term();
+        let (poly, tables) = if gruen_round.linear_evals().1.is_zero() {
+            // An exceptional equality factor cannot recover q(1) from the claim.
+            let ([q_zero, q_leading, q_one], tables) =
+                streamed.q_terms().map_err(row_extraction_error)?;
+            let poly = gruen_round.checked_cubic(
+                q_zero + suffix,
+                q_leading,
+                previous_claim,
+                round,
+                || q_one + suffix,
+            )?;
+            (poly, tables)
+        } else {
+            let ([q_zero, q_leading], tables) = streamed.q_terms().map_err(row_extraction_error)?;
+            let poly = gruen_round.checked_cubic(
+                q_zero + suffix,
+                q_leading,
+                previous_claim,
+                round,
+                F::zero,
+            )?;
+            (poly, tables)
+        };
         if let Some(tables) = tables {
-            let prefix_len = tables[0].len();
-            // `tail` is never used: the tables span the whole power-of-two
-            // domain that is left, so no entry lies in a constant suffix.
-            let tail = core::array::from_fn(|i| tables[i][prefix_len - 1]);
-            self.phase = Phase::Dense(OptimizedInstructionInputKernel {
-                progress: streamed.challenges.progress(),
-                gamma: streamed.gamma,
-                state: InputState::Dense(tables),
-                prefix_len,
-                tail,
-                gruen: streamed.gruen.clone(),
-            });
+            // The finished placeholder is dropped with the streamed state.
+            let gruen = std::mem::replace(
+                &mut streamed.gruen,
+                GruenSplitEqPolynomial::new(&[] as &[F], BindingOrder::LowToHigh),
+            );
+            self.phase = Phase::Dense(OptimizedInstructionInputKernel::from_dense(
+                streamed.challenges.progress(),
+                streamed.gamma,
+                tables,
+                streamed.tail,
+                gruen,
+            ));
         }
         Ok(poly)
     }
@@ -409,7 +474,7 @@ mod tests {
     use jolt_witness::{JoltVmWitnessInputs, TraceBackend};
 
     use super::*;
-    use crate::optimized::instruction_input::OptimizedInstructionInput;
+    use crate::optimized::instruction_input::InputState;
     use crate::optimized::parity::{probe_input_claim, run_lockstep, ExceptionalEq};
     use crate::optimized::registers_read_write::test_support::structured_fixture;
     use crate::reference::views::eq_table;
@@ -488,11 +553,12 @@ mod tests {
     }
 
     /// Drives the reference prover over the rows' dense columns and the
-    /// streaming kernel, its tables capped at exactly their size at round
-    /// `depth` and its round-0 visit made in callbacks of `visit_rows` rows,
-    /// through every round on `challenges`: equal round polynomials
-    /// and output claims, the pinned eq scalar, and tables filled with
-    /// `T / 2^c` entries at round `c = min(depth, log_t − 1)`.
+    /// streaming kernel, its tables capped at exactly the full domain's size
+    /// at round `depth` and its round-0 visit made in callbacks of
+    /// `visit_rows` rows, through every round on `challenges`: equal round
+    /// polynomials and output claims, the pinned eq scalar, and tables
+    /// filled with `⌈prefix / 2^c⌉` entries at the crossover round `c`,
+    /// `prefix` the start of the rows' constant suffix.
     fn assert_parity(
         rows: Vec<InstructionInputRow>,
         r_product: &[Fr],
@@ -554,13 +620,18 @@ mod tests {
         )
         .unwrap();
         let cap = ((NUM_TABLES * size_of::<Fr>()) << log_t) >> depth;
+        let prefix = rows
+            .iter()
+            .rposition(|row| row != &rows[rows.len() - 1])
+            .map_or(0, |i| i + 1);
         let mut streaming = StreamingInstructionInputKernel::new(
             r_product,
             BundleStore::Retained(rows),
             gamma,
             cap,
             visit_rows,
-        );
+        )
+        .unwrap();
 
         let mut claim = probe_input_claim(&mut reference);
         let mut filled = None;
@@ -580,10 +651,11 @@ mod tests {
         let last = bind.unwrap();
         reference.finish_rounds(last).unwrap();
         streaming.finish_rounds(last).unwrap();
-        let crossover = depth.min(log_t - 1);
+        let crossover = crossover_round::<Fr>(log_t, prefix, cap);
+        assert!(crossover <= depth.min(log_t - 1));
         assert_eq!(
             filled,
-            Some((crossover, (1 << log_t) >> crossover)),
+            Some((crossover, prefix.div_ceil(1 << crossover))),
             "dense tables, log_t {log_t}, depth {depth}"
         );
         assert_eq!(
@@ -663,19 +735,56 @@ mod tests {
         }
     }
 
-    /// The crossover is exact at the cap's boundary, clamps to rounds
-    /// `1..=rounds − 1`, and does not wrap when the tables exceed `usize`
-    /// bytes (a round count eight below the word size).
+    /// The crossover is exact at the cap's boundary, sizes the tables by the
+    /// prefix before the constant suffix, clamps to rounds `1..=rounds − 1`,
+    /// and does not wrap when the tables exceed `usize` bytes (a round count
+    /// eight below the word size).
     #[test]
     fn crossover_round_is_exact_at_the_cap_and_past_usize_bytes() {
         let cycle_bytes = NUM_TABLES * size_of::<Fr>();
-        assert_eq!(crossover_round::<Fr>(20, cycle_bytes << 10), 10);
-        assert_eq!(crossover_round::<Fr>(20, (cycle_bytes << 10) - 1), 11);
-        assert_eq!(crossover_round::<Fr>(20, usize::MAX), 1);
-        assert_eq!(crossover_round::<Fr>(20, 0), 19);
-        assert_eq!(crossover_round::<Fr>(1, 0), 0);
+        let full = 1 << 20;
+        assert_eq!(crossover_round::<Fr>(20, full, cycle_bytes << 10), 10);
+        assert_eq!(crossover_round::<Fr>(20, full, (cycle_bytes << 10) - 1), 11);
+        assert_eq!(crossover_round::<Fr>(20, full, usize::MAX), 1);
+        assert_eq!(crossover_round::<Fr>(20, full, 0), 19);
+        assert_eq!(crossover_round::<Fr>(20, full >> 1, cycle_bytes << 9), 10);
+        assert_eq!(
+            crossover_round::<Fr>(20, (full >> 1) + 1, cycle_bytes << 9),
+            11
+        );
+        assert_eq!(crossover_round::<Fr>(20, 0, 0), 1);
+        assert_eq!(crossover_round::<Fr>(1, 2, 0), 0);
         let wide = usize::BITS as usize - 8;
-        assert_eq!(crossover_round::<Fr>(wide, cycle_bytes << 20), wide - 20);
+        assert_eq!(
+            crossover_round::<Fr>(wide, 1 << wide, cycle_bytes << 20),
+            wide - 20
+        );
+    }
+
+    /// Rows ending in a constant suffix at every prefix length of a 2^5
+    /// domain, at every crossover depth: passes stop at the prefix, the
+    /// suffix's weight stands in for its pairs, and the tables hold only the
+    /// prefix's entries.
+    #[test]
+    fn constant_suffix_parity_at_every_prefix() {
+        let log_t = 5;
+        let challenges: Vec<Fr> = (0..log_t).map(challenge).collect();
+        for prefix in 0..=1usize << log_t {
+            let mut rows = synthetic_rows(log_t, 5150 + prefix as u64);
+            let tail = rows[rows.len() - 1];
+            rows[prefix..].fill(tail);
+            for depth in 1..log_t {
+                for visit_rows in [2, VISIT_ROWS] {
+                    assert_parity(
+                        rows.clone(),
+                        &product_point(log_t),
+                        &challenges,
+                        depth,
+                        visit_rows,
+                    );
+                }
+            }
+        }
     }
 
     /// Exceptional eq points (coordinates 0 or 1, a prefix that vanishes at
@@ -736,13 +845,16 @@ mod tests {
             .unwrap();
         let mut streaming: Box<dyn SumcheckKernel<F, Relation = InstructionInput<F>>> = match depth
         {
-            Some(depth) => Box::new(StreamingInstructionInputKernel::new(
-                &r_product,
-                BundleStore::resident::<F>(backend, log_t, "trace rows").unwrap(),
-                challenges.gamma,
-                ((NUM_TABLES * size_of::<F>()) << log_t) >> depth,
-                VISIT_ROWS,
-            )),
+            Some(depth) => Box::new(
+                StreamingInstructionInputKernel::new(
+                    &r_product,
+                    BundleStore::resident::<F>(backend, log_t, "trace rows").unwrap(),
+                    challenges.gamma,
+                    ((NUM_TABLES * size_of::<F>()) << log_t) >> depth,
+                    VISIT_ROWS,
+                )
+                .unwrap(),
+            ),
             None => StreamingInstructionInput
                 .prepare(&mut ProofSession::default(), backend, inputs())
                 .unwrap(),

@@ -23,6 +23,7 @@
 
 #[cfg(feature = "akita")]
 use jolt_akita::AkitaChunkProfile;
+use jolt_kernels::optimized::StreamingFamilies;
 use jolt_profiling::summary::ProfileSummary;
 use jolt_profiling::taxonomy;
 use jolt_profiling::taxonomy::{CONFIG_DERIVATION_SPAN, ROOT_SPAN, TAXONOMY_VERSION};
@@ -36,7 +37,7 @@ fn profile_run_emits_conformant_artifacts() {
         scale: Some(13),
         format: OutputFormat::Chrome,
         backend: BackendKind::Reference,
-        streaming: None,
+        streaming: StreamingFamilies::default(),
         guest_elf: None,
         input_file: None,
         result_json: None,
