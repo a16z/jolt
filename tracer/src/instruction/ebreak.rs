@@ -2,8 +2,10 @@
 //!
 //! Encoding: 0x00100073 (SYSTEM opcode, funct3=000, imm=1)
 //!
-//! In a zkVM context without a debugger, EBREAK serves as a termination point.
-//! The emulator detects termination when PC doesn't change.
+//! EBREAK halts the hart, as it does under an external debugger with
+//! `dcsr.ebreakm = 1` (RISC-V Debug Specification): M-mode EBREAK enters
+//! Debug Mode instead of trapping, so `mepc`, `mcause`, `mtval` and `mstatus`
+//! are unchanged. The emulator detects termination when PC doesn't change.
 
 use crate::instruction::registers::i::RegisterStateI;
 

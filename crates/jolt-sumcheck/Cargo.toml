@@ -66,6 +66,10 @@ name = "extension_fields"
 required-features = ["prover"]
 
 [[test]]
+name = "single"
+required-features = ["prover"]
+
+[[test]]
 name = "f8_domain"
 required-features = ["binary", "prover"]
 
