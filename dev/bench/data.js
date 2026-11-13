@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794545095030,
+  "lastUpdate": 1794611299224,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -248314,6 +248314,270 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 889048,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "atretyakov@a16z.com",
+            "name": "Andrew Tretyakov",
+            "username": "0xAndoroid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "4687f30cdafc1dea785c8ab75992e79e37dec4f2",
+          "message": "feat(jolt-kernels): add an opt-in streaming kernel for the instruction-input sumcheck (#2373)\n\n* feat(jolt-prover): reserve known profile caller owners\n\n* feat(jolt-kernels): stream stage-3 instruction input on current rows\n\n* fix(profile): address caller-owner review findings\n\n* fix(streaming): wire profile selection and simplify instruction rows\n\n* fix(profiling): distinguish streaming run identities\n\n* fix(streaming): satisfy the clippy lints of Rust 1.99.1\n\nMain moved to Rust 1.99.1 (#2313), whose clippy rejects chunks_exact with a constant size and assert!(x.is_empty()) under -D warnings. Rewrite both the way #2313 did across main: as_chunks::<2>() and assert_eq! against an empty array.\n\n* test(jolt-kernels): cover round-0 groups wider than one visit callback\n\nRound 0 of the streaming instruction-input kernel visits rows in\ncallbacks of at most 4,096 rows. When a split-eq group is wider than\nthat, which happens for every trace of 2^25 cycles or more, a callback\ncovers only part of a group: it starts at a nonzero offset into the\ninner eq table and its block sum is one of several partial sums that\nare added per group. The largest tested trace has 2^13 cycles, whose\ngroups are 128 rows wide, so every tested callback was exactly one\nwhole group and the offset and partial-sum code never ran.\n\nThe callback size of the round-0 visit becomes a private constructor\nparameter, next to the existing table cap, and production still passes\nVISIT_ROWS, so behaviour is unchanged. The new parity case runs the\nexisting reference comparison with callbacks of 2, 4, ... rows, each\nsmaller than the group, at every crossover round for 2^4, 2^7 and 2^8\ncycles. It reads the group width from the split-eq tables and asserts\nthat it exceeds the callback, so the case cannot silently stop\nreaching the multi-callback path.\n\n* fix(jolt-kernels): size the streaming crossover without overflow\n\nThree size computations of the streaming kernel could go wrong at the\nedge of the integer range.\n\nThe crossover round was chosen from the byte size of the tables,\ncomputed as bytes-per-cycle shifted left by the round count. A left\nshift drops high bits silently, so a table set larger than usize could\nbe priced as a small one and the crossover chosen too early. The sizes\nare now compared in cycles: the tables of 2^m cycles fit the cap\nexactly when 2^m is at most the cap divided by the bytes per cycle, so\nthe choice is the same wherever the old one was right and the byte\nproduct is never formed.\n\nBundleStore::resident computed 1 << log_t before comparing it with the\nwitness's cycle count, which overflows for a point of usize::BITS or\nmore coordinates instead of giving the typed dimension error the\nfunction returns for every other mismatch. It now uses a checked shift\nand reports an unrepresentable cycle count as InvalidDimensions.\n\nDENSE_TABLE_CAP was written 4 << 30, which is zero where usize has 32\nbits and would move every crossover to the last round there. It now\nsaturates, so the value is unchanged on 64-bit targets.\n\nTests: the crossover at the exact cap, one byte below it, at both\nclamps and for a round count whose tables exceed usize bytes (no\nallocation), and the typed refusal of an oversized point.\n\n* fix(jolt-kernels): hand a zero-round instruction input to the eager kernel\n\nWith an empty opening point and a one-cycle witness, the streaming\nkernel prepared successfully but could never answer: it fills its\ntables in the pass of some round, there is no round, so it stayed in\nits streamed phase and output_claims and validate_derived_tables\nreturned an invariant error. The default kernel handles the same input\nby opening its single row.\n\nPreparation now returns the eager kernel for a zero-round domain with\none resident cycle. The resident-row requirement is unchanged, and\nnothing changes for one or more rounds. The prover itself never produces this\nshape (it pads to at least 256 cycles); the kernel interface does\nallow it.\n\nTest: prepare both factories on a one-cycle witness and compare the\noutput claims, then run the derived-table check, without calling a\nround method.\n\n* docs(streaming): correct three statements about the instruction-input kernel\n\nThe profiling chapter said streaming names keep \"resumed sweeps\"\nseparate from eager runs, which reads as if the benchmark sweep could\nselect streaming. It cannot: only `profile` has the option. The text\nnow says so, and that a resumed sweep ignores streaming artifacts.\n\nThe module introduction said the default kernel materializes \"the ten\ntables at T/2\". After its first bind the default holds five operand\ntables and packed flag words, not ten field tables; the comparison is\nnow stated against that.\n\nThe hand-off to the eager kernel fills its `tail` field with each\ntable's last entry, which is not a constant-suffix value. That is\nharmless because the tables cover the whole remaining power-of-two\ndomain, so the tail never contributes. A comment records this so a\nlater change does not come to rely on the value.\n\n* fix(jolt-profiling): omit an empty streaming selection from summary.json\n\nrun.streaming_families was written for every run, as [] when no\nstreaming kernel is selected. The summary structs deny unknown fields\nand the JSON Schema sets additionalProperties to false, so a reader\nbuilt from the schema before this field existed rejects every new\nsummary, including those of ordinary runs, although the schema version\nis still 1.\n\nThe field is now skipped when empty. An ordinary run's summary is then\nbyte-compatible with what earlier readers expect, and only a run that\nactually selects a streaming family carries the new key. Reading is\nunchanged: an absent field still defaults to the empty list.\n\nThe checked-in schema loses the property's \"default\": [] line, which\nthe generator no longer emits for a field skipped at its default.\n\n* test(jolt-prover): prove and verify with the streaming instruction-input kernel\n\nNo test proved with a streaming kernel installed: only the profiler\ncalled JoltBackend::with_streaming. The backend contract suite now\nproves its muldiv fixture with the instruction-input family selected,\nverifies that proof, and requires its bytes to equal the proof the\ndefault kernels produce from the same preprocessing, config and witness.\n\nThe fixture's trace pads to 512 cycles, so the 4 GiB table cap puts the\nswitch to dense tables at round 1. The streamed proof therefore reads\nthe trace rows in round 0 (integer row pairs) and in round 1 (the pass\nthat also fills the tables), and the default kernel's rounds run from\nround 2. A streamed round that fills no tables needs at least 2^25\ncycles under that cap; those rounds stay with the kernel parity tests,\nwhich lower the cap.\n\nThe case is in backend_contract.rs rather than e2e_matrix.rs. That\nsuite already prepares one fixture that several proofs can share, and\nit builds only without the zk, akita and field-inline features, so one\nCI job runs the two proofs. On main, #2407 and #2419 have since\nrestructured the matrix's mode modules; threading a StreamingFamilies\nthrough them on this branch would conflict with those changes.\n\n* fix(jolt-kernels): assert at compile time that round-0 callbacks tile split-eq groups\n\nRound 0 of the streaming instruction-input kernel applies one e_out\nweight per visit callback and pairs that callback's rows in place, so a\ncallback must lie inside one split-eq group and hold whole pairs. Groups\nare powers of two, so the callback size must be a power of two of at\nleast two rows. Production passes VISIT_ROWS, which is 4096 and\nqualifies, but nothing enforced it: the requirement was a doc comment,\nand the constant is shared with gruen_pair_pass, which takes any size.\n\nThe tests do not catch a wrong value. With VISIT_ROWS = 3000 every\nstreaming test still passes, while a callback that does not divide its\ngroup runs past the group boundary in any task that holds more than one\ngroup, the shape round_zero_groups_span_several_visit_callbacks covers\nfor powers of two. A const assertion now fails the build on such an\nedit.\n\n* docs(jolt-kernels): bound the crossover's no-overflow claim to rounds below the word size\n\nThe comment on crossover_round said the cycle comparison cannot\noverflow where the byte count would. That holds only for\nrounds < usize::BITS, because the function still evaluates 1 << rounds.\nprepare never passes more: BundleStore::resident rejects a domain whose\ncycle count does not fit usize before the kernel is built. The comment\nnow states the bound and where it comes from. The code is unchanged.\n\n* test(jolt-kernels): check that with_streaming installs the instruction-input kernel\n\nStreamed and default proofs are byte-equal by design, so no test could\ntell whether JoltBackend::with_streaming installed anything. With the\ninstallation removed, every existing test still passes, including the\nproof-level test in jolt-prover.\n\nThe new test prepares the backend's instruction_input slot on a witness\nthat has no resident rows and serves its cycles only through chunk\nvisits. The default backend's kernel collects the rows and prepares.\nAfter with_streaming(StreamingFamilies { instruction_input: true }) the\nslot refuses with the typed UnavailableView error, which is the\nstreaming kernel's behavior.\n\nThe test is compiled out of the akita build, where\nJoltBackend::optimized needs an Akita commitment scheme. The selection\ncode has no feature-dependent branch.\n\n---------\n\nCo-authored-by: acentelles <centelles.alberto@gmail.com>",
+          "timestamp": "2026-11-13T16:58:01-05:00",
+          "tree_id": "56e395a1fd93b941c7d49cab13d82ea01838dfe9",
+          "url": "https://github.com/a16z/jolt/commit/4687f30cdafc1dea785c8ab75992e79e37dec4f2"
+        },
+        "date": 1794611291149,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 3.7896,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 888844,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.512,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 463648,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 463536,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 463836,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.8379,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 463440,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-mem",
+            "value": 887876,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 1.8526,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 463664,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 4.8606,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 463252,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 5.8894,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 116504,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.964,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 888128,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.6522,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 463768,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.4771,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 463780,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 25.7714,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 463896,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 5.8483,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 463680,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 36.7192,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 699132,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 17.7717,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 606320,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 73.0598,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 640908,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.8431,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 463452,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 2.1218,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 463796,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 19.5553,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 888000,
             "unit": "KB",
             "extra": ""
           }
