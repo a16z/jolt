@@ -9,6 +9,8 @@ use super::source::{validate_dimension, TraceOneHotColumn};
 use super::{K256_ROW_BATCH, NO_SELECTED_ROW, TASKS_PER_RAYON_WORKER};
 use crate::AkitaField;
 
+const _: () = assert!(NO_SELECTED_ROW == 0);
+
 #[inline(always)]
 pub(super) fn row_is_committed(selected_row: u8, committed_zero_mask: u64, column: usize) -> bool {
     selected_row != NO_SELECTED_ROW || committed_zero_mask & (1u64 << column) != 0
@@ -221,8 +223,8 @@ pub(super) fn visit_segment_ring_row_range<const D: usize>(
         source
             .rows
             .fill_rows_with_masks(row_start, populated_indices, populated_masks);
-        // Invalid selectors form an upper interval, so checking the maximum
-        // suffices. Rescan only to report the first invalid selector.
+        // The zero sentinel and valid selectors precede every invalid selector,
+        // so checking the maximum suffices. Rescan to report the first error.
         if populated_indices.iter().copied().max().is_some_and(invalid) {
             for &hot in populated_indices.iter() {
                 if invalid(hot) {
@@ -341,7 +343,9 @@ where
             }
             let mut blocks = vec![E::zero(); num_columns * subring_dimension];
             for (column_sums, column_blocks) in sums
-                .chunks_exact(D)
+                .as_chunks::<D>()
+                .0
+                .iter()
                 .zip(blocks.chunks_exact_mut(subring_dimension))
             {
                 for (coefficient, sum) in column_sums.iter().enumerate() {

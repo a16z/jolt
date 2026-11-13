@@ -59,7 +59,7 @@ ATTESTATION = re.compile(
 )
 # The only review models and efforts an attestation may name, spelled as .github/ai-merge-gate.md
 # lists them; any model may pair with any effort.
-REVIEW_MODELS = ("GPT-6 Astra", "Claude Opus 5.5")
+REVIEW_MODELS = ("GPT-6 Astra", "Claude Opus 5.5", "Claude Fable 5.2")
 REVIEW_EFFORTS = ("max", "xhigh")
 LEDGER = re.compile(r"<!-- ai-merge-gate/attempts (\{.*\}) -->")
 # The run-name of .github/workflows/ai-merge-gate-events.yml, which GitHub reports as display_title.

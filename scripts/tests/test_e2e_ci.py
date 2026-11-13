@@ -66,7 +66,7 @@ class E2eCiTests(unittest.TestCase):
               'base': {'sha': 'a' * 40, 'ref': 'main', 'repo': {'full_name': 'a16z/jolt'}}}
         labelled = {'id': 11, 'event': 'labeled', 'label': {'name': 'benchmark'},
                     'actor': {'login': 'maintainer'}, 'created_at': '2026-11-02T18:00:00Z'}
-        for fault in ('unlabelled', 'fork', 'write-only', 'removed', 'stale-head', 'untrusted-event'):
+        for fault in ('unlabelled', 'fork', 'other-base', 'write-only', 'removed', 'stale-head', 'untrusted-event'):
             current, timeline, role = copy.deepcopy(pr), [labelled], 'maintain'
             event = {'action': 'synchronize', 'pull_request': copy.deepcopy(pr)}
             name = 'pull_request_target'
@@ -74,6 +74,8 @@ class E2eCiTests(unittest.TestCase):
                 current['labels'] = []
             elif fault == 'fork':
                 current['head']['repo']['full_name'] = 'outside/jolt'
+            elif fault == 'other-base':
+                current['base']['ref'] = 'other'
             elif fault == 'write-only':
                 role = 'write'
             elif fault == 'removed':
@@ -102,15 +104,14 @@ class E2eCiTests(unittest.TestCase):
         def api(path, **_):
             return ({'role_name': 'maintain'} if path.startswith('collaborators/')
                     else [labelled] if '/events?' in path else pr)
-        revisions = {'HEAD': 'a' * 40, 'refs/e2e/merge': 'c' * 40,
-                     'c' * 40 + '^1': 'a' * 40, 'c' * 40 + '^2': 'b' * 40,
-                     'refs/e2e/main': 'a' * 40}
+        revisions = {'HEAD': 'a' * 40, 'refs/e2e/merge': 'c' * 40}
         for action in ('labeled', 'synchronize'):
             event = {'action': action, 'label': {'name': 'benchmark'},
                      'sender': {'login': 'maintainer'}, 'pull_request': pr}
             with self.subTest(action=action), patch.object(ci, 'github', side_effect=api), \
                     patch.object(ci.bench, 'git_revision', side_effect=revisions.__getitem__), \
-                    patch.object(ci.bench, 'capture'):
+                    patch.object(ci.bench, 'capture', side_effect=lambda argv:
+                        'a' * 40 + ' ' + 'b' * 40 if argv[1] == 'show' else 'a' * 40):
                 harness, runs, number, admission = ci.resolve('pull_request_target', event, 'a16z/jolt', 'a' * 40)
             self.assertEqual((harness, number), ('a' * 40, 7))
             self.assertEqual(runs, [{'base': 'a' * 40, 'head': 'c' * 40, 'submitted_head': 'b' * 40}])
@@ -127,6 +128,80 @@ class E2eCiTests(unittest.TestCase):
             labelled['id'] = 12
             with self.assertRaises(ValueError):
                 ci.recheck_pr(plan)
+
+    def test_conflicting_pr_refuses_before_fetch_but_unknown_mergeability_proceeds(self):
+        pr = {'number': 7, 'mergeable': False,
+              'head': {'sha': 'b' * 40, 'ref': 'candidate', 'repo': {'full_name': 'a16z/jolt'}}}
+        event = {'action': 'synchronize', 'pull_request': pr}
+        with patch.object(ci, 'labelled_pr', return_value=(pr, {})), \
+                patch.object(ci.bench, 'git_revision', side_effect=lambda ref:
+                    'c' * 40 if ref == 'refs/e2e/merge' else 'a' * 40), \
+                patch.object(ci.bench, 'capture', side_effect=lambda argv:
+                    'a' * 40 + ' ' + 'b' * 40 if argv[1] == 'show' else 'a' * 40) as capture:
+            with self.assertRaisesRegex(ValueError, 'resolve.*conflicts'):
+                ci.resolve('pull_request_target', event, 'a16z/jolt', 'a' * 40)
+            capture.assert_not_called()
+            pr['mergeable'] = None
+            self.assertEqual(ci.resolve('pull_request_target', event, 'a16z/jolt', 'a' * 40)[1],
+                [{'base': 'a' * 40, 'head': 'c' * 40, 'submitted_head': 'b' * 40}])
+
+    def test_refusal_comment_uses_the_same_run_event_without_new_plan_fields(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            event = root / 'event.json'
+            event.write_text(json.dumps({'pull_request': {'number': 7,
+                'head': {'sha': 'b' * 40}, 'base': {'ref': 'other'}}}))
+            plan = root / 'plan.json'
+            plan.write_text(json.dumps({'provenance': {'pr_number': 7, 'run_id': '123', 'run_attempt': '2'},
+                                        'reason': 'benchmark requires main <base>'}))
+            outputs = root / 'outputs'
+            with patch.dict(os.environ, GITHUB_EVENT_PATH=str(event), GITHUB_OUTPUT=str(outputs)):
+                ci.refusal_comment(argparse.Namespace(plan=plan, out=root / 'out'))
+            comment = (root / 'out/pr-comment.md').read_text()
+            self.assertTrue(comment.startswith('<!-- jolt-e2e-benchmark-comment -->\n'))
+            self.assertIn('Benchmark not run', comment)
+            self.assertIn('benchmark requires main &lt;base&gt;', comment)
+            self.assertIn('https://github.com/a16z/jolt/actions/runs/123/attempts/2', comment)
+            self.assertEqual(outputs.read_text(), f'pr_number=7\nhead_sha={"b" * 40}\n')
+
+    def test_sticky_comment_skips_a_superseded_refusal_head(self):
+        with tempfile.TemporaryDirectory() as directory:
+            comment = Path(directory) / 'comment.md'
+            comment.write_text('<!-- jolt-e2e-benchmark-comment -->\nBenchmark not run: resolve conflicts.')
+            program = r'''
+const assert = require('node:assert/strict');
+const writer = require(process.argv[1]);
+const posted = [];
+const github = {
+  rest: {
+    pulls: {get: async () => ({data: {head: {sha: 'new-head'}}})},
+    issues: {
+      listComments: 'list',
+      createComment: async args => posted.push(args),
+      updateComment: async args => posted.push(args),
+    },
+  },
+  paginate: async () => [],
+};
+(async () => {
+  const context = {repo: {owner: 'a16z', repo: 'jolt'}};
+  process.env.PR_HEAD = 'old-head';
+  await writer({github, context});
+  assert.equal(posted.length, 0);
+  process.env.PR_HEAD = 'new-head';
+  await writer({github, context});
+  assert.equal(posted.length, 1);
+  assert.equal(posted[0].issue_number, 7);
+  assert.match(posted[0].body, /Benchmark not run/);
+  delete process.env.PR_HEAD;
+  github.paginate = async () => [{id: 42, user: {login: 'github-actions[bot]'}, body: posted[0].body}];
+  await writer({github, context});
+  assert.equal(posted.length, 2);
+  assert.equal(posted[1].comment_id, 42);
+})().catch(error => { console.error(error); process.exitCode = 1; });
+'''
+            env = dict(os.environ, PR_NUMBER='7', COMMENT_PATH=str(comment))
+            subprocess.run(['node', '-e', program, str(DIRECTORY / 'sticky_comment.js')], env=env, check=True)
 
     def test_main_push_keeps_all_new_first_parent_commits_in_event_order(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -155,6 +230,44 @@ class E2eCiTests(unittest.TestCase):
             self.assertEqual([item['head'] for item in runs], [first, merge, after])
             self.assertIsNone(number)
             self.assertIsNone(request)
+
+    def test_pr_merge_accepts_stale_main_base_but_not_side_history_or_wrong_head(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Path(directory)
+            env = dict(os.environ, GIT_AUTHOR_NAME='fixture', GIT_COMMITTER_NAME='fixture',
+                       GIT_AUTHOR_EMAIL='fixture@example.invalid', GIT_COMMITTER_EMAIL='fixture@example.invalid')
+            subprocess.run(['git', 'init', '-q', str(repo)], check=True)
+            subprocess.run(['git', 'remote', 'add', 'origin', str(repo)], cwd=repo, check=True)
+            tree = subprocess.check_output(['git', 'mktree'], input='', text=True, cwd=repo).strip()
+            def commit(label, parents):
+                argv = ['git', 'commit-tree', tree, '-m', label]
+                for parent in parents:
+                    argv.extend(['-p', parent])
+                return subprocess.check_output(argv, cwd=repo, env=env, text=True).strip()
+            base = commit('old main', [])
+            side = commit('side history', [base])
+            newer = commit('newer main', [base])
+            main = commit('current main', [newer, side])
+            head = commit('submitted head', [base])
+            subprocess.run(['git', 'update-ref', 'refs/heads/main', main], cwd=repo, check=True)
+            subprocess.run(['git', 'update-ref', 'HEAD', main], cwd=repo, check=True)
+            pr = {'number': 7, 'head': {'sha': head, 'ref': 'candidate', 'repo': {'full_name': 'a16z/jolt'}}}
+            event = {'action': 'synchronize', 'pull_request': pr}
+            real_capture = ci.bench.capture
+            for parents, accepted in [([base, head], True), ([main, head], True),
+                                      ([side, head], False), ([base, side], False),
+                                      ([base, head, side], False), ([head], False)]:
+                merge = commit('merge', parents)
+                subprocess.run(['git', 'update-ref', 'refs/pull/7/merge', merge], cwd=repo, check=True)
+                with self.subTest(parents=parents), patch.object(ci, 'labelled_pr', return_value=(pr, {})), \
+                        patch.object(ci.bench, 'capture', side_effect=lambda argv, **kwargs: real_capture(argv, cwd=repo)):
+                    if accepted:
+                        harness, runs, number, _ = ci.resolve('pull_request_target', event, 'a16z/jolt', main)
+                        self.assertEqual((harness, number), (main, 7))
+                        self.assertEqual(runs, [{'base': parents[0], 'head': merge, 'submitted_head': head}])
+                    else:
+                        with self.assertRaisesRegex(ValueError, 'first-parent main commit'):
+                            ci.resolve('pull_request_target', event, 'a16z/jolt', main)
 
     def test_batch_artifact_has_root_tip_and_explicit_earlier_commit_documents(self):
         with tempfile.TemporaryDirectory() as directory:

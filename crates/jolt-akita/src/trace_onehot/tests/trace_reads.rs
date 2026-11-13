@@ -221,6 +221,8 @@ fn row_traversal_rejects_invalid_selector_at_every_position() {
         fn fill_row(&self, row: usize, selected: &mut [u8]) {
             selected[0] = if row == self.invalid_row {
                 self.invalid_value
+            } else if row.is_multiple_of(2) {
+                NO_SELECTED_ROW
             } else {
                 15
             };

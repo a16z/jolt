@@ -7,7 +7,8 @@ pub(super) fn fill_digits<const BITS: usize>(mut value: u128, columns: &mut [u8]
         target_feature = "neon"
     ))]
     if BITS == 4 && (16..=32).contains(&columns.len()) {
-        // SAFETY: NEON is enabled for this target. Each store writes 16 bytes
+        // SAFETY: NEON is enabled for this target. The load reads a complete
+        // 16-byte array that remains live for the call. Each store writes 16 bytes
         // within a slice of length 16..=32. The overlapping stores agree on
         // their common digits, so no padding or extra output storage is needed.
         unsafe {

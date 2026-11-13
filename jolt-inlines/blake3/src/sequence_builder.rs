@@ -240,7 +240,7 @@ mod tests {
 
     fn words_to_bytes(words: &[u32; CHAINING_VALUE_LEN]) -> [u8; 32] {
         let mut bytes = [0u8; 32];
-        for (chunk, word) in bytes.chunks_exact_mut(4).zip(words) {
+        for (chunk, word) in bytes.as_chunks_mut::<4>().0.iter_mut().zip(words) {
             chunk.copy_from_slice(&word.to_le_bytes());
         }
         bytes

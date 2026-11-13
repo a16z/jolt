@@ -39,7 +39,7 @@ impl<F: JoltField> PairedBranchTables<F> {
             .iter()
             .map(|table| {
                 let mut paired = Vec::with_capacity(Self::entries(table.len() / PAIR_ADDRESSES));
-                for branches in table.chunks_exact(2 * PAIR_ADDRESSES) {
+                for branches in table.as_chunks::<{ 2 * PAIR_ADDRESSES }>().0 {
                     let (low, high) = branches.split_at(PAIR_ADDRESSES);
                     for lo in low.iter().copied().chain([F::zero()]) {
                         for hi in high.iter().copied().chain([F::zero()]) {
@@ -108,7 +108,9 @@ impl<F: JoltField> PairedBranchTables<F> {
             for column in (start..end).rev() {
                 let table = &self.tables[column];
                 let sum = indices
-                    .chunks_exact_mut(2)
+                    .as_chunks_mut::<2>()
+                    .0
+                    .iter_mut()
                     .enumerate()
                     .map(|(pair, indices)| {
                         let lo = (indices[0] & 15) as usize;
@@ -196,7 +198,7 @@ mod tests {
     use crate::optimized::constant_suffix::ConstantSuffix;
     use crate::optimized::instruction_read_raf::{InstructionCycleRow, LookupIndexChunks};
     #[cfg(feature = "akita")]
-    use jolt_field::Prime128OffsetA7F7;
+    use jolt_field::Prime128Offset6A23801F;
     use jolt_field::{Fr, JoltField};
     #[cfg(feature = "akita")]
     use jolt_witness::witnesses::FusedInc;
@@ -288,6 +290,6 @@ mod tests {
     fn paired_instruction_gathers_match_multilinear_definition() {
         check::<Fr>();
         #[cfg(feature = "akita")]
-        check::<Prime128OffsetA7F7>();
+        check::<Prime128Offset6A23801F>();
     }
 }
