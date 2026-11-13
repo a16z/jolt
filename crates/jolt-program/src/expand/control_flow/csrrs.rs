@@ -1,54 +1,20 @@
+use super::csr::emit_csr_set;
 use super::*;
 
 /// Lowers `CSRRS` to operations on Jolt's CSR virtual registers.
 ///
-/// Supported CSRs are represented by reserved virtual registers. The sequence
-/// must preserve the Zicsr read-before-write rule, including the special cases:
-/// `rs1 = x0` is read-only, `rd = x0` discards the old CSR value, and
-/// `rd == rs1` needs a temporary so the source bits are not overwritten before
-/// the CSR update. With both `rs1 = x0` and `rd = x0` the instruction has no
-/// effect and lowers to the canonical no-op.
+/// `rd` receives the old CSR value unless `rd = x0`, and the CSR receives
+/// `csr | rs1`, legalized as described in [`super::csr`], unless `rs1 = x0`
+/// (then the CSR is not written). See [`super::csr::emit_csr_set`]
+/// for the special cases.
 pub(in crate::expand) fn expand_csrrs(
     instruction: &SourceInstructionRow,
 ) -> Result<ExpandedInstructionSequence, ExpansionError> {
     let csr = csr_address(instruction);
     let virtual_reg = virtual_register_for_csr(csr).ok_or(ExpansionError::UnsupportedCsr(csr))?;
+    let rd = rd(instruction)?;
+    let rs1 = rs1(instruction)?;
     let mut asm = ExpansionBuilder::new(*instruction);
-
-    if rs1(instruction)? == 0 && rd(instruction)? == 0 {
-        asm.emit_i(Kind::ADDI, reg(0), reg(0), 0);
-        return asm.finalize();
-    } else if rs1(instruction)? == 0 {
-        // Read-only `csrr rd, csr`: copy the CSR virtual register to rd.
-        asm.emit_i(Kind::ADDI, reg(rd(instruction)?), reg(virtual_reg), 0);
-        return asm.finalize();
-    } else if rd(instruction)? == 0 {
-        // Set-only `csrs csr, rs1`: update the CSR virtual register and
-        // deliberately discard the old value.
-        asm.emit_r(
-            Kind::OR,
-            reg(virtual_reg),
-            reg(virtual_reg),
-            reg(rs1(instruction)?),
-        );
-        return asm.finalize();
-    } else if rd(instruction)? == rs1(instruction)? {
-        // Preserve rs1 before writing rd with the old CSR value.
-        let temp = asm.allocate()?;
-        asm.emit_i(Kind::ADDI, temp.operand(), reg(rs1(instruction)?), 0);
-        asm.emit_i(Kind::ADDI, reg(rd(instruction)?), reg(virtual_reg), 0);
-        asm.emit_r(Kind::OR, reg(virtual_reg), reg(virtual_reg), temp.operand());
-        asm.release(temp);
-        return asm.finalize();
-    }
-
-    asm.emit_i(Kind::ADDI, reg(rd(instruction)?), reg(virtual_reg), 0);
-    asm.emit_r(
-        Kind::OR,
-        reg(virtual_reg),
-        reg(virtual_reg),
-        reg(rs1(instruction)?),
-    );
-
+    emit_csr_set(&mut asm, csr, virtual_reg, rd, reg(rs1))?;
     asm.finalize()
 }

@@ -1,10 +1,10 @@
 use jolt_claims::protocols::jolt::lattice::increments::FusedIncLayout;
 use jolt_field::JoltField;
 use jolt_openings::{CommitmentScheme, TransparentObjectSetup};
+#[cfg(feature = "parallel")]
+use jolt_utils::par_collect_windows;
 use jolt_witness::witnesses::FusedInc;
 use jolt_witness::{collect_bundles, JoltWitnessPlane, WitnessBundle, WitnessError};
-#[cfg(feature = "parallel")]
-use rayon::prelude::*;
 
 use crate::akita::commitment::FusedIncObject;
 use crate::KernelError;
@@ -36,10 +36,7 @@ where
         };
         let physical = access.physical_cycles().min(cycles);
         #[cfg(feature = "parallel")]
-        let values = (0..physical)
-            .into_par_iter()
-            .map(extract)
-            .collect::<Result<Vec<_>, _>>()?;
+        let values = par_collect_windows(physical, extract)?;
         #[cfg(not(feature = "parallel"))]
         let values = (0..physical).map(extract).collect::<Result<Vec<_>, _>>()?;
         values
