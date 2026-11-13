@@ -19,7 +19,7 @@ use jolt_witness::{JoltWitnessPlane, WitnessError};
 use super::FieldInlineRowCursor;
 use super::{
     rows_unavailable, take_carry, OuterRemainderKernel, OuterTables, PrefixColumn,
-    SpartanOuterCarry, SpartanOuterDimensions, DOMAIN,
+    SpartanOuterCarry, DOMAIN,
 };
 use crate::optimized::streaming::{
     dense_crossover, gruen_pair_pass, product_endpoint_terms, PairHalves, DENSE_TABLE_CAP,
@@ -27,17 +27,17 @@ use crate::optimized::streaming::{
 use crate::optimized::support::{eq_round_error, GruenRoundMessage};
 use crate::{KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel};
 
-fn remainder_len(log_t: usize) -> usize {
-    1usize << SpartanOuterDimensions::rv64(log_t).remainder_rounds()
-}
-
 /// The streaming stage-1 remainder slot.
 pub struct StreamingOuterRemainder;
 
 /// The round whose pass fills both tables over `2^log_t` cycles: the first
-/// whose tables fit `cap` bytes, or the round count when none does.
+/// whose tables fit `cap` bytes, or the round count when none does. Sizes are
+/// compared in cycles against the cycles `cap` holds, which is the same test
+/// as bytes against `cap` and cannot overflow where the byte count of
+/// `2^log_t` cycles would.
 fn crossover_round<F: JoltField>(log_t: usize, cap: usize) -> usize {
-    dense_crossover((4 * size_of::<F>()) << log_t, cap, log_t + 1)
+    let cap_cycles = cap / (4 * size_of::<F>());
+    dense_crossover(1 << log_t, cap_cycles, log_t + 1)
 }
 
 impl<F: JoltField> PrepareKernel<F, OuterRemainder<F>> for StreamingOuterRemainder {
@@ -76,7 +76,7 @@ impl<F: JoltField> OuterRemainderKernel<F> {
     /// `2T / 2^round`, allocated once at its final capacity and written in
     /// disjoint task slices.
     pub(super) fn fill_tables(&mut self) -> Result<(F, F), WitnessError> {
-        let len = remainder_len(self.challenges.total() - 1) >> self.challenges.bound();
+        let len = 1usize << (self.challenges.total() - self.challenges.bound());
         let mut az: Vec<F> = unsafe_allocate_zero_vec(len);
         let mut bz: Vec<F> = unsafe_allocate_zero_vec(len);
         let [zero, infinity] =
@@ -205,5 +205,27 @@ impl<F: JoltField> OuterRemainderKernel<F> {
             }
             Ok(())
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use jolt_field::Fr;
+
+    use super::crossover_round;
+
+    /// The crossover is exact at the cap's boundary, is the round count when
+    /// one cycle's entries exceed the cap, and does not wrap when the tables
+    /// exceed `usize` bytes (the widest cycle count `usize` holds).
+    #[test]
+    fn crossover_round_is_exact_at_the_cap_and_past_usize_bytes() {
+        let cycle_bytes = 4 * size_of::<Fr>();
+        assert_eq!(crossover_round::<Fr>(20, cycle_bytes << 10), 10);
+        assert_eq!(crossover_round::<Fr>(20, (cycle_bytes << 10) - 1), 11);
+        assert_eq!(crossover_round::<Fr>(20, usize::MAX), 0);
+        assert_eq!(crossover_round::<Fr>(20, cycle_bytes), 20);
+        assert_eq!(crossover_round::<Fr>(20, cycle_bytes - 1), 21);
+        let wide = usize::BITS as usize - 1;
+        assert_eq!(crossover_round::<Fr>(wide, cycle_bytes << 20), wide - 20);
     }
 }
