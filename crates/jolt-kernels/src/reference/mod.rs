@@ -20,10 +20,14 @@
 //! - The round scheduler stays `ReferenceBackend` in every mode.
 //! - `NaiveSumcheckProver` drives the optimized RAM RAF-evaluation kernel.
 //! - Optimized kernels call helpers in `views`, such as `eq_table`.
-//! - Without `akita`, the optimized commit slot delegates advice commits,
-//!   field-inline witness commits and non-cycle-major grids to
-//!   `commitment.rs`, and the optimized field-inline opening delegates to
-//!   `opening.rs`.
+//! - Without `akita`, the optimized commit and joint-opening slots derive
+//!   every trace column through `ColumnKind` in `reference/commitment.rs`.
+//!   The commit slot also delegates advice commits, field-inline witness
+//!   commits, and address-major or widened grids to
+//!   `reference/commitment.rs`, and the field-inline opening delegates to
+//!   `reference/opening.rs`.
+//! - Dory stage 0 requests the `annotated_ids` of the
+//!   `InstructionReadRafWitness` and `BytecodeReadRafWitness` types.
 
 #[cfg(feature = "akita")]
 use jolt_akita::TraceOneHotCommitment;
