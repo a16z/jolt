@@ -292,14 +292,14 @@ mod matrix {
                     ..GuestCase::new("advice-consumer-guest")
                 };
                 rounded_advice => GuestCase {
-                    func: Some("rounded_advice_consumer"),
+                    func: Some("rounded_advice"),
                     max_untrusted_advice_size: Some(12),
                     // Sixteen bytes fill the rounded block, past the configured 12.
                     untrusted_advice: (1..=16).collect(),
                     expected_output: Some(encode(&u64::from_le_bytes([
                         9, 10, 11, 12, 13, 14, 15, 16
                     ]))),
-                    ..GuestCase::new("advice-consumer-guest")
+                    ..GuestCase::new("memory-ops-guest")
                 };
             }
         };
