@@ -1326,9 +1326,8 @@ mod test_mmu {
             - 1
             - trusted_advice_size
             - untrusted_advice_size;
-        // Write to address below I/O region - rejected as unknown mapping
-        // (Note: address is in "zero-padding" range so passes underflow check,
-        // but fails device I/O check since it's not a valid write target)
+        // A store below the I/O region skips the load-only underflow fault and
+        // fails the unmapped-device check.
         mmu.store_bytes(invalid_addr, 0xc50513, 2).unwrap();
     }
 
