@@ -305,7 +305,6 @@
         },
         "streaming_families": {
           "type": "array",
-          "default": [],
           "items": {
             "type": "string"
           }

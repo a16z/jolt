@@ -69,10 +69,12 @@ early rounds recompute from the resident trace until the dense tables fit a fixe
 cap; the full trace remains resident. This is not a process-memory cap, and
 streaming can use more memory than eager kernels on small or padded traces.
 Streaming workload, CSV and trace names append `_streaming_<families>` in
-canonical order (`instruction_input`, `spartan`, `ram`), so their run directories,
-`latest_` links and resumed sweeps stay separate from eager runs.
-`summary.json` records the selection in
-`run.streaming_families`; `--result-json` records it in `streaming_families`.
+canonical order (`instruction_input`, `spartan`, `ram`), so their run directories
+and `latest_` links stay separate from eager runs.
+The option belongs to `profile` only: `benchmark` sweeps have no streaming
+selection, and a resumed sweep ignores streaming profile artifacts.
+`summary.json` records the selection in `run.streaming_families`;
+`--result-json` records it in `streaming_families`.
 The option cannot be combined with `--memory-budget`: the budget checks
 price only eager kernels, not a streaming selection.
 

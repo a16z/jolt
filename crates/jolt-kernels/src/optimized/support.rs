@@ -1128,7 +1128,10 @@ impl<B: WitnessBundle + Copy + Send + Sync> BundleStore<B> {
         let rows = witness
             .random_access()
             .ok_or(WitnessError::UnavailableView { label })?;
-        if rows.cycles() != 1 << log_t {
+        let cycles = u32::try_from(log_t)
+            .ok()
+            .and_then(|shift| 1usize.checked_shl(shift));
+        if cycles != Some(rows.cycles()) {
             return Err(WitnessError::InvalidDimensions {
                 label,
                 reason: format!("{} rows for a 2^{log_t}-cycle stage", rows.cycles()),

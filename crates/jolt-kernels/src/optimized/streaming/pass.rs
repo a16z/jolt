@@ -18,7 +18,8 @@ pub(crate) const VISIT_ROWS: usize = 1 << 12;
 
 /// Byte cap on one streaming kernel's dense tables: its rounds recompute
 /// their pairs from the rows until the tables fit ([`dense_crossover`]).
-pub(crate) const DENSE_TABLE_CAP: usize = 4 << 30;
+/// 4 GiB, or every representable size where `usize` cannot hold 4 GiB.
+pub(crate) const DENSE_TABLE_CAP: usize = 4usize.saturating_mul(1 << 30);
 
 /// Tasks per pool thread in a [`task_ranges`] partition, so work stealing can
 /// even out unequal row costs between tasks.
@@ -239,12 +240,14 @@ pub(crate) fn split_at_tasks<'a, T, const N: usize>(
         .collect()
 }
 
-/// The first bind depth `k` at which tables of `table_bytes` before any bind
-/// fit `cap` bytes (`⌈table_bytes / 2^k⌉ ≤ cap`), or `rounds` when none of
-/// the `rounds` depths does.
-pub(crate) fn dense_crossover(table_bytes: usize, cap: usize, rounds: usize) -> usize {
+/// The first bind depth `k` at which tables over `cycles` cycles before any
+/// bind fit a cap of `cap_cycles` cycles (`⌈cycles / 2^k⌉ ≤ cap_cycles`), or
+/// `rounds` when none of the `rounds` depths does. Both arguments count
+/// cycles: a caller divides its byte cap by its tables' bytes per cycle, so
+/// the byte size of the whole domain is never formed.
+pub(crate) fn dense_crossover(cycles: usize, cap_cycles: usize, rounds: usize) -> usize {
     (0..rounds)
-        .find(|&depth| table_bytes.div_ceil(1 << depth) <= cap)
+        .find(|&depth| cycles.div_ceil(1 << depth) <= cap_cycles)
         .unwrap_or(rounds)
 }
 

@@ -1,7 +1,8 @@
 //! Streaming instruction input virtualization: the eager kernel's rounds
 //! after a crossover, preceded by rounds that read the witness's resident
-//! rows in task-partitioned passes instead of materializing the ten tables
-//! at `T/2`. Round 0 evaluates native integer row pairs. Round `j ≥ 1`
+//! rows in task-partitioned passes instead of materializing the eager
+//! kernel's first-bind state at `T/2` (five operand tables and the packed
+//! flag words). Round 0 evaluates native integer row pairs. Round `j ≥ 1`
 //! contracts each column over the low and high halves of its
 //! `2^(j+1)`-cycle pairs with `eq(r_1..r_j, ·)` (LowToHigh binding gives
 //! `f^(j)(y) = Σ_b eq(r, b)·f(2^j·y + b)`). The first round whose tables fit
@@ -35,6 +36,11 @@ use crate::{
 
 const TERMS: usize = 3;
 
+// Round 0 (`native_q_terms`) weights each visit callback by one `e_out`
+// entry and pairs its rows in place, so its callbacks must tile every
+// split-eq group in whole pairs; `gruen_pair_pass` has no such requirement.
+const _: () = assert!(VISIT_ROWS.is_power_of_two() && VISIT_ROWS >= 2);
+
 /// The quadratic's constant and leading coefficients, then its value at one.
 #[inline]
 fn pair_q_terms<F: JoltField>(
@@ -55,9 +61,13 @@ pub struct StreamingInstructionInput;
 /// The round whose pass fills the dense tables over `2^rounds` cycles: the
 /// first whose tables fit `cap`, at least round 1 when there are two or more
 /// rounds, and at most the last round, so openings are always table entries.
+/// Sizes are compared in cycles against the cycles `cap` holds, which is the
+/// same test as bytes against `cap` and cannot overflow where the byte count
+/// of `2^rounds` cycles would, for `rounds < usize::BITS` (`prepare` gets that
+/// from [`BundleStore::resident`]).
 fn crossover_round<F: JoltField>(rounds: usize, cap: usize) -> usize {
-    let table_bytes = (NUM_TABLES * size_of::<F>()) << rounds;
-    dense_crossover(table_bytes, cap, rounds)
+    let cap_cycles = cap / (NUM_TABLES * size_of::<F>());
+    dense_crossover(1 << rounds, cap_cycles, rounds)
         .max(1)
         .min(rounds.saturating_sub(1))
 }
@@ -71,11 +81,21 @@ impl<F: JoltField> PrepareKernel<F, InstructionInput<F>> for StreamingInstructio
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = InstructionInput<F>>>, KernelError<F>> {
         let r_product = inputs.relation.product_remainder_opening_point();
         let rows = BundleStore::resident(witness, r_product.len(), "instruction input trace rows")?;
+        // A one-cycle domain has no round whose pass could fill the tables:
+        // the eager kernel opens its single row without any.
+        if r_product.is_empty() {
+            return Ok(Box::new(OptimizedInstructionInputKernel::new(
+                r_product,
+                rows,
+                inputs.challenges.gamma,
+            )?));
+        }
         Ok(Box::new(StreamingInstructionInputKernel::new(
             r_product,
             rows,
             inputs.challenges.gamma,
             DENSE_TABLE_CAP,
+            VISIT_ROWS,
         )))
     }
 }
@@ -87,6 +107,9 @@ struct StreamedRounds<F: JoltField> {
     gamma: F,
     /// The round whose pass fills the tables ([`crossover_round`]).
     dense_round: usize,
+    /// Rows per callback of round 0's visit: a power of two of at least two
+    /// rows, so every callback holds whole pairs inside one split-eq group.
+    native_visit_rows: usize,
     gruen: GruenSplitEqPolynomial<F>,
     challenges: RoundChallenges<F>,
     rows: BundleStore<InstructionInputRow>,
@@ -136,7 +159,7 @@ impl<F: JoltField> StreamedRounds<F> {
             let mut q_terms = vec![F::zero(); TERMS];
             self.rows.visit(
                 ranges[task].clone(),
-                VISIT_ROWS.min(group),
+                self.native_visit_rows.min(group),
                 |start, bundles| {
                     let mut sums = NativePairSums::<F, TERMS>::new();
                     for (pair, &weight) in bundles
@@ -223,19 +246,23 @@ impl<F: JoltField> StreamedRounds<F> {
 }
 
 impl<F: JoltField> StreamingInstructionInputKernel<F> {
-    /// `dense_cap` bounds the bytes of the ten dense tables; production
-    /// passes [`DENSE_TABLE_CAP`].
+    /// `dense_cap` bounds the bytes of the ten dense tables and
+    /// `native_visit_rows` is the power-of-two row count of one callback of
+    /// round 0's visit; production passes [`DENSE_TABLE_CAP`] and
+    /// [`VISIT_ROWS`].
     fn new(
         r_product: &[F],
         rows: BundleStore<InstructionInputRow>,
         gamma: F,
         dense_cap: usize,
+        native_visit_rows: usize,
     ) -> Self {
         let rounds = r_product.len();
         Self {
             phase: Phase::Streamed(StreamedRounds {
                 gamma,
                 dense_round: crossover_round::<F>(rounds, dense_cap),
+                native_visit_rows,
                 gruen: GruenSplitEqPolynomial::new(r_product, BindingOrder::LowToHigh),
                 challenges: RoundChallenges::new(rounds),
                 rows,
@@ -272,6 +299,8 @@ impl<F: JoltField> StreamingInstructionInputKernel<F> {
             .checked_cubic(q_terms[0], q_terms[1], previous_claim, round, || q_terms[2])?;
         if let Some(tables) = tables {
             let prefix_len = tables[0].len();
+            // `tail` is never used: the tables span the whole power-of-two
+            // domain that is left, so no entry lies in a constant suffix.
             let tail = core::array::from_fn(|i| tables[i][prefix_len - 1]);
             self.phase = Phase::Dense(OptimizedInstructionInputKernel {
                 progress: streamed.challenges.progress(),
@@ -380,6 +409,7 @@ mod tests {
     use jolt_witness::{JoltVmWitnessInputs, TraceBackend};
 
     use super::*;
+    use crate::optimized::instruction_input::OptimizedInstructionInput;
     use crate::optimized::parity::{probe_input_claim, run_lockstep, ExceptionalEq};
     use crate::optimized::registers_read_write::test_support::structured_fixture;
     use crate::reference::views::eq_table;
@@ -459,7 +489,8 @@ mod tests {
 
     /// Drives the reference prover over the rows' dense columns and the
     /// streaming kernel, its tables capped at exactly their size at round
-    /// `depth`, through every round on `challenges`: equal round polynomials
+    /// `depth` and its round-0 visit made in callbacks of `visit_rows` rows,
+    /// through every round on `challenges`: equal round polynomials
     /// and output claims, the pinned eq scalar, and tables filled with
     /// `T / 2^c` entries at round `c = min(depth, log_t − 1)`.
     fn assert_parity(
@@ -467,6 +498,7 @@ mod tests {
         r_product: &[Fr],
         challenges: &[Fr],
         depth: usize,
+        visit_rows: usize,
     ) {
         let log_t = r_product.len();
         let tables: Vec<Vec<Fr>> = (0..NUM_TABLES)
@@ -527,6 +559,7 @@ mod tests {
             BundleStore::Retained(rows),
             gamma,
             cap,
+            visit_rows,
         );
 
         let mut claim = probe_input_claim(&mut reference);
@@ -596,9 +629,53 @@ mod tests {
                     &product_point(log_t),
                     &challenges,
                     depth,
+                    VISIT_ROWS,
                 );
             }
         }
+    }
+
+    /// Round 0 over split-eq groups wider than one visit callback, the shape
+    /// of every trace of 2^25 cycles or more at the production callback size:
+    /// each callback after a group's first starts at a nonzero `e_in` offset
+    /// and closes a partial group, at every crossover round.
+    #[test]
+    fn round_zero_groups_span_several_visit_callbacks() {
+        for (log_t, seed) in [(4usize, 404u64), (7, 707), (8, 808)] {
+            let r_product = product_point(log_t);
+            let challenges: Vec<Fr> = (0..log_t).map(challenge).collect();
+            let split_eq = GruenSplitEqPolynomial::new(&r_product, BindingOrder::LowToHigh);
+            let group = 2 * split_eq.e_in_current().len();
+            assert!(group >= 4, "log_t {log_t} has one-pair groups");
+            let mut visit_rows = 2;
+            while visit_rows < group {
+                for depth in 1..log_t {
+                    assert_parity(
+                        synthetic_rows(log_t, seed),
+                        &r_product,
+                        &challenges,
+                        depth,
+                        visit_rows,
+                    );
+                }
+                visit_rows *= 2;
+            }
+        }
+    }
+
+    /// The crossover is exact at the cap's boundary, clamps to rounds
+    /// `1..=rounds − 1`, and does not wrap when the tables exceed `usize`
+    /// bytes (a round count eight below the word size).
+    #[test]
+    fn crossover_round_is_exact_at_the_cap_and_past_usize_bytes() {
+        let cycle_bytes = NUM_TABLES * size_of::<Fr>();
+        assert_eq!(crossover_round::<Fr>(20, cycle_bytes << 10), 10);
+        assert_eq!(crossover_round::<Fr>(20, (cycle_bytes << 10) - 1), 11);
+        assert_eq!(crossover_round::<Fr>(20, usize::MAX), 1);
+        assert_eq!(crossover_round::<Fr>(20, 0), 19);
+        assert_eq!(crossover_round::<Fr>(1, 0), 0);
+        let wide = usize::BITS as usize - 8;
+        assert_eq!(crossover_round::<Fr>(wide, cycle_bytes << 20), wide - 20);
     }
 
     /// Exceptional eq points (coordinates 0 or 1, a prefix that vanishes at
@@ -616,6 +693,7 @@ mod tests {
                     &case.point(log_t, challenges[0]),
                     &challenges,
                     depth,
+                    VISIT_ROWS,
                 );
             }
             assert_parity(
@@ -623,6 +701,7 @@ mod tests {
                 &product_point(log_t),
                 &zero_one,
                 depth,
+                VISIT_ROWS,
             );
         }
     }
@@ -662,6 +741,7 @@ mod tests {
                 BundleStore::resident::<F>(backend, log_t, "trace rows").unwrap(),
                 challenges.gamma,
                 ((NUM_TABLES * size_of::<F>()) << log_t) >> depth,
+                VISIT_ROWS,
             )),
             None => StreamingInstructionInput
                 .prepare(&mut ProofSession::default(), backend, inputs())
@@ -699,6 +779,46 @@ mod tests {
                 }
             });
         }
+    }
+
+    /// A one-cycle domain has no rounds: preparation hands it to the eager
+    /// kernel, so the output claims and the eq check are available at once.
+    #[test]
+    fn zero_round_domain_opens_like_the_default_kernel() {
+        let relation = InstructionInput::<Fr>::new(TraceDimensions::new(0), Vec::new());
+        let claims = InstructionInputInputClaims {
+            right_instruction_input: fr(0),
+            left_instruction_input: fr(0),
+        };
+        let points = InstructionInputInputClaims {
+            right_instruction_input: Vec::new(),
+            left_instruction_input: Vec::new(),
+        };
+        let challenges = InstructionInputChallenges { gamma: fr(7019) };
+        let inputs = || ProverInputs {
+            relation: &relation,
+            claims: &claims,
+            points: &points,
+            challenges: &challenges,
+        };
+        structured_fixture(1).with_plane(0, |backend| {
+            let mut eager = OptimizedInstructionInput
+                .prepare(&mut ProofSession::default(), backend, inputs())
+                .unwrap();
+            let mut streaming = StreamingInstructionInput
+                .prepare(&mut ProofSession::default(), backend, inputs())
+                .unwrap();
+            assert_eq!(streaming.num_rounds(), 0);
+            assert_eq!(
+                streaming.output_claims(&claims).unwrap(),
+                eager.output_claims(&claims).unwrap(),
+                "zero-round output claims"
+            );
+            let output_points = relation.derive_opening_points(&[], &points).unwrap();
+            streaming
+                .validate_derived_tables(&relation, &points, &output_points, &challenges)
+                .unwrap();
+        });
     }
 
     /// A witness without resident rows, or with another cycle domain, fails
@@ -749,6 +869,73 @@ mod tests {
             assert!(matches!(
                 prepare(resident, log_t + 1),
                 Err(KernelError::Witness(WitnessError::InvalidDimensions { .. }))
+            ));
+            // A cycle count that does not fit `usize` is refused the same way.
+            assert!(matches!(
+                prepare(resident, usize::BITS as usize),
+                Err(KernelError::Witness(WitnessError::InvalidDimensions { .. }))
+            ));
+        });
+    }
+
+    /// `with_streaming` puts this kernel in the backend's slot. Streamed and
+    /// default proofs are byte-equal, so only the kernel's behavior shows
+    /// which one is installed: it refuses a witness without resident rows,
+    /// which the default kernel collects. Dory stands in for the commitment
+    /// scheme; the akita build's `optimized` takes another.
+    #[cfg(not(feature = "akita"))]
+    #[test]
+    fn with_streaming_installs_the_instruction_input_kernel() {
+        use jolt_dory::DoryScheme;
+
+        use crate::optimized::streaming::StreamingFamilies;
+        use crate::JoltBackend;
+
+        let log_t = 1;
+        let relation = InstructionInput::new(TraceDimensions::new(log_t), vec![fr(5)]);
+        let claims = InstructionInputInputClaims {
+            right_instruction_input: fr(0),
+            left_instruction_input: fr(0),
+        };
+        let points = InstructionInputInputClaims {
+            right_instruction_input: Vec::new(),
+            left_instruction_input: Vec::new(),
+        };
+        let challenges = InstructionInputChallenges { gamma: fr(3) };
+        structured_fixture(7).with_plane(3, |resident| {
+            // A configured domain shorter than the trace leaves no resident
+            // rows; chunk visits still serve its `2^log_t` cycles.
+            let mut chunk_only = TraceBackend::new(
+                resident.config.clone(),
+                JoltVmWitnessInputs::new(
+                    &resident.program,
+                    &resident.preprocessing,
+                    resident.trace.clone(),
+                ),
+            );
+            chunk_only.config.log_t = log_t;
+            let prepare = |backend: JoltBackend<Fr, DoryScheme>| {
+                backend
+                    .instruction_input
+                    .prepare(
+                        &mut ProofSession::default(),
+                        &chunk_only,
+                        ProverInputs {
+                            relation: &relation,
+                            claims: &claims,
+                            points: &points,
+                            challenges: &challenges,
+                        },
+                    )
+                    .map(|_| ())
+            };
+            prepare(JoltBackend::optimized()).unwrap();
+            assert!(matches!(
+                prepare(JoltBackend::optimized().with_streaming(StreamingFamilies {
+                    instruction_input: true,
+                    ..StreamingFamilies::default()
+                })),
+                Err(KernelError::Witness(WitnessError::UnavailableView { .. }))
             ));
         });
     }

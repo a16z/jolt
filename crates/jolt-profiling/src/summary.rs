@@ -138,7 +138,10 @@ pub struct RunMetadata {
     /// log2 of the padded trace length the workload was scaled to.
     pub scale_log2: u32,
     pub backend: String,
-    #[serde(default)]
+    // Omitted when empty, so a run without a streaming selection serializes
+    // as it did before this field existed and earlier strict readers of
+    // schema version 1 still accept it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub streaming_families: Vec<String>,
     pub timestamp_unix_secs: u64,
     pub git_rev: Option<String>,

@@ -465,6 +465,18 @@ fn summary_round_trips_through_strict_schema_structs() {
     );
 }
 
+/// A run without a streaming selection omits `run.streaming_families`, as
+/// summaries did before the field existed; a selection is written out.
+#[test]
+fn summary_omits_empty_streaming_families() {
+    let mut summary = fixture_summary(&fixture_events());
+    let selected = serde_json::to_value(&summary.run).unwrap();
+    assert_eq!(selected["streaming_families"][0], "instruction-input");
+    summary.run.streaming_families.clear();
+    let ordinary = serde_json::to_value(&summary.run).unwrap();
+    assert!(ordinary.get("streaming_families").is_none());
+}
+
 #[test]
 fn summary_deserializes_without_hardware_extensions() {
     let summary: ProfileSummary = serde_json::from_str(
