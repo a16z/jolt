@@ -36,12 +36,17 @@
 
 use crate::optimized::support::eq_round_error;
 mod categorical;
+mod streaming;
 
 use std::sync::Arc;
+
+pub use streaming::StreamingInstructionRaVirtualization;
+use streaming::{rows_unavailable, LookupIndexDigits};
 
 use super::constant_suffix::ConstantSuffix;
 use super::instruction_read_raf::{InstructionCycleRow, LookupIndexChunks};
 use super::lazy_ra::LazyFoldedRa;
+use super::streaming::StreamedFoldedRa;
 use super::support::{
     accumulate_product_grid, map_indices, pin_derived_term, product_grid_scratch_len,
     GruenRoundMessage, RoundProgress, MAX_GRID_FACTORS,
@@ -78,16 +83,19 @@ impl<F: JoltField> PrepareKernel<F, InstructionRaVirtualization<F>>
         let cycles = 1usize << relation.dimensions().log_t();
         let rows = InstructionCycleRow::shared(session, witness, cycles)?;
         Ok(Box::new(OptimizedInstructionRaVirtualizationKernel::new(
-            relation.dimensions().log_t(),
-            relation.dimensions().num_virtual_ra_polys(),
-            relation.dimensions().num_committed_per_virtual(),
-            relation.instruction_address(),
-            relation.instruction_read_raf_cycle(),
-            relation.committed_chunk_bits(),
+            relation,
             rows,
             inputs.challenges.gamma,
         )?))
     }
+}
+
+/// The committed RA selectors: the default family, or the streaming family
+/// until the bind that gathers it dense.
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
+enum Selectors<F: JoltField> {
+    Lazy(LazyFoldedRa<F, LookupIndexChunks>),
+    Streamed(StreamedFoldedRa<F, LookupIndexDigits>),
 }
 
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
@@ -103,22 +111,44 @@ pub struct OptimizedInstructionRaVirtualizationKernel<F: JoltField> {
     /// batch's first table pre-scaled by `γ^v` so the round loop needs no
     /// batching multiplies — served lazily off the shared rows for the
     /// first four binds instead of `N × T` dense.
-    folded_ra: LazyFoldedRa<F, LookupIndexChunks>,
+    folded_ra: Selectors<F>,
     gruen: GruenSplitEqPolynomial<F>,
 }
 
 impl<F: JoltField> OptimizedInstructionRaVirtualizationKernel<F> {
-    #[expect(clippy::too_many_arguments, reason = "mirrors the relation accessors")]
     pub(crate) fn new(
-        log_t: usize,
-        num_virtual: usize,
-        num_committed_per_virtual: usize,
-        instruction_address: &[F],
-        instruction_read_raf_cycle: &[F],
-        committed_chunk_bits: usize,
+        relation: &InstructionRaVirtualization<F>,
         rows: Arc<ConstantSuffix<InstructionCycleRow>>,
         gamma: F,
     ) -> Result<Self, KernelError<F>> {
+        let log_t = relation.dimensions().log_t();
+        if rows.len() != 1 << log_t {
+            return Err(KernelError::TableSizeMismatch {
+                table: "stage-6b instruction rows".to_owned(),
+                expected: 1 << log_t,
+                got: rows.len(),
+            });
+        }
+        Self::with_selectors(relation, gamma, |tables| {
+            let source =
+                LookupIndexChunks::new(rows, tables.len(), relation.committed_chunk_bits());
+            Ok(Selectors::Lazy(LazyFoldedRa::new(tables, source)))
+        })
+    }
+
+    /// The kernel over the selector family `selectors` builds from the
+    /// committed chunks' scale tables, in chunk order.
+    fn with_selectors(
+        relation: &InstructionRaVirtualization<F>,
+        gamma: F,
+        selectors: impl FnOnce(Vec<Vec<F>>) -> Result<Selectors<F>, KernelError<F>>,
+    ) -> Result<Self, KernelError<F>> {
+        let log_t = relation.dimensions().log_t();
+        let num_virtual = relation.dimensions().num_virtual_ra_polys();
+        let num_committed_per_virtual = relation.dimensions().num_committed_per_virtual();
+        let instruction_address = relation.instruction_address();
+        let instruction_read_raf_cycle = relation.instruction_read_raf_cycle();
+        let committed_chunk_bits = relation.committed_chunk_bits();
         let num_committed = num_virtual * num_committed_per_virtual;
         let chunks = committed_address_chunks(instruction_address, committed_chunk_bits);
         if chunks.len() != num_committed
@@ -137,13 +167,6 @@ impl<F: JoltField> OptimizedInstructionRaVirtualizationKernel<F> {
             return Err(KernelError::Unsupported {
                 reason: "more committed RA chunks per virtual polynomial than the product grid \
                          supports",
-            });
-        }
-        if rows.len() != 1 << log_t {
-            return Err(KernelError::TableSizeMismatch {
-                table: "stage-6b instruction rows".to_owned(),
-                expected: 1 << log_t,
-                got: rows.len(),
             });
         }
         if instruction_read_raf_cycle.len() != log_t {
@@ -182,10 +205,7 @@ impl<F: JoltField> OptimizedInstructionRaVirtualizationKernel<F> {
             }
             table
         });
-        let folded_ra = LazyFoldedRa::new(
-            chunk_tables,
-            LookupIndexChunks::new(rows, num_committed, committed_chunk_bits),
-        );
+        let folded_ra = selectors(chunk_tables)?;
 
         Ok(Self {
             progress: RoundProgress::new(log_t),
@@ -213,12 +233,17 @@ impl<F: JoltField> OptimizedInstructionRaVirtualizationKernel<F> {
         round: usize,
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
+        let folded_ra = match &self.folded_ra {
+            Selectors::Lazy(folded_ra) => folded_ra,
+            Selectors::Streamed(selectors) => {
+                return self.streamed_message(selectors, round, previous_claim);
+            }
+        };
         let n = self.num_committed_per_virtual;
         if n < 2 {
-            return self.message_single_factor(round, previous_claim);
+            return self.message_single_factor(folded_ra, round, previous_claim);
         }
-        let num_committed = self.folded_ra.num_polys();
-        let folded_ra = &self.folded_ra;
+        let num_committed = folded_ra.num_polys();
         let paired = folded_ra.paired_lo_hi(num_committed);
         let gather = |row, pairs: &mut [(F, F)]| {
             if let Some(paired) = &paired {
@@ -364,11 +389,11 @@ impl<F: JoltField> OptimizedInstructionRaVirtualizationKernel<F> {
     /// sampling of the quadratic summand.
     fn message_single_factor(
         &self,
+        folded_ra: &LazyFoldedRa<F, LookupIndexChunks>,
         round: usize,
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
-        let num_committed = self.folded_ra.num_polys();
-        let folded_ra = &self.folded_ra;
+        let num_committed = folded_ra.num_polys();
         let prefix_pairs = folded_ra.prefix_len().div_ceil(2);
         let tail = folded_ra
             .tail_values()
@@ -423,7 +448,15 @@ impl<F: JoltField> OptimizedInstructionRaVirtualizationKernel<F> {
             .round_mut()
             .ok_or_else(|| eq_round_error(round))?
             .bind(challenge);
-        self.folded_ra.bind(challenge);
+        match &mut self.folded_ra {
+            Selectors::Lazy(folded_ra) => folded_ra.bind(challenge),
+            Selectors::Streamed(selectors) => {
+                selectors.bind(challenge);
+                if let Some(dense) = selectors.materialized().map_err(rows_unavailable)? {
+                    self.folded_ra = Selectors::Lazy(dense);
+                }
+            }
+        }
         self.progress.advance();
         Ok(())
     }
@@ -459,9 +492,14 @@ impl<F: JoltField> SumcheckKernel<F> for OptimizedInstructionRaVirtualizationKer
         _inputs: &SumcheckInputClaims<F, Self::Relation>,
     ) -> Result<InstructionRaVirtualizationOutputClaims<F>, SumcheckKernelError<F>> {
         self.progress.require_complete()?;
+        let Selectors::Lazy(folded_ra) = &self.folded_ra else {
+            return Err(SumcheckKernelError::InvariantViolation {
+                reason: "streamed instruction RA selectors outlived their last bind",
+            });
+        };
         // Unscale the batch-first tables' γ^v pre-scaling back to the
         // committed polynomials' claims.
-        let mut committed_instruction_ra = self.folded_ra.final_values();
+        let mut committed_instruction_ra = folded_ra.final_values();
         for (index, value) in committed_instruction_ra.iter_mut().enumerate() {
             if index % self.num_committed_per_virtual == 0 {
                 *value *= self.opening_unscale[index / self.num_committed_per_virtual];

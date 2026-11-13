@@ -4,8 +4,10 @@
 //! immediately. [`JoltBackend::optimized`] keeps the eager kernels;
 //! [`JoltBackend::with_streaming`] installs a selection.
 
+mod lazy_ra;
 mod pass;
 
+pub(crate) use lazy_ra::{RowIndexSource, StreamedFoldedRa, MATERIALIZE_BYTES};
 pub(crate) use pass::{
     bind_groups_in_place, dense_crossover, exact_task_fill, gruen_pair_pass, key_runs,
     product_endpoint_terms, task_ranges, FillMismatch, PairHalves, TaskSlots, DENSE_TABLE_CAP,
@@ -16,6 +18,7 @@ use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
 
 use super::instruction_input::StreamingInstructionInput;
+use super::instruction_ra_virtualization::StreamingInstructionRaVirtualization;
 use super::ram_ra_claim_reduction::StreamingRamRaClaimReduction;
 use super::ram_ra_virtualization::StreamingRamRaVirtualization;
 use super::ram_raf_evaluation::StreamingRamRafEvaluation;
@@ -41,6 +44,14 @@ pub struct StreamingFamilies {
     /// RAM event log replaces the default kernels' address column, held from
     /// stage 2 through stage 5, and stage 6b collects its own column.
     pub ram: bool,
+    /// Readers of the per-cycle instruction rows, which the default kernels
+    /// share from stage 5 on as a packed row cache: stage 6b's instruction RA
+    /// virtualization reads the witness's resident rows in its own passes.
+    /// The cache's other readers keep their default kernels, so stage 5 still
+    /// collects it. Stage 7's Hamming-weight claim reduction has no streaming
+    /// kernel: its default kernel reads the resident rows whenever no cache
+    /// is live.
+    pub instruction_rows: bool,
 }
 
 impl<F, PCS> JoltBackend<F, PCS>
@@ -56,6 +67,7 @@ where
             spartan,
             instruction_input,
             ram,
+            instruction_rows,
         } = families;
         if spartan {
             self.spartan_outer_remainder = Box::new(StreamingOuterRemainder);
@@ -70,6 +82,9 @@ where
             self.ram_val_check = Box::new(StreamingRamValCheck);
             self.ram_ra_claim_reduction = Box::new(StreamingRamRaClaimReduction);
             self.ram_ra_virtualization = Box::new(StreamingRamRaVirtualization);
+        }
+        if instruction_rows {
+            self.instruction_ra_virtualization = Box::new(StreamingInstructionRaVirtualization);
         }
         self
     }

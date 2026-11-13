@@ -1,9 +1,11 @@
-use crate::optimized::parity::ExceptionalEq;
+use crate::optimized::parity::{probe_input_claim, run_lockstep, ExceptionalEq};
 use std::sync::Arc;
 
 use std::collections::BTreeMap;
 use std::num::NonZeroUsize;
 
+#[cfg(feature = "akita")]
+use jolt_akita::AkitaField;
 use jolt_claims::protocols::jolt::geometry::dimensions::committed_address_chunks;
 use jolt_claims::protocols::jolt::geometry::instruction::{
     committed_instruction_ra, InstructionRaVirtualizationDimensions,
@@ -12,7 +14,7 @@ use jolt_claims::protocols::jolt::relations::instruction::{
     InstructionRaVirtualizationChallenges, InstructionRaVirtualizationInputClaims,
 };
 use jolt_claims::protocols::jolt::{InstructionRaVirtualizationPublic, JoltDerivedId};
-use jolt_field::{Fr, Ring};
+use jolt_field::{Fr, JoltField, Ring};
 use jolt_poly::{BindingOrder, Polynomial};
 use jolt_sumcheck::ProveRounds;
 use jolt_verifier::stages::relations::ConcreteSumcheck;
@@ -20,12 +22,18 @@ use jolt_verifier::stages::stage6b::instruction_ra_virtualization::InstructionRa
 #[cfg(feature = "akita")]
 use jolt_witness::witnesses::FusedInc;
 use jolt_witness::witnesses::{InstructionRafFlag, LookupIndex, TableIndex};
-use jolt_witness::{FixedBackend, PolynomialEncoding, Shape};
+use jolt_witness::{FixedBackend, PolynomialEncoding, Shape, TraceBackend};
+#[cfg(not(feature = "akita"))]
+use jolt_witness::{JoltVmWitnessInputs, WitnessError};
 
+use crate::optimized::registers_read_write::test_support::structured_fixture;
+use crate::optimized::streaming::MATERIALIZE_BYTES;
+use crate::optimized::support::BundleStore;
 use crate::reference::instruction_read_raf::InstructionReadRafWitness;
 use crate::reference::views::{address_fold, eq_table};
 use crate::{
-    KernelError, NaiveSumcheckProver, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel,
+    KernelError, NaiveSumcheckProver, PrepareKernel, ProofSession, ProverInputs, ReferenceBackend,
+    SumcheckKernel,
 };
 
 use super::super::instruction_read_raf::{
@@ -33,7 +41,11 @@ use super::super::instruction_read_raf::{
 };
 use super::super::support::MAX_GRID_FACTORS;
 use super::super::testing::{with_ram_fixture, FixtureShape};
-use super::{OptimizedInstructionRaVirtualization, OptimizedInstructionRaVirtualizationKernel};
+use super::streaming::LookupIndexRow;
+use super::{
+    OptimizedInstructionRaVirtualization, OptimizedInstructionRaVirtualizationKernel,
+    StreamingInstructionRaVirtualization,
+};
 
 #[test]
 fn constant_suffix_matches_dense_rounds() {
@@ -192,6 +204,122 @@ fn assert_parity_case(
     exceptional: Option<ExceptionalEq>,
     prefix: Option<usize>,
 ) {
+    assert_parity_with(
+        log_t,
+        num_virtual,
+        per_virtual,
+        chunk_bits,
+        seed,
+        gamma,
+        exceptional,
+        prefix,
+        |inputs, rows| {
+            if with_session {
+                // The witness plane comes from an unrelated trace fixture: a
+                // missed take of the parked rows would stream that trace's
+                // lookup indices instead and fail the parity loop loudly.
+                let shape = FixtureShape { log_t, ram_k: 16 };
+                with_ram_fixture(shape, Vec::new(), |witness| {
+                    let mut session = ProofSession::default();
+                    session.park(SharedInstructionRows(Arc::new(pack(rows).into())));
+                    let kernel = OptimizedInstructionRaVirtualization
+                        .prepare(
+                            &mut session,
+                            witness,
+                            ProverInputs {
+                                relation: inputs.relation,
+                                claims: inputs.claims,
+                                points: inputs.points,
+                                challenges: inputs.challenges,
+                            },
+                        )
+                        .unwrap();
+                    assert!(
+                        session.state::<SharedInstructionRows>().is_some()
+                            || session.state::<SharedInstructionRowsWeak>().is_some(),
+                        "prepare must park a shared-rows carry back for later consumers"
+                    );
+                    kernel
+                })
+            } else {
+                Box::new(
+                    OptimizedInstructionRaVirtualizationKernel::new(
+                        inputs.relation,
+                        Arc::new(pack(rows).into()),
+                        gamma,
+                    )
+                    .unwrap(),
+                )
+            }
+        },
+    );
+}
+
+/// [`assert_parity_case`] for the streaming family over the rows, each
+/// selector materialized within `bytes`.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "test shape plus exceptional equality case"
+)]
+fn assert_streaming_parity(
+    log_t: usize,
+    num_virtual: usize,
+    per_virtual: usize,
+    chunk_bits: usize,
+    seed: u64,
+    gamma: Fr,
+    exceptional: Option<ExceptionalEq>,
+    bytes: usize,
+) {
+    assert_parity_with(
+        log_t,
+        num_virtual,
+        per_virtual,
+        chunk_bits,
+        seed,
+        gamma,
+        exceptional,
+        None,
+        |inputs, rows| {
+            let rows = rows
+                .iter()
+                .map(|row| LookupIndexRow {
+                    lookup_index: row.lookup_index,
+                })
+                .collect();
+            Box::new(
+                OptimizedInstructionRaVirtualizationKernel::streamed(
+                    inputs.relation,
+                    gamma,
+                    BundleStore::Retained(rows),
+                    bytes,
+                )
+                .unwrap(),
+            )
+        },
+    );
+}
+
+/// [`assert_parity_case`] over the kernel `build` returns for the case's
+/// inputs and rows.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "test shape plus exceptional equality case"
+)]
+fn assert_parity_with(
+    log_t: usize,
+    num_virtual: usize,
+    per_virtual: usize,
+    chunk_bits: usize,
+    seed: u64,
+    gamma: Fr,
+    exceptional: Option<ExceptionalEq>,
+    prefix: Option<usize>,
+    build: impl FnOnce(
+        &ProverInputs<'_, Fr, InstructionRaVirtualization<Fr>>,
+        &[InstructionReadRafWitness],
+    ) -> Box<dyn SumcheckKernel<Fr, Relation = InstructionRaVirtualization<Fr>>>,
+) {
     let num_committed = num_virtual * per_virtual;
     let dimensions = InstructionRaVirtualizationDimensions::new(
         log_t,
@@ -263,49 +391,7 @@ fn assert_parity_case(
     )
     .unwrap();
 
-    let mut optimized: Box<dyn SumcheckKernel<Fr, Relation = InstructionRaVirtualization<Fr>>> =
-        if with_session {
-            // The witness plane comes from an unrelated trace fixture: a
-            // missed take of the parked rows would stream that trace's
-            // lookup indices instead and fail the parity loop loudly.
-            let shape = FixtureShape { log_t, ram_k: 16 };
-            with_ram_fixture(shape, Vec::new(), |witness| {
-                let mut session = ProofSession::default();
-                session.park(SharedInstructionRows(Arc::new(pack(&rows).into())));
-                let kernel = OptimizedInstructionRaVirtualization
-                    .prepare(
-                        &mut session,
-                        witness,
-                        ProverInputs {
-                            relation: &relation,
-                            claims: &input_claims,
-                            points: &input_points,
-                            challenges: &challenges,
-                        },
-                    )
-                    .unwrap();
-                assert!(
-                    session.state::<SharedInstructionRows>().is_some()
-                        || session.state::<SharedInstructionRowsWeak>().is_some(),
-                    "prepare must park a shared-rows carry back for later consumers"
-                );
-                kernel
-            })
-        } else {
-            Box::new(
-                OptimizedInstructionRaVirtualizationKernel::new(
-                    log_t,
-                    num_virtual,
-                    per_virtual,
-                    &instruction_address,
-                    &r_cycle,
-                    chunk_bits,
-                    Arc::new(pack(&rows).into()),
-                    gamma,
-                )
-                .unwrap(),
-            )
-        };
+    let mut optimized = build(&inputs, &rows);
 
     let eq_cycle = eq_table(&r_cycle);
     let mut claim = fr(0);
@@ -418,14 +504,19 @@ fn parity_eight_factors_past_lazy_materialization() {
 fn rejects_more_factors_than_the_product_grid_supports() {
     for (per_virtual, supported) in [(MAX_GRID_FACTORS, true), (MAX_GRID_FACTORS + 1, false)] {
         let log_t = 2;
-        let instruction_address: Vec<Fr> = (0..per_virtual as u64).map(fr).collect();
+        let relation = InstructionRaVirtualization::new(
+            InstructionRaVirtualizationDimensions::new(
+                log_t,
+                NonZeroUsize::MIN,
+                NonZeroUsize::new(per_virtual).unwrap(),
+            )
+            .unwrap(),
+            (0..per_virtual as u64).map(fr).collect(),
+            vec![fr(3), fr(5)],
+            1,
+        );
         let kernel = OptimizedInstructionRaVirtualizationKernel::new(
-            log_t,
-            1,
-            per_virtual,
-            &instruction_address,
-            &[fr(3), fr(5)],
-            1,
+            &relation,
             Arc::new(pack(&fixture_rows(log_t, 47)).into()),
             fr(7),
         );
@@ -472,4 +563,230 @@ fn parity_exceptional_eq_in_lazy_and_dense_virtualization() {
             assert_parity_case(6, 2, factors, 2, 277, true, fr(31), Some(case), None);
         }
     }
+}
+
+/// The streaming family against the reference at every materializing bind a
+/// budget selects at 2^7 cycles (the fourth through the last, which leaves
+/// one entry per selector), at the production budget, with eight factors
+/// and with one, on domains shorter than four binds, under a zero batching
+/// challenge, and at exceptional eq points, where `q(0)` takes its own pass.
+#[test]
+fn streaming_parity_at_every_materialization() {
+    let entry = size_of::<Fr>();
+    let gamma = fr(0xFEED_5EED);
+    for depth in 4..=7 {
+        assert_streaming_parity(7, 2, 2, 4, 61, gamma, None, entry << (7 - depth));
+    }
+    assert_streaming_parity(4, 8, 4, 4, 42, gamma, None, MATERIALIZE_BYTES);
+    assert_streaming_parity(6, 4, 8, 4, 43, gamma, None, entry);
+    assert_streaming_parity(3, 3, 1, 2, 1337, gamma, None, entry);
+    assert_streaming_parity(1, 2, 2, 2, 9, gamma, None, entry);
+    assert_streaming_parity(6, 2, 2, 4, 7, fr(0), None, entry);
+    assert_streaming_parity(3, 3, 1, 2, 1337, fr(0), None, entry);
+    for factors in [1, 2, 4] {
+        for case in ExceptionalEq::ALL {
+            assert_streaming_parity(6, 2, factors, 2, 277, fr(31), Some(case), 2 * entry);
+        }
+    }
+}
+
+/// The relation and prover inputs over the trace fixture's geometry: 4-bit
+/// committed chunks of a 128-bit lookup index, four per virtual polynomial.
+struct TraceCase<F: JoltField> {
+    relation: InstructionRaVirtualization<F>,
+    claims: InstructionRaVirtualizationInputClaims<F>,
+    points: InstructionRaVirtualizationInputClaims<Vec<F>>,
+    challenges: InstructionRaVirtualizationChallenges<F>,
+}
+
+impl<F: JoltField> TraceCase<F> {
+    fn new(log_t: usize) -> Self {
+        let dimensions = InstructionRaVirtualizationDimensions::new(
+            log_t,
+            NonZeroUsize::new(8).unwrap(),
+            NonZeroUsize::new(4).unwrap(),
+        )
+        .unwrap();
+        Self {
+            relation: InstructionRaVirtualization::new(
+                dimensions,
+                (0..128).map(|i| F::from_u64(300 + 13 * i)).collect(),
+                (0..log_t as u64)
+                    .map(|i| F::from_u64(7000 + 29 * i))
+                    .collect(),
+                4,
+            ),
+            claims: InstructionRaVirtualizationInputClaims {
+                instruction_ra: vec![F::zero(); 8],
+            },
+            points: InstructionRaVirtualizationInputClaims {
+                instruction_ra: vec![Vec::new(); 8],
+            },
+            challenges: InstructionRaVirtualizationChallenges {
+                gamma: F::from_u64(0xFEED_5EED),
+            },
+        }
+    }
+
+    fn inputs(&self) -> ProverInputs<'_, F, InstructionRaVirtualization<F>> {
+        ProverInputs {
+            relation: &self.relation,
+            claims: &self.claims,
+            points: &self.points,
+            challenges: &self.challenges,
+        }
+    }
+}
+
+/// One [`streaming_trace_rows_match_reference`] case: each selector
+/// materialized within `bytes`, or within the production budget through the
+/// slot when `None`.
+fn trace_case<F: JoltField>(backend: &TraceBackend, log_t: usize, bytes: Option<usize>) {
+    let case = TraceCase::<F>::new(log_t);
+    let mut reference = ReferenceBackend
+        .prepare(&mut ProofSession::default(), backend, case.inputs())
+        .unwrap();
+    let mut streaming: Box<dyn SumcheckKernel<F, Relation = InstructionRaVirtualization<F>>> =
+        match bytes {
+            Some(bytes) => Box::new(
+                OptimizedInstructionRaVirtualizationKernel::streamed(
+                    &case.relation,
+                    case.challenges.gamma,
+                    BundleStore::resident::<F>(backend, log_t, "trace rows").unwrap(),
+                    bytes,
+                )
+                .unwrap(),
+            ),
+            None => StreamingInstructionRaVirtualization
+                .prepare(&mut ProofSession::default(), backend, case.inputs())
+                .unwrap(),
+        };
+    let input_claim = probe_input_claim(reference.as_mut());
+    let round_challenges: Vec<F> = (0..log_t as u64)
+        .map(|i| F::from_u64(883 + 29 * i))
+        .collect();
+    run_lockstep(
+        reference.as_mut(),
+        streaming.as_mut(),
+        input_claim,
+        &round_challenges,
+    );
+    assert_eq!(
+        streaming
+            .output_claims(&case.claims)
+            .unwrap()
+            .committed_instruction_ra,
+        reference
+            .output_claims(&case.claims)
+            .unwrap()
+            .committed_instruction_ra,
+        "output claims, log_t {log_t}, bytes {bytes:?}"
+    );
+}
+
+/// Every round and the output claims over a witness's resident rows, whose
+/// domain ends in a padded suffix of three eighths of its cycles, at every
+/// materializing bind and at the production budget through the slot,
+/// against the reference, in both fields.
+#[test]
+fn streaming_trace_rows_match_reference() {
+    for log_t in [1, 3, 6] {
+        structured_fixture(((5 << log_t) / 8).max(1)).with_plane(log_t, |backend| {
+            for depth in (4..=log_t).map(Some).chain([None]) {
+                trace_case::<Fr>(
+                    backend,
+                    log_t,
+                    depth.map(|depth| size_of::<Fr>() << (log_t - depth)),
+                );
+                #[cfg(feature = "akita")]
+                trace_case::<AkitaField>(
+                    backend,
+                    log_t,
+                    depth.map(|depth| size_of::<AkitaField>() << (log_t - depth)),
+                );
+            }
+        });
+    }
+}
+
+/// A one-cycle domain has no rounds: preparation gathers the selectors
+/// dense, so the output claims and the eq check are available at once.
+#[test]
+fn streaming_zero_round_domain_opens_like_the_reference() {
+    let case = TraceCase::<Fr>::new(0);
+    structured_fixture(1).with_plane(0, |backend| {
+        let mut reference = ReferenceBackend
+            .prepare(&mut ProofSession::default(), backend, case.inputs())
+            .unwrap();
+        let mut streaming = StreamingInstructionRaVirtualization
+            .prepare(&mut ProofSession::default(), backend, case.inputs())
+            .unwrap();
+        assert_eq!(streaming.num_rounds(), 0);
+        assert_eq!(
+            streaming
+                .output_claims(&case.claims)
+                .unwrap()
+                .committed_instruction_ra,
+            reference
+                .output_claims(&case.claims)
+                .unwrap()
+                .committed_instruction_ra,
+        );
+        let output_points = case
+            .relation
+            .derive_opening_points(&[], &case.points)
+            .unwrap();
+        streaming
+            .validate_derived_tables(
+                &case.relation,
+                &case.points,
+                &output_points,
+                &case.challenges,
+            )
+            .unwrap();
+    });
+}
+
+/// `with_streaming` puts this kernel in the backend's slot. Streamed and
+/// default proofs are byte-equal, so only the kernel's behavior shows which
+/// one is installed: it refuses a witness without resident rows, which the
+/// default kernel collects. Dory stands in for the commitment scheme; the
+/// akita build's `optimized` takes another.
+#[cfg(not(feature = "akita"))]
+#[test]
+fn with_streaming_installs_the_instruction_ra_virtualization_kernel() {
+    use jolt_dory::DoryScheme;
+
+    use crate::optimized::streaming::StreamingFamilies;
+    use crate::JoltBackend;
+
+    let log_t = 1;
+    let case = TraceCase::<Fr>::new(log_t);
+    structured_fixture(7).with_plane(3, |resident| {
+        // A configured domain shorter than the trace leaves no resident
+        // rows; chunk visits still serve its `2^log_t` cycles.
+        let mut chunk_only = TraceBackend::new(
+            resident.config.clone(),
+            JoltVmWitnessInputs::new(
+                &resident.program,
+                &resident.preprocessing,
+                resident.trace.clone(),
+            ),
+        );
+        chunk_only.config.log_t = log_t;
+        let prepare = |backend: JoltBackend<Fr, DoryScheme>| {
+            backend
+                .instruction_ra_virtualization
+                .prepare(&mut ProofSession::default(), &chunk_only, case.inputs())
+                .map(|_| ())
+        };
+        prepare(JoltBackend::optimized()).unwrap();
+        assert!(matches!(
+            prepare(JoltBackend::optimized().with_streaming(StreamingFamilies {
+                instruction_rows: true,
+                ..StreamingFamilies::default()
+            })),
+            Err(KernelError::Witness(WitnessError::UnavailableView { .. }))
+        ));
+    });
 }
