@@ -58,7 +58,8 @@ def inputs(tier='pr'):
     plan = {'tier': tier, 'enabled': True, 'harness': result['revisions']['harness'], 'push_before': 'a' * 40,
             'push_after': 'c' * 40, 'provenance': result['provenance'],
             'config': {'path': 'scripts/bench/suites.json', 'sha256': hashlib.sha256(config).hexdigest()},
-            'admission': {'label_event_id': 11, 'label_actor': 'maintainer', 'head_ref': 'candidate'},
+            'admission': {'label_event_id': 11, 'label_actor': 'maintainer',
+                          'head_repo': 'a16z/jolt', 'head_ref': 'candidate'},
             'runs': [{'base': 'a' * 40 if tier == 'pr' else None,
                       'head': 'c' * 40, 'submitted_head': ('b' if tier == 'pr' else 'c') * 40}],
             'expected_builds': {build['revision']: {key: value for key, value in build.items() if key != 'leg'}
@@ -254,6 +255,37 @@ class IngestTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'exactly one'):
                 ingest.trusted_plan(123, 1)
 
+    def test_fork_head_plan_needs_a_pull_request_target_producer_and_the_admitted_head_repository(self):
+        result, plan, dispatch, config, receipt, _ = inputs()
+        plan['admission']['head_repo'] = 'outside/jolt'
+        actual = {'id': 123, 'run_attempt': 1, 'repository': {'full_name': 'a16z/jolt'},
+            'head_repository': {'full_name': 'outside/jolt'}, 'name': ingest.bench.WORKFLOW,
+            'path': ingest.bench.WORKFLOW_FILE, 'status': 'completed', 'conclusion': 'success',
+            'event': 'pull_request_target', 'head_branch': 'candidate', 'head_sha': 'b' * 40,
+            'pull_requests': []}
+        def github(path):
+            if path.startswith('actions/runs/'):
+                return actual
+            if path.startswith('commits/'):
+                return {'parents': [{'sha': 'a' * 40}, {'sha': 'b' * 40}]}
+            return {'type': 'file', 'encoding': 'base64', 'content': base64.b64encode(config).decode()}
+        def artifact(run_id, attempt, prefix, filename):
+            return (plan, json.dumps(plan).encode(), 42) if filename == 'plan.json' else (
+                dispatch, json.dumps(dispatch).encode(), 43)
+        with patch.object(ingest.ci, 'github', side_effect=github), \
+                patch.object(ingest, 'artifact_json', side_effect=artifact) as downloaded:
+            self.assertEqual(ingest.trusted_plan(123, 1)[0], plan)
+            for head_repository in ({'full_name': 'other/jolt'}, {'full_name': 'a16z/jolt'}, None):
+                actual['head_repository'] = head_repository
+                with self.subTest(head_repository=head_repository), \
+                        self.assertRaisesRegex(ValueError, 'not bound to the admitted head'):
+                    ingest.trusted_plan(123, 1)
+            actual.update(head_repository={'full_name': 'outside/jolt'}, event='pull_request')
+            downloaded.reset_mock()
+            with self.assertRaisesRegex(ValueError, 'not a successful trusted workflow attempt'):
+                ingest.trusted_plan(123, 1)
+            downloaded.assert_not_called()
+
     def test_main_ingest_refuses_divergence_and_foreign_build_artifacts(self):
         result, plan, dispatch, config, receipt, _ = inputs('main')
         actual = {'id': 123, 'run_attempt': 1, 'repository': {'full_name': 'a16z/jolt'},
@@ -278,6 +310,7 @@ class IngestTests(unittest.TestCase):
             ingest.trusted_plan(123, 1)
             for target, key, value in [(comparison, 'status', 'diverged'),
                     (builds, 'workflow_run', {'id': 999}), (builds, 'name', 'other'),
+                    (actual, 'head_repository', {'full_name': 'outside/jolt'}),
                     (actual, 'head_branch', 'candidate'), (actual, 'head_sha', 'f' * 40)]:
                 original = target[key]
                 target[key] = value

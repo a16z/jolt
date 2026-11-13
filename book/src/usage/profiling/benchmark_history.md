@@ -13,7 +13,7 @@ nor a Pages-source change.
 | --- | --- |
 | Standard main | Every main push's new first-parent commits; hosted build, target run-only |
 | Nightly | Wider suite on main at 07:00 UTC; hosted build, target run-only |
-| Pull requests | Same-repository PRs with a maintainer/admin-applied `benchmark` label; local build and proof |
+| Pull requests | PRs into main with a maintainer/admin-applied `benchmark` label; local build and proof |
 | Manual previews | Explicitly labelled imported measurements, never authenticated main history |
 
 The PR workload matrix is defined in `scripts/bench/suites.json`. At 24 physical
@@ -36,14 +36,16 @@ jobs always calibrate.
 Without another matching reference, a PR based on a skipped tip keeps its
 measurements but has a neutral reference-unavailable check.
 
-The PR label persists across pushes. The trusted producer checks the actual label
-applier, current label and merge parents; a write-only collaborator or fork is
-not admitted. The merge must have exactly two parents: a commit on main's fetched
+On a same-repository PR the label persists across pushes. On a fork PR it admits
+only the head it was applied to; after a push, a maintainer removes and
+re-applies it. The trusted producer checks the actual label
+applier, current label and merge parents; a label from a write-only collaborator
+is not admitted. The merge must have exactly two parents: a commit on main's fetched
 first-parent history and the submitted PR head. A stale merge ref remains valid
 against that exact older base; it need not include the newest main commit.
 Planning refuses a PR that GitHub reports as conflicting with main; unknown
 mergeability does not block planning.
-The target rechecks the label and PR head after queue/lock waits.
+The target rechecks the label, head repository and PR head after queue/lock waits.
 The dashboard shows the PR link, submitted head, base and measured merge, source
 run/attempt, admission event, and raw result. Select a PR, workload/input/core
 count, base or head leg, host/build configuration, and metric. PR legs do not enter
@@ -112,7 +114,11 @@ The result JSON retains the original plan run's provenance. Main/nightly plans
 are bound to the producer's main head. PR plans bind the payload PR number,
 label event/actor, base, submitted head, measured merge and harness; merge parents
 and planned native inputs are checked. GitHub's `pull_request_target` run head
-is the submitted PR head. An empty live `pull_requests` list is accepted after a PR merges; a non-empty
+is the submitted PR head, and the run's head repository and branch must equal
+the plan's admitted ones. A fork head repository is accepted only for a
+`pull_request_target` producer, which GitHub runs from the base branch's
+workflow file. An empty live `pull_requests` list is accepted: GitHub lists no
+PR for a fork head or after a PR merges. A non-empty
 list must still contain the planned PR with base `main`. Current PR state can change after a
 valid measurement; it does not rewrite archived history. Only JSON is read;
 downloaded scripts, HTML and binaries are never executed.

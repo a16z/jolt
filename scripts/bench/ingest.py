@@ -81,9 +81,12 @@ def artifact_json(run_id, attempt, prefix, filename):
 
 def trusted_plan(run_id, attempt):
     actual = ci.github(f'actions/runs/{run_id}/attempts/{attempt}')
+    head_repository = (actual['head_repository'] or {}).get('full_name')
+    # GitHub runs pull_request_target from the base branch's workflow file. Any other
+    # event with a fork head runs the fork's copy, which can upload same-named artifacts.
     if (actual['id'] != run_id or actual['run_attempt'] != attempt
             or actual['repository']['full_name'] != 'a16z/jolt'
-            or (actual['head_repository'] or {}).get('full_name') != 'a16z/jolt'
+            or (head_repository != 'a16z/jolt' and actual['event'] != 'pull_request_target')
             or actual['name'] != bench.WORKFLOW or actual['path'] != bench.WORKFLOW_FILE
             or actual['status'] != 'completed' or actual['conclusion'] != 'success'):
         raise ValueError('plan producer is not a successful trusted workflow attempt')
@@ -103,6 +106,7 @@ def trusted_plan(run_id, attempt):
         item = plan['runs'][0]
         if (actual['event'] != 'pull_request_target' or len(plan['runs']) != 1
                 or (prs and not any(pr['number'] == prov['pr_number'] and pr['base']['ref'] == 'main' for pr in prs))
+                or head_repository != plan['admission']['head_repo']
                 or actual['head_branch'] != plan['admission']['head_ref']
                 or actual['head_sha'] != item['submitted_head']):
             raise ValueError('PR plan is not bound to the admitted head and main base')

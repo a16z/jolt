@@ -98,7 +98,7 @@ def synthetic_run(data):
     return run
 
 
-def producer_fixture(data, run, *, runs=None, plan_run_change=None, builds=None):
+def producer_fixture(data, run, *, runs=None, plan_run_change=None, builds=None, head_repo='a16z/jolt'):
     producer = synthetic_plan_run(data)
     producer['id'], producer['run_attempt'] = map(int, run['display_title'].split()[-1].split('-'))
     producer.update(plan_run_change or {})
@@ -108,7 +108,8 @@ def producer_fixture(data, run, *, runs=None, plan_run_change=None, builds=None)
             'runs': runs or [{'base': 'b' * 40 if paired else None,
                              'head': 'c' * 40 if paired else data['revisions']['head'],
                              'submitted_head': data['revisions']['head']}],
-            'admission': {'label_event_id': 11, 'label_actor': 'maintainer', 'head_ref': 'candidate'},
+            'admission': {'label_event_id': 11, 'label_actor': 'maintainer',
+                          'head_repo': head_repo, 'head_ref': 'candidate'},
             'expected_builds': {build['revision']: {key: build[key] for key in (
                 'revision', 'harness_revision', 'profile', 'rustflags')} for build in data['builds']},
             'own_harness_files': {build['revision']: build['harness_files'] for build in data['builds']}}
@@ -162,9 +163,10 @@ def synthetic_pr_result():
 
 
 def collected_fixture(data, *, run=None, missing=False, extra_zip=None, artifact_change=None,
-                      plan_run_change=None, receipt_change=None):
+                      plan_run_change=None, receipt_change=None, head_repo='a16z/jolt'):
     run = run or synthetic_run(data)
-    producer, receipt, plan_artifacts, archives = producer_fixture(data, run, plan_run_change=plan_run_change)
+    producer, receipt, plan_artifacts, archives = producer_fixture(
+        data, run, plan_run_change=plan_run_change, head_repo=head_repo)
     receipt.update(receipt_change or {})
     raw = (json.dumps(data, indent=4) + "\n").encode()
     archive = io.BytesIO()
@@ -310,6 +312,17 @@ class BenchmarkHistoryTests(unittest.TestCase):
     def test_merged_pr_with_an_empty_live_pull_requests_list_keeps_its_plan_identity(self):
         record, _ = collected_fixture(synthetic_pr_result(), plan_run_change={'pull_requests': []})
         self.assertEqual((record['publication_status'], record['source']['pr_number']), ('ready', 7))
+
+    def test_fork_pr_plan_needs_a_pull_request_target_producer_with_the_admitted_head_repository(self):
+        fork = {'head_repository': {'full_name': 'outside/jolt'}, 'pull_requests': []}
+        record, _ = collected_fixture(synthetic_pr_result(), plan_run_change=fork, head_repo='outside/jolt')
+        self.assertEqual((record['publication_status'], record['source']['pr_number']), ('ready', 7))
+        record, raw = collected_fixture(synthetic_pr_result(), plan_run_change=fork)
+        self.assertEqual((record['publication_status'], record['reason']),
+                         ('rejected', 'PR plan does not match its admitted source and label'))
+        self.assertIsNone(raw)
+        with self.assertRaisesRegex(ValueError, 'untrusted plan producer'):
+            collected_fixture(synthetic_result(), plan_run_change=fork)
 
     def test_only_successful_app_ingests_can_publish_even_when_target_execution_failed(self):
         data = synthetic_pr_result()
