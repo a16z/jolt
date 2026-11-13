@@ -157,7 +157,9 @@ expensive; (4) making the RAM sumchecks somewhat more complex is nearly irreleva
 Tracer admission rejects changed protected words before mutation and permits
 same-value stores at every width. It also rejects loads below `lowest_address`.
 AMOs, successful SC, lazy tracing, parallel replay and native fast stores use
-these guards.
+these guards. Host calls read guest buffers under the guest-load bounds through
+`identity_loads_succeed`; a buffer with a byte below `lowest_address` is logged
+and ignored rather than failing the run.
 
 ## Intent
 
