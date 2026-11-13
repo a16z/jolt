@@ -5,7 +5,7 @@
 //! asserted at compile time.
 
 use common::constants::{RAM_START_ADDRESS, REGISTER_COUNT};
-use common::jolt_device::{JoltDeviceMemory, MemoryLayout};
+use common::jolt_device::{JoltDevice, MemoryLayout};
 use jolt_program::execution::TraceError;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -213,7 +213,7 @@ pub const fn reg_offset(register: u8) -> i32 {
 /// Host-side context reachable from helper calls. Not addressed by generated
 /// code directly (only through `extern "C"` helpers), so layout is free.
 pub struct HostContext {
-    pub device: JoltDeviceMemory,
+    pub device: JoltDevice,
     /// Runtime advice tape bytes (append-only; reads go through the cursor).
     pub advice_tape: Vec<u8>,
     /// Read cursor into `advice_tape` (advice-load kinds).

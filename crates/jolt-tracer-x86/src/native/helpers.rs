@@ -140,7 +140,7 @@ pub extern "sysv64" fn slow_load_doubleword(state: *mut GuestState, address: u64
 
 /// Record the pre-value of a device-region store into the current row's
 /// observation slot. The fast RAM path captures this inline; the device path
-/// cannot (the bytes live in `JoltDeviceMemory`), so the helper does it.
+/// cannot (the bytes live in `JoltDevice`), so the helper does it.
 fn record_device_store_pre(state: &mut GuestState, host: &HostContext, address: u64) {
     if state.obs_cursor.is_null() || state.obs_cursor >= state.obs_end {
         return;
@@ -155,8 +155,8 @@ fn record_device_store_pre(state: &mut GuestState, host: &HostContext, address: 
 }
 
 /// `Sd`/`VirtualStore*` slow path: device-region, unaligned, stack-canary, or
-/// out-of-bounds addresses. `JoltDeviceMemory::store` also updates the
-/// panic and termination bytes.
+/// out-of-bounds addresses. `JoltDevice::store` also handles the
+/// panic/termination bits.
 pub extern "sysv64" fn slow_store_doubleword(
     state: *mut GuestState,
     address: u64,

@@ -34,29 +34,7 @@ cycles. Measured on `btreemap`, the trace shrinks ~17% (~21% with the optional f
 
 ## Background and requirements
 
-### Flag-word I/O and layout admission
-
-The panic and termination locations each occupy one eight-byte RAM word in the
-I/O window. Both words start at zero. Loads return the stored little-endian bytes;
-stores of any supported width and AMOs update the addressed lanes. Intermediate
-values are unrestricted, including repeated termination writes. LR/SC remains
-restricted to ordinary RAM by the existing expansion guards and cannot access the
-I/O window.
-
-At finalization, the tracer accepts exactly `(panic_word, termination_word) =
-(0, 1)` for success or `(1, 0)` for panic. Every other pair is an I/O-contract error.
-The tracer derives public `panic: bool` from the accepted pair and carries the
-stored bytes into the final-memory witness. `MemoryImage` identifies every byte by
-its absolute guest address, including the flag bytes below ordinary RAM.
-Live device state has no independent
-panic latch. Checkpoints, parallel replay, and native snapshots preserve both raw
-words. SDK success and abort paths write both full words before the exit self-jump
-to produce the canonical endpoint even after earlier flag writes.
-
-`PublicIoMemory` keeps its existing values and mask: the mask covers both complete
-flag words, panic equals the public Boolean, and termination equals one on success
-or zero on panic. The output check already enforces these endpoints. Plain flag
-memory adds no sumcheck relation, commitment, opening, or per-cycle witness table.
+### Layout and ELF admission
 
 Layout construction and full and committed preprocessing admission, including
 verifier-key deserialization, check `heap_end <= 2^64 - 8` and

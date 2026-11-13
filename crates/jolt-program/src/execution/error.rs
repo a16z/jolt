@@ -1,12 +1,9 @@
-use common::jolt_device::InvalidFlagWords;
 use jolt_riscv::{JoltInstructionRow, SourceInstructionKind, TraceRowError};
 
 use crate::preprocess::PreprocessingError;
 
 #[derive(Debug, thiserror::Error)]
 pub enum TraceError {
-    #[error(transparent)]
-    InvalidFlagWords(#[from] InvalidFlagWords),
     #[error(transparent)]
     Program(#[from] crate::ProgramError),
     #[error("Jolt program does not contain ELF bytes for the selected backend")]

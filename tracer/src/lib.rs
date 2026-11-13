@@ -11,10 +11,7 @@ use tracing::{error, info};
 #[cfg(not(feature = "std"))]
 use alloc::{boxed::Box, vec::Vec};
 
-use common::{
-    self,
-    jolt_device::{JoltDeviceMemory, MemoryConfig},
-};
+use common::{self, jolt_device::MemoryConfig};
 use emulator::{cpu, default_terminal::DefaultTerminal};
 use instruction::{Cycle, Instruction};
 use jolt_program::execution::TraceError;
@@ -180,8 +177,7 @@ pub(crate) fn finish_emulator(
         .jolt_device
         .as_ref()
         .expect("JoltDevice was not initialized")
-        .flags
-        .outcome()?
+        .panic
     {
         error!(
             "Guest program terminated due to panic after {} cycles.",
@@ -192,14 +188,13 @@ pub(crate) fn finish_emulator(
 
     let advice_tape = emulator.take_advice_tape();
     let cpu = emulator.get_mut_cpu();
-    let mut final_memory = cpu.mmu.memory.memory.take_memory();
+    let final_memory = cpu.mmu.memory.memory.take_memory();
     let jolt_device = cpu
         .get_mut_mmu()
         .jolt_device
         .take()
         .expect("JoltDevice was not initialized");
-    final_memory.flag_memory = Some((jolt_device.memory_layout.panic, jolt_device.flags));
-    Ok((advice_tape, final_memory, jolt_device.into_public()?))
+    Ok((advice_tape, final_memory, jolt_device))
 }
 
 /// Executes a RISC-V program to completion without materializing trace rows
@@ -422,7 +417,7 @@ pub fn create_emulator(
         memory_config.max_input_size,
     );
 
-    let mut jolt_device = JoltDeviceMemory::new(memory_config);
+    let mut jolt_device = JoltDevice::new(memory_config);
     jolt_device.inputs = inputs.to_vec();
     jolt_device.trusted_advice = trusted_advice.to_vec();
     jolt_device.untrusted_advice = untrusted_advice.to_vec();
@@ -542,9 +537,7 @@ impl LazyTracer for Checkpoint {
             .jolt_device
             .as_ref()
             .unwrap()
-            .flags
-            .outcome()
-            == Ok(true)
+            .panic
     }
 
     fn at_tick_boundary(&self) -> bool {
@@ -584,8 +577,6 @@ impl LazyTracer for Checkpoint {
             .jolt_device
             .take()
             .unwrap()
-            .into_public()
-            .expect("guest execution violated the I/O contract")
     }
 }
 
@@ -687,9 +678,7 @@ impl LazyTracer for CheckpointingTracer {
             .jolt_device
             .as_ref()
             .unwrap()
-            .flags
-            .outcome()
-            == Ok(true)
+            .panic
     }
 
     fn at_tick_boundary(&self) -> bool {
@@ -717,16 +706,6 @@ impl LazyTracer for CheckpointingTracer {
             self.finished = true;
             let emulator = &mut self.emulator_state;
             let cpu = emulator.get_mut_cpu();
-            let device = cpu
-                .mmu
-                .jolt_device
-                .as_ref()
-                .expect("JoltDevice was not initialized");
-            device
-                .flags
-                .outcome()
-                .expect("guest execution violated the I/O contract");
-            cpu.mmu.memory.memory.flag_memory = Some((device.memory_layout.panic, device.flags));
             // When checkpoint saving is active, the caller still saves one
             // final checkpoint after termination, which snapshots the live
             // memory's capacity — clone instead of emptying it.
@@ -751,8 +730,6 @@ impl LazyTracer for CheckpointingTracer {
             .jolt_device
             .take()
             .expect("JoltDevice was not initialized")
-            .into_public()
-            .expect("guest execution violated the I/O contract")
     }
 }
 
@@ -783,26 +760,8 @@ pub fn decode(elf: &[u8]) -> (Vec<Instruction>, Vec<(u64, u8)>, u64, u64) {
 
 #[cfg(test)]
 pub(crate) mod test_utils {
-    use common::jolt_device::{MemoryConfig, MemoryLayout};
-
-    pub(crate) fn flag_exit_words(panic: u32, termination: u32) -> Vec<u32> {
-        let layout = MemoryLayout::new(&MemoryConfig {
-            program_size: Some(1024),
-            ..Default::default()
-        });
-        let address = layout.panic as u32;
-        vec![
-            ((address + 0x800) & 0xffff_f000) | 0x537,
-            ((address & 0xfff) << 20) | 0x50513,
-            (panic << 20) | 0x593,
-            0x00b5_3023,
-            (termination << 20) | 0x593,
-            0x00b5_3423,
-            0x0000_006f,
-        ]
-    }
-
     /// Build the muldiv guest and return the ELF bytes.
+    /// Mirrors the pattern used by `jolt_host::Program::build()`.
     pub(crate) fn build_muldiv_guest() -> Vec<u8> {
         let guest = "muldiv-guest";
         let func = "muldiv";
@@ -961,9 +920,11 @@ mod tests {
 
     /// addi x1, x0, 1 ; addi x2, x1, 2 ; j .  — terminates via PC stall.
     fn tiny_guest_elf() -> Vec<u8> {
-        let mut words = vec![0x0010_0093, 0x0020_8113];
-        words.extend(crate::test_utils::flag_exit_words(0, 1));
-        build_elf64(&words, &[], StrtabOrder::GnuLd)
+        build_elf64(
+            &[0x0010_0093, 0x0020_8113, 0x0000_006f],
+            &[],
+            StrtabOrder::GnuLd,
+        )
     }
 
     fn tiny_guest_config(elf: &[u8]) -> MemoryConfig {

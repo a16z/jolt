@@ -15,7 +15,6 @@ use crate::emulator::mmu::ChunkMmuState;
 use crate::emulator::terminal::DummyTerminal;
 use crate::emulator::Emulator;
 use crate::instruction::Cycle;
-use common::jolt_device::{FlagWords, JoltDeviceMemory};
 use std::sync::{Arc, OnceLock};
 
 /// Everything needed to seed a bit-exact trace-mode replay from a tick
@@ -28,7 +27,7 @@ pub struct ChunkCheckpoint {
     /// JoltDevice outputs at the boundary: the guest can read outputs back,
     /// so they are live per-chunk state (inputs/advice regions are static).
     outputs: Vec<u8>,
-    flags: FlagWords,
+    panic: bool,
 }
 
 impl ChunkCheckpoint {
@@ -47,7 +46,7 @@ impl ChunkCheckpoint {
             cpu: cpu.capture_chunk_state(),
             mmu: cpu.mmu.capture_chunk_state(),
             outputs: device.outputs.clone(),
-            flags: device.flags,
+            panic: device.panic,
         }
     }
 
@@ -67,10 +66,10 @@ impl ChunkCheckpoint {
                         device.outputs.len()
                     ));
                 }
-                if self.flags != device.flags {
+                if self.panic != device.panic {
                     return Some(format!(
-                        "jolt_device.flags: {:?} vs {:?}",
-                        self.flags, device.flags
+                        "jolt_device.panic: {} vs {}",
+                        self.panic, device.panic
                     ));
                 }
             }
@@ -142,7 +141,7 @@ pub struct ChunkWorker {
 impl ChunkWorker {
     /// Build a worker from the pass-1 emulator's static parts (JoltDevice
     /// inputs/advice/layout, program text range). Independent of pass-1
-    /// progress; outputs and flag words are patched per chunk.
+    /// progress; outputs and panic are patched per chunk.
     pub fn new(emulator: &Emulator) -> Self {
         let src = emulator.get_cpu();
         Self::from_seed(
@@ -154,7 +153,10 @@ impl ChunkWorker {
     /// Like [`ChunkWorker::new`], but from pre-cloned static parts — the
     /// pipeline takes the seed before pass-1 starts mutating the emulator
     /// and each worker thread builds its own CPU from it.
-    pub fn from_seed(jolt_device: Option<JoltDeviceMemory>, decode_template: DecodeCache) -> Self {
+    pub fn from_seed(
+        jolt_device: Option<common::jolt_device::JoltDevice>,
+        decode_template: DecodeCache,
+    ) -> Self {
         let mut cpu = Cpu::new(Box::new(DummyTerminal {}));
         cpu.set_host_io(HostIo::Replay);
         cpu.mmu.jolt_device = jolt_device;
@@ -167,7 +169,7 @@ impl ChunkWorker {
 
     /// Install a chunk: seed CPU+MMU state, adopt `image` as the working
     /// memory (returns the previous buffer for the pool), patch device
-    /// outputs and flag words, and reset the decode cache.
+    /// outputs/panic, and reset the decode cache.
     #[expect(clippy::expect_used)]
     pub fn install_chunk(&mut self, checkpoint: &ChunkCheckpoint, image: Vec<u64>) -> Vec<u64> {
         self.cpu.install_chunk_state(&checkpoint.cpu);
@@ -180,7 +182,7 @@ impl ChunkWorker {
             .as_mut()
             .expect("worker device installed at construction");
         device.outputs.clone_from(&checkpoint.outputs);
-        device.flags = checkpoint.flags;
+        device.panic = checkpoint.panic;
         self.cpu.mmu.decode_cache = self.decode_template.clone();
         previous
     }

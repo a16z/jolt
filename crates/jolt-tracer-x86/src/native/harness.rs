@@ -3,7 +3,7 @@
 //! differential tests and the iai microbenchmarks.
 
 use common::constants::{RAM_START_ADDRESS, REGISTER_COUNT};
-use common::jolt_device::{FlagWords, JoltDeviceMemory, MemoryConfig};
+use common::jolt_device::{JoltDevice, MemoryConfig};
 use jolt_program::execution::{JoltProgram, TraceError};
 use jolt_riscv::{JoltInstructionKind, JoltInstructionRow, NormalizedOperands};
 
@@ -124,7 +124,7 @@ impl Prepared {
     /// Run once from the initial register state; returns the row count.
     pub fn run_once(&mut self) -> Result<u64, TraceError> {
         let mut host = HostContext {
-            device: JoltDeviceMemory::new(&memory_config()),
+            device: JoltDevice::new(&memory_config()),
             advice_tape: Vec::new(),
             advice_cursor: 0,
             helper_error: None,
@@ -155,7 +155,6 @@ impl Prepared {
 }
 
 pub struct Outcome {
-    pub flags: FlagWords,
     pub regs: [u64; REGISTER_COUNT as usize],
     pub pc: u64,
     pub trace_len: u64,
@@ -194,7 +193,7 @@ pub fn run_program(
     }
 
     let mut host = HostContext {
-        device: JoltDeviceMemory::new(&memory_config()),
+        device: JoltDevice::new(&memory_config()),
         advice_tape: advice.to_vec(),
         advice_cursor: 0,
         helper_error: None,
@@ -231,7 +230,6 @@ pub fn run_program(
     }
 
     Ok(Outcome {
-        flags: host.device.flags,
         regs: guest.x,
         pc: guest.pc,
         trace_len: guest.trace_len,

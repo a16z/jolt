@@ -563,42 +563,34 @@ fn ram_val_final_virtual_view_materializes_final_memory_and_public_io() -> Resul
         heap_size: 0,
         program_size: Some(64),
     });
-    // The witness must preserve a tampered panic=2 even when the public claim is false.
-    for panic_word in [0u64, 2] {
-        let preprocessing = preprocessing_with_memory_layout(memory_layout.clone());
-        let device = JoltDevice {
-            memory_layout: memory_layout.clone(),
-            trusted_advice: vec![0x11],
-            untrusted_advice: vec![0x22],
-            inputs: vec![0x33],
-            outputs: vec![0x44, 0x55],
-            ..Default::default()
-        };
-        let final_memory = MemoryImage {
-            bytes: vec![
-                (RAM_START_ADDRESS + 64, 0x66),
-                (RAM_START_ADDRESS + 65, 0x77),
-                (device.memory_layout.panic, panic_word as u8),
-                (device.memory_layout.termination, 1),
-            ],
-        };
-        let inputs = JoltVmWitnessInputs::new(
-            &program,
-            &preprocessing,
-            trace_output_with_device_and_final_memory(device, final_memory),
-        );
-        let witness = TraceBackend::new(JoltVmWitnessConfig::new(2, 32, config().one_hot), inputs);
+    let preprocessing = preprocessing_with_memory_layout(memory_layout.clone());
+    let device = JoltDevice {
+        memory_layout,
+        trusted_advice: vec![0x11],
+        untrusted_advice: vec![0x22],
+        inputs: vec![0x33],
+        outputs: vec![0x44, 0x55],
+        ..Default::default()
+    };
+    let final_memory = MemoryImage {
+        bytes: vec![(64, 0x66), (65, 0x77)],
+    };
+    let inputs = JoltVmWitnessInputs::new(
+        &program,
+        &preprocessing,
+        trace_output_with_device_and_final_memory(device, final_memory),
+    );
+    let witness = TraceBackend::new(JoltVmWitnessConfig::new(2, 32, config().one_hot), inputs);
 
-        let val_final = materialized_virtual_view(&witness, JoltVirtualPolynomial::RamValFinal)?;
-        assert_eq!(val_final.len(), 32);
-        assert_eq!(val_final[0], Fr::from_u64(0x11));
-        assert_eq!(val_final[1], Fr::from_u64(0x22));
-        assert_eq!(val_final[2], Fr::from_u64(0x33));
-        assert_eq!(val_final[3], Fr::from_u64(0x5544));
-        assert_eq!(val_final[4], Fr::from_u64(panic_word));
-        assert_eq!(val_final[5], Fr::from_u64(1));
-        assert_eq!(val_final[16], Fr::from_u64(0x7766));
-    }
+    let val_final = materialized_virtual_view(&witness, JoltVirtualPolynomial::RamValFinal)?;
+    assert_eq!(val_final.len(), 32);
+    assert_eq!(val_final[0], Fr::from_u64(0x11));
+    assert_eq!(val_final[1], Fr::from_u64(0x22));
+    assert_eq!(val_final[2], Fr::from_u64(0x33));
+    assert_eq!(val_final[3], Fr::from_u64(0x5544));
+    assert_eq!(val_final[4], Fr::from_u64(0));
+    assert_eq!(val_final[5], Fr::from_u64(1));
+    assert_eq!(val_final[16], Fr::from_u64(0x7766));
     Ok(())
 }
 
