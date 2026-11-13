@@ -3,17 +3,22 @@
 ## Guest × mode acceptance matrix
 
 `crates/jolt-prover/tests/e2e_matrix.rs` holds one guest table per instruction
-profile. The ordinary profile has eleven cases: muldiv, fibonacci, memory-ops,
+profile. The ordinary profile has twelve cases: muldiv, fibonacci, memory-ops,
 stdlib, memory-copy, sha2, sha3 through both its unaligned and aligned entry
-points, advice-consumer, btreemap, and muldiv-full-domain. The last one extends
-muldiv's execution with its own terminal stall until it fills its padded trace
-domain, and bakes that domain in as the maximum, so the proof has no padding
-row. Enabling `field-inline` selects `field_ops`, `field_limbs`, and `muldiv`,
-covering active field operations, the SDK's checked limb conversions, and an
-ordinary guest proved under the field-inline protocol with no field activity.
+points, advice-consumer, btreemap, exact-domain, and panic-halt. Enabling
+`field-inline` selects five: `field_ops`, `field_limbs`, `muldiv`,
+`exact_domain`, and `panic_halt`, covering active field operations, the SDK's
+checked limb conversions, an ordinary guest proved under the field-inline
+protocol with no field activity, and the two cases both profiles share.
+
+`exact_domain` runs a memory-ops guest entry whose execution fills 2^12 rows
+exactly and bakes that domain in as the maximum, so the proof has no padding
+row and the halt sits at row T−1. `panic_halt` proves a guest panic, which
+ends at `ebreak`, with `panic = true`.
 
 The shared runner checks each guest's output against a natively computed
-value, its panic status, trace bound, and field activity, then proves it with
+value, its panic status, the halt that ends its run (`jolt.success`, or
+`ebreak` for a panic), its trace bound, and field activity, then proves it with
 the optimized backend. The compiled protocol selects Dory clear by default,
 Dory ZK with `zk`, or Akita with `akita`. The mode is part of every test name
 (`matrix::clear::sha2`, `matrix::zk::field_ops`,
@@ -24,8 +29,8 @@ stay in `zk_e2e.rs` and `akita_e2e.rs`; field-inline parity and tampering
 checks stay in `field_inline_e2e.rs` and `akita_field_inline_e2e.rs`; limb
 conversion policy and dishonest-advice checks stay in `field_inline_limbs.rs`.
 
-Clear-mode full-domain cases also cover default cycle-first read/write rounds
-on the optimized and reference backends, and active field-inline operations.
+In clear mode, the ordinary profile also proves `exact_domain` with default
+cycle-first read/write rounds on the optimized and reference backends.
 
 Akita builds of both profiles also prove `fibonacci_ring_512`, a fibonacci
 trace padded to 2^18 rows. Akita's default one-hot catalog commits a trace
@@ -53,9 +58,10 @@ its entry function when the crate has several, the `stack_size` from its
 when the guest crate enables `jolt`'s `guest-std` feature, postcard-encoded
 inputs that keep the trace within (at most equal to) the row's padded bound
 (2^16 by default), and the postcard-encoded output computed natively in the
-test. Rows with `max_padded_trace_length: None` are filled to their padded
-domain instead. Field cases that execute field instructions must also set
-`field_inline_active: true`.
+test. Rows with `max_padded_trace_length: None` bake in the execution's own
+padded domain instead, which the execution must fill exactly. A guest that
+panics sets `panics: true`. Field cases that execute field instructions must
+also set `field_inline_active: true`.
 
 ## Tamper rejection phases
 
