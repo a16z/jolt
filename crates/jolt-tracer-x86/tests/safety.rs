@@ -11,13 +11,15 @@
 
 use common::constants::{RAM_START_ADDRESS, STACK_CANARY_SIZE};
 use common::jolt_device::{JoltDevice, MemoryConfig};
+use jolt_platform::{JOLT_ADVICE_WRITE_CALL_ID, JOLT_PRINT_CALL_ID, JOLT_PRINT_STRING};
 use jolt_program::execution::{
     ChunkedExecutionBackend, ExecutionBackend, JoltProgram, TraceError, TraceInputs,
 };
+use jolt_riscv::instructions::VirtualHostIO;
 use jolt_riscv::{JoltInstructionKind as Kind, JoltInstructionRow, NormalizedOperands};
 use jolt_tracer_x86::harness::{
     compile_program, memory_config, run_program, single_row_program, terminal_row, ExitReason,
-    Outcome, TEST_ADDR,
+    Outcome, SCRATCH_START, TEST_ADDR,
 };
 
 use jolt_tracer_x86::X86TracerBackend;
@@ -299,6 +301,54 @@ fn device_load_failures_report_io_overflow() {
         .helper_error
         .expect("load error")
         .contains("I/O overflow"));
+
+    // A host call never fails: it ignores a range a guest load would reject,
+    // as the interpreter does.
+    let program = single_row_program(row(Kind::VirtualHostIO(VirtualHostIO(())), None, None, 0));
+    for call in [JOLT_ADVICE_WRITE_CALL_ID, JOLT_PRINT_CALL_ID] {
+        pre[10] = u64::from(call);
+        pre[11] = layout.io_end + 8;
+        pre[12] = 1;
+        pre[13] = u64::from(JOLT_PRINT_STRING);
+        let read = run_program(&program, &pre, &[], &[]).expect("run overflowing host read");
+        assert_eq!(
+            read.exit,
+            ExitReason::HaltedSuccess as u64,
+            "{:?}",
+            read.helper_error
+        );
+        assert_eq!(read.advice_tape, [] as [u8; 0]);
+    }
+}
+
+#[test]
+fn advice_write_follows_guest_load_bounds() {
+    let layout = JoltDevice::new(&memory_config()).memory_layout;
+    let program = single_row_program(row(Kind::VirtualHostIO(VirtualHostIO(())), None, None, 0));
+    // A rejected range leaves the tape empty and the run continues.
+    for (address, tape) in [
+        (layout.get_lowest_address() - 1, Some(0)),
+        (layout.heap_end, None),
+        (layout.get_lowest_address(), Some(0)),
+        (SCRATCH_START, Some(0xab)),
+    ] {
+        let mut pre = [0u64; REGS];
+        pre[10] = u64::from(JOLT_ADVICE_WRITE_CALL_ID);
+        pre[11] = address;
+        pre[12] = 1;
+        let outcome = run_program(&program, &pre, &[0xab], &[]).expect("run advice write");
+        assert_eq!(
+            outcome.exit,
+            ExitReason::HaltedSuccess as u64,
+            "address {address:#x}: {:?}",
+            outcome.helper_error
+        );
+        assert_eq!(
+            outcome.advice_tape,
+            Vec::from_iter(tape),
+            "address {address:#x}"
+        );
+    }
 }
 
 fn partial_word_program(config: &MemoryConfig, offset: u64, value: u64) -> JoltProgram {

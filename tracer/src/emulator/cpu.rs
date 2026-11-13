@@ -1562,7 +1562,7 @@ mod test_cpu {
     use crate::emulator::mmu::DRAM_BASE;
     use crate::emulator::terminal::DummyTerminal;
     use common::jolt_device::{JoltDevice, MemoryConfig};
-    use jolt_platform::{JOLT_PRINT_LINE, JOLT_PRINT_STRING};
+    use jolt_platform::{JOLT_ADVICE_WRITE_CALL_ID, JOLT_PRINT_LINE, JOLT_PRINT_STRING};
     use jolt_riscv::JOLT_SUCCESS_WORD;
 
     fn create_cpu() -> Cpu {
@@ -2050,7 +2050,7 @@ mod test_cpu {
     }
 
     #[test]
-    fn advice_write_enforces_guest_load_bounds() {
+    fn advice_write_follows_guest_load_bounds() {
         let config = MemoryConfig {
             program_size: Some(64),
             stack_size: 0,
@@ -2059,19 +2059,32 @@ mod test_cpu {
         };
         let layout = JoltDevice::new(&config).memory_layout;
         let scratch = DRAM_BASE + 32;
-        for (address, appended) in [
-            (layout.get_lowest_address() - 1, vec![0]),
-            (layout.heap_end, vec![]),
-            (layout.get_lowest_address(), vec![0]),
-            (scratch, vec![0xab]),
+        // A rejected range leaves the tape empty and the run continues.
+        for (address, tape) in [
+            (layout.get_lowest_address() - 1, Some(0)),
+            (layout.heap_end, None),
+            (layout.get_lowest_address(), Some(0)),
+            (scratch, Some(0xab)),
         ] {
             let mut cpu = create_cpu();
-            // Back heap_end with memory so that only the layout bound rejects it.
+            // Let heap_end reach the MMU check after trace_load reads its word.
             cpu.mmu.init_memory(layout.get_total_memory_size() + 8);
             cpu.mmu.jolt_device = Some(JoltDevice::new(&config));
+            // VirtualHostIO, as in test_run_two_pass_replays_advice_writes.
+            for (i, byte) in 0x0000_205bu32.to_le_bytes().into_iter().enumerate() {
+                cpu.mmu.store_raw(DRAM_BASE + i as u64, byte);
+            }
             cpu.mmu.store_raw(scratch, 0xab);
-            cpu.handle_advice_write(address, 1);
-            assert_eq!(cpu.advice_tape.data, appended, "address {address:#x}");
+            cpu.update_pc(DRAM_BASE);
+            cpu.x[10] = i64::from(JOLT_ADVICE_WRITE_CALL_ID);
+            cpu.x[11] = address as i64;
+            cpu.x[12] = 1;
+            cpu.tick(None);
+            assert_eq!(
+                cpu.advice_tape.data,
+                Vec::from_iter(tape),
+                "address {address:#x}"
+            );
         }
     }
 }
