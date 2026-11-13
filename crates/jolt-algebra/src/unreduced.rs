@@ -57,7 +57,8 @@ pub trait Unreduced: Field {
     /// Whether callers choosing a product-sum implementation should prefer
     /// canonical multiplication to widening products. An accelerated guest
     /// multiplication can be cheaper even when [`SUM_IS_EXACT`](Self::SUM_IS_EXACT)
-    /// holds. This is a cost preference, not an exactness guarantee.
+    /// holds. Akita's product-sum selectors consume this policy. This is a
+    /// cost preference, not an exactness guarantee.
     const PREFER_REDUCED_PRODUCTS: bool = false;
 
     /// Widening `self × other` with no reduction.

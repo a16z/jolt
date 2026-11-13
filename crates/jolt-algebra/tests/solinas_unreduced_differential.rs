@@ -806,4 +806,5 @@ fn check_fp128_exact_sum_headroom<const P: u128>() {
 fn fp128_exact_sum_headroom_boundary() {
     check_fp128_exact_sum_headroom::<{ u128::MAX - 274 }>();
     check_fp128_exact_sum_headroom::<{ u128::MAX - 0xFFFF_A7F6 }>();
+    check_fp128_exact_sum_headroom::<{ u128::MAX - 0x6A23_801E }>();
 }
