@@ -37,7 +37,7 @@ fn fail(state: &mut GuestState, host: &mut HostContext, message: String) -> u64 
 
 /// The device doubleword at an aligned `address` below RAM, under the
 /// interpreter's guest-load bounds (`Mmu::load`): bytes below
-/// `lowest_address` or past `io_end` fail.
+/// `lowest_address` or at or above `io_end` fail.
 fn load_device_doubleword(device: &JoltDevice, address: u64) -> Result<u64, String> {
     let layout = &device.memory_layout;
     if address < layout.get_lowest_address() {
@@ -47,7 +47,7 @@ fn load_device_doubleword(device: &JoltDevice, address: u64) -> Result<u64, Stri
     }
     let mut value = 0u64;
     for i in 0..8 {
-        if address + i > layout.io_end {
+        if address + i >= layout.io_end {
             return Err(format!(
                 "I/O overflow: Attempted to read from {:#X}",
                 address + i

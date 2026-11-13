@@ -104,7 +104,9 @@ impl AddressFault {
 fn address_fault(jolt_device: &JoltDevice, ea: u64, is_write: bool) -> Option<AddressFault> {
     let layout = &jolt_device.memory_layout;
     if ea < DRAM_BASE {
-        if ea > layout.io_end {
+        // The padding from `io_end` up to DRAM is unmapped: the RAM read-write
+        // relation's unmapped-word mask starts at `io_end`.
+        if ea >= layout.io_end {
             return Some(AddressFault::IoOverflow);
         }
         // Loads below the lowest mapped address fault. Stores there still
@@ -1843,7 +1845,7 @@ mod test_mmu {
         assert_eq!(io_end, RAM_START_ADDRESS - 24);
         mmu.jolt_device = Some(device);
         assert_eq!(mmu.load_doubleword(io_end - 8).unwrap().0, 0);
-        let _ = mmu.load_doubleword(io_end + 8);
+        let _ = mmu.load_doubleword(io_end);
     }
 
     #[test]
