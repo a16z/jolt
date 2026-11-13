@@ -109,7 +109,7 @@ fn address_fault(jolt_device: &JoltDevice, ea: u64, is_write: bool) -> Option<Ad
         }
         // Loads below the lowest mapped address fault. Stores there still
         // reach the unmapped-device check.
-        if ea < layout.get_lowest_address() && !(is_write && ea <= RAM_START_ADDRESS - 8) {
+        if !is_write && ea < layout.get_lowest_address() {
             return Some(AddressFault::IoUnderflow);
         }
         // Input and advice stores are admitted here; the protected-store
