@@ -115,9 +115,10 @@ are bound to the producer's main head. PR plans bind the payload PR number,
 label event/actor, base, submitted head, measured merge and harness; merge parents
 and planned native inputs are checked. GitHub's `pull_request_target` run head
 is the submitted PR head, and the run's head repository and branch must equal
-the plan's admitted ones. A fork head repository is accepted only for a
-`pull_request_target` producer, which GitHub runs from the base branch's
-workflow file. An empty live `pull_requests` list is accepted: GitHub lists no
+the plan's admitted ones; a plan that records no head repository is bound to
+`a16z/jolt`. A fork head repository is accepted only for a
+`pull_request_target` producer, whose workflow file GitHub takes from the
+repository's default branch. An empty live `pull_requests` list is accepted: GitHub lists no
 PR for a fork head or after a PR merges. A non-empty
 list must still contain the planned PR with base `main`. Current PR state can change after a
 valid measurement; it does not rewrite archived history. Only JSON is read;

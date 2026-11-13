@@ -108,8 +108,8 @@ def producer_fixture(data, run, *, runs=None, plan_run_change=None, builds=None,
             'runs': runs or [{'base': 'b' * 40 if paired else None,
                              'head': 'c' * 40 if paired else data['revisions']['head'],
                              'submitted_head': data['revisions']['head']}],
-            'admission': {'label_event_id': 11, 'label_actor': 'maintainer',
-                          'head_repo': head_repo, 'head_ref': 'candidate'},
+            'admission': {'label_event_id': 11, 'label_actor': 'maintainer', 'head_ref': 'candidate',
+                          **({'head_repo': head_repo} if head_repo else {})},
             'expected_builds': {build['revision']: {key: build[key] for key in (
                 'revision', 'harness_revision', 'profile', 'rustflags')} for build in data['builds']},
             'own_harness_files': {build['revision']: build['harness_files'] for build in data['builds']}}
@@ -323,6 +323,15 @@ class BenchmarkHistoryTests(unittest.TestCase):
         self.assertIsNone(raw)
         with self.assertRaisesRegex(ValueError, 'untrusted plan producer'):
             collected_fixture(synthetic_result(), plan_run_change=fork)
+
+    def test_pr_plan_without_a_recorded_head_repository_is_bound_to_a16z_jolt(self):
+        record, _ = collected_fixture(synthetic_pr_result(), head_repo=None)
+        self.assertEqual((record['publication_status'], record['source']['pr_number']), ('ready', 7))
+        fork = {'head_repository': {'full_name': 'outside/jolt'}, 'pull_requests': []}
+        record, raw = collected_fixture(synthetic_pr_result(), plan_run_change=fork, head_repo=None)
+        self.assertEqual((record['publication_status'], record['reason']),
+                         ('rejected', 'PR plan does not match its admitted source and label'))
+        self.assertIsNone(raw)
 
     def test_only_successful_app_ingests_can_publish_even_when_target_execution_failed(self):
         data = synthetic_pr_result()

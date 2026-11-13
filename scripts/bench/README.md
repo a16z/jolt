@@ -778,25 +778,32 @@ read-only token and no secrets.
 The App repeats admission when enqueueing and immediately before submitting.
 Every request must be a successful `.github/workflows/e2e-bench.yml` run in
 `a16z/jolt`. The run's head repository may differ from `a16z/jolt` only for a
-`pull_request_target` run. GitHub runs that event from the base branch's
-workflow file; a fork's `pull_request` run instead executes the fork's copy of
-the same path and can upload artifacts under the plan and dispatch names, so
-the App must refuse it before reading any artifact. Main push, schedule and
-manual requests must have head repository `a16z/jolt` and head branch `main`;
-the API comparison of the measured SHA against main must be `identical` or
-`ahead`.
+`pull_request_target` run. GitHub takes that event's workflow file and checkout
+from the repository's default branch, whatever the PR's base branch
+([changelog](https://github.blog/changelog/2025-11-07-actions-pull_request_target-and-environment-branch-protections-changes/),
+in effect since December 8, 2025). A fork's `pull_request` run instead runs in
+the context of the PR's merge commit, so its workflow file is the PR's own
+version of the same path and can upload artifacts under the plan and dispatch
+names. The App must refuse such a run before reading any artifact. Main push,
+schedule and manual requests must have head repository `a16z/jolt` and head
+branch `main`; the API comparison of the measured SHA against main must be
+`identical` or `ahead`.
 
-A PR request takes its PR number from the dispatch. The App reads that PR and
-requires it to be open, with base `main` in `a16z/jolt`, the current `benchmark`
-label, and a head SHA equal to the run's and the dispatch's. For a
-same-repository head the run must also list exactly one payload PR with base
-`main` and that number. GitHub leaves a run's `pull_requests` empty for a fork
-head, so there the PR's head repository and branch must equal the run's instead.
-All issue-event pages must identify the dispatch's latest label event and actor,
-with no later removal. The actor must still hold `maintain` or `admin`. API
-errors refuse admission. Both checks require the PR's current head to equal the
-planned one, so a fork push after planning refuses the job. A dispatcher
-without this fork rule refuses every fork-head run: planning succeeds, and no
+A PR request must come from a `pull_request_target` run and takes its PR number
+from the dispatch. A run that lists pull requests must list exactly one, with
+that number and base `main`. A run that lists none is decided by the PR read
+alone; GitHub lists none for a fork head. The App reads the PR and requires it
+to be open, into `main` of `a16z/jolt`, labelled `benchmark`, at the head SHA
+that the dispatch and the run both name, with the run's head repository and
+head branch. A PR whose head repository was deleted is refused. For a fork head
+the run's actor must also be the label actor. That check is not the head pin:
+the labeller's own push to a labelled fork PR passes it, so the planner's
+refusal of fork `synchronize` events stays the rule that binds a label to one
+head. All issue-event pages must identify the dispatch's latest label event and
+actor, with no later removal. The actor must still hold `maintain` or `admin`.
+API errors refuse admission. Because both checks require the PR's current head
+to be the planned one, a fork push after planning refuses the job. A dispatcher
+without these fork rules refuses every fork-head run: planning succeeds, and no
 check, target job or result comment follows.
 
 The App connects to `jolt-bench` as `runner` with a dedicated forced-command SSH
@@ -916,7 +923,9 @@ plan and dispatch come from that producer attempt's own artifacts. Ingest and
 the history publisher accept a producer with a fork head only for
 `pull_request_target`, refuse any other fork-head producer before downloading
 its artifacts, and require the run's head repository and branch to equal the
-plan's admitted ones. Main, nightly and calibration producers must have head
+plan's admitted ones. A PR plan that records no head repository comes from a
+planner that admitted only `a16z/jolt` heads, so both bind it to `a16z/jolt`.
+Main, nightly and calibration producers must have head
 repository `a16z/jolt`. Main/nightly
 manifest and index digests come from the hosted dispatch. PR manifests are checked
 against the plan's pinned native inputs; their binary hashes are target observations,

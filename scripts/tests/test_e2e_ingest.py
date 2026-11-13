@@ -251,6 +251,15 @@ class IngestTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 ingest.trusted_plan(123, 1)
             actual['pull_requests'][0]['base']['ref'] = 'main'
+            unrecorded = copy.deepcopy(plan)
+            del unrecorded['admission']['head_repo']
+            archives[42] = zipped({'plan.json': json.dumps(unrecorded)})
+            self.assertEqual(ingest.trusted_plan(123, 1)[0], unrecorded)
+            actual['head_repository'] = {'full_name': 'outside/jolt'}
+            with self.assertRaisesRegex(ValueError, 'not bound to the admitted head'):
+                ingest.trusted_plan(123, 1)
+            actual['head_repository'] = {'full_name': 'a16z/jolt'}
+            archives[42] = zipped({'plan.json': plan_raw})
             artifacts.append(copy.deepcopy(artifacts[0]))
             with self.assertRaisesRegex(ValueError, 'exactly one'):
                 ingest.trusted_plan(123, 1)
