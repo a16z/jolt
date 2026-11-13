@@ -36,6 +36,11 @@ use crate::{
 
 const TERMS: usize = 3;
 
+// Round 0 (`native_q_terms`) weights each visit callback by one `e_out`
+// entry and pairs its rows in place, so its callbacks must tile every
+// split-eq group in whole pairs; `gruen_pair_pass` has no such requirement.
+const _: () = assert!(VISIT_ROWS.is_power_of_two() && VISIT_ROWS >= 2);
+
 /// The quadratic's constant and leading coefficients, then its value at one.
 #[inline]
 fn pair_q_terms<F: JoltField>(
@@ -58,7 +63,8 @@ pub struct StreamingInstructionInput;
 /// rounds, and at most the last round, so openings are always table entries.
 /// Sizes are compared in cycles against the cycles `cap` holds, which is the
 /// same test as bytes against `cap` and cannot overflow where the byte count
-/// of `2^rounds` cycles would.
+/// of `2^rounds` cycles would, for `rounds < usize::BITS` (`prepare` gets that
+/// from [`BundleStore::resident`]).
 fn crossover_round<F: JoltField>(rounds: usize, cap: usize) -> usize {
     let cap_cycles = cap / (NUM_TABLES * size_of::<F>());
     dense_crossover(1 << rounds, cap_cycles, rounds)
@@ -868,6 +874,68 @@ mod tests {
             assert!(matches!(
                 prepare(resident, usize::BITS as usize),
                 Err(KernelError::Witness(WitnessError::InvalidDimensions { .. }))
+            ));
+        });
+    }
+
+    /// `with_streaming` puts this kernel in the backend's slot. Streamed and
+    /// default proofs are byte-equal, so only the kernel's behavior shows
+    /// which one is installed: it refuses a witness without resident rows,
+    /// which the default kernel collects. Dory stands in for the commitment
+    /// scheme; the akita build's `optimized` takes another.
+    #[cfg(not(feature = "akita"))]
+    #[test]
+    fn with_streaming_installs_the_instruction_input_kernel() {
+        use jolt_dory::DoryScheme;
+
+        use crate::optimized::streaming::StreamingFamilies;
+        use crate::JoltBackend;
+
+        let log_t = 1;
+        let relation = InstructionInput::new(TraceDimensions::new(log_t), vec![fr(5)]);
+        let claims = InstructionInputInputClaims {
+            right_instruction_input: fr(0),
+            left_instruction_input: fr(0),
+        };
+        let points = InstructionInputInputClaims {
+            right_instruction_input: Vec::new(),
+            left_instruction_input: Vec::new(),
+        };
+        let challenges = InstructionInputChallenges { gamma: fr(3) };
+        structured_fixture(7).with_plane(3, |resident| {
+            // A configured domain shorter than the trace leaves no resident
+            // rows; chunk visits still serve its `2^log_t` cycles.
+            let mut chunk_only = TraceBackend::new(
+                resident.config.clone(),
+                JoltVmWitnessInputs::new(
+                    &resident.program,
+                    &resident.preprocessing,
+                    resident.trace.clone(),
+                ),
+            );
+            chunk_only.config.log_t = log_t;
+            let prepare = |backend: JoltBackend<Fr, DoryScheme>| {
+                backend
+                    .instruction_input
+                    .prepare(
+                        &mut ProofSession::default(),
+                        &chunk_only,
+                        ProverInputs {
+                            relation: &relation,
+                            claims: &claims,
+                            points: &points,
+                            challenges: &challenges,
+                        },
+                    )
+                    .map(|_| ())
+            };
+            prepare(JoltBackend::optimized()).unwrap();
+            assert!(matches!(
+                prepare(JoltBackend::optimized().with_streaming(StreamingFamilies {
+                    instruction_input: true,
+                    ..StreamingFamilies::default()
+                })),
+                Err(KernelError::Witness(WitnessError::UnavailableView { .. }))
             ));
         });
     }
