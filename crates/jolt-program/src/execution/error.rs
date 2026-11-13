@@ -1,3 +1,4 @@
+use common::jolt_device::MemoryLayoutError;
 use jolt_riscv::{JoltInstructionRow, SourceInstructionKind, TraceRowError};
 
 use crate::preprocess::PreprocessingError;
@@ -37,4 +38,6 @@ pub enum TraceError {
         expected: Box<JoltInstructionRow>,
         actual: Box<JoltInstructionRow>,
     },
+    #[error(transparent)]
+    MemoryLayout(#[from] MemoryLayoutError),
 }

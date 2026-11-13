@@ -440,7 +440,8 @@ mod tests {
 
             for invalid_heap_end in [
                 u64::MAX - 6,
-                (1u64 << 63) + valid.memory_layout().get_lowest_address() + 1,
+                (1u64 << 63) + valid.memory_layout().get_lowest_address() + 8,
+                valid.memory_layout().heap_end + 4,
             ] {
                 let mut invalid = valid.clone();
                 let layout = match &mut invalid {

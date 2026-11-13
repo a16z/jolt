@@ -250,6 +250,12 @@ mod matrix {
                     expected_output: Some(encode(&memory_ops_reference())),
                     ..GuestCase::new("memory-ops-guest")
                 };
+                // Stores the last byte below the linker's `__heap_end`.
+                heap_top => GuestCase {
+                    func: Some("heap_top"),
+                    expected_output: Some(encode(&0xa523_4567_89ab_cdef_u64)),
+                    ..GuestCase::new("memory-ops-guest")
+                };
                 // 127 bytes: one full block through the initial compression,
                 // then a 63-byte tail that needs the two-block padding, so both
                 // SHA-256 inline instructions run.
@@ -316,6 +322,16 @@ mod matrix {
                     trusted_advice: encode(&7u64),
                     expected_output: Some(encode(&(7u64 * 3 + 5))),
                     ..GuestCase::new("advice-consumer-guest")
+                };
+                rounded_advice => GuestCase {
+                    func: Some("rounded_advice"),
+                    max_untrusted_advice_size: Some(12),
+                    // Sixteen bytes fill the rounded block, past the configured 12.
+                    untrusted_advice: (1..=16).collect(),
+                    expected_output: Some(encode(&u64::from_le_bytes([
+                        9, 10, 11, 12, 13, 14, 15, 16
+                    ]))),
+                    ..GuestCase::new("memory-ops-guest")
                 };
             }
         };

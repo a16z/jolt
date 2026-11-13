@@ -500,7 +500,7 @@ fn final_partial_canary_word_accepts_only_unchanged_stores() {
             Err(TraceError::Backend("host helper reported an error"))
         ));
     }
-    for offset in [1153, 1160] {
+    for offset in [1160, 1168] {
         let outside = partial_word_program(&config, offset, 0);
         assert!(X86TracerBackend::new()
             .run_machine(&outside, inputs.clone())
@@ -509,7 +509,7 @@ fn final_partial_canary_word_accepts_only_unchanged_stores() {
 }
 
 #[test]
-fn final_partial_heap_word_preserves_backing_bytes_across_checkpoints() {
+fn last_heap_word_preserves_backing_bytes_across_checkpoints() {
     let config = MemoryConfig {
         program_size: Some(1025),
         stack_size: 0,
@@ -522,7 +522,7 @@ fn final_partial_heap_word_preserves_backing_bytes_across_checkpoints() {
     backend.set_min_checkpoint_spacing_rows(1);
     let trace = backend
         .trace(&program, inputs.clone())
-        .expect("partial heap word");
+        .expect("last heap word");
     assert_eq!(
         trace.trace.rows()[3]
             .registers()
@@ -545,7 +545,7 @@ fn final_partial_heap_word_preserves_backing_bytes_across_checkpoints() {
         let replay = backend.replay_chunk(checkpoint).expect("replay heap word");
         assert_eq!(replay.rows(), std::slice::from_ref(expected));
     }
-    for offset in [1161, 1168] {
+    for offset in [1168, 1176] {
         let outside = partial_word_program(&config, offset, 0);
         let inputs = TraceInputs::new(Vec::new(), Vec::new(), Vec::new(), config);
         assert!(X86TracerBackend::new().fast_run(&outside, inputs).is_err());
