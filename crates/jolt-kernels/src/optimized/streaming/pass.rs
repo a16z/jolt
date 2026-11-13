@@ -15,7 +15,8 @@ pub(crate) const VISIT_ROWS: usize = 1 << 12;
 
 /// Byte cap on one streaming kernel's dense tables: its rounds recompute
 /// their pairs from the rows until the tables fit ([`dense_crossover`]).
-pub(crate) const DENSE_TABLE_CAP: usize = 4 << 30;
+/// 4 GiB, or every representable size where `usize` cannot hold 4 GiB.
+pub(crate) const DENSE_TABLE_CAP: usize = 4usize.saturating_mul(1 << 30);
 
 /// Tasks per pool thread in a [`task_ranges`] partition, so work stealing can
 /// even out unequal row costs between tasks.

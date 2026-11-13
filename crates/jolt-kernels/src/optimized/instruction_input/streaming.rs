@@ -55,9 +55,12 @@ pub struct StreamingInstructionInput;
 /// The round whose pass fills the dense tables over `2^rounds` cycles: the
 /// first whose tables fit `cap`, at least round 1 when there are two or more
 /// rounds, and at most the last round, so openings are always table entries.
+/// Sizes are compared in cycles against the cycles `cap` holds, which is the
+/// same test as bytes against `cap` and cannot overflow where the byte count
+/// of `2^rounds` cycles would.
 fn crossover_round<F: JoltField>(rounds: usize, cap: usize) -> usize {
-    let table_bytes = (NUM_TABLES * size_of::<F>()) << rounds;
-    dense_crossover(table_bytes, cap, rounds)
+    let cap_cycles = cap / (NUM_TABLES * size_of::<F>());
+    dense_crossover(1 << rounds, cap_cycles, rounds)
         .max(1)
         .min(rounds.saturating_sub(1))
 }
@@ -641,6 +644,21 @@ mod tests {
         }
     }
 
+    /// The crossover is exact at the cap's boundary, clamps to rounds
+    /// `1..=rounds − 1`, and does not wrap when the tables exceed `usize`
+    /// bytes (a round count eight below the word size).
+    #[test]
+    fn crossover_round_is_exact_at_the_cap_and_past_usize_bytes() {
+        let cycle_bytes = NUM_TABLES * size_of::<Fr>();
+        assert_eq!(crossover_round::<Fr>(20, cycle_bytes << 10), 10);
+        assert_eq!(crossover_round::<Fr>(20, (cycle_bytes << 10) - 1), 11);
+        assert_eq!(crossover_round::<Fr>(20, usize::MAX), 1);
+        assert_eq!(crossover_round::<Fr>(20, 0), 19);
+        assert_eq!(crossover_round::<Fr>(1, 0), 0);
+        let wide = usize::BITS as usize - 8;
+        assert_eq!(crossover_round::<Fr>(wide, cycle_bytes << 20), wide - 20);
+    }
+
     /// Exceptional eq points (coordinates 0 or 1, a prefix that vanishes at
     /// the first bind) and zero/one challenges, through round-1 fills,
     /// streamed rounds before a later fill and the last-round fill.
@@ -791,6 +809,11 @@ mod tests {
             ));
             assert!(matches!(
                 prepare(resident, log_t + 1),
+                Err(KernelError::Witness(WitnessError::InvalidDimensions { .. }))
+            ));
+            // A cycle count that does not fit `usize` is refused the same way.
+            assert!(matches!(
+                prepare(resident, usize::BITS as usize),
                 Err(KernelError::Witness(WitnessError::InvalidDimensions { .. }))
             ));
         });
