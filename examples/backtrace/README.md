@@ -43,7 +43,7 @@ cargo run --release -p backtrace --no-default-features --features nostd
 
 ```
 PANIC: panicked at examples/backtrace/guest-nostd/src/lib.rs:33:5: backtrace demo (no-std)
-ERROR tracer: Guest program terminated due to panic after 3696 cycles.
+ERROR tracer: Guest program halted at ebreak (abnormal end) after 3696 cycles.
   <no backtrace available>
 note: run `trace_and_analyze` with `JOLT_BACKTRACE=1` environment variable to enable backtraces
 ```
@@ -58,7 +58,7 @@ JOLT_BACKTRACE=1 cargo run --release -p backtrace --no-default-features --featur
 
 ```
 PANIC: panicked at examples/backtrace/guest-nostd/src/lib.rs:33:5: backtrace demo (no-std)
-ERROR tracer: Guest program terminated due to panic after 1020 cycles.
+ERROR tracer: Guest program halted at ebreak (abnormal end) after 1020 cycles.
 Guest Program panicked in "core::fmt::write" at ".../library/core/src/fmt/mod.rs:1665:20"
 stack backtrace:
    0: 0x80000c52 - core::fmt::write
@@ -86,7 +86,7 @@ JOLT_BACKTRACE=full cargo run --release -p backtrace --no-default-features --fea
 
 ```
 PANIC: panicked at examples/backtrace/guest-nostd/src/lib.rs:33:5: backtrace demo (no-std)
-ERROR tracer: Guest program terminated due to panic after 1020 cycles.
+ERROR tracer: Guest program halted at ebreak (abnormal end) after 1020 cycles.
 Guest Program panicked in "core::fmt::write" at ".../library/core/src/fmt/mod.rs:1665:20"
 stack backtrace:
    ...
@@ -130,7 +130,7 @@ stack backtrace:
    1:         0x8000180e - <unknown>
    ...
   11:         0x80034e48 - <unknown>
-ERROR tracer: Guest program terminated due to panic after 463691 cycles.
+ERROR tracer: Guest program halted at ebreak (abnormal end) after 463691 cycles.
   <no backtrace available>
 note: run `trace_and_analyze` with `JOLT_BACKTRACE=1` environment variable to enable backtraces
 ```
@@ -149,7 +149,7 @@ backtrace demo (std)
 stack backtrace:
    0:         0x800112b2 - <unknown>
    ...
-ERROR tracer: Guest program terminated due to panic after 463691 cycles.
+ERROR tracer: Guest program halted at ebreak (abnormal end) after 463691 cycles.
 stack backtrace:
    0: 0x800067b2 - trap_handler
    1: 0x800001f6 - _default_trap_handler
@@ -180,7 +180,7 @@ JOLT_BACKTRACE=full cargo run --release -p backtrace --no-default-features --fea
 
 ```
 ...
-ERROR tracer: Guest program terminated due to panic after 463691 cycles.
+ERROR tracer: Guest program halted at ebreak (abnormal end) after 463691 cycles.
 stack backtrace:
    0: 0x800067b2 - trap_handler
                    registers: ra=0x800001fa, sp=0x80157e00, gp=0x80056b60, ...

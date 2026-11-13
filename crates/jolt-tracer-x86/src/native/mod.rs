@@ -20,7 +20,7 @@ use jolt_riscv::{
 
 use compile::CompiledProgram;
 use memory::MemoryPlane;
-use state::{ExitReason, GuestState, HostContext, Observation};
+use state::{ExitReason, GuestState, HostContext, MachineExit, Observation};
 
 /// AOT x86-64 transpiling execution backend.
 ///
@@ -102,10 +102,12 @@ pub struct MachineRunOutput {
     pub device: JoltDevice,
     pub final_memory: MemoryImage,
     pub advice_tape: Vec<u8>,
+    exit: MachineExit,
 }
 
 impl MachineRunOutput {
     fn finalize(self) -> Result<FastRunOutput, TraceError> {
+        self.exit.require_halt()?;
         Ok(FastRunOutput {
             trace_len: self.trace_len,
             device: self.device,
@@ -195,7 +197,7 @@ impl X86TracerBackend {
         });
 
         compiled.run_record(&mut guest)?;
-        guest.check_exit(&mut host)?;
+        guest.check_exit(&mut host)?.require_halt()?;
 
         let recorded =
             (guest.obs_cursor as usize - obs_start as usize) / core::mem::size_of::<Observation>();
@@ -213,7 +215,8 @@ impl X86TracerBackend {
     }
 
     /// Fast pass: run the program to completion without materializing trace
-    /// rows. (Checkpoint logging joins in the chunked-execution slice.)
+    /// rows. A Jolt run must end at a halt instruction
+    /// ([`TraceError::EndedWithoutHalt`] otherwise).
     pub fn fast_run(
         &mut self,
         program: &JoltProgram,
@@ -225,7 +228,8 @@ impl X86TracerBackend {
         self.run_machine(program, inputs)?.finalize()
     }
 
-    /// Runs to the machine's stop. The ACT4 runner (`jolt-emu-x86`) reports through `tohost`.
+    /// Runs to the machine's stop, a halt or a PC stall, with no Jolt end-of-run contract: the
+    /// ACT4 runner (`jolt-emu-x86`) reports through `tohost`.
     pub fn run_machine(
         &mut self,
         program: &JoltProgram,
@@ -267,7 +271,7 @@ impl X86TracerBackend {
         });
 
         compiled.run(&mut guest)?;
-        guest.check_exit(&mut host)?;
+        let exit = guest.check_exit(&mut host)?;
 
         Ok(MachineRunOutput {
             trace_len: guest.trace_len as usize,
@@ -276,6 +280,7 @@ impl X86TracerBackend {
                 bytes: plane.materialized_nonzero_bytes(),
             },
             advice_tape: host.advice_tape,
+            exit,
         })
     }
 }
@@ -615,7 +620,7 @@ impl ChunkedExecutionBackend for X86TracerBackend {
                 ));
                 continue;
             }
-            guest.check_exit(&mut host)?;
+            guest.check_exit(&mut host)?.require_halt()?;
             break;
         }
         let trace_len = guest.trace_len as usize;
@@ -692,7 +697,7 @@ impl ChunkedExecutionBackend for X86TracerBackend {
 
         checkpoint.compiled.run_record_pausable(&mut guest)?;
         if guest.exit != ExitReason::Paused as u64 {
-            guest.check_exit(&mut host)?;
+            guest.check_exit(&mut host)?.require_halt()?;
         }
 
         let recorded =
@@ -720,10 +725,12 @@ impl ChunkedExecutionBackend for X86TracerBackend {
 #[cfg(test)]
 #[expect(clippy::expect_used)]
 mod tests {
+    use super::harness::{memory_config, terminal_row};
     use super::*;
     use jolt_riscv::{
         Flags, JoltInstruction, NormalizedOperands, RV64IMAC_JOLT, RV64IMAC_JOLT_ALL_INLINES,
     };
+    use tracer::HaltKind;
 
     fn program_with_profile(profile: jolt_riscv::JoltInstructionProfile) -> JoltProgram {
         let terminal = JoltInstructionRow {
@@ -747,6 +754,33 @@ mod tests {
             0x8000_1000,
             profile,
         )
+    }
+
+    /// A machine-level run stops at a halt or a PC stall; a Jolt run accepts
+    /// only the halt.
+    #[test]
+    fn fast_run_requires_a_halt_that_run_machine_does_not() {
+        let stalls = program_with_profile(RV64IMAC_JOLT);
+        let mut halts = stalls.clone();
+        halts.expanded_bytecode = vec![terminal_row(0x8000_1000)];
+        // A backend each: the two programs share a compile-cache key.
+        let run = |program: &JoltProgram| {
+            let inputs = TraceInputs::new(Vec::new(), Vec::new(), Vec::new(), memory_config());
+            X86TracerBackend::new()
+                .run_machine(program, inputs)
+                .expect("machine run")
+        };
+
+        let halted = run(&halts);
+        assert_eq!(halted.exit, MachineExit::Halted(HaltKind::Success));
+        assert_eq!(halted.finalize().expect("a Jolt run").trace_len, 1);
+
+        let stalled = run(&stalls);
+        assert_eq!(stalled.exit, MachineExit::Stalled { pc: 0x8000_1000 });
+        assert!(matches!(
+            stalled.finalize(),
+            Err(TraceError::EndedWithoutHalt { pc: 0x8000_1000 })
+        ));
     }
 
     /// `JoltTraceRow::new` rejects a row whose RAM access disagrees with its

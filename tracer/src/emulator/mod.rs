@@ -29,7 +29,7 @@ pub mod memory;
 pub mod mmu;
 pub mod terminal;
 
-use self::cpu::Cpu;
+use self::cpu::{Cpu, HaltKind};
 use self::elf_analyzer::ElfAnalyzer;
 use self::terminal::Terminal;
 
@@ -40,6 +40,10 @@ use std::path::Path;
 /// The endcode [`Emulator::run_test`] returns when a test guest stalls after
 /// writing a value to `tohost` that is not an HTIF exit command.
 const UNRECOGNIZED_TOHOST_ENDCODE: u64 = 1;
+
+/// The endcode [`Emulator::run_test`] returns for a run that halts at
+/// `ebreak`, Jolt's failure halt.
+const PANIC_HALT_ENDCODE: u64 = 1;
 
 /// Returns `payload >> 1` only for an HTIF syscall-proxy exit command:
 /// device (bits 63..56) and command (bits 55..48) must both be zero, and
@@ -109,12 +113,15 @@ impl Emulator {
 
     /// Method for running [`riscv-tests`](https://github.com/riscv/riscv-tests) program.
     ///
-    /// Returns the HTIF termination code:
+    /// Returns the termination code:
+    /// * `0` for a Jolt guest that ends at `jolt.success`;
+    /// * `PANIC_HALT_ENDCODE` (1) for a guest that halts at `ebreak`, Jolt's
+    ///   failure halt;
     /// * `payload >> 1` for an HTIF exit command (device 0, command 0,
     ///   payload bit 0 set): `0` for RVMODEL_HALT_PASS, `1` for ACT4's
     ///   RVMODEL_HALT_FAIL, the failing test number for riscv-tests;
-    /// * `0` for a PC stall with `tohost` untouched (Jolt guests that call
-    ///   `platform_exit()`);
+    /// * `0` for a PC stall with `tohost` untouched (bare-metal test programs
+    ///   that spin);
     /// * `UNRECOGNIZED_TOHOST_ENDCODE` (1) for a PC stall after any other
     ///   non-zero `tohost` write, such as a non-zero command or device byte.
     ///
@@ -125,16 +132,32 @@ impl Emulator {
         tracing::info!("This elf file seems like a riscv-tests elf file. Running in test mode.");
         let mut cycle_count = 0;
         loop {
+            if let Some(halt) = self.cpu.halted() {
+                return match halt {
+                    HaltKind::Success => {
+                        tracing::info!(
+                            "Program exited successfully (code 0) after {cycle_count} cycles"
+                        );
+                        0
+                    }
+                    HaltKind::Panic => {
+                        tracing::error!(
+                            "Program halted at ebreak (abnormal end) after {cycle_count} cycles"
+                        );
+                        PANIC_HALT_ENDCODE
+                    }
+                };
+            }
+
             if disassemble {
                 let disas = self.cpu.disassemble_next_instruction();
                 println!("core   0: {disas}");
             }
 
-            // Jolt guests terminate via `j .`: jolt-platform's platform_exit()
-            // enters this loop for clean termination. A test ELF halts instead
-            // by writing an HTIF exit command to `tohost`, which the check
-            // after each tick below catches. A guest that spins after writing
-            // any other non-zero value there tried to halt with a command this
+            // A test ELF halts by writing an HTIF exit command to `tohost`,
+            // which the check after each tick below catches; a bare-metal
+            // program may instead spin. A guest that spins after writing any
+            // other non-zero value there tried to halt with a command this
             // emulator does not recognize, so its outcome is unknown and must
             // not read as a pass.
             if self.cpu.has_stalled() {
@@ -354,6 +377,7 @@ mod tests {
     use super::elf_analyzer::test_elf::{build_elf64, StrtabOrder, TestSymbol};
     use super::*;
     use crate::emulator::default_terminal::DefaultTerminal;
+    use jolt_riscv::JOLT_SUCCESS_WORD;
 
     const TOHOST_ADDR: u64 = 0x8000_3000;
 
@@ -445,6 +469,13 @@ mod tests {
     #[test]
     fn run_test_reports_a_spin_without_a_tohost_write_as_success() {
         assert_eq!(run(&[0x0000_006f], 0), (0, 0)); // jal x0, 0
+    }
+
+    #[test]
+    fn run_test_reports_halts() {
+        assert_eq!(run(&[JOLT_SUCCESS_WORD], 0), (0, 0));
+        assert_eq!(run(&[0x0010_0073], 0), (PANIC_HALT_ENDCODE, 0)); // ebreak
+        assert_ne!(PANIC_HALT_ENDCODE, 0);
     }
 
     /// Encoding `(gp << 1) | 1` with gp = 0x1cadd5ae9e2ac9c5 sets the HTIF

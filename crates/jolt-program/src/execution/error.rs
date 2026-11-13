@@ -10,6 +10,10 @@ pub enum TraceError {
     MissingElfBytes,
     #[error("execution backend failed: {0}")]
     Backend(&'static str),
+    #[error(
+        "guest stopped at pc {pc:#x} without executing a halt instruction (jolt.success or ebreak)"
+    )]
+    EndedWithoutHalt { pc: u64 },
     #[error(transparent)]
     InvalidRow(#[from] TraceRowError),
     #[error(transparent)]

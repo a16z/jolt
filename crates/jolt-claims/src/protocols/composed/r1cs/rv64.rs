@@ -1167,8 +1167,8 @@ mod execution_witness_tests {
         w
     }
 
-    /// The guest's final `j .` stall: `JAL x0, 0` at 0x8000_0100, whose
-    /// target is its own address.
+    /// A `j .` self-loop: `JAL x0, 0` at 0x8000_0100, whose target is its own
+    /// address.
     fn jal_self_loop_witness() -> Vec<Fr> {
         const UNEXPANDED_PC: u64 = 0x8000_0100;
 

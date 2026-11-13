@@ -331,9 +331,10 @@ pub struct Cpu {
     f: [f64; 32],
     pub(crate) pc: u64,
     /// Whether the last tick left the PC where it was and re-running it would
-    /// too (`JoltInstructionRow::self_jump_repeats`). A halt also sets it, so a
-    /// driver that stops on a stall also stops at a halt; `halted` tells the
-    /// two apart.
+    /// too (`JoltInstructionRow::self_jump_repeats`). A halt also sets it;
+    /// `halted` tells a Jolt end from a bare stall, which ends HTIF test runs
+    /// (`Emulator::run_test`) but is an error for a Jolt run
+    /// (`TraceError::EndedWithoutHalt`).
     stalled: bool,
     /// Set by the halt that ended the run; every later tick is a no-op.
     halted: Option<HaltKind>,
@@ -1562,6 +1563,7 @@ mod test_cpu {
     use crate::emulator::terminal::DummyTerminal;
     use common::jolt_device::{JoltDevice, MemoryConfig};
     use jolt_platform::{JOLT_PRINT_LINE, JOLT_PRINT_STRING};
+    use jolt_riscv::JOLT_SUCCESS_WORD;
 
     fn create_cpu() -> Cpu {
         Cpu::new(Box::new(DummyTerminal::default()))
@@ -1715,6 +1717,45 @@ mod test_cpu {
             (rows, cpu.read_pc(), cpu.x[1] as u64),
             (3, DRAM_BASE + 2, DRAM_BASE + 2)
         );
+    }
+
+    /// A halt writes its link to its instruction temporary, leaves the PC on
+    /// itself and stops the hart: a later tick emits no rows.
+    #[test]
+    fn halts_write_their_link_and_stop_the_hart() {
+        let success = JOLT_SUCCESS_WORD.to_le_bytes();
+        let ebreak = 0x0010_0073u32.to_le_bytes();
+        // c.ebreak, then c.nop.
+        let c_ebreak = [0x02, 0x90, 0x01, 0x00];
+        for (halt, kind, length) in [
+            (success, HaltKind::Success, 4),
+            (ebreak, HaltKind::Panic, 4),
+            (c_ebreak, HaltKind::Panic, 2),
+        ] {
+            let mut cpu = create_cpu();
+            cpu.get_mut_mmu().init_memory(1 << 16);
+            // addi x1, x0, 1, then the halt.
+            let code = [0x0010_0093u32.to_le_bytes(), halt].concat();
+            for (i, byte) in code.iter().enumerate() {
+                cpu.get_mut_mmu().store_raw(DRAM_BASE + i as u64, *byte);
+            }
+            cpu.update_pc(DRAM_BASE);
+            let mut rows = Vec::new();
+            for _ in 0..2 {
+                cpu.tick(Some(&mut rows));
+            }
+
+            let address = DRAM_BASE + 4;
+            assert_eq!(cpu.halted(), Some(kind));
+            assert_eq!(cpu.read_pc(), address);
+            assert!(cpu.has_stalled());
+            assert_eq!(rows.len(), 2);
+            assert_eq!(rows[1].rd_write(), Some((40, 0, address + length)));
+
+            let trace_len = cpu.trace_len;
+            cpu.tick(Some(&mut rows));
+            assert_eq!((rows.len(), cpu.trace_len), (2, trace_len));
+        }
     }
 
     #[test]

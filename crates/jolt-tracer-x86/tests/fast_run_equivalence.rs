@@ -100,6 +100,10 @@ fn assert_record_matches(package: &str, func: &str, input: Vec<u8>) {
         "{package}: outputs"
     );
     assert_eq!(
+        actual_output.device.panic, reference.device.panic,
+        "{package}: panic flag"
+    );
+    assert_eq!(
         actual_output.final_memory, reference.final_memory,
         "{package}: final memory"
     );
@@ -123,6 +127,17 @@ fn muldiv_record_matches_reference() {
         bytes.extend(postcard::to_stdvec(&3u32).unwrap());
         bytes
     });
+}
+
+/// A guest panic ends at EBREAK's `Panic` row: the only real guest that runs
+/// the JIT's panic halt.
+#[test]
+fn panic_halt_record_matches_reference() {
+    assert_record_matches(
+        "memory-ops-guest",
+        "panic_halt",
+        postcard::to_stdvec(&true).unwrap(),
+    );
 }
 
 #[test]
@@ -156,6 +171,15 @@ fn fibonacci_fast_run_matches_reference() {
         "fibonacci-guest",
         "fib",
         postcard::to_stdvec(&100u32).unwrap(),
+    );
+}
+
+#[test]
+fn panic_halt_fast_run_matches_reference() {
+    assert_fast_run_matches(
+        "memory-ops-guest",
+        "panic_halt",
+        postcard::to_stdvec(&true).unwrap(),
     );
 }
 

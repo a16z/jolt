@@ -658,8 +658,10 @@ mod chunked_tests {
 mod tests {
     use super::*;
     use crate::emulator::elf_analyzer::test_elf::{build_elf64, StrtabOrder};
+    use crate::parallel::{run_two_pass, TwoPassConfig};
     use common::jolt_device::MemoryConfig;
     use jolt_program::execution::{TraceError, TraceInputs};
+    use jolt_riscv::{JoltInstructionKind, JOLT_SUCCESS_WORD};
 
     #[cfg(feature = "field-inline")]
     use crate::{
@@ -667,15 +669,10 @@ mod tests {
         instruction::Instruction,
     };
 
-    #[test]
-    #[expect(clippy::expect_used, reason = "test-only assertions")]
-    fn tracer_backend_traces_a_guest_elf_into_jolt_rows() {
-        // addi x1, x0, 1 ; addi x2, x1, 2 ; j .
-        let elf = build_elf64(
-            &[0x0010_0093, 0x0020_8113, 0x0000_006f],
-            &[],
-            StrtabOrder::GnuLd,
-        );
+    /// A program of `text` words at 0x8000_0000, with inputs that size its
+    /// memory to the ELF.
+    fn tiny_program(text: &[u32]) -> (Vec<u8>, JoltProgram, TraceInputs) {
+        let elf = build_elf64(text, &[], StrtabOrder::GnuLd);
         let program = jolt_program::build_jolt_program(&elf).expect("prepare program");
         let inputs = TraceInputs {
             memory_config: MemoryConfig {
@@ -684,12 +681,24 @@ mod tests {
             },
             ..Default::default()
         };
+        (elf, program, inputs)
+    }
+
+    #[test]
+    #[expect(clippy::expect_used, reason = "test-only assertions")]
+    fn tracer_backend_traces_a_guest_elf_into_jolt_rows() {
+        // addi x1, x0, 1 ; addi x2, x1, 2 ; jolt.success
+        let (_, program, inputs) = tiny_program(&[0x0010_0093, 0x0020_8113, JOLT_SUCCESS_WORD]);
 
         let mut backend = TracerBackend::new();
         let output = backend.trace(&program, inputs).expect("trace succeeds");
 
         let rows = output.trace.rows();
-        assert!(rows.len() >= 3, "two ADDIs plus the jump expansion");
+        assert_eq!(rows.len(), 3, "two ADDIs and the halt");
+        assert_eq!(
+            rows[2].instruction().instruction_kind,
+            JoltInstructionKind::JoltSuccess
+        );
         let rd = rows[0].registers().rd.expect("first ADDI writes rd");
         assert_eq!((rd.register, rd.pre_value, rd.post_value), (1, 0, 1));
         let rs1 = rows[1].registers().rs1.expect("second ADDI reads rs1");
@@ -700,6 +709,75 @@ mod tests {
         let image = output.final_memory.expect("memory image present");
         assert!(!image.bytes.is_empty());
         assert!(!output.device.panic);
+    }
+
+    /// Every driver ends a run at its halt row and rejects a run that stops
+    /// at a PC stall instead.
+    #[test]
+    fn jolt_runs_end_at_halts() {
+        // addi x1, x0, 1, then jolt.success, ebreak, or c.ebreak and c.nop.
+        for (halt, kind, is_compressed) in [
+            (JOLT_SUCCESS_WORD, JoltInstructionKind::JoltSuccess, false),
+            (0x0010_0073, JoltInstructionKind::JoltPanic, false),
+            (0x0001_9002, JoltInstructionKind::JoltPanic, true),
+        ] {
+            let (_, program, inputs) = tiny_program(&[0x0010_0093, halt]);
+            let mut backend = TracerBackend::new();
+            let eager = backend
+                .trace(&program, inputs.clone())
+                .expect("eager trace");
+            let rows = eager.trace.rows();
+            let last = rows.last().expect("nonempty trace").instruction();
+            assert_eq!(
+                (last.instruction_kind, last.is_compressed),
+                (kind, is_compressed)
+            );
+            // No panic byte was written: the device latch, not the halt kind,
+            // sets the public panic bit.
+            assert!(!eager.device.panic);
+
+            let summary = backend
+                .execute(&program, inputs, 1)
+                .expect("chunked execute");
+            assert!(!summary.device.panic);
+            let replayed: Vec<JoltTraceRow> = summary
+                .checkpoints
+                .iter()
+                .flat_map(|checkpoint| {
+                    backend
+                        .replay_chunk(checkpoint)
+                        .expect("replay")
+                        .rows()
+                        .to_vec()
+                })
+                .collect();
+            assert_eq!(replayed, rows);
+        }
+
+        // addi x1, x0, 1, then j . or beq x0, x0, 0: a PC stall, not a halt.
+        for stall in [0x0000_006f, 0x0000_0063] {
+            let (elf, program, inputs) = tiny_program(&[0x0010_0093, stall]);
+            let mut backend = TracerBackend::new();
+            assert!(matches!(
+                backend.trace(&program, inputs.clone()),
+                Err(TraceError::EndedWithoutHalt { pc: 0x8000_0004 })
+            ));
+            assert!(matches!(
+                backend.execute(&program, inputs.clone(), 1),
+                Err(TraceError::EndedWithoutHalt { pc: 0x8000_0004 })
+            ));
+            let emulator =
+                crate::create_emulator(&elf, None, &[], &[], &[], &inputs.memory_config, None);
+            let config = TwoPassConfig {
+                workers: 2,
+                chunk_rows: 1,
+                capacity_rows: 64,
+            };
+            assert!(matches!(
+                crate::finish_emulator(run_two_pass(emulator, &config).1),
+                Err(TraceError::EndedWithoutHalt { pc: 0x8000_0004 })
+            ));
+        }
     }
 
     #[test]

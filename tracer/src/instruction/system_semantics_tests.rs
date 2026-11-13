@@ -9,7 +9,7 @@
 
 use common::jolt_device::{JoltDevice, MemoryConfig};
 
-use crate::emulator::cpu::Cpu;
+use crate::emulator::cpu::{Cpu, HaltKind};
 use crate::emulator::terminal::DummyTerminal;
 use crate::instruction::Cycle;
 
@@ -118,12 +118,13 @@ fn hart(program: &[u32], handler: &[u32], registers: &[(u8, u64)]) -> Cpu {
     cpu
 }
 
-/// Runs until the hart stalls on `EBREAK` (Jolt's halt).
+/// Runs until the hart halts at `EBREAK`.
 fn run(cpu: &mut Cpu) {
     let mut trace: Vec<Cycle> = Vec::new();
     for _ in 0..MAX_TICKS {
         cpu.tick(Some(&mut trace));
-        if cpu.has_stalled() {
+        if let Some(halt) = cpu.halted() {
+            assert_eq!(halt, HaltKind::Panic);
             return;
         }
     }

@@ -16,8 +16,8 @@ use jolt_program::execution::{
 };
 use jolt_riscv::{JoltInstructionKind as Kind, JoltInstructionRow, NormalizedOperands};
 use jolt_tracer_x86::harness::{
-    compile_program, memory_config, run_program, single_row_program, terminal_row, Outcome,
-    TEST_ADDR,
+    compile_program, memory_config, run_program, single_row_program, terminal_row, ExitReason,
+    Outcome, TEST_ADDR,
 };
 
 use jolt_tracer_x86::X86TracerBackend;
@@ -98,9 +98,11 @@ fn out_of_bounds_load_reports_a_fault() {
 
     let outcome = run_program(&program, &pre, &[], &[]).expect("run should not error");
     assert_eq!(
-        outcome.exit, 2,
+        outcome.exit,
+        ExitReason::FaultOutOfBounds as u64,
         "expected the out-of-bounds exit reason, got {} ({:?})",
-        outcome.exit, outcome.helper_error
+        outcome.exit,
+        outcome.helper_error
     );
     assert_eq!(
         outcome.fault_addr, pre[1],
@@ -121,9 +123,11 @@ fn out_of_bounds_store_reports_a_fault() {
 
     let outcome = run_program(&program, &pre, &[], &[]).expect("run should not error");
     assert_eq!(
-        outcome.exit, 2,
+        outcome.exit,
+        ExitReason::FaultOutOfBounds as u64,
         "expected the out-of-bounds exit reason, got {} ({:?})",
-        outcome.exit, outcome.helper_error
+        outcome.exit,
+        outcome.helper_error
     );
 }
 
@@ -153,9 +157,11 @@ fn store_into_stack_canary_reports_a_fault() {
     for address in [stack_end, stack_end + 8, last_doubleword] {
         let outcome = store_to(address);
         assert_eq!(
-            outcome.exit, 4,
+            outcome.exit,
+            ExitReason::FaultHelper as u64,
             "store to {address:#x}: expected the helper-fault exit reason, got {} ({:?})",
-            outcome.exit, outcome.helper_error
+            outcome.exit,
+            outcome.helper_error
         );
         let message = outcome.helper_error.expect("a helper error message");
         assert!(
@@ -175,9 +181,11 @@ fn stores_next_to_stack_canary_succeed() {
     for address in [stack_end - 8, stack_end + STACK_CANARY_SIZE] {
         let outcome = store_to(address);
         assert_eq!(
-            outcome.exit, 1,
-            "store to {address:#x}: expected a clean termination, got {} ({:?})",
-            outcome.exit, outcome.helper_error
+            outcome.exit,
+            ExitReason::HaltedSuccess as u64,
+            "store to {address:#x}: expected the terminal halt, got {} ({:?})",
+            outcome.exit,
+            outcome.helper_error
         );
     }
 }
@@ -192,9 +200,11 @@ fn in_range_unmapped_jump_reports_bad_target() {
 
     let outcome = run_program(&program, &pre, &[], &[]).expect("run should not error");
     assert_eq!(
-        outcome.exit, 3,
+        outcome.exit,
+        ExitReason::FaultBadJumpTarget as u64,
         "expected the bad-jump exit reason, got {} ({:?})",
-        outcome.exit, outcome.helper_error
+        outcome.exit,
+        outcome.helper_error
     );
     assert_eq!(outcome.fault_addr, TEST_ADDR + 2);
 }
@@ -205,16 +215,19 @@ fn in_range_unmapped_jump_reports_bad_target() {
 fn static_branch_to_unmapped_target_faults_only_when_taken() {
     let target = TEST_ADDR + 12;
     let program = single_row_program(row(Kind::BEQ, Some(1), None, (target - TEST_ADDR).into()));
-    for (x1, exit) in [(1, 1), (0, 3)] {
+    for (x1, exit) in [
+        (1, ExitReason::HaltedSuccess),
+        (0, ExitReason::FaultBadJumpTarget),
+    ] {
         let mut pre = [0u64; REGS];
         pre[1] = x1;
         let outcome = run_program(&program, &pre, &[], &[]).expect("run should not error");
         assert_eq!(
-            outcome.exit, exit,
+            outcome.exit, exit as u64,
             "x1 = {x1}: unexpected exit reason ({:?})",
             outcome.helper_error
         );
-        if exit == 3 {
+        if exit == ExitReason::FaultBadJumpTarget {
             assert_eq!(outcome.fault_addr, target);
         }
     }
@@ -281,7 +294,7 @@ fn device_load_failures_report_io_overflow() {
     pre[1] = layout.io_end + 8;
     let program = single_row_program(row(Kind::LD, Some(1), Some(2), 0));
     let load = run_program(&program, &pre, &[], &[]).expect("run overflowing load");
-    assert_eq!(load.exit, 4);
+    assert_eq!(load.exit, ExitReason::FaultHelper as u64);
     assert!(load
         .helper_error
         .expect("load error")

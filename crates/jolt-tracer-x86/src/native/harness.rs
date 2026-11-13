@@ -13,11 +13,12 @@ use jolt_riscv::{JoltInstructionKind, JoltInstructionRow, NormalizedOperands};
 pub use super::compile::emitter::{EmitOutcome, EmitterSet, RowEmitter};
 pub use super::compile::CompiledProgram;
 use super::memory::MemoryPlane;
-use super::state::{ExitReason, GuestState, HostContext};
+pub use super::state::ExitReason;
+use super::state::{GuestState, HostContext};
 
-/// Source address of the row under test. Terminal rows (always-taken
-/// self-branches with no register effects) catch the fall-through and the
-/// ±8 branch targets.
+/// Source address of the row under test. Terminal rows (`jolt.success`
+/// halts with no register effects) catch the fall-through and the ±8 branch
+/// targets.
 pub const TEST_ADDR: u64 = RAM_START_ADDRESS + 0x1000;
 /// RAM scratch region seeded identically on both sides for memory-op rows.
 pub const SCRATCH_START: u64 = RAM_START_ADDRESS + 0x2000;
@@ -32,16 +33,16 @@ pub fn memory_config() -> MemoryConfig {
     }
 }
 
-/// An always-taken self-branch: `Beq x0, x0, 0`. Terminates via PC-stall
-/// with no register or memory effects.
+/// A `jolt.success` halt that links into x0, so it has no register or memory
+/// effect: the run ends with `ExitReason::HaltedSuccess` at `address`.
 pub fn terminal_row(address: u64) -> JoltInstructionRow {
     JoltInstructionRow {
-        instruction_kind: JoltInstructionKind::BEQ,
+        instruction_kind: JoltInstructionKind::JoltSuccess,
         address: address as usize,
         operands: NormalizedOperands {
             rs1: Some(0),
-            rs2: Some(0),
-            rd: None,
+            rs2: None,
+            rd: Some(0),
             imm: 0,
         },
         virtual_sequence_remaining: None,
@@ -147,8 +148,8 @@ impl Prepared {
         });
         guest.x[0] = 0;
         self.compiled.run(&mut guest)?;
-        if guest.exit != ExitReason::Stalled as u64 {
-            return Err(TraceError::Backend("benchmark program did not terminate"));
+        if guest.exit != ExitReason::HaltedSuccess as u64 {
+            return Err(TraceError::Backend("benchmark program did not halt"));
         }
         Ok(guest.trace_len)
     }
