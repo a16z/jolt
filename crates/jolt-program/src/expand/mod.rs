@@ -39,7 +39,8 @@ pub mod asm_support {
 
 use allocator::{
     mcause_register, mepc_register, mstatus_register, mtval_register, reservation_d_register,
-    reservation_w_register, trap_handler_register, virtual_register_for_csr,
+    reservation_w_register, trap_handler_register, virtual_register_for_csr, CSR_MEPC, CSR_MSTATUS,
+    CSR_MTVEC,
 };
 use arithmetic::*;
 use control_flow::*;
