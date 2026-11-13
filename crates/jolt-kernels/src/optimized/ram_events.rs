@@ -9,10 +9,11 @@ use std::sync::Arc;
 
 use jolt_field::JoltField;
 use jolt_witness::witnesses::{RamReadValue, RamWriteValue, RemappedRamAddress};
-use jolt_witness::{JoltWitnessPlane, RandomAccessRows, WitnessBundle, WitnessError};
+use jolt_witness::{JoltWitnessPlane, WitnessBundle, WitnessError};
 
 use super::ram_trace::val_init_from_first_accesses;
 use super::streaming::{exact_task_fill, task_ranges, TaskSlots, VISIT_ROWS};
+use super::support::BundleStore;
 use crate::{KernelError, ProofSession};
 
 const LABEL: &str = "RAM event log";
@@ -81,31 +82,12 @@ impl RamEvent {
     }
 }
 
-/// The witness's row handle over exactly `2^log_t` cycles.
-fn event_rows<F: JoltField>(
-    witness: &dyn JoltWitnessPlane<F>,
-    log_t: usize,
-) -> Result<RandomAccessRows, KernelError<F>> {
-    const ROWS: &str = "RAM event trace rows";
-    let rows = witness
-        .random_access()
-        .ok_or(WitnessError::UnavailableView { label: ROWS })?;
-    if rows.cycles() != 1usize << log_t {
-        return Err(WitnessError::InvalidDimensions {
-            label: ROWS,
-            reason: format!("{} rows for a 2^{log_t}-cycle stage", rows.cycles()),
-        }
-        .into());
-    }
-    Ok(rows)
-}
-
 /// Every [`RamEvent`] of the cycle domain in cycle order: the sparse support
 /// of the stage-2–5 RAM factors. Clones share one backing.
 #[derive(Clone)]
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(crate) struct RamEventLog {
-    cycles: usize,
+    log_t: usize,
     ram_k: usize,
     events: Arc<Vec<RamEvent>>,
 }
@@ -159,7 +141,7 @@ impl RamEventLog {
         log_t: usize,
         ram_k: usize,
     ) -> Result<Self, KernelError<F>> {
-        let rows = event_rows(witness, log_t)?;
+        let rows = BundleStore::<RamEventBundle>::resident(witness, log_t, "RAM event trace rows")?;
         let cycles = 1usize << log_t;
         if u32::try_from(cycles - 1).is_err() {
             return Err(KernelError::Unsupported {
@@ -170,29 +152,21 @@ impl RamEventLog {
             &task_ranges(cycles, 1),
             |range| {
                 let mut count = 0;
-                rows.visit_bundles(
-                    range.clone(),
-                    VISIT_ROWS,
-                    |_, bundles: &[RamEventBundle]| {
-                        count += bundles.iter().filter(|bundle| bundle.is_event()).count();
-                        Ok(())
-                    },
-                )?;
+                rows.visit(range.clone(), VISIT_ROWS, |_, bundles| {
+                    count += bundles.iter().filter(|bundle| bundle.is_event()).count();
+                    Ok(())
+                })?;
                 Ok(count)
             },
             |range, slots: &mut TaskSlots<'_, RamEvent>| {
-                rows.visit_bundles(
-                    range.clone(),
-                    VISIT_ROWS,
-                    |first, bundles: &[RamEventBundle]| {
-                        for (cycle, bundle) in (first..).zip(bundles) {
-                            if bundle.is_event() {
-                                slots.push(RamEvent::new(cycle, bundle, ram_k)?);
-                            }
+                rows.visit(range.clone(), VISIT_ROWS, |first, bundles| {
+                    for (cycle, bundle) in (first..).zip(bundles) {
+                        if bundle.is_event() {
+                            slots.push(RamEvent::new(cycle, bundle, ram_k)?);
                         }
-                        Ok(())
-                    },
-                )
+                    }
+                    Ok(())
+                })
             },
             |_| WitnessError::InvalidWitnessData {
                 label: LABEL,
@@ -200,7 +174,7 @@ impl RamEventLog {
             },
         )?;
         Ok(Self {
-            cycles,
+            log_t,
             ram_k,
             events: Arc::new(events),
         })
@@ -210,9 +184,9 @@ impl RamEventLog {
     fn check_domain<F: JoltField>(&self, log_t: usize, ram_k: usize) -> Result<(), KernelError<F>> {
         for (table, expected, got) in [
             (
-                "session-shared RAM event log cycles",
-                1usize << log_t,
-                self.cycles,
+                "session-shared RAM event log cycle variables",
+                log_t,
+                self.log_t,
             ),
             ("session-shared RAM event log words", ram_k, self.ram_k),
         ] {
@@ -297,8 +271,8 @@ mod tests {
         assert_eq!(logged, inc);
     }
 
-    /// A witness without a row handle, an access beyond `ram_K` and a session
-    /// log of another domain fail typed.
+    /// A witness without a row handle, a cycle count `usize` cannot hold, an
+    /// access beyond `ram_K` and a session log of another domain fail typed.
     #[test]
     fn event_log_failures_are_typed() {
         let shape = FixtureShape { log_t: 3, ram_k: 8 };
@@ -310,6 +284,10 @@ mod tests {
         assert!(matches!(
             RamEventLog::collect::<Fr>(&shortened, 1, shape.ram_k),
             Err(KernelError::Witness(WitnessError::UnavailableView { .. }))
+        ));
+        assert!(matches!(
+            RamEventLog::collect::<Fr>(&witness, usize::BITS as usize, shape.ram_k),
+            Err(KernelError::Witness(WitnessError::InvalidDimensions { .. }))
         ));
         assert!(matches!(
             RamEventLog::collect::<Fr>(&witness, shape.log_t, 2),
@@ -328,11 +306,17 @@ mod tests {
                 ..
             })
         ));
+        // A log over `2^log_t` cycles is not one over `2^(log_t + usize::BITS)`.
+        let wide = shape.log_t + usize::BITS as usize;
+        assert!(matches!(
+            RamEventLog::shared::<Fr>(&mut session, &witness, wide, shape.ram_k),
+            Err(KernelError::TableSizeMismatch { got: 3, .. })
+        ));
         assert!(matches!(
             RamEventLog::take::<Fr>(&mut session, &witness, shape.log_t + 1, shape.ram_k),
             Err(KernelError::TableSizeMismatch {
-                expected: 16,
-                got: 8,
+                expected: 4,
+                got: 3,
                 ..
             })
         ));
