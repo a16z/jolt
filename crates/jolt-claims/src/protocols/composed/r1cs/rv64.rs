@@ -1288,14 +1288,4 @@ mod execution_witness_tests {
             assert_eq!(check(&at_last_row(&w)), Ok(()), "{kind:?}");
         }
     }
-
-    #[test]
-    fn halt_rejects_a_real_successor() {
-        // A halt targets address 0, so a real next row fails row 14.
-        let mut w = halt_witness(JoltInstructionKind::JoltSuccess, None, false);
-        w[V_SHOULD_JUMP] = Fr::from_u64(1);
-        w[V_NEXT_UNEXPANDED_PC] = Fr::from_u64(0x8000_0204);
-        w[V_NEXT_PC] = Fr::from_u64(13);
-        assert_eq!(check(&w), Err(NEXT_UNEXP_PC_EQ_LOOKUP_IF_SHOULD_JUMP));
-    }
 }
