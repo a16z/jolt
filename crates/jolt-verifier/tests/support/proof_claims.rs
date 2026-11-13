@@ -489,9 +489,6 @@ fn claim_mut_from_stage6_outputs<'a, F: JoltField>(
             return Some(opening_claim);
         }
     }
-    if id == ram::ram_hamming_weight() {
-        return Some(&mut stage6b.ram_hamming_booleanity.ram_hamming_weight);
-    }
     for (index, opening_claim) in stage6b.ram_ra_virtualization.ram_ra.iter_mut().enumerate() {
         if id == ram::committed_ram_ra(index) {
             return Some(opening_claim);

@@ -1,12 +1,11 @@
 //! Stage 6b: the cycle-phase batch — bytecode read+RAF and booleanity cycle
-//! phases, RAM Hamming booleanity, both RA virtualizations, the increment
-//! claim reduction, and the present precommitted claim-reduction cycle
-//! phases (advice, committed bytecode, program image — head-aligned
-//! members). A precommitted member whose schedule has active address-phase
-//! rounds stages its intermediate claim here and — via the driver's uniform
-//! post-extraction `park_residue` hook — parks its post-cycle bound state in
-//! the proof session as plain data; stage 7's address-phase member reclaims
-//! the carry.
+//! phases, both RA virtualizations, the increment claim reduction, and the
+//! present precommitted claim-reduction cycle phases (advice, committed
+//! bytecode, program image — head-aligned members). A precommitted member
+//! whose schedule has active address-phase rounds stages its intermediate
+//! claim here and — via the driver's uniform post-extraction `park_residue`
+//! hook — parks its post-cycle bound state in the proof session as plain
+//! data; stage 7's address-phase member reclaims the carry.
 //!
 //! Pure orchestration mirroring `stage6b::verify`: the bytecode gamma is
 //! carried from stage 6a's squeeze (no draw here), the post-6a draws and the

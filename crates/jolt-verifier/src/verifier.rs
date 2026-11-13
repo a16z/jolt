@@ -1951,9 +1951,6 @@ mod tests {
                     bytecode_ra: Vec::new(),
                     ram_ra: Vec::new(),
                 },
-                ram_hamming_booleanity: stage6b::outputs::RamHammingBooleanityOutputClaims {
-                    ram_hamming_weight: zero,
-                },
                 ram_ra_virtualization: stage6b::outputs::RamRaVirtualizationOutputClaims {
                     ram_ra: Vec::new(),
                 },

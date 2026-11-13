@@ -98,10 +98,10 @@ use jolt_claims::{
         InstructionReadRafChallenge, InstructionReadRafPublic, JoltAdviceKind, JoltChallengeId,
         JoltCommittedPolynomial, JoltDerivedId, JoltOpeningId, JoltPolynomialId, JoltRelationId,
         PrecommittedReductionLayout, ProgramImageClaimReductionLayout,
-        ProgramImageClaimReductionPublic, RamHammingBooleanityPublic, RamOutputCheckPublic,
-        RamRaClaimReductionChallenge, RamRaClaimReductionPublic, RamRaVirtualizationPublic,
-        RamRafEvaluationPublic, RamReadWriteChallenge, RamReadWritePublic, RamValCheckChallenge,
-        RamValCheckPublic, RegistersClaimReductionChallenge, RegistersClaimReductionPublic,
+        ProgramImageClaimReductionPublic, RamOutputCheckPublic, RamRaClaimReductionChallenge,
+        RamRaClaimReductionPublic, RamRaVirtualizationPublic, RamRafEvaluationPublic,
+        RamReadWriteChallenge, RamReadWritePublic, RamValCheckChallenge, RamValCheckPublic,
+        RegistersClaimReductionChallenge, RegistersClaimReductionPublic,
         RegistersReadWriteChallenge, RegistersReadWritePublic, RegistersValEvaluationPublic,
         SpartanOuterPublic, SpartanShiftChallenge, SpartanShiftPublic,
     },
@@ -704,7 +704,6 @@ fn add_stage6_publics_and_challenges<PCS, VC, ZkProof>(
     bytecode_rounds: usize,
     booleanity_address_rounds: usize,
     booleanity_rounds: usize,
-    ram_hamming_rounds: usize,
     ram_ra_rounds: usize,
     instruction_ra_rounds: usize,
     inc_rounds: usize,
@@ -776,7 +775,6 @@ where
         .try_instance_point(bytecode_rounds)
         .map_err(|error| stage_sumcheck_error(JoltRelationId::BytecodeReadRaf, error))?;
     let bytecode_r_cycle = bytecode_point.iter().rev().copied().collect::<Vec<_>>();
-    let stage1_remainder_challenges = input.stage1.remainder_consistency.challenges();
     let stage1_cycle = input.stage2.product_tau_low.clone();
     let stage2_product_point = input
         .stage2
@@ -976,22 +974,6 @@ where
         JoltDerivedId::from(BooleanityPublic::EqAddressCycle),
         try_eq_mle(&booleanity_full_point, &reference_eq_point)
             .map_err(|error| public_error(JoltRelationId::Booleanity, error))?,
-    )?;
-
-    let ram_hamming_point = input
-        .stage6b
-        .batch_consistency
-        .try_instance_point(ram_hamming_rounds)
-        .map_err(|error| stage_sumcheck_error(JoltRelationId::RamHammingBooleanity, error))?;
-    let stage1_cycle_binding = point_suffix(
-        &stage1_remainder_challenges,
-        1,
-        JoltRelationId::RamHammingBooleanity,
-    )?;
-    values.public(
-        JoltDerivedId::from(RamHammingBooleanityPublic::EqCycle),
-        try_eq_mle(&ram_hamming_point, stage1_cycle_binding)
-            .map_err(|error| public_error(JoltRelationId::RamHammingBooleanity, error))?,
     )?;
 
     let ram_ra_point = input

@@ -90,6 +90,11 @@ impl ReadWriteChecking {
                     output_weight: RamReadWritePublic::CodeEqCycle.into(),
                     offset: false,
                 },
+                // The only RAM one-hotness check. With Booleanity of every committed
+                // `RamRa` chunk, `Σ_k ra(k, j) = Load(j) + Store(j)` (exclusive Boolean
+                // flags; `load_store_exclusive` in jolt-riscv) makes `ra = Π_i ra_i`
+                // select one word on memory rows and none on other rows. Chunk weights
+                // are not checked individually.
                 UnbatchedClaim {
                     input_relation: JoltRelationId::SpartanOuter,
                     input: v(JoltVirtualPolynomial::OpFlags(CircuitFlags::Load))

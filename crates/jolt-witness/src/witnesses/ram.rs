@@ -22,10 +22,6 @@ pub struct RamReadValue(pub u64);
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct RamWriteValue(pub u64);
 
-/// Whether the cycle accesses a nonzero RAM address.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct RamHammingWeight(pub bool);
-
 /// The cycle's RAM access address remapped to a word index; `None` for
 /// no-ops and — the committed streams' convention — for unremappable
 /// addresses (the grid materializers bound-check instead).
@@ -77,24 +73,6 @@ impl Extract for RamWriteValue {
         _env: &WitnessEnv<'_>,
     ) -> Result<Self, WitnessError> {
         Ok(Self(row.ram_write_value()))
-    }
-}
-
-impl ToField for RamHammingWeight {
-    fn to_field<F: JoltField>(self) -> F {
-        F::from_bool(self.0)
-    }
-}
-
-impl Extract for RamHammingWeight {
-    fn extract(
-        row: &TraceRow,
-        _next: Option<&TraceRow>,
-        _env: &WitnessEnv<'_>,
-    ) -> Result<Self, WitnessError> {
-        Ok(Self(
-            ram_access_address(row).is_some_and(|address| address != 0),
-        ))
     }
 }
 

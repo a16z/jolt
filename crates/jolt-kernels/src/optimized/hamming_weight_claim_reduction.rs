@@ -10,14 +10,17 @@
 //!   against ONE tensor-factored `eq(r_cycle)` (every stage-6b claim family
 //!   lives at the same cycle point), replacing the reference tier's `N`
 //!   independent `O(K_chunk·T)` folds over materialized one-hot grids.
-//! - **One-hot weight fusion**: the base protocol's three per-polynomial claim
-//!   weights `γ^{3i} + γ^{3i+1}·eq_bool(k) + γ^{3i+2}·eq_virt_i(k)` are one
-//!   combined multilinear `W_i(k)` (the Hamming-weight leg's constant-1 rides
-//!   the constant term), so the round summand is `Σ_i G_i·W_i` — `2N` bound
+//! - **One-hot weight fusion**: the base protocol's per-polynomial claim
+//!   weights `h_i·γ^{3i} + γ^{3i+1}·eq_bool(k) + γ^{3i+2}·eq_virt_i(k)`, with
+//!   `h_i` = 1 for instruction and bytecode and 0 for RAM, are one combined
+//!   multilinear `W_i(k)` (the Hamming-weight leg's constant rides the
+//!   constant term), so the round summand is `Σ_i G_i·W_i` — `2N` bound
 //!   tables instead of `2N + 1` and one fused multiply per pair per point.
 //! - **Eval-at-1 recovery** and **rayon walks** (module docs on
 //!   [`crate::optimized`]).
 
+#[cfg(not(feature = "akita"))]
+use jolt_claims::protocols::jolt::geometry::claim_reductions::hamming_weight::has_hamming_weight_leg;
 #[cfg(feature = "akita")]
 use jolt_claims::protocols::jolt::geometry::ra::JoltRaPolynomial;
 use jolt_claims::protocols::jolt::{JoltOpeningId, JoltRelationId};
@@ -100,20 +103,26 @@ impl<F: JoltField> PrepareKernel<F, HammingWeightClaimReduction<F>>
         let gamma_powers = gamma_powers(inputs.challenges.gamma, 3 * layout.total());
         let eq_bool = eq_table(r_address);
         #[cfg(not(feature = "akita"))]
-        let weight_tables: Vec<Polynomial<F>> = virtualization_points
-            .iter()
+        let weight_tables: Vec<Polynomial<F>> = layout
+            .polynomials()
+            .zip(virtualization_points)
             .enumerate()
-            .map(|(i, point)| {
+            .map(|(i, (polynomial, point))| {
                 if point.len() != dimensions.log_k_chunk {
                     return Err(KernelError::InvariantViolation {
                         reason: "hamming virtualization point has the wrong variable count",
                     });
                 }
+                let hamming_weight = if has_hamming_weight_leg(polynomial) {
+                    gamma_powers[3 * i]
+                } else {
+                    F::zero()
+                };
                 let eq_virt = eq_table(point);
                 Ok(Polynomial::new(
                     (0..k_chunk)
                         .map(|k| {
-                            gamma_powers[3 * i]
+                            hamming_weight
                                 + gamma_powers[3 * i + 1] * eq_bool[k]
                                 + gamma_powers[3 * i + 2] * eq_virt[k]
                         })
@@ -122,18 +131,11 @@ impl<F: JoltField> PrepareKernel<F, HammingWeightClaimReduction<F>>
             })
             .collect::<Result<_, _>>()?;
 
-        // Instruction and bytecode use the paper's digit-zero recentering;
-        // RAM keeps the base three-leg reduction.
+        // Instruction and bytecode use the paper's digit-zero recentering; RAM
+        // commits its digit-zero row and takes unrecentered legs.
         #[cfg(feature = "akita")]
         let weight_tables: Vec<Polynomial<F>> = {
-            let ra_terms = layout
-                .polynomials()
-                .map(|polynomial| match polynomial {
-                    JoltRaPolynomial::Instruction(_) | JoltRaPolynomial::Bytecode(_) => 2,
-                    JoltRaPolynomial::Ram(_) => 3,
-                })
-                .sum::<usize>();
-            let gamma_powers = gamma_powers(inputs.challenges.gamma, ra_terms);
+            let gamma_powers = gamma_powers(inputs.challenges.gamma, 2 * layout.total());
             let at_digit_zero = |point: &[F]| {
                 point
                     .iter()
@@ -141,7 +143,6 @@ impl<F: JoltField> PrepareKernel<F, HammingWeightClaimReduction<F>>
             };
             let eq_bool_digit_zero = at_digit_zero(r_address);
             let mut weights = Vec::with_capacity(layout.total());
-            let mut power = 0;
             for (i, polynomial) in layout.polynomials().enumerate() {
                 let point = &virtualization_points[i];
                 if point.len() != dimensions.log_k_chunk {
@@ -156,29 +157,25 @@ impl<F: JoltField> PrepareKernel<F, HammingWeightClaimReduction<F>>
                         weights.push(Polynomial::new(
                             (0..k_chunk)
                                 .map(|k| {
-                                    gamma_powers[power] * (eq_bool[k] - eq_bool_digit_zero)
-                                        + gamma_powers[power + 1]
+                                    gamma_powers[2 * i] * (eq_bool[k] - eq_bool_digit_zero)
+                                        + gamma_powers[2 * i + 1]
                                             * (eq_virt[k] - eq_virt_digit_zero)
                                 })
                                 .collect(),
                         ));
-                        power += 2;
                     }
                     JoltRaPolynomial::Ram(_) => {
                         weights.push(Polynomial::new(
                             (0..k_chunk)
                                 .map(|k| {
-                                    gamma_powers[power]
-                                        + gamma_powers[power + 1] * eq_bool[k]
-                                        + gamma_powers[power + 2] * eq_virt[k]
+                                    gamma_powers[2 * i] * eq_bool[k]
+                                        + gamma_powers[2 * i + 1] * eq_virt[k]
                                 })
                                 .collect(),
                         ));
-                        power += 3;
                     }
                 }
             }
-            debug_assert_eq!(power, ra_terms);
             weights
         };
 

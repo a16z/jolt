@@ -33,7 +33,7 @@ fn verify_witness(
         RamGuardDomain {
             intervals: if code { vec![(0, 1)] } else { Vec::new() },
             log_k: 0,
-            address: 0,
+            addresses: vec![0],
         },
         read,
         increments,
@@ -45,7 +45,8 @@ fn verify_witness(
 struct RamGuardDomain {
     intervals: Vec<(usize, usize)>,
     log_k: usize,
-    address: usize,
+    /// The words a selecting cycle selects, all at once.
+    addresses: Vec<usize>,
 }
 
 fn verify_address_witness(
@@ -58,7 +59,7 @@ fn verify_address_witness(
     let RamGuardDomain {
         intervals,
         log_k,
-        address,
+        addresses,
     } = domain;
     let tau = Fr::from_u64(7);
     let lerp = |values: [i64; 2], point: Fr| {
@@ -91,17 +92,22 @@ fn verify_address_witness(
     };
     let outputs_at = |point: &[Fr]| {
         let cycle = point[log_k];
-        let address_eq: Fr = point[..log_k]
+        let address_eq: Fr = addresses
             .iter()
-            .enumerate()
-            .map(|(bit, r)| {
-                if address & (1 << (log_k - bit - 1)) == 0 {
-                    Fr::from_u64(1) - *r
-                } else {
-                    *r
-                }
+            .map(|address| {
+                point[..log_k]
+                    .iter()
+                    .enumerate()
+                    .map(|(bit, r)| {
+                        if address & (1 << (log_k - bit - 1)) == 0 {
+                            Fr::from_u64(1) - *r
+                        } else {
+                            *r
+                        }
+                    })
+                    .product::<Fr>()
             })
-            .product();
+            .sum();
         RamReadWriteOutputClaims {
             val: lerp(read, cycle),
             ra: address_eq * lerp(selected, cycle),
@@ -193,6 +199,24 @@ fn verifier_requires_selection_only_on_memory_rows() {
         verify_witness(false, [0, 0], [0, 0], [0, 0], [1, 0]),
         Err(VerifierError::StageClaimOutputMismatch { stage: 2 }),
     ));
+    assert!(matches!(
+        verify_witness(false, [0, 0], [0, 0], [1, 0], [0, 0]),
+        Err(VerifierError::StageClaimOutputMismatch { stage: 2 }),
+    ));
+}
+
+#[test]
+fn verifier_rejects_two_selected_words_on_a_memory_row() {
+    let domain = |addresses| RamGuardDomain {
+        intervals: Vec::new(),
+        log_k: 1,
+        addresses,
+    };
+    assert!(verify_address_witness(domain(vec![1]), [0, 0], [0, 0], [1, 1], [1, 1]).is_ok());
+    assert!(matches!(
+        verify_address_witness(domain(vec![0, 1]), [0, 0], [0, 0], [1, 1], [1, 1]),
+        Err(VerifierError::StageClaimOutputMismatch { stage: 2 }),
+    ));
 }
 
 #[test]
@@ -221,7 +245,7 @@ fn verifier_rejects_protected_io_and_canary_changes_with_or_without_restoration(
                 RamGuardDomain {
                     intervals: Vec::new(),
                     log_k,
-                    address: word
+                    addresses: vec![word]
                 },
                 read,
                 increments,
@@ -234,7 +258,7 @@ fn verifier_rejects_protected_io_and_canary_changes_with_or_without_restoration(
                     RamGuardDomain {
                         intervals: intervals.clone(),
                         log_k,
-                        address: word
+                        addresses: vec![word]
                     },
                     read,
                     increments,
@@ -248,7 +272,7 @@ fn verifier_rejects_protected_io_and_canary_changes_with_or_without_restoration(
             RamGuardDomain {
                 intervals: intervals.clone(),
                 log_k,
-                address: word
+                addresses: vec![word]
             },
             [41, 41],
             [0, 0],

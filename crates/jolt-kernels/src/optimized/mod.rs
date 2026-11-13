@@ -69,7 +69,6 @@ mod one_hot_histograms;
 pub mod opening;
 pub mod precommitted_reduction;
 mod prefix_product;
-pub mod ram_hamming_booleanity;
 pub mod ram_output_check;
 pub mod ram_ra_claim_reduction;
 pub mod ram_ra_virtualization;
@@ -173,8 +172,6 @@ where
 
         self.booleanity_address = Box::new(booleanity::OptimizedBooleanityAddress);
         self.booleanity_cycle = Box::new(booleanity::OptimizedBooleanityCycle);
-        self.ram_hamming_booleanity =
-            Box::new(ram_hamming_booleanity::OptimizedRamHammingBooleanity);
 
         self.bytecode_read_raf_address = Box::new(OptimizedBytecodeReadRafAddress);
         self.bytecode_read_raf_cycle = Box::new(OptimizedBytecodeReadRafCycle);

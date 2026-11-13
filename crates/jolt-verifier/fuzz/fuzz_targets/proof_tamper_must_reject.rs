@@ -125,7 +125,12 @@ fn mutate_clear_claim(proof: &mut Proof, stage: usize, delta: Fr) -> bool {
         3 => claims.stage4.ram_val_check.ram_ra += delta,
         4 => claims.stage5.registers_val_evaluation.rd_inc += delta,
         5 => claims.stage6a.booleanity.intermediate += delta,
-        6 => claims.stage6b.ram_hamming_booleanity.ram_hamming_weight += delta,
+        6 => {
+            let Some(value) = claims.stage6b.ram_ra_virtualization.ram_ra.first_mut() else {
+                return false;
+            };
+            *value += delta;
+        }
         _ => {
             let Some(value) = claims
                 .stage7

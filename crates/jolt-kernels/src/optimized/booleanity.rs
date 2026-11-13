@@ -874,7 +874,8 @@ impl<F: JoltField> SumcheckKernel<F> for OptimizedBooleanityCycleKernel<F> {
 }
 
 /// Trace-backed test fixtures shared by the optimized-kernel parity tests
-/// (this module and `optimized::ram_hamming_booleanity`): a tiny consistent
+/// (this module, `optimized::bytecode_read_raf` and
+/// `optimized::hamming_weight_claim_reduction`): a tiny consistent
 /// trace behind a full witness plane, so the reference kernels' dense
 /// `oracle_table` grids and the optimized kernels' typed bundle rows
 /// describe the same witness by construction.
@@ -934,7 +935,7 @@ pub(crate) mod testing {
         ..LOAD
     };
 
-    pub(crate) fn load_row(address: u64) -> TraceRow {
+    fn load_row(address: u64) -> TraceRow {
         TraceRow::new(
             LOAD,
             RegisterState {
@@ -955,7 +956,7 @@ pub(crate) mod testing {
         .unwrap()
     }
 
-    pub(crate) fn store_row(address: u64) -> TraceRow {
+    fn store_row(address: u64) -> TraceRow {
         TraceRow::new(
             STORE,
             RegisterState {
@@ -979,7 +980,7 @@ pub(crate) mod testing {
         .unwrap()
     }
 
-    pub(crate) fn no_op_row() -> TraceRow {
+    fn no_op_row() -> TraceRow {
         TraceRow::new(
             JoltInstructionRow::default(),
             RegisterState::default(),
@@ -1026,7 +1027,7 @@ pub(crate) mod testing {
     /// (padded by the backend up to `2^log_t`). Booleanity dimensions are
     /// probed off the backend's own servable set so test and backend
     /// geometry cannot drift.
-    pub(crate) fn with_trace_backend<R>(
+    fn with_trace_backend<R>(
         log_t: usize,
         log_k_chunk: u8,
         rows: Vec<TraceRow>,

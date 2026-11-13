@@ -1,9 +1,10 @@
 //! The stage 7 `HammingWeightClaimReduction` sumcheck instance.
 //!
-//! Reduces the per-family RA booleanity, virtualization, and hamming-weight claims
-//! (instruction, bytecode, RAM) into the one-hot `Ra` opening claims that anchor the
-//! stage 8 final batched opening. Owns the shared opening-point derivation and the
-//! `EqBooleanity` / `EqVirtualization` public-value computation.
+//! Reduces the per-family RA booleanity and virtualization claims and the
+//! instruction and bytecode hamming-weight claims into the one-hot `Ra` opening
+//! claims that anchor the stage 8 final batched opening. Owns the shared
+//! opening-point derivation and the `EqBooleanity` / `EqVirtualization`
+//! public-value computation.
 //!
 //! # One slot, two relations
 //!
@@ -11,10 +12,11 @@
 //! The opening ids, transcript labels, and wire field name are identical in both modes;
 //! which symbolic relation fills the slot is chosen by the `akita` feature:
 //!
-//! - base — `claim_reductions::hamming_weight::ClaimReduction`: three gamma legs per RA
-//!   polynomial (hamming weight, booleanity, virtualization).
-//! - akita — `lattice::relations::digit_zero::LatticeDigitZeroClaimReduction`: two
-//!   digit-zero-recentered legs for instruction and bytecode, the base three for RAM. See
+//! - base — `claim_reductions::hamming_weight::ClaimReduction`: hamming-weight,
+//!   booleanity and virtualization legs for instruction and bytecode polynomials;
+//!   booleanity and virtualization only for RAM.
+//! - akita — `lattice::relations::digit_zero::LatticeDigitZeroClaimReduction`: two legs
+//!   per polynomial, digit-zero-recentered for instruction and bytecode. See
 //!   `specs/digit-zero-virtualization.md`.
 //!
 //! The private `mode` module below is the only place that choice is made. Everything
@@ -83,7 +85,6 @@ pub fn hamming_weight_input_values_from_upstream<F: JoltField>(
     cycle_phase: &Stage6bOutputClaims<F>,
 ) -> HammingWeightClaimReductionInputClaims<F> {
     HammingWeightClaimReductionInputClaims {
-        ram_hamming_weight: cycle_phase.ram_hamming_booleanity.ram_hamming_weight,
         instruction_booleanity: cycle_phase.booleanity.instruction_ra.clone(),
         bytecode_booleanity: cycle_phase.booleanity.bytecode_ra.clone(),
         ram_booleanity: cycle_phase.booleanity.ram_ra.clone(),
