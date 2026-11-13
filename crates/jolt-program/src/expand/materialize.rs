@@ -6,7 +6,10 @@ use std::marker::PhantomData;
 use std::ops::RangeInclusive;
 
 use crate::expand::{
-    allocator::{ExpansionAllocator, NUM_INLINE_REGISTERS, NUM_VIRTUAL_INSTRUCTION_REGISTERS},
+    allocator::{
+        ExpansionAllocator, FIRST_INLINE_WRITE_TARGET, NUM_INLINE_REGISTERS,
+        NUM_VIRTUAL_INSTRUCTION_REGISTERS,
+    },
     expand_source_only_instruction,
     grammar::{
         is_source_only, ExpandedInstructionSequence, ExpansionOp, InlineTempId, RegisterOperand,
@@ -142,6 +145,15 @@ impl ExpansionState {
     /// constraint 0 forms `RamAddress` from the unwrapped `rs1 + imm`, so a
     /// wider offset could wrap the tracer's effective address into mapped
     /// memory and leave the access unprovable (see constraint 0 in jolt-claims).
+    ///
+    /// No row may write an architectural register other than `x0` or a
+    /// reserved virtual register (`vr32..vr39`): an inline's architectural
+    /// effect is limited to memory, and reserved registers hold modeled machine
+    /// state. Rows may write the instruction temps (`vr40..vr47`) that
+    /// recursively expanded helpers allocate, and inline registers, whose
+    /// liveness `SequenceMaterializer` checks when it binds them. This check
+    /// reads the materialized rows, so it also accepts a provider row that
+    /// names an instruction temp directly.
     pub(super) fn materialize_inline(
         &mut self,
         sequence: ExpandedInstructionSequence,
@@ -155,6 +167,14 @@ impl ExpansionState {
             },
         )?;
         for row in &rows {
+            if let Some(register) = row.operands.rd {
+                if register != 0 && register < FIRST_INLINE_WRITE_TARGET {
+                    return Err(ExpansionError::InvalidInlineWriteTarget {
+                        register,
+                        minimum_register: FIRST_INLINE_WRITE_TARGET,
+                    });
+                }
+            }
             let flags = JoltInstruction::from(*row).circuit_flags();
             if (flags[CircuitFlags::Load] || flags[CircuitFlags::Store])
                 && !MEMORY_OFFSET_RANGE.contains(&row.operands.imm)
