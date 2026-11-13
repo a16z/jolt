@@ -75,9 +75,10 @@ changes to any of these regions even when a later store restores the original
 value. Same-value stores remain valid, including byte, halfword and word stores
 into a protected
 doubleword. The $\gamma^3$ identity ties the selector sum to the existing Load
-and Store flags. Together with the one-hot reductions, it requires one selected
-address on memory rows and zero on other rows. Virtual memory rows and the
-field-inline memory accumulator carry these same flags.
+and Store flags. Together with Booleanity of every committed RAM chunk, it
+requires one selected address on memory rows and none on other rows. It is the
+only RAM one-hotness check (see [No-op cycles](#no-op-cycles)). Virtual memory
+rows and the field-inline memory accumulator carry these same flags.
 
 Preprocessing rounds each real source instruction's two- or four-byte extent
 outward to doublewords, merges adjacent intervals and excludes synthetic
@@ -107,9 +108,11 @@ value throughout execution. Equality of initial and final RAM alone would permit
 a temporary modification.
 
 The interpreter, replay tracer and native tracer reject a changed protected
-word before writing it, and reject loads below `lowest_address`. These checks
-match the new relations' intended memory behavior. They do not add constraints
-for the rest of the tracer's store-permission policy. Host calls (prints, cycle
+word before writing it, and reject loads below `lowest_address`. The
+constraints reject the same accesses: the $\gamma^2$ identity rejects the
+store, and the $\gamma^3$ identity with RAF evaluation rejects any address below
+`lowest_address`. The rest of the tracer's store-permission policy has no
+matching constraint. Host calls (prints, cycle
 markers and advice writes) never stop the run: a call whose buffer has a byte
 below `lowest_address`, or any other byte a guest load would reject, is logged
 and ignored.
@@ -129,21 +132,19 @@ This polynomial is referred to as $\widetilde{\textsf{ra}}$ for the rest of this
 
 Many instructions do not access memory, so we represent them using a row of zeros in the $\widetilde{\textsf{ra}}$ polynomial rather than the one-hot encoding of the accessed address.
 Having more zeros in $\widetilde{\textsf{ra}}$ makes it cheaper to commit to and speeds up some of the other Twist sumchecks.
-This modification necessitates adjustments to the [Hamming weight](../twist-shout.md#one-hot-polynomials) sumcheck, which would otherwise enforce that the Hamming weight for each "row" in $\widetilde{\textsf{ra}}$ is 1.
-
-We introduce an additional **Hamming Booleanity** sumcheck:
-
-$$
-0 = \sum_{j \in \{0, 1\}^{\log(T)}} \widetilde{\textsf{eq}}(r', j) \cdot \left(\widetilde{\textsf{hw}}(j)^2 - \widetilde{\textsf{hw}}(j)\right)
-$$
-
-where $\widetilde{\textsf{hw}}$ is the Hamming weight polynomial, which can be virtualized using the original Hamming weight sumcheck expression:
+The paper's [Hamming weight](../twist-shout.md#one-hot-polynomials) check, which requires every row of $\widetilde{\textsf{ra}}$ to have weight 1, therefore does not apply to RAM.
+Instead, the $\gamma^3$ identity of [read-write checking](#read-write-checking-and-protected-words) requires, on every cycle $j$,
 
 $$
-\widetilde{\textsf{hw}}(r_\text{cycle}) = \sum_{k = (k_1, \dots, k_d) \in \left(\{0, 1\}^{\log(K) / d}\right)^d} \widetilde{\textsf{ra}}(k, r_\text{cycle})
+\sum_{k} \textsf{ra}(k, j) = \textsf{Load}(j) + \textsf{Store}(j).
 $$
 
-For simplicity, these equations are presented for the $d=1$ case, but as described [above](#dynamic-parameters), $d$ for RAM is dynamic and can be greater than one.
+No instruction sets both flags (the `load_store_exclusive` test in `jolt-riscv` pins the instruction catalog, and bytecode read-checking ties each cycle's flags to its bytecode row), so the right-hand side is 0 or 1.
+The $d$ committed chunks factor the selector as $\textsf{ra}(k, j) = \prod_{i=1}^{d} \textsf{ra}_i(k_i, j)$ (as described [above](#dynamic-parameters), $d$ for RAM is dynamic), so the left-hand side is $\prod_{i=1}^{d} n_i(j)$, where $n_i(j) = \sum_{k_i} \textsf{ra}_i(k_i, j)$ sums over the values that digit $k_i$ takes in addresses of the RAM domain.
+Booleanity of every committed chunk makes each $n_i(j)$ a nonnegative integer, and the product is far below the field modulus, so the equation holds over the integers.
+On a memory row the product is 1, so every chunk's row is one-hot and $\textsf{ra}$ selects exactly one word.
+On any other row the product is 0, so some chunk's row is zero and $\textsf{ra}$ selects no word.
+Individual chunk weights are not otherwise constrained: on a non-memory row, the chunks other than a zero one may hold several ones.
 
 ### ra virtualization
 

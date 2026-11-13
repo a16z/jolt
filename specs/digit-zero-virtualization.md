@@ -1,15 +1,14 @@
 # Digit-zero virtualization for the packed one-hot trace
 
 Digit-zero virtualization applies to the instruction and bytecode families.
-RV64 fused increments are committed directly as a bounded-dense polynomial. RAM stays on the base treatment
-(all rows committed, `RamHammingBooleanity`, and the Hamming-weight leg) so it
-can be reviewed in a separate change. This document makes no claim about the
-note's nonconstant-activation RAM construction. Source: "Digit-Zero
-Virtualization for Twist and Shout" (`~/akita-paper/ra-virtualization-note.tex`).
+RV64 fused increments are committed directly as a bounded-dense polynomial. RAM
+keeps all of its rows committed and is not digit-zero virtualized (§4). This
+document makes no claim about the note's nonconstant-activation RAM
+construction. Source: "Digit-Zero Virtualization for Twist and Shout"
+(`~/akita-paper/ra-virtualization-note.tex`).
 
-Base (Dory) mode is untouched: it commits full one-hot columns for every
-family, keeps all Hamming-weight legs and `RamHammingBooleanity`, and must keep
-producing bit-identical proofs.
+Base (Dory) mode commits full one-hot columns for every family and keeps the
+Hamming-weight legs of the instruction and bytecode families.
 
 ## 1. Setting and notation
 
@@ -86,20 +85,18 @@ There is no Hamming-weight check for these families — `Σ_k ra_i(k,j) = 1` hol
 by construction of the reconstruction, so the weight is fixed with nothing to
 check.
 
-## 4. RAM: the base treatment, unchanged
+## 4. RAM: committed digit-zero row, no recentering
 
-`RamRa` is committed with **all** rows (digit-zero row included), exactly as
-base mode does, and keeps:
+`RamRa` is committed with **all** rows (digit-zero row included), as in base
+mode. Its stage-7 legs are Booleanity (`γ^{2i}`) and RA virtualization
+(`γ^{2i+1}`) with **no digit-zero recentering**; the virtualized families use
+the same two legs, recentered.
 
-- `RamHammingBooleanity` (stage 6b): proves the RAM access indicator
-  `H = RamHammingWeight` is Boolean (`H² = H`) at the stage-1 cycle point;
-- the stage-7 Hamming-weight leg (`γ^{3i}`): ties `Σ_k ra(k,·) = H` against the
-  committed rows — a genuine tie because all rows are committed;
-- the standard Booleanity and RA-virtualization legs.
-
-So RAM's stage-7 legs are the base 3-leg form (Hamming, Booleanity,
-virtualization) with **no digit-zero recentering**; the virtualized families
-use the 2-leg recentered form (Booleanity, virtualization).
+Neither mode has a RAM Hamming-weight check: there is no `RamHammingBooleanity`
+sumcheck and no RAM Hamming-weight leg. RAM read-write checking enforces the
+per-cycle access count `Σ_k ra(k,j) = Load(j) + Store(j)` instead, which with
+Booleanity of every committed `RamRa` chunk makes `ra` one-hot on memory rows
+and zero on other rows (`specs/ram-guards.md`).
 
 ## 5. Proof obligations
 
@@ -112,34 +109,38 @@ Booleanity of the reconstructed rows, their sum is one by definition, so each
 ### RAM is deferred
 
 The note proposes `M_RAM = Load + Store`, which is not the public unit case
-implemented here. Integrating that construction requires a separate mapping
-of the activation claims, their evaluation points, and their binding to the
-existing RAM relations. This patch deliberately does not settle those details.
+implemented here. RAM read-write checking already enforces that activation on
+the product selector: `Σ_k ra(k,j) = Load(j) + Store(j)` on every cycle. It
+does not constrain each chunk's weight on non-memory rows, which the note's
+per-digit reconstruction would. Virtualizing RAM's digit-zero row on top of it
+remains future work: it needs a mapping of the activation claims, their
+evaluation points, and their binding to the existing RAM relations.
 
-For now `RamRa` commits every row and follows the existing base protocol:
-`RamHammingBooleanity`, the Hamming-weight leg, Booleanity, and RAM
-virtualization. This is a scope boundary, not a conclusion about whether a
-later implementation of the note's RAM construction is possible.
+`RamRa` commits every row and reduces Booleanity and RA virtualization. This is
+a scope boundary, not a conclusion about whether a later implementation of the
+note's RAM construction is possible.
 
 ## 6. Delta versus base mode / prior drafts
 
 - Instruction/bytecode: digit-zero-virtualized (omit the digit-zero
   row, two reconstructed stage-7 legs, no Hamming leg).
-- RAM: unchanged from base (all rows committed, `RamHammingBooleanity` + base
-  Hamming leg, three-leg stage-7 reduction). The `Load+Store` construction is
-  deferred.
+- RAM: all rows committed, as in base mode; two unrecentered stage-7 legs
+  (Booleanity, virtualization); no `RamHammingBooleanity` and no Hamming leg in
+  either mode, since RAM read-write checking enforces the `Load + Store` access
+  count. The note's `Load+Store` digit-zero construction is deferred.
 - Notation renamed to digit-zero throughout the lattice path
   (`…AtDigitZero` publics, `LatticeDigitZeroClaimReduction`, digest
   `…/digit-zero-mu-one-full-ram/…`).
 - Shared `JoltRelationId::HammingWeightClaimReduction` / `SumcheckId` names
-  kept (base mode still performs a genuine Hamming-weight reduction under them,
-  and now so does RAM on the packed path).
+  kept (base mode still performs a genuine Hamming-weight reduction under them
+  for the instruction and bytecode families).
 
 ## 7. Gates
 
-- `muldiv` both modes (base bit-identical); the four akita e2e tests;
+- `muldiv` both modes; the four akita e2e tests;
   `jolt-claims` lattice-semantics + claim-graph; `jolt-verifier` tamper suites
   and fingerprint-keyed fixtures; both clippy modes; `cargo fmt`.
 - Policy-specific: physical packing tests must show that digit zero is omitted
   for a virtualized column and retained for a RAM-style committed column; the
-  stage-7 algebra test must show the mixed two-leg/three-leg gamma layout.
+  stage-7 algebra test must show two legs per polynomial, recentered for
+  instruction and bytecode and unrecentered for RAM.

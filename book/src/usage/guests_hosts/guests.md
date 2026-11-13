@@ -131,7 +131,7 @@ Both mechanisms signal that the data is untrusted and must be verified by the gu
 
 Beyond the usual Rust rules around `unsafe` and undefined behavior, Jolt guest programs are subject to a few zkVM-specific rules:
 
-- **Self-modifying programs are undefined behavior.** Jolt commits to the program's bytecode at preprocessing time. The tracers reject a store that changes any byte of a doubleword holding a source instruction (a store of the same value is allowed), so a guest that modifies its own code fails to trace. The proof system does not check this, so a proof of such a run from a modified prover has undefined semantics: it attests to execution against the committed bytecode, not the modified version.
+- **Self-modifying programs cannot be proved.** Jolt commits to the program's bytecode at preprocessing time. The tracers reject a store that changes any byte of a doubleword holding a source instruction (a store of the same value is allowed), so a guest that modifies its own code fails to trace. The constraints reject the same stores: [RAM read-write checking](../../how/architecture/ram.md#read-write-checking-and-protected-words) requires a zero increment on every store to such a doubleword, so even a modified prover cannot produce an accepted proof of a run that changes its own code, including one that later restores the original bytes.
 
 - **Direct invocation of Jolt's custom RISC-V instructions is unsafe.** Jolt extends the RISC-V ISA with custom instructions used internally (e.g. for inline cryptographic primitives and runtime advice). Invoking these instructions directly from guest code, such as via inline assembly, bypasses the safety checks performed by the SDK and may produce incorrect proofs or cause proving to fail.
 
