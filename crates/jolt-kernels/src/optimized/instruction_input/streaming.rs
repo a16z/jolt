@@ -36,6 +36,11 @@ use crate::{
 
 const TERMS: usize = 3;
 
+// Round 0 (`native_q_terms`) weights each visit callback by one `e_out`
+// entry and pairs its rows in place, so its callbacks must tile every
+// split-eq group in whole pairs; `gruen_pair_pass` has no such requirement.
+const _: () = assert!(VISIT_ROWS.is_power_of_two() && VISIT_ROWS >= 2);
+
 /// The quadratic's constant and leading coefficients, then its value at one.
 #[inline]
 fn pair_q_terms<F: JoltField>(
