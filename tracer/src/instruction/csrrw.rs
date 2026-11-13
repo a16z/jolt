@@ -13,6 +13,10 @@
 //!
 //! The `csrw csr, rs` pseudo-instruction is `csrrw x0, csr, rs` (rd=0, discard old value).
 //! The full `csrrw rd, csr, rs` swaps rd ← old_CSR, CSR ← rs.
+//!
+//! Writes are legalized as on an M-mode-only hart: mstatus keeps only MIE and
+//! MPIE (MPP reads as M), mtvec keeps its old MODE when a reserved MODE is
+//! written, and mepc clears bit 0. See `jolt_program::expand::control_flow::csr`.
 
 use crate::instruction::registers::i::RegisterStateI;
 
@@ -94,8 +98,9 @@ mod tests {
 
         // Choose distinct values so that if the inline sequence accidentally uses
         // the post-clobber rs1 value, the test will fail.
-        let old_vr_val: u64 = 0x2222_3333;
+        let old_vr_val: u64 = 0x2222_3331;
         let write_val: u64 = 0x1111_0000;
+        assert_eq!(old_vr_val & 2, 0, "mtvec starts with a legal MODE");
 
         // Set up the virtual register (single source of truth)
         cpu.x[34] = old_vr_val as i64; // vr34 = mtvec
