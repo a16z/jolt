@@ -216,12 +216,12 @@ impl MemoryBudget {
     /// # Assumptions
     ///
     /// The check assumes [`JoltBackend::optimized`](crate::JoltBackend::optimized)
-    /// with the `SequentialRounds` member scheduler it inherits, which runs
-    /// each member's round to completion in declaration order; address-first
-    /// RAM's allowance for one half-length copy of a `K`-entry table at a time
-    /// depends on it. `round_scheduler` is a public field, so a concurrent
-    /// replacement falls outside this bound, and no type enforces the single
-    /// copy.
+    /// and its member scheduler, which runs at most two opted-in members
+    /// together under `parallel`. Address-first RAM reserves an extra RAF
+    /// half-copy alongside read-write's first-bind window under that feature,
+    /// even when the round-size cutoff makes the bind sequential. Other priced
+    /// members are summed at their individual peaks. A custom `round_scheduler`
+    /// still must respect the phase ordering used by these reservations.
     ///
     /// # Not reserved
     ///

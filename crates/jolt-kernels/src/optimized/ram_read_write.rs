@@ -12,7 +12,7 @@
 //! - **Gruen split-eq + Dao–Thaler factoring** for the `log_T` cycle rounds:
 //!   cycle-first keeps the eq factor in `O(√T)` tables, and each cubic message is
 //!   reconstructed from the quadratic factor's `[q(0), q_∞]` plus the
-//!   running claim ([`GruenSplitEqPolynomial::gruen_poly_deg_3`]).
+//!   running claim ([`jolt_poly::GruenRound::gruen_poly_deg_3`]).
 //! - **Hint-based quadratic address rounds** on the address-major matrix
 //!   against the bound `val_init` column (`s(1)` recovered from the claim).
 //!
@@ -29,6 +29,7 @@
 //! a constant suffix equal to the final checkpoint; both remain implicit.
 //! Mixed cycle/address schedules are explicitly unsupported.
 
+use crate::optimized::support::eq_round_error;
 use jolt_claims::protocols::jolt::geometry::ram::ram_inc;
 use jolt_claims::protocols::jolt::{
     JoltDerivedId, JoltPolynomialId, JoltVirtualPolynomial, RamReadWritePublic, ReadWriteDimensions,
@@ -118,11 +119,11 @@ impl<F: JoltField> RamReadWriteKernel<F> {
             Phase::Round0 { columns, gruen } => {
                 let matrix = round0_bind(&columns, r);
                 crate::mem::drop_in_background_thread(columns);
-                self.finish_cycle_bind(matrix, gruen, r, round)
+                self.finish_cycle_bind(matrix, gruen, r, round)?
             }
             Phase::Cycle { mut matrix, gruen } => {
                 matrix.bind(r);
-                self.finish_cycle_bind(matrix, gruen, r, round)
+                self.finish_cycle_bind(matrix, gruen, r, round)?
             }
             Phase::Address {
                 mut matrix,
@@ -154,10 +155,11 @@ impl<F: JoltField> RamReadWriteKernel<F> {
                 mut val,
                 mut gruen,
             } => {
+                let gruen_round = gruen.round_mut().ok_or_else(|| eq_round_error(round))?;
                 let _ = ra.bind(r);
                 let _ = val.bind(r);
                 let _ = self.inc.bind(r);
-                gruen.bind(r);
+                gruen_round.bind(r);
                 if round + 1 == self.log_t + self.log_k {
                     Phase::Done {
                         merged_eq: vec![gruen.current_scalar()],
@@ -179,8 +181,11 @@ impl<F: JoltField> RamReadWriteKernel<F> {
         mut gruen: GruenSplitEqPolynomial<F>,
         r: F,
         round: usize,
-    ) -> Phase<F> {
-        gruen.bind(r);
+    ) -> Result<Phase<F>, SumcheckError<F>> {
+        gruen
+            .round_mut()
+            .ok_or_else(|| eq_round_error(round))?
+            .bind(r);
         let _ = self.inc.bind(r);
         let phase = if round + 1 == self.log_t {
             let matrix = matrix.into_address_major();
@@ -197,7 +202,7 @@ impl<F: JoltField> RamReadWriteKernel<F> {
         if round == 0 || round == LATE_PURGE_CYCLE_ROUNDS || round + 1 == self.log_t {
             crate::mem::purge_retained_memory(self.log_t);
         }
-        phase
+        Ok(phase)
     }
 
     fn finish_address(&self, matrix: AddressMajorMatrix<F>, merged_eq: Vec<F>) -> Phase<F> {
@@ -267,28 +272,32 @@ impl<F: JoltField> RamReadWriteKernel<F> {
             }
             _ => return Err(Phase::error()),
         };
-        gruen.checked_cubic(q_0, q_infty, previous_claim, round, || {
-            let e_in = gruen.e_in_current();
-            let e_out = gruen.e_out_current();
-            let in_bits = e_in.len().trailing_zeros() as usize;
-            let in_mask = e_in.len() - 1;
-            let weight = |pair| e_out[pair >> in_bits] * e_in[pair & in_mask];
-            match &self.phase {
-                Some(Phase::Round0 { columns, .. }) => {
-                    round0_q_at_one(columns, weight, &self.inc, self.gamma)
+        gruen
+            .round()
+            .ok_or_else(|| eq_round_error(round))?
+            .checked_cubic(q_0, q_infty, previous_claim, round, || {
+                let e_in = gruen.e_in_current();
+                let e_out = gruen.e_out_current();
+                let in_bits = e_in.len().trailing_zeros() as usize;
+                let in_mask = e_in.len() - 1;
+                let weight = |pair| e_out[pair >> in_bits] * e_in[pair & in_mask];
+                match &self.phase {
+                    Some(Phase::Round0 { columns, .. }) => {
+                        round0_q_at_one(columns, weight, &self.inc, self.gamma)
+                    }
+                    Some(Phase::Cycle { matrix, .. }) => {
+                        matrix.q_at_one(weight, &self.inc, self.gamma)
+                    }
+                    Some(Phase::DenseCycle { ra, val, .. }) => (0..ra.values.len().div_ceil(2))
+                        .fold(F::zero(), |sum, pair| {
+                            let row = 2 * pair + 1;
+                            sum + weight(pair)
+                                * ra.value(row)
+                                * val_slope_term(val.value(row), self.inc.value(row), self.gamma)
+                        }),
+                    _ => unreachable!("cycle phase was checked above"),
                 }
-                Some(Phase::Cycle { matrix, .. }) => matrix.q_at_one(weight, &self.inc, self.gamma),
-                Some(Phase::DenseCycle { ra, val, .. }) => {
-                    (0..ra.values.len().div_ceil(2)).fold(F::zero(), |sum, pair| {
-                        let row = 2 * pair + 1;
-                        sum + weight(pair)
-                            * ra.value(row)
-                            * val_slope_term(val.value(row), self.inc.value(row), self.gamma)
-                    })
-                }
-                _ => unreachable!("cycle phase was checked above"),
-            }
-        })
+            })
     }
 
     fn address_round_message(
@@ -464,8 +473,8 @@ pub struct RamReadWriteBytes {
     /// From the read-write kernel's preparation until a member of the batch
     /// first binds.
     pub prepared: usize,
-    /// Through the read-write kernel's first bind and RAF's first bind after
-    /// it.
+    /// Through the read-write kernel's and RAF's first binds, including their
+    /// possible overlap under parallel member scheduling.
     pub first_bind: usize,
 }
 
@@ -490,10 +499,12 @@ impl RamReadWriteBytes {
     /// the bind's collect (`AddressMajorMatrix::first_bind_bytes`, the old
     /// entries included) and its bound entries
     /// (`AddressMajorMatrix::bound_bytes`) beside one half-length copy of a
-    /// `K`-entry table: `val_init`'s, or one of RAF's. RAF binds its tables
-    /// one at a time after the read-write kernel under the optimized backend's
-    /// sequential member scheduler. The cycle-table handoff of a two-address
-    /// first bind fits in these bytes.
+    /// `K`-entry table. With `parallel`, an additional half-length copy covers
+    /// RAF binding alongside the read-write kernel's collect or `val_init`
+    /// copy. This conservatively reserves overlap even when the scheduler's
+    /// round-size cutoff makes that first bind sequential. Without `parallel`,
+    /// RAF binds after read-write, so one half-copy suffices. The cycle-table
+    /// handoff of a two-address first bind fits in these bytes.
     ///
     /// Not counted: later binds, and the preparation transients other than
     /// the stored tables: the access columns' collection (the eager check
@@ -540,6 +551,11 @@ impl RamReadWriteBytes {
                 let bind = AddressMajorMatrix::<F>::first_bind_bytes(prefix_cycles)?.max(
                     AddressMajorMatrix::<F>::bound_bytes(prefix_cycles)?.checked_add(half_copy)?,
                 );
+                let bind = if cfg!(feature = "parallel") {
+                    bind.checked_add(half_copy)?
+                } else {
+                    bind
+                };
                 Some(Self {
                     prepared: eq
                         .checked_add(ram_access_columns_bytes(prefix_cycles, 1)?)?
@@ -841,18 +857,21 @@ mod tests {
         }
     }
 
-    /// Address-first, the first bind holds one half-length copy of a
-    /// `K`-entry table at a time beside its bound entries. Over 2^13 cycles,
-    /// 2^20 addresses and 4096 proof rows, with 136-byte entries, that 16 MiB
-    /// copy outweighs the bind's collect, and the term is 118,284,976 bytes:
-    /// above the 105,571,064 bytes with the collect leading instead, below the
-    /// 135,062,192 bytes with two copies at once.
+    /// The parallel allowance reserves both RW and RAF half-copies, even
+    /// though this large shape's first bind falls above the concurrency cutoff.
     #[test]
-    fn address_first_first_bind_holds_one_half_copy() {
+    fn address_first_first_bind_reserves_possible_member_overlap() {
         let bytes = RamReadWriteBytes::new::<Fr>(ReadWriteDimensions::new(13, 20, 0, 20), 4096)
             .unwrap()
             .unwrap()
             .first_bind;
-        assert_eq!(bytes, 118_284_976);
+        assert_eq!(
+            bytes,
+            if cfg!(feature = "parallel") {
+                135_062_192
+            } else {
+                118_284_976
+            }
+        );
     }
 }

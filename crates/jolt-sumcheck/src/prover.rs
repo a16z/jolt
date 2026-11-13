@@ -23,7 +23,7 @@ use jolt_field::Field;
 #[cfg(feature = "committed")]
 use jolt_field::JoltField;
 use jolt_poly::{UnivariatePoly, UnivariatePolynomial};
-use jolt_transcript::{Encoding, FieldTranscript, ProverTranscript};
+use jolt_transcript::{Encoding, FieldTranscript, PrivateChannel, ProverTranscript};
 #[cfg(feature = "committed")]
 use rand_core::RngCore;
 
@@ -55,11 +55,15 @@ use crate::round_proof::RoundMessage;
 /// engine threads the challenge bookkeeping: `bind` is `None` exactly on the
 /// member's first active round, and the final active round's challenge arrives
 /// through the terminal [`finish_rounds`](Self::finish_rounds).
-pub trait ProveRounds<F: Field> {
+///
+/// `Err` is the kernel's error. The batched engine uses the default
+/// [`SumcheckError`]; [`prove_single`](crate::prove_single) takes any error
+/// that embeds one, so a kernel can report its own failures.
+pub trait ProveRounds<F: Field, Err = SumcheckError<F>> {
     /// Opt into concurrent scheduling. The returned view must operate on the
     /// same round state as this object. This query must not advance the prover.
     /// Sequential implementations need not opt in.
-    fn parallel_rounds(&mut self) -> Option<&mut (dyn ProveRounds<F> + Send)> {
+    fn parallel_rounds(&mut self) -> Option<&mut (dyn ProveRounds<F, Err> + Send)> {
         None
     }
 
@@ -76,20 +80,20 @@ pub trait ProveRounds<F: Field> {
         bind: Option<F>,
         round: usize,
         previous_claim: F,
-    ) -> Result<UnivariatePoly<F>, SumcheckError<F>>;
+    ) -> Result<UnivariatePoly<F>, Err>;
 
     /// Bind the member's final active round's challenge. Called once by the
     /// engine after the batch's round loop, for every member that was ever
     /// active; the member is fully bound afterwards.
-    fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>>;
+    fn finish_rounds(&mut self, bind: F) -> Result<(), Err>;
 }
 
 /// Opt a sendable round prover into concurrent scheduling without imposing
 /// `Send` on every implementation of [`ProveRounds`].
 pub struct SendRounds<P>(pub P);
 
-impl<F: Field, P: ProveRounds<F> + Send> ProveRounds<F> for SendRounds<P> {
-    fn parallel_rounds(&mut self) -> Option<&mut (dyn ProveRounds<F> + Send)> {
+impl<F: Field, Err, P: ProveRounds<F, Err> + Send> ProveRounds<F, Err> for SendRounds<P> {
+    fn parallel_rounds(&mut self) -> Option<&mut (dyn ProveRounds<F, Err> + Send)> {
         Some(self)
     }
 
@@ -102,11 +106,11 @@ impl<F: Field, P: ProveRounds<F> + Send> ProveRounds<F> for SendRounds<P> {
         bind: Option<F>,
         round: usize,
         previous_claim: F,
-    ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
+    ) -> Result<UnivariatePoly<F>, Err> {
         self.0.prove_round(bind, round, previous_claim)
     }
 
-    fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {
+    fn finish_rounds(&mut self, bind: F) -> Result<(), Err> {
         self.0.finish_rounds(bind)
     }
 }
@@ -474,7 +478,7 @@ where
     grind_round(degree, 0, &mut pow_nonces, transcript)?;
     let challenge = transcript.challenge()?;
     let output_claim = round_poly.evaluate(challenge);
-    transcript.append(&output_claim);
+    transcript.append_private(&[output_claim]);
 
     Ok(ProvedUniskip {
         proof: ClearSumcheckProof {

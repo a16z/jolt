@@ -269,3 +269,124 @@ fn concurrent_errors_follow_declaration_order() {
             ));
         });
 }
+
+struct OccupancyMember<'a> {
+    rounds: usize,
+    active: &'a AtomicUsize,
+    peak: &'a AtomicUsize,
+    visits: &'a AtomicUsize,
+}
+
+impl OccupancyMember<'_> {
+    fn visit(&self) {
+        let active = self.active.fetch_add(1, Ordering::SeqCst) + 1;
+        let _ = self.peak.fetch_max(active, Ordering::SeqCst);
+        // Keep transient owners live long enough for other worker calls to overlap.
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        let _ = self.visits.fetch_add(1, Ordering::SeqCst);
+        let _ = self.active.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+impl ProveRounds<Fr> for OccupancyMember<'_> {
+    fn num_rounds(&self) -> usize {
+        self.rounds
+    }
+
+    fn prove_round(
+        &mut self,
+        _bind: Option<Fr>,
+        _round: usize,
+        claim: Fr,
+    ) -> Result<UnivariatePoly<Fr>, SumcheckError<Fr>> {
+        self.visit();
+        Ok(UnivariatePoly::new(vec![Fr::from_u64(0), claim]))
+    }
+
+    fn finish_rounds(&mut self, _bind: Fr) -> Result<(), SumcheckError<Fr>> {
+        self.visit();
+        Ok(())
+    }
+}
+
+#[test]
+fn member_concurrency_bounds_live_transients() {
+    ThreadPoolBuilder::new()
+        .num_threads(8)
+        .build()
+        .unwrap()
+        .install(|| {
+            for (count, rounds, round_limit) in [(4, 18, 2), (5, 18, 2), (5, 19, 1)] {
+                let active = AtomicUsize::new(0);
+                let peak = AtomicUsize::new(0);
+                let visits = AtomicUsize::new(0);
+                let mut provers: Vec<_> = (0..count)
+                    .map(|_| {
+                        SendRounds(OccupancyMember {
+                            rounds,
+                            active: &active,
+                            peak: &peak,
+                            visits: &visits,
+                        })
+                    })
+                    .collect();
+                let mut work: Vec<_> = provers
+                    .iter_mut()
+                    .enumerate()
+                    .map(|(index, member)| MemberRound {
+                        index,
+                        local_round: 0,
+                        bind: None,
+                        claim: Fr::from_u64(1),
+                        member,
+                        message: None,
+                    })
+                    .collect();
+                ParallelMembers.batch_prove_round(&mut work).unwrap();
+                assert!(work.iter().all(|item| item.message.is_some()));
+                assert_eq!(visits.load(Ordering::SeqCst), count);
+                assert_eq!(active.load(Ordering::SeqCst), 0);
+                assert!(peak.load(Ordering::SeqCst) <= round_limit);
+                peak.store(0, Ordering::SeqCst);
+                let mut finishes: Vec<_> = provers
+                    .iter_mut()
+                    .map(|member| MemberFinish {
+                        bind: Fr::from_u64(1),
+                        member,
+                    })
+                    .collect();
+                ParallelMembers.batch_finish_rounds(&mut finishes).unwrap();
+                assert_eq!(visits.load(Ordering::SeqCst), 2 * count);
+                assert_eq!(active.load(Ordering::SeqCst), 0);
+                assert!(peak.load(Ordering::SeqCst) <= 2);
+            }
+        });
+}
+
+#[test]
+fn send_rounds_preserves_custom_non_send_errors() {
+    struct CustomErrorMember;
+    impl ProveRounds<Fr, Rc<usize>> for CustomErrorMember {
+        fn num_rounds(&self) -> usize {
+            1
+        }
+
+        fn prove_round(
+            &mut self,
+            _bind: Option<Fr>,
+            _round: usize,
+            _claim: Fr,
+        ) -> Result<UnivariatePoly<Fr>, Rc<usize>> {
+            Err(Rc::new(7))
+        }
+
+        fn finish_rounds(&mut self, _bind: Fr) -> Result<(), Rc<usize>> {
+            Err(Rc::new(9))
+        }
+    }
+    let mut member = SendRounds(CustomErrorMember);
+    let view = member.parallel_rounds().unwrap();
+    assert_eq!(view.num_rounds(), 1);
+    assert_eq!(*view.prove_round(None, 0, Fr::from_u64(0)).unwrap_err(), 7);
+    assert_eq!(*view.finish_rounds(Fr::from_u64(1)).unwrap_err(), 9);
+}

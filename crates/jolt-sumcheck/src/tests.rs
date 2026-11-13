@@ -8,7 +8,7 @@
 )]
 
 use jolt_crypto::{Bn254, Bn254G1, JoltGroup, Pedersen, PedersenSetup, VectorCommitment};
-use jolt_field::{Field, Fr, Prime128OffsetA7F7, Prime32Offset99, Ring};
+use jolt_field::{Field, Fr, Prime128Offset6A23801F, Prime32Offset99, Ring};
 use jolt_poly::{CompressedPoly, UnivariatePoly};
 use jolt_transcript::{
     prover_transcript, Blake2b512, Encoding, FieldTranscript, ProverState, ProverTranscript,
@@ -32,7 +32,7 @@ use crate::{
 type F = Fr;
 /// BN254 challenges need no proof of work, so the proof-of-work tests run
 /// over Akita's field, whose rounds grind.
-type P = Prime128OffsetA7F7;
+type P = Prime128Offset6A23801F;
 type PT = ProverState<Blake2b512>;
 
 fn pow_bits(degree: usize) -> u32 {
@@ -1693,7 +1693,7 @@ fn clear_proof_nonces_are_a_plain_list() {
     let mut transcript =
         prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"sumcheck-test"), b"");
     let mut proof = honest_prove(&evals, 3, &mut transcript);
-    assert!(proof.pow_nonces.is_empty());
+    assert_eq!(proof.pow_nonces, [] as [u64; 0]);
     let wire = bincode::serde::encode_to_vec(&proof, config).unwrap();
     let rounds_only = bincode::serde::encode_to_vec(&proof.round_polynomials, config).unwrap();
     assert_eq!(wire, [rounds_only.as_slice(), &[0]].concat());

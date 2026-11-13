@@ -5,7 +5,9 @@ use tracing::Span;
 
 use crate::backend::{BuildRoundScheduler, ProofSession};
 
-/// Runs independent members together; transcript updates remain in the batch engine.
+/// Runs at most two independent member calls together; transcript updates remain
+/// in the batch engine. This caps member calls, not their internal allocations
+/// or background drops.
 /// An error still selects the first failing member in declaration order, but
 /// other members may already have run before that error is returned.
 pub(super) struct ParallelMembers;
@@ -49,14 +51,19 @@ impl<F: JoltField> RoundScheduler<F> for ParallelMembers {
                 ))
             })
             .collect();
-        if let Some(parallel) = parallel {
+        if let Some(mut parallel) = parallel {
             let span = Span::current();
-            let results: Vec<_> = parallel
-                .into_par_iter()
-                .map(|(member, bind, round, claim)| {
-                    span.in_scope(|| member.prove_round(bind, round, claim))
-                })
-                .collect();
+            let mut results = Vec::with_capacity(parallel.len());
+            for pair in parallel.chunks_mut(2) {
+                let pair_results: Vec<_> = pair
+                    .par_iter_mut()
+                    .map(|(member, bind, round, claim)| {
+                        span.in_scope(|| member.prove_round(*bind, *round, *claim))
+                    })
+                    .collect();
+                results.extend(pair_results);
+            }
+            drop(parallel);
             for (item, result) in work.iter_mut().zip(results) {
                 item.message = Some(result?);
             }
@@ -82,14 +89,16 @@ impl<F: JoltField> RoundScheduler<F> for ParallelMembers {
             .iter_mut()
             .map(|item| Some((item.member.parallel_rounds()?, item.bind)))
             .collect();
-        if let Some(parallel) = parallel {
+        if let Some(mut parallel) = parallel {
             let span = Span::current();
-            let results: Vec<_> = parallel
-                .into_par_iter()
-                .map(|(member, bind)| span.in_scope(|| member.finish_rounds(bind)))
-                .collect();
-            for result in results {
-                result?;
+            for pair in parallel.chunks_mut(2) {
+                let results: Vec<_> = pair
+                    .par_iter_mut()
+                    .map(|(member, bind)| span.in_scope(|| member.finish_rounds(*bind)))
+                    .collect();
+                for result in results {
+                    result?;
+                }
             }
         } else {
             for item in finishes {

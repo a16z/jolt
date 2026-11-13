@@ -50,6 +50,7 @@ jolt-field = { path = "../../jolt-field" }
 jolt-poly = { path = "../../jolt-poly" }
 jolt-sumcheck = { path = ".." }
 jolt-transcript = { path = "../../jolt-transcript", features = [
+  "prover-entropy",
   "bn254",
   "transcript-blake2b",
   "prover-grinding",
