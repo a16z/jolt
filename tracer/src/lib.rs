@@ -75,6 +75,10 @@ fn env_rows(name: &str, default: usize) -> usize {
 ///
 /// Panics if the run does not end at a halt instruction
 /// ([`TraceError::EndedWithoutHalt`]).
+#[expect(
+    clippy::expect_used,
+    reason = "the infallible trace API panics when a run does not end at a halt; TracerBackend returns TraceError::EndedWithoutHalt"
+)]
 pub fn trace(
     elf_contents: &[u8],
     elf_path: Option<&PathBuf>,
@@ -219,6 +223,10 @@ fn report_panic_halt(emulator: &Emulator) {
 /// a tick that emits no rows (observed here as a zero `trace_len` delta), and
 /// both panic unless the run stopped at a halt.
 #[tracing::instrument(skip_all)]
+#[expect(
+    clippy::expect_used,
+    reason = "the infallible execute API panics when a run does not end at a halt; TracerBackend's chunked execute returns TraceError::EndedWithoutHalt"
+)]
 pub fn execute(
     elf_contents: &[u8],
     elf_path: Option<&PathBuf>,
