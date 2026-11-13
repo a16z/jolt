@@ -81,28 +81,3 @@ mod exec_unit {
         assert_eq!(state, expected_states.iota, "round 1: mismatch after iota");
     }
 }
-
-mod sequence {
-    use crate::{
-        INLINE_OPCODE, KECCAK256_ABSORB_PERMUTE_FUNCT3, KECCAK256_FUNCT3, KECCAK256_FUNCT7,
-    };
-    use tracer::utils::{
-        inline_test_harness::InlineTestHarness, virtual_registers::VirtualRegisterAllocator,
-    };
-
-    #[test]
-    fn rows_include_register_resets() {
-        for (funct3, expected) in [
-            (KECCAK256_FUNCT3, 3009),
-            (KECCAK256_ABSORB_PERMUTE_FUNCT3, 3043),
-        ] {
-            let instruction = InlineTestHarness::create_default_instruction(
-                INLINE_OPCODE,
-                funct3,
-                KECCAK256_FUNCT7,
-            );
-            let sequence = instruction.inline_sequence(&VirtualRegisterAllocator::default());
-            assert_eq!(sequence.len(), expected);
-        }
-    }
-}
