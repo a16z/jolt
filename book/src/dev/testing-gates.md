@@ -7,8 +7,8 @@ profile. The ordinary profile has thirteen cases: muldiv, fibonacci, memory-ops,
 heap-top, stdlib, memory-copy, sha2, sha3 through both its unaligned and aligned
 entry points, advice-consumer, rounded-advice, btreemap, and muldiv-full-domain.
 Heap-top stores the last byte below the linker's `__heap_end`.
-Rounded-advice configures 12 bytes of untrusted advice and supplies 16, the
-rounded capacity the verifier admits. Muldiv-full-domain extends
+Rounded-advice, a second memory-ops entry point, configures 12 bytes of
+untrusted advice and supplies 16, the rounded capacity the verifier admits. Muldiv-full-domain extends
 muldiv's execution with its own terminal stall until it fills its padded trace
 domain, and bakes that domain in as the maximum, so the proof has no padding
 row. Enabling `field-inline` selects `field_ops`, `field_limbs`, and `muldiv`,

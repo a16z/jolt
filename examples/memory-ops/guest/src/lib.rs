@@ -134,3 +134,18 @@ fn heap_top() -> u64 {
         core::ptr::read_volatile(last_word)
     }
 }
+
+/// Configured for 12 bytes of untrusted advice, which the layout rounds up to
+/// 16. Returns the advice's high doubleword, so bytes 12..16 reach the output.
+#[jolt::provable(
+    guest_only,
+    heap_size = 65536,
+    max_trace_length = 65536,
+    max_untrusted_advice_size = 12
+)]
+fn rounded_advice(untrusted: jolt::UntrustedAdvice<[u8; 16]>) -> u64 {
+    let bytes = *untrusted;
+    let mut high = [0u8; 8];
+    high.copy_from_slice(&bytes[8..]);
+    u64::from_le_bytes(high)
+}
