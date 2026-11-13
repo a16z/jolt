@@ -597,8 +597,17 @@ fn ram_val_final_virtual_view_materializes_final_memory_and_public_io() -> Resul
 #[test]
 fn lookahead_witnesses_pad_the_final_cycle() {
     let instruction = instruction(0x8000_0000);
+    let jump = JoltInstructionRow {
+        instruction_kind: JoltInstructionKind::JAL,
+        address: 0x8000_0004,
+        operands: NormalizedOperands {
+            rd: Some(1),
+            ..NormalizedOperands::default()
+        },
+        ..instruction
+    };
     let bytecode = BytecodePreprocessing::preprocess(
-        vec![instruction],
+        vec![instruction, jump],
         instruction.address as u64,
         RV64IMAC_JOLT,
     )
@@ -608,6 +617,12 @@ fn lookahead_witnesses_pad_the_final_cycle() {
     let row = checked_row(
         &preprocessing,
         instruction,
+        RegisterState::default(),
+        RamAccess::NoOp,
+    );
+    let jump_row = checked_row(
+        &preprocessing,
+        jump,
         RegisterState::default(),
         RamAccess::NoOp,
     );
@@ -623,11 +638,21 @@ fn lookahead_witnesses_pad_the_final_cycle() {
         NextUnexpandedPc::extract(&row, None, &env),
         Ok(NextUnexpandedPc(0))
     );
-    // ShouldJump suppresses the jump only for a PRESENT no-op successor: a
-    // missing successor does not count as a no-op here (ADDI has no jump
-    // flag, so both are false; the semantics are pinned by the oracle-table
-    // assertions on real traces).
-    assert_eq!(ShouldJump::extract(&row, None, &env), Ok(ShouldJump(false)));
+    // The shift boundary at `T - 1` gives a final jump with no padding row
+    // the successor values of a no-op. Constraint 21 then forces
+    // `ShouldJump = 0`.
+    assert_eq!(
+        ShouldJump::extract(&jump_row, None, &env),
+        Ok(ShouldJump(false))
+    );
+    assert_eq!(
+        ShouldJump::extract(&jump_row, Some(&noop_next), &env),
+        Ok(ShouldJump(false))
+    );
+    assert_eq!(
+        ShouldJump::extract(&jump_row, Some(&row), &env),
+        Ok(ShouldJump(true))
+    );
 }
 
 fn assert_virtual_values(
