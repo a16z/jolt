@@ -14,8 +14,9 @@
 #![cfg(feature = "host")]
 
 use jolt_inlines_keccak256::{
-    Keccak256, INLINE_OPCODE, KECCAK256_ABSORB_PERMUTE_FUNCT3, KECCAK256_FUNCT3, KECCAK256_FUNCT7,
-    NUM_LANES, RATE_IN_BYTES, RATE_IN_U64,
+    keccak256_absorb_digest, keccak256_digest, Keccak256, INLINE_OPCODE,
+    KECCAK256_ABSORB_DIGEST_FUNCT3, KECCAK256_ABSORB_PERMUTE_FUNCT3, KECCAK256_DIGEST_FUNCT3,
+    KECCAK256_FUNCT3, KECCAK256_FUNCT7, NUM_LANES, RATE_IN_BYTES, RATE_IN_U64,
 };
 use rand::rngs::StdRng;
 use rand::{RngCore, SeedableRng};
@@ -191,5 +192,67 @@ fn fuzz_chunked_update_vs_tiny_keccak() {
             reference_digest(input),
             "iteration {i}, len {len}, offset {offset}"
         );
+    }
+}
+
+#[test]
+fn fuzz_final_digest_inline_and_sdk_vs_tiny_keccak() {
+    let mut rng = StdRng::seed_from_u64(0xD165E57);
+    for absorb in [false, true] {
+        let funct3 = if absorb {
+            KECCAK256_ABSORB_DIGEST_FUNCT3
+        } else {
+            KECCAK256_DIGEST_FUNCT3
+        };
+        for i in 0..fuzz_iters(2_000) {
+            let mut original = [0; NUM_LANES];
+            let mut block = [0; RATE_IN_U64];
+            if i == 1 {
+                original.fill(u64::MAX);
+                block.fill(u64::MAX);
+            } else if i > 1 {
+                for x in &mut original {
+                    *x = rng.next_u64();
+                }
+                for x in &mut block {
+                    *x = rng.next_u64();
+                }
+            }
+            let mut expected = original;
+            if absorb {
+                for (x, y) in expected.iter_mut().zip(block) {
+                    *x ^= y;
+                }
+            }
+            tiny_keccak::keccakf(&mut expected);
+            expected[4..].copy_from_slice(&original[4..]);
+            let mut harness = InlineTestHarness::new(InlineMemoryLayout::single_input(
+                RATE_IN_BYTES,
+                STATE_IN_BYTES,
+            ));
+            harness.setup_registers();
+            harness.load_state64(&original);
+            harness.load_input64(&block);
+            harness.execute_inline(InlineTestHarness::create_default_instruction(
+                INLINE_OPCODE,
+                funct3,
+                KECCAK256_FUNCT7,
+            ));
+            assert_eq!(
+                harness.read_output64(NUM_LANES),
+                expected,
+                "absorb={absorb} case={i}"
+            );
+            let mut sdk_state = original;
+            // SAFETY: initialized arrays are aligned, correctly sized and distinct.
+            unsafe {
+                if absorb {
+                    keccak256_absorb_digest(sdk_state.as_mut_ptr(), block.as_ptr().cast());
+                } else {
+                    keccak256_digest(sdk_state.as_mut_ptr());
+                }
+            }
+            assert_eq!(sdk_state, expected, "SDK absorb={absorb} case={i}");
+        }
     }
 }
