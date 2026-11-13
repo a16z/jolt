@@ -249,9 +249,9 @@ mod tests {
 
     /// Every streaming family is selected. On a trace this small the
     /// instruction-input kernel reads the rows in rounds 0 and 1 and fills its
-    /// dense tables in round 1, and the Spartan outer remainder fills its
-    /// tables in the pass that yields round 0's endpoints; the parity tests in
-    /// `jolt-kernels` cover later crossovers.
+    /// dense tables in round 1, and the Spartan outer and product remainders
+    /// fill their tables in the passes that yield round 0's endpoints; the
+    /// parity tests in `jolt-kernels` cover later crossovers.
     #[test]
     fn streaming_kernels_reproduce_the_default_proof() {
         let Fixture {
