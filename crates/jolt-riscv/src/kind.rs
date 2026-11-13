@@ -349,6 +349,12 @@ macro_rules! source_extension_for_marker {
     (VirtualHostIO) => {
         Some(SourceExtension::JoltCustom)
     };
+    (Success) => {
+        Some(SourceExtension::JoltCustom)
+    };
+    (Panic) => {
+        Some(SourceExtension::JoltCustom)
+    };
     (VirtualNegateIf) => {
         Some(SourceExtension::JoltCustom)
     };
@@ -689,6 +695,12 @@ macro_rules! source_side_effects_for_marker {
         true
     };
     (VirtualHostIO) => {
+        true
+    };
+    (Success) => {
+        true
+    };
+    (Panic) => {
         true
     };
     (Add) => {
@@ -1117,6 +1129,12 @@ macro_rules! jolt_target_extension_for_marker {
     (Jalr) => {
         Some(JoltTargetExtension::ControlFlow)
     };
+    (Success) => {
+        Some(JoltTargetExtension::ControlFlow)
+    };
+    (Panic) => {
+        Some(JoltTargetExtension::ControlFlow)
+    };
     (Ld) => {
         Some(JoltTargetExtension::LoadStore64)
     };
@@ -1358,6 +1376,12 @@ macro_rules! jolt_side_effects_for_marker {
         true
     };
     (Jalr) => {
+        true
+    };
+    (Success) => {
+        true
+    };
+    (Panic) => {
         true
     };
     (Ld) => {
@@ -2179,6 +2203,14 @@ mod tests {
             JoltInstructionKind::VirtualXORROTW7.tag(),
             JoltInstructionTag(0x0088)
         );
+        assert_eq!(
+            JoltInstructionKind::JoltSuccess.tag(),
+            JoltInstructionTag(0x00a8)
+        );
+        assert_eq!(
+            JoltInstructionKind::JoltPanic.tag(),
+            JoltInstructionTag(0x00a9)
+        );
     }
 
     #[test]
@@ -2205,6 +2237,10 @@ mod tests {
         assert_eq!(
             SourceInstructionKind::from_canonical_name("rv64.addw"),
             Some(SourceInstructionKind::ADDW)
+        );
+        assert_eq!(
+            SourceInstructionKind::JoltSuccess.canonical_name(),
+            "jolt.success"
         );
     }
 

@@ -136,6 +136,8 @@ const SUPPORTED: &[&str] = &[
     "StoreB",
     "StoreH",
     "StoreW",
+    "Success",
+    "Panic",
 ];
 
 fn class_by_marker(marker: &str) -> Class {

@@ -13,8 +13,9 @@ use jolt_program::execution::TraceError;
 pub enum ExitReason {
     /// Still running (initial value; never observed on return).
     Running = 0,
-    /// Guest terminated via the PC-stall convention (`j .`).
-    Terminated = 1,
+    /// A PC stall: a jump or taken branch to its own address that a re-run
+    /// repeats (`JoltInstructionRow::self_jump_repeats`).
+    Stalled = 1,
     /// Guest RAM access outside the memory plane.
     FaultOutOfBounds = 2,
     /// Indirect jump to an address that is not a compiled group start.
@@ -27,6 +28,10 @@ pub enum ExitReason {
     /// Paused at a group boundary having reached `row_limit`; `pc` holds the
     /// resume point, so calling the body again continues the execution.
     Paused = 6,
+    /// A `Success` row (`jolt.success`) ended the run.
+    HaltedSuccess = 7,
+    /// A `Panic` row (EBREAK's lowering) ended the run.
+    HaltedPanic = 8,
 }
 
 /// State shared with generated code. Field offsets are load-bearing.
@@ -77,7 +82,9 @@ impl GuestState {
     #[expect(clippy::print_stderr)]
     pub fn check_exit(&self, host: &mut HostContext) -> Result<(), TraceError> {
         match self.exit {
-            e if e == ExitReason::Terminated as u64 => {}
+            e if e == ExitReason::Stalled as u64
+                || e == ExitReason::HaltedSuccess as u64
+                || e == ExitReason::HaltedPanic as u64 => {}
             e if e == ExitReason::FaultOutOfBounds as u64 => {
                 return Err(TraceError::Backend("guest RAM access out of bounds"));
             }

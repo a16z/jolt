@@ -200,6 +200,14 @@ pub enum HostIo {
     Replay,
 }
 
+/// How a Jolt run ended: at `jolt.success`, or at Jolt's failure halt (`ebreak`, lowered to a
+/// `Panic` row).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HaltKind {
+    Success,
+    Panic,
+}
+
 /// Architectural CPU state captured at a tick boundary — everything a
 /// bit-exact trace-mode chunk replay needs, and nothing run-scoped: cycle
 /// markers and the call stack stay with pass-1 (host-side logging), and the
@@ -214,6 +222,7 @@ pub(crate) struct ChunkCpuState {
     x: [i64; REGISTER_COUNT as usize],
     f: [f64; 32],
     pc: u64,
+    halted: Option<HaltKind>,
     /// Boxed: 32 KB, keeps checkpoints cheap to move.
     csr: Box<[u64; CSR_CAPACITY]>,
     reservation: u64,
@@ -243,6 +252,9 @@ impl ChunkCpuState {
         }
         if self.pc != cpu.pc {
             return Some(format!("pc: {:#x} vs {:#x}", self.pc, cpu.pc));
+        }
+        if self.halted != cpu.halted {
+            return Some(format!("halted: {:?} vs {:?}", self.halted, cpu.halted));
         }
         for i in 0..REGISTER_COUNT as usize {
             if self.x[i] != cpu.x[i] {
@@ -318,10 +330,13 @@ pub struct Cpu {
     #[allow(dead_code)]
     f: [f64; 32],
     pub(crate) pc: u64,
-    /// Whether the last tick reached the PC-stall fixed point that ends a
-    /// guest: it left the PC where it was, and re-running it would too
-    /// (`JoltInstructionRow::self_jump_repeats`).
+    /// Whether the last tick left the PC where it was and re-running it would
+    /// too (`JoltInstructionRow::self_jump_repeats`). A halt also sets it, so a
+    /// driver that stops on a stall also stops at a halt; `halted` tells the
+    /// two apart.
     stalled: bool,
+    /// Set by the halt that ended the run; every later tick is a no-op.
+    halted: Option<HaltKind>,
     csr: [u64; CSR_CAPACITY],
     pub mmu: Mmu,
     reservation: u64,
@@ -449,6 +464,7 @@ impl Cpu {
             f: [0.0; 32],
             pc: 0,
             stalled: false,
+            halted: None,
             csr: [0; CSR_CAPACITY],
             mmu: Mmu::new(terminal),
             reservation: 0,
@@ -522,6 +538,21 @@ impl Cpu {
         self.stalled
     }
 
+    pub fn halted(&self) -> Option<HaltKind> {
+        self.halted
+    }
+
+    /// Executes a halt at `address`: writes the link (`pc`, already advanced
+    /// past the instruction) to `link` unless it is x0, leaves the PC on the
+    /// halt and halts the hart. Every later tick is a no-op.
+    pub(crate) fn halt(&mut self, kind: HaltKind, address: u64, link: u8) {
+        if link != 0 {
+            self.write_register(link as usize, self.sign_extend(self.pc as i64));
+        }
+        self.pc = address;
+        self.halted = Some(kind);
+    }
+
     pub fn set_reservation(&mut self, address: u64, width: ReservationWidth) {
         self.reservation = address;
         self.is_reservation_set = true;
@@ -552,6 +583,9 @@ impl Cpu {
 
     /// Runs program one cycle. Fetch, decode, and execution are completed in a cycle so far.
     pub fn tick(&mut self, trace: Option<&mut Vec<Cycle>>) {
+        if self.halted.is_some() {
+            return;
+        }
         let instruction_address = self.pc;
         let executed = match self.tick_operate(trace) {
             Ok(executed) => executed,
@@ -1231,6 +1265,7 @@ impl Cpu {
             f: self.f,
             pc: self.pc,
             stalled: self.stalled,
+            halted: self.halted,
             csr: self.csr,
             mmu: self.mmu.save_state_with_empty_memory(),
             reservation: self.reservation,
@@ -1265,6 +1300,7 @@ impl Cpu {
             pc,
             // Pass 1 owns termination; workers replay counted ticks.
             stalled: _,
+            halted,
             csr,
             // Memory image, JoltDevice and decode cache are captured by the
             // checkpoint layer (see `parallel::ChunkCheckpoint`).
@@ -1301,6 +1337,7 @@ impl Cpu {
             x: *x,
             f: *f,
             pc: *pc,
+            halted: *halted,
             csr: Box::new(*csr),
             reservation: *reservation,
             is_reservation_set: *is_reservation_set,
@@ -1327,6 +1364,7 @@ impl Cpu {
         self.x = state.x;
         self.f = state.f;
         self.pc = state.pc;
+        self.halted = state.halted;
         self.csr = *state.csr;
         self.reservation = state.reservation;
         self.is_reservation_set = state.is_reservation_set;
@@ -1349,8 +1387,8 @@ impl Cpu {
     /// register file (including virtual registers), the CSR array, clock, wfi,
     /// privilege mode, the LR/SC reservation triple, the advice tape (data and
     /// read position), `executed_instrs`, `trace_len` (row-uniform across
-    /// trace and execute modes), and JoltDevice outputs/panic. Excludes
-    /// host-side bookkeeping (markers, call stack) and the dead `f`
+    /// trace and execute modes), JoltDevice outputs/panic, and the halt state.
+    /// Excludes host-side bookkeeping (markers, call stack) and the dead `f`
     /// registers. Memory is not compared — callers hash it separately.
     pub fn arch_state_diff(&self, other: &Cpu) -> Option<String> {
         if self.trace_len != other.trace_len {
@@ -1361,6 +1399,9 @@ impl Cpu {
         }
         if self.pc != other.pc {
             return Some(format!("pc: {:#x} vs {:#x}", self.pc, other.pc));
+        }
+        if self.halted != other.halted {
+            return Some(format!("halted: {:?} vs {:?}", self.halted, other.halted));
         }
         for i in 0..REGISTER_COUNT as usize {
             if self.x[i] != other.x[i] {

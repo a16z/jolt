@@ -354,6 +354,38 @@ fn decodes_host_io_without_operands() {
 }
 
 #[test]
+fn decodes_jolt_success_and_rejects_its_reserved_fields() {
+    let instruction = decode_ok(JOLT_SUCCESS_WORD, 0x8000_0000, false);
+    assert_eq!(instruction.kind(), SourceInstructionKind::JoltSuccess);
+    assert_eq!(
+        instruction.row().operands,
+        NormalizedOperands {
+            rd: Some(0),
+            rs1: Some(0),
+            rs2: None,
+            imm: 0,
+        }
+    );
+
+    for word in [
+        JOLT_SUCCESS_WORD | (1 << 7),
+        JOLT_SUCCESS_WORD | (1 << 15),
+        JOLT_SUCCESS_WORD | (1 << 20),
+        JOLT_SUCCESS_WORD | (0xfff << 20),
+    ] {
+        assert!(
+            matches!(
+                decode_instruction(word, 0x8000_0000, false, RV64IMAC_JOLT),
+                Err(ProgramError::MalformedImage(
+                    "invalid jolt.success operands"
+                ))
+            ),
+            "word {word:#010x}"
+        );
+    }
+}
+
+#[test]
 fn decodes_inline_opcode_with_dispatch_key() {
     let word = (3 << 25) | (2 << 20) | (1 << 15) | (0b101 << 12) | (4 << 7) | 0x0b;
     let instruction = decode_ok(word, 0x8000_0000, false);
@@ -407,6 +439,7 @@ fn rejects_invalid_encodings_with_exact_messages() {
         ),
         (0x0800_00db, "invalid custom instruction"),
         ((0x3f << 25) | 0x5b, "invalid custom instruction"),
+        ((0b100 << 12) | 0x5b, "invalid custom instruction"),
         (0x0f | (0b001 << 12), "invalid MISC-MEM funct3"),
         (0x0f | (0b010 << 12), "invalid MISC-MEM funct3"),
         (0x0f | (0b011 << 12), "invalid MISC-MEM funct3"),

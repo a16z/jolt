@@ -147,7 +147,7 @@ impl Prepared {
         });
         guest.x[0] = 0;
         self.compiled.run(&mut guest)?;
-        if guest.exit != ExitReason::Terminated as u64 {
+        if guest.exit != ExitReason::Stalled as u64 {
             return Err(TraceError::Backend("benchmark program did not terminate"));
         }
         Ok(guest.trace_len)
