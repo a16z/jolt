@@ -377,6 +377,25 @@ fn final_partial_heap_word_preserves_backing_bytes_across_checkpoints() {
     }
 }
 
+/// A Jolt run must end at a halt: chunked `execute` rejects a PC stall.
+#[test]
+fn chunked_execute_rejects_a_stall() {
+    let mut stall = row(Kind::BEQ, Some(0), None, 0);
+    stall.operands.rs2 = Some(0);
+    let program = JoltProgram::from_parts(
+        minimal_elf(TEST_ADDR),
+        vec![stall],
+        Vec::new(),
+        RAM_START_ADDRESS + 1024,
+        TEST_ADDR,
+    );
+    let inputs = TraceInputs::new(Vec::new(), Vec::new(), Vec::new(), memory_config());
+    assert!(matches!(
+        X86TracerBackend::new().execute(&program, inputs, 1),
+        Err(TraceError::EndedWithoutHalt { pc: TEST_ADDR })
+    ));
+}
+
 fn minimal_elf(entry: u64) -> Vec<u8> {
     // Source recovery parses this sectionless ELF; execution uses the rows above.
     let mut elf = vec![0; 64];

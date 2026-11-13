@@ -777,6 +777,15 @@ mod tests {
                 crate::finish_emulator(run_two_pass(emulator, &config).1),
                 Err(TraceError::EndedWithoutHalt { pc: 0x8000_0004 })
             ));
+            // The infallible lazy iterator panics with the same error.
+            let panic = std::panic::catch_unwind(|| {
+                crate::trace_lazy(&elf, None, &[], &[], &[], &inputs.memory_config, None).count()
+            })
+            .expect_err("the lazy iterator must reject a stall");
+            assert_eq!(
+                panic.downcast_ref::<String>(),
+                Some(&TraceError::EndedWithoutHalt { pc: 0x8000_0004 }.to_string())
+            );
         }
     }
 
