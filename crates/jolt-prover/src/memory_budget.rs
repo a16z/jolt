@@ -582,10 +582,8 @@ mod tests {
     }
 
     /// Address-first RAM over 2^16 cycles, `PREFIX` proof rows and 64
-    /// addresses: stage 2 reserves 8,912,536 bytes, above the 8,257,176 with
-    /// the order priced cycle-first and the 4,371,032 with the reduction's
-    /// window beside the first bind leading, and below the 11,042,528 with
-    /// the construction collect beside the first bind.
+    /// addresses: construction plus prepared tables determines the stage-2
+    /// maximum, including under the conservative parallel first-bind allowance.
     #[cfg(feature = "akita")]
     #[test]
     fn stage_two_phase_pairing_address_first_akita_field() {
