@@ -74,6 +74,15 @@ impl<F: JoltField> PrepareKernel<F, InstructionInput<F>> for StreamingInstructio
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = InstructionInput<F>>>, KernelError<F>> {
         let r_product = inputs.relation.product_remainder_opening_point();
         let rows = BundleStore::resident(witness, r_product.len(), "instruction input trace rows")?;
+        // A one-cycle domain has no round whose pass could fill the tables:
+        // the eager kernel opens its single row without any.
+        if r_product.is_empty() {
+            return Ok(Box::new(OptimizedInstructionInputKernel::new(
+                r_product,
+                rows,
+                inputs.challenges.gamma,
+            )?));
+        }
         Ok(Box::new(StreamingInstructionInputKernel::new(
             r_product,
             rows,
@@ -391,6 +400,7 @@ mod tests {
     use jolt_witness::{JoltVmWitnessInputs, TraceBackend};
 
     use super::*;
+    use crate::optimized::instruction_input::OptimizedInstructionInput;
     use crate::optimized::parity::{probe_input_claim, run_lockstep, ExceptionalEq};
     use crate::optimized::registers_read_write::test_support::structured_fixture;
     use crate::reference::views::eq_table;
@@ -760,6 +770,46 @@ mod tests {
                 }
             });
         }
+    }
+
+    /// A one-cycle domain has no rounds: preparation hands it to the eager
+    /// kernel, so the output claims and the eq check are available at once.
+    #[test]
+    fn zero_round_domain_opens_like_the_default_kernel() {
+        let relation = InstructionInput::<Fr>::new(TraceDimensions::new(0), Vec::new());
+        let claims = InstructionInputInputClaims {
+            right_instruction_input: fr(0),
+            left_instruction_input: fr(0),
+        };
+        let points = InstructionInputInputClaims {
+            right_instruction_input: Vec::new(),
+            left_instruction_input: Vec::new(),
+        };
+        let challenges = InstructionInputChallenges { gamma: fr(7019) };
+        let inputs = || ProverInputs {
+            relation: &relation,
+            claims: &claims,
+            points: &points,
+            challenges: &challenges,
+        };
+        structured_fixture(1).with_plane(0, |backend| {
+            let mut eager = OptimizedInstructionInput
+                .prepare(&mut ProofSession::default(), backend, inputs())
+                .unwrap();
+            let mut streaming = StreamingInstructionInput
+                .prepare(&mut ProofSession::default(), backend, inputs())
+                .unwrap();
+            assert_eq!(streaming.num_rounds(), 0);
+            assert_eq!(
+                streaming.output_claims(&claims).unwrap(),
+                eager.output_claims(&claims).unwrap(),
+                "zero-round output claims"
+            );
+            let output_points = relation.derive_opening_points(&[], &points).unwrap();
+            streaming
+                .validate_derived_tables(&relation, &points, &output_points, &challenges)
+                .unwrap();
+        });
     }
 
     /// A witness without resident rows, or with another cycle domain, fails
