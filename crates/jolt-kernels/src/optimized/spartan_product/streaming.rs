@@ -30,9 +30,15 @@ use crate::{KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKern
 pub struct StreamingProductRemainder;
 
 /// The round whose pass fills both tables over `2^log_t` cycles: the first
-/// whose tables fit `cap` bytes, or the round count when none does.
+/// whose tables fit `cap` bytes, or the round count when none does. Sizes are
+/// compared in cycles against the cycles `cap` holds, which is the same test
+/// as bytes against `cap` and cannot overflow where the byte count of
+/// `2^log_t` cycles would, for `log_t < usize::BITS`. That bound is the
+/// carry's: its uni-skip kernel sized the row store by `1 << log_t`, a shift
+/// no check guards.
 fn crossover_round<F: JoltField>(log_t: usize, cap: usize) -> usize {
-    dense_crossover((2 * size_of::<F>()) << log_t, cap, log_t)
+    let cap_cycles = cap / (2 * size_of::<F>());
+    dense_crossover(1 << log_t, cap_cycles, log_t)
 }
 
 impl<F: JoltField> PrepareKernel<F, ProductRemainder<F>> for StreamingProductRemainder {
@@ -180,5 +186,27 @@ impl<F: JoltField> ProductRemainderKernel<F> {
             }
             Ok(())
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use jolt_field::Fr;
+
+    use super::crossover_round;
+
+    /// The crossover is exact at the cap's boundary, is the round count when
+    /// the last round's tables exceed the cap, and does not wrap when the
+    /// tables exceed `usize` bytes (the widest cycle count `usize` holds).
+    #[test]
+    fn crossover_round_is_exact_at_the_cap_and_past_usize_bytes() {
+        let cycle_bytes = 2 * size_of::<Fr>();
+        assert_eq!(crossover_round::<Fr>(20, cycle_bytes << 10), 10);
+        assert_eq!(crossover_round::<Fr>(20, (cycle_bytes << 10) - 1), 11);
+        assert_eq!(crossover_round::<Fr>(20, usize::MAX), 0);
+        assert_eq!(crossover_round::<Fr>(20, 2 * cycle_bytes), 19);
+        assert_eq!(crossover_round::<Fr>(20, 2 * cycle_bytes - 1), 20);
+        let wide = usize::BITS as usize - 1;
+        assert_eq!(crossover_round::<Fr>(wide, cycle_bytes << 20), wide - 20);
     }
 }
