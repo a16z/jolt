@@ -407,6 +407,10 @@ fn setup_emulator(
 ///
 /// Public seam for drivers that need to tick the emulator themselves
 /// (mode-equivalence gates, two-pass parallel tracing).
+#[expect(
+    clippy::expect_used,
+    reason = "create_emulator has no error path: like its input-size asserts, it panics on a program image jolt-program rejects"
+)]
 pub fn create_emulator(
     elf_contents: &[u8],
     elf_path: Option<&PathBuf>,
@@ -445,6 +449,7 @@ pub fn create_emulator(
     jolt_device.inputs = inputs.to_vec();
     jolt_device.trusted_advice = trusted_advice.to_vec();
     jolt_device.untrusted_advice = untrusted_advice.to_vec();
+    let lowest_address = jolt_device.memory_layout.get_lowest_address();
     emulator.get_mut_cpu().get_mut_mmu().jolt_device = Some(jolt_device);
     if let Some(elf_path) = elf_path {
         emulator.set_elf_path(elf_path);
@@ -456,14 +461,7 @@ pub fn create_emulator(
     let profile = RV64IMAC_JOLT_FIELD_INLINE;
     let image = jolt_program::image::decode_elf(elf_contents, profile)
         .expect("program ELF decoding failed");
-    let mmu = emulator.get_mut_cpu().get_mut_mmu();
-    let lowest_address = mmu
-        .jolt_device
-        .as_ref()
-        .expect("JoltDevice initialized before loading the ELF")
-        .memory_layout
-        .get_lowest_address();
-    mmu.code_word_intervals = code_word_intervals(
+    emulator.get_mut_cpu().get_mut_mmu().code_word_intervals = code_word_intervals(
         image.instructions.iter().map(|instruction| {
             let row = instruction.row();
             (row.address as u64, row.is_compressed)

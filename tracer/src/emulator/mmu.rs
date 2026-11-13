@@ -712,10 +712,6 @@ impl Mmu {
     }
 
     fn assert_write_protected_store(&mut self, address: u64, value: u64, width: u64) {
-        let Some(device) = self.jolt_device.as_ref() else {
-            return;
-        };
-        let lowest_address = device.memory_layout.get_lowest_address();
         // One interval lookup per touched word, fused into the existing write; only
         // protected words need another read. Naturally aligned stores touch one word.
         let first = address & !7;
@@ -724,9 +720,11 @@ impl Mmu {
             .into_iter()
             .take(1 + usize::from(first != last))
         {
-            let index = ((word - lowest_address) >> 3) as usize;
-            let device = self.jolt_device.as_ref().unwrap();
+            let Some(device) = self.jolt_device.as_ref() else {
+                return;
+            };
             let layout = &device.memory_layout;
+            let index = ((word - layout.get_lowest_address()) >> 3) as usize;
             let canary =
                 word + 7 >= layout.stack_end && word < layout.stack_end + STACK_CANARY_SIZE;
             if !is_code_word(&self.code_word_intervals, index)
