@@ -63,7 +63,8 @@ pub struct StreamingInstructionInput;
 /// rounds, and at most the last round, so openings are always table entries.
 /// Sizes are compared in cycles against the cycles `cap` holds, which is the
 /// same test as bytes against `cap` and cannot overflow where the byte count
-/// of `2^rounds` cycles would.
+/// of `2^rounds` cycles would, for `rounds < usize::BITS` (`prepare` gets that
+/// from [`BundleStore::resident`]).
 fn crossover_round<F: JoltField>(rounds: usize, cap: usize) -> usize {
     let cap_cycles = cap / (NUM_TABLES * size_of::<F>());
     dense_crossover(1 << rounds, cap_cycles, rounds)
