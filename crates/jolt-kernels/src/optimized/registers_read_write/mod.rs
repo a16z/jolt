@@ -108,31 +108,15 @@ impl OptimizedRegistersReadWrite {
         inputs: ProverInputs<'_, F, RegistersReadWriteChecking<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = RegistersReadWriteChecking<F>>>, KernelError<F>>
     {
-        let dimensions = inputs.relation.register_dimensions();
-        let order = ReadWriteOrder::new::<F>(dimensions)?;
-        let log_t = dimensions.log_t();
-        let log_k = dimensions.log_k();
-        if log_t == 0 {
-            return Err(KernelError::Unsupported {
-                reason: "optimized registers read-write checking requires at least one cycle round",
-            });
-        }
-        let r_cycle: &[F] = &inputs.points.rd_write_value;
-        if r_cycle.len() != log_t {
-            return Err(KernelError::InvariantViolation {
-                reason: "registers read-write input point has the wrong variable count",
-            });
-        }
-        if log_k != REGISTER_ADDRESS_BITS {
-            return Err(KernelError::InvariantViolation {
-                reason: "register read/write dimensions do not match the witness domain",
-            });
-        }
-        if order == ReadWriteOrder::AddressFirst {
+        if read_write_order(&inputs)? == ReadWriteOrder::AddressFirst {
             return Ok(Box::new(AddressFirstKernel::prepare(
                 rd_carry, witness, &inputs,
             )?));
         }
+        let dimensions = inputs.relation.register_dimensions();
+        let log_t = dimensions.log_t();
+        let log_k = dimensions.log_k();
+        let r_cycle: &[F] = &inputs.points.rd_write_value;
         let cycles = 1usize << log_t;
 
         // Sparse entry construction: one trace pass — the typed rows are
@@ -161,6 +145,31 @@ impl OptimizedRegistersReadWrite {
             challenges: RoundChallenges::new(log_t + log_k),
         }))
     }
+}
+
+/// The binding order `inputs` select, once the checks every register
+/// read/write kernel shares pass.
+fn read_write_order<F: JoltField>(
+    inputs: &ProverInputs<'_, F, RegistersReadWriteChecking<F>>,
+) -> Result<ReadWriteOrder, KernelError<F>> {
+    let dimensions = inputs.relation.register_dimensions();
+    let order = ReadWriteOrder::new::<F>(dimensions)?;
+    if dimensions.log_t() == 0 {
+        return Err(KernelError::Unsupported {
+            reason: "optimized registers read-write checking requires at least one cycle round",
+        });
+    }
+    if inputs.points.rd_write_value.len() != dimensions.log_t() {
+        return Err(KernelError::InvariantViolation {
+            reason: "registers read-write input point has the wrong variable count",
+        });
+    }
+    if dimensions.log_k() != REGISTER_ADDRESS_BITS {
+        return Err(KernelError::InvariantViolation {
+            reason: "register read/write dimensions do not match the witness domain",
+        });
+    }
+    Ok(order)
 }
 
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
