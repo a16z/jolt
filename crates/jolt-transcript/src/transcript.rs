@@ -87,7 +87,10 @@ pub trait Transcript: Sealed {
     ///
     /// For values whose encodings are whole words, such as every production
     /// field element and Dory's compressed group elements, the padding is
-    /// empty and the sponge absorbs the bytes that one absorb per value would.
+    /// empty and the message carries the bytes that one absorb per value
+    /// would. Sponges that absorb bytes without framing (Keccak, Blake2b) then
+    /// reach the same state either way; the Poseidon sponge frames each absorb
+    /// with its length, so for it the two differ.
     /// Shorter encodings, such as an odd count of 4-byte elements, are padded
     /// once at the end. An empty slice absorbs nothing.
     fn append_values<M: Encoding>(&mut self, values: &[M]) {
