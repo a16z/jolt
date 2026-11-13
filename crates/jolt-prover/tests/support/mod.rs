@@ -28,6 +28,8 @@ pub struct GuestCase {
     pub func: Option<&'static str>,
     pub std: bool,
     pub stack_size: Option<u64>,
+    /// Must match the guest's `max_untrusted_advice_size` attribute.
+    pub max_untrusted_advice_size: Option<u64>,
     pub inputs: Vec<u8>,
     pub untrusted_advice: Vec<u8>,
     pub trusted_advice: Vec<u8>,
@@ -52,6 +54,7 @@ impl GuestCase {
             func: None,
             std: false,
             stack_size: None,
+            max_untrusted_advice_size: None,
             inputs: Vec::new(),
             untrusted_advice: Vec::new(),
             trusted_advice: Vec::new(),
@@ -99,7 +102,7 @@ pub fn memory_config(layout: &MemoryLayout) -> MemoryConfig {
 }
 
 /// The guest build `case` runs: its example crate, entry point, profile,
-/// standard library, and stack size.
+/// standard library, stack size, and untrusted-advice maximum.
 pub fn program(case: &GuestCase) -> Program {
     let mut source = Program::new(case.name);
     #[cfg(feature = "field-inline")]
@@ -110,6 +113,9 @@ pub fn program(case: &GuestCase) -> Program {
     source.set_std(case.std);
     if let Some(bytes) = case.stack_size {
         source.set_stack_size(bytes);
+    }
+    if let Some(bytes) = case.max_untrusted_advice_size {
+        source.set_max_untrusted_advice_size(bytes);
     }
     source
 }

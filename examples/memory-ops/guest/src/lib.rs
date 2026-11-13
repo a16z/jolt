@@ -1,5 +1,7 @@
 #![cfg_attr(feature = "guest", no_std)]
 
+use jolt::UntrustedAdvice;
+
 #[cfg(feature = "guest")]
 use core::arch::asm;
 
@@ -108,6 +110,46 @@ fn misaligned_access(kind: u8) -> u64 {
         }
     }
     value ^ scratch.words()[1]
+}
+
+#[cfg(feature = "guest")]
+extern "C" {
+    /// Global pointer, stack top, heap start and heap end, written by the
+    /// linker script (`src/linker.ld.template`).
+    static __jolt_memory_layout: [usize; 4];
+}
+
+/// Stores into the heap's last doubleword and then its last byte, both ending
+/// at the linker's `__heap_end`, and reloads the doubleword. The memory layout
+/// rounds `heap_end` up to a doubleword so that it matches `__heap_end` even
+/// when the program size is not a multiple of eight.
+#[jolt::provable(guest_only, heap_size = 65536, max_trace_length = 65536)]
+fn heap_top() -> u64 {
+    // SAFETY: the linker reserves `[__heap_start, __heap_end)` for this guest,
+    // and the allocator has not handed out the heap's last doubleword in a
+    // guest that allocates nothing.
+    unsafe {
+        let heap_end = __jolt_memory_layout[3];
+        let last_word = (heap_end - 8) as *mut u64;
+        core::ptr::write_volatile(last_word, 0x0123_4567_89ab_cdef);
+        core::ptr::write_volatile((heap_end - 1) as *mut u8, 0xa5);
+        core::ptr::read_volatile(last_word)
+    }
+}
+
+/// Configured for 12 bytes of untrusted advice, which the layout rounds up to
+/// 16. Returns the advice's high doubleword, so bytes 12..16 reach the output.
+#[jolt::provable(
+    guest_only,
+    heap_size = 65536,
+    max_trace_length = 65536,
+    max_untrusted_advice_size = 12
+)]
+fn rounded_advice(untrusted: UntrustedAdvice<[u8; 16]>) -> u64 {
+    let bytes = *untrusted;
+    let mut high = [0u8; 8];
+    high.copy_from_slice(&bytes[8..]);
+    u64::from_le_bytes(high)
 }
 
 /// Runs `pad` single-row no-ops (`pad <= 4096`) between a fixed prologue and
