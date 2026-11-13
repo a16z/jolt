@@ -76,6 +76,7 @@ impl<F: JoltField> PrepareKernel<F, InstructionInput<F>> for StreamingInstructio
             rows,
             inputs.challenges.gamma,
             DENSE_TABLE_CAP,
+            VISIT_ROWS,
         )))
     }
 }
@@ -87,6 +88,9 @@ struct StreamedRounds<F: JoltField> {
     gamma: F,
     /// The round whose pass fills the tables ([`crossover_round`]).
     dense_round: usize,
+    /// Rows per callback of round 0's visit: a power of two of at least two
+    /// rows, so every callback holds whole pairs inside one split-eq group.
+    native_visit_rows: usize,
     gruen: GruenSplitEqPolynomial<F>,
     challenges: RoundChallenges<F>,
     rows: BundleStore<InstructionInputRow>,
@@ -136,7 +140,7 @@ impl<F: JoltField> StreamedRounds<F> {
             let mut q_terms = vec![F::zero(); TERMS];
             self.rows.visit(
                 ranges[task].clone(),
-                VISIT_ROWS.min(group),
+                self.native_visit_rows.min(group),
                 |start, bundles| {
                     let mut sums = NativePairSums::<F, TERMS>::new();
                     for (pair, &weight) in bundles
@@ -223,19 +227,23 @@ impl<F: JoltField> StreamedRounds<F> {
 }
 
 impl<F: JoltField> StreamingInstructionInputKernel<F> {
-    /// `dense_cap` bounds the bytes of the ten dense tables; production
-    /// passes [`DENSE_TABLE_CAP`].
+    /// `dense_cap` bounds the bytes of the ten dense tables and
+    /// `native_visit_rows` is the power-of-two row count of one callback of
+    /// round 0's visit; production passes [`DENSE_TABLE_CAP`] and
+    /// [`VISIT_ROWS`].
     fn new(
         r_product: &[F],
         rows: BundleStore<InstructionInputRow>,
         gamma: F,
         dense_cap: usize,
+        native_visit_rows: usize,
     ) -> Self {
         let rounds = r_product.len();
         Self {
             phase: Phase::Streamed(StreamedRounds {
                 gamma,
                 dense_round: crossover_round::<F>(rounds, dense_cap),
+                native_visit_rows,
                 gruen: GruenSplitEqPolynomial::new(r_product, BindingOrder::LowToHigh),
                 challenges: RoundChallenges::new(rounds),
                 rows,
@@ -459,7 +467,8 @@ mod tests {
 
     /// Drives the reference prover over the rows' dense columns and the
     /// streaming kernel, its tables capped at exactly their size at round
-    /// `depth`, through every round on `challenges`: equal round polynomials
+    /// `depth` and its round-0 visit made in callbacks of `visit_rows` rows,
+    /// through every round on `challenges`: equal round polynomials
     /// and output claims, the pinned eq scalar, and tables filled with
     /// `T / 2^c` entries at round `c = min(depth, log_t − 1)`.
     fn assert_parity(
@@ -467,6 +476,7 @@ mod tests {
         r_product: &[Fr],
         challenges: &[Fr],
         depth: usize,
+        visit_rows: usize,
     ) {
         let log_t = r_product.len();
         let tables: Vec<Vec<Fr>> = (0..NUM_TABLES)
@@ -527,6 +537,7 @@ mod tests {
             BundleStore::Retained(rows),
             gamma,
             cap,
+            visit_rows,
         );
 
         let mut claim = probe_input_claim(&mut reference);
@@ -596,7 +607,36 @@ mod tests {
                     &product_point(log_t),
                     &challenges,
                     depth,
+                    VISIT_ROWS,
                 );
+            }
+        }
+    }
+
+    /// Round 0 over split-eq groups wider than one visit callback, the shape
+    /// of every trace of 2^25 cycles or more at the production callback size:
+    /// each callback after a group's first starts at a nonzero `e_in` offset
+    /// and closes a partial group, at every crossover round.
+    #[test]
+    fn round_zero_groups_span_several_visit_callbacks() {
+        for (log_t, seed) in [(4usize, 404u64), (7, 707), (8, 808)] {
+            let r_product = product_point(log_t);
+            let challenges: Vec<Fr> = (0..log_t).map(challenge).collect();
+            let split_eq = GruenSplitEqPolynomial::new(&r_product, BindingOrder::LowToHigh);
+            let group = 2 * split_eq.e_in_current().len();
+            assert!(group >= 4, "log_t {log_t} has one-pair groups");
+            let mut visit_rows = 2;
+            while visit_rows < group {
+                for depth in 1..log_t {
+                    assert_parity(
+                        synthetic_rows(log_t, seed),
+                        &r_product,
+                        &challenges,
+                        depth,
+                        visit_rows,
+                    );
+                }
+                visit_rows *= 2;
             }
         }
     }
@@ -616,6 +656,7 @@ mod tests {
                     &case.point(log_t, challenges[0]),
                     &challenges,
                     depth,
+                    VISIT_ROWS,
                 );
             }
             assert_parity(
@@ -623,6 +664,7 @@ mod tests {
                 &product_point(log_t),
                 &zero_one,
                 depth,
+                VISIT_ROWS,
             );
         }
     }
@@ -662,6 +704,7 @@ mod tests {
                 BundleStore::resident::<F>(backend, log_t, "trace rows").unwrap(),
                 challenges.gamma,
                 ((NUM_TABLES * size_of::<F>()) << log_t) >> depth,
+                VISIT_ROWS,
             )),
             None => StreamingInstructionInput
                 .prepare(&mut ProofSession::default(), backend, inputs())
