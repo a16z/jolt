@@ -1,5 +1,7 @@
 #![cfg_attr(feature = "guest", no_std)]
 
+use jolt::UntrustedAdvice;
+
 #[cfg(feature = "guest")]
 use core::arch::asm;
 
@@ -143,7 +145,7 @@ fn heap_top() -> u64 {
     max_trace_length = 65536,
     max_untrusted_advice_size = 12
 )]
-fn rounded_advice(untrusted: jolt::UntrustedAdvice<[u8; 16]>) -> u64 {
+fn rounded_advice(untrusted: UntrustedAdvice<[u8; 16]>) -> u64 {
     let bytes = *untrusted;
     let mut high = [0u8; 8];
     high.copy_from_slice(&bytes[8..]);
