@@ -408,29 +408,9 @@ pub fn create_emulator(
         emulator.set_advice_tape(tape);
     }
 
-    assert!(
-        trusted_advice.len() as u64 <= memory_config.max_trusted_advice_size,
-        "Trusted advice too long: got {} bytes, max is {} bytes (set by MemoryConfig.max_trusted_advice_size).",
-        trusted_advice.len(),
-        memory_config.max_trusted_advice_size,
-    );
-    assert!(
-        untrusted_advice.len() as u64 <= memory_config.max_untrusted_advice_size,
-        "Untrusted advice too long: got {} bytes, max is {} bytes (set by MemoryConfig.max_untrusted_advice_size).",
-        untrusted_advice.len(),
-        memory_config.max_untrusted_advice_size,
-    );
-    assert!(
-        inputs.len() as u64 <= memory_config.max_input_size,
-        "Input too long: got {} bytes, max is {} bytes (set by MemoryConfig.max_input_size).",
-        inputs.len(),
-        memory_config.max_input_size,
-    );
-
-    let mut jolt_device = JoltDeviceMemory::new(memory_config);
-    jolt_device.inputs = inputs.to_vec();
-    jolt_device.trusted_advice = trusted_advice.to_vec();
-    jolt_device.untrusted_advice = untrusted_advice.to_vec();
+    let jolt_device =
+        JoltDeviceMemory::try_with_io(memory_config, inputs, trusted_advice, untrusted_advice)
+            .unwrap_or_else(|error| panic!("{error}"));
     emulator.get_mut_cpu().get_mut_mmu().jolt_device = Some(jolt_device);
     if let Some(elf_path) = elf_path {
         emulator.set_elf_path(elf_path);

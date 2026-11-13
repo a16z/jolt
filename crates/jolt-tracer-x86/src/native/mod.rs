@@ -155,10 +155,12 @@ impl X86TracerBackend {
     ) -> Result<RecordRunOutput, TraceError> {
         let compiled = self.compiled(program)?;
 
-        let mut device = JoltDeviceMemory::new(&inputs.memory_config);
-        device.inputs.clone_from(&inputs.inputs);
-        device.trusted_advice.clone_from(&inputs.trusted_advice);
-        device.untrusted_advice.clone_from(&inputs.untrusted_advice);
+        let device = JoltDeviceMemory::try_with_io(
+            &inputs.memory_config,
+            &inputs.inputs,
+            &inputs.trusted_advice,
+            &inputs.untrusted_advice,
+        )?;
 
         let plane_size = device.memory_layout.get_total_memory_size();
         let mut plane = MemoryPlane::new(plane_size as usize)?;
@@ -235,10 +237,12 @@ impl X86TracerBackend {
     ) -> Result<MachineRunOutput, TraceError> {
         let compiled = self.compiled(program)?;
 
-        let mut device = JoltDeviceMemory::new(&inputs.memory_config);
-        device.inputs.clone_from(&inputs.inputs);
-        device.trusted_advice.clone_from(&inputs.trusted_advice);
-        device.untrusted_advice.clone_from(&inputs.untrusted_advice);
+        let device = JoltDeviceMemory::try_with_io(
+            &inputs.memory_config,
+            &inputs.inputs,
+            &inputs.trusted_advice,
+            &inputs.untrusted_advice,
+        )?;
 
         let plane_size = device.memory_layout.get_total_memory_size();
         let mut plane = MemoryPlane::new(plane_size as usize)?;
@@ -564,10 +568,12 @@ impl ChunkedExecutionBackend for X86TracerBackend {
         }
         let compiled = self.compiled(program)?;
 
-        let mut device = JoltDeviceMemory::new(&inputs.memory_config);
-        device.inputs.clone_from(&inputs.inputs);
-        device.trusted_advice.clone_from(&inputs.trusted_advice);
-        device.untrusted_advice.clone_from(&inputs.untrusted_advice);
+        let device = JoltDeviceMemory::try_with_io(
+            &inputs.memory_config,
+            &inputs.inputs,
+            &inputs.trusted_advice,
+            &inputs.untrusted_advice,
+        )?;
 
         let plane_size = device.memory_layout.get_total_memory_size();
         let mut plane = MemoryPlane::new(plane_size as usize)?;

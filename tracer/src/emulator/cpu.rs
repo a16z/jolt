@@ -1809,7 +1809,7 @@ mod test_cpu {
             .memory_layout
             .clone();
         // Past the heap, an emulator peripheral, and the gap above the I/O region.
-        for ptr in [layout.heap_end, 0x1020, layout.io_end + 1] {
+        for ptr in [layout.heap_end, 0x1020, layout.io_end] {
             let ptr32 = u32::try_from(ptr).unwrap();
             cpu.handle_jolt_print(ptr32, 4, JOLT_PRINT_LINE);
             cpu.handle_jolt_cycle_marker(ptr32, 4, JOLT_CYCLE_MARKER_START);
