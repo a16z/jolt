@@ -39,8 +39,11 @@ pub struct Program {
     pub elf_compute_advice: Option<GuestElf>,
 }
 
-/// A guest ELF read once so all consumers use the same bytes even if
-/// another build replaces the file at `path`.
+/// A guest ELF and the bytes read from it once.
+///
+/// Guest builds replace the file at `path` even when nothing was recompiled
+/// (cargo removes and re-links its uplifted binary), so the bytes are read a
+/// single time and every later consumer uses them instead of the path.
 #[derive(Clone)]
 pub struct GuestElf {
     path: PathBuf,

@@ -300,6 +300,18 @@ fn build_command(args: JoltBuildArgs) -> Result<()> {
         std::env::set_var("CARGO_TARGET_DIR", target_dir);
     }
 
+    // zeroos-build rewrites the shared linker script before cargo takes its own
+    // lock, so a concurrent build with another layout could link against this
+    // script and cache the ELF under its own key. Serialize script write and link.
+    // Not `.jolt-build.lock`: the SDK parent holds that file in this directory.
+    let lock_dir = zeroos_build::project::get_target_directory(&workspace_root)?;
+    fs::create_dir_all(&lock_dir).context("create the guest target directory")?;
+    let linker_lock =
+        File::create(lock_dir.join(".jolt-linker.lock")).context("open the guest linker lock")?;
+    linker_lock
+        .lock()
+        .context("acquire the guest linker lock")?;
+
     zeroos_build::cmds::build_binary_with_rustflags(
         &workspace_root,
         &args.base,
