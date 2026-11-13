@@ -197,34 +197,76 @@ impl<F: JoltField> ConcreteSumcheck<F> for RamReadWriteChecking<F> {
 }
 
 #[cfg(test)]
-#[expect(clippy::unwrap_used, reason = "test module")]
+#[expect(
+    clippy::unwrap_used,
+    clippy::arithmetic_side_effects,
+    reason = "brute-force field sums over test fixtures"
+)]
 mod tests {
     use super::*;
-    use jolt_field::{Fr, Ring};
+    use jolt_field::{Fr, One, Ring};
 
     fn fr(value: u64) -> Fr {
         Fr::from_u64(value)
     }
 
-    /// The shared-evaluation override must equal the generic per-leaf
-    /// evaluation through `derive_output_term`.
+    /// `eq(bits, r)` for an index whose most significant bit pairs with `r[0]`.
+    fn eq_at_index(index: usize, r: &[Fr]) -> Fr {
+        r.iter()
+            .enumerate()
+            .map(|(j, &r_j)| {
+                if (index >> (r.len() - 1 - j)) & 1 == 1 {
+                    r_j
+                } else {
+                    Fr::one() - r_j
+                }
+            })
+            .product()
+    }
+
+    /// A mask's multilinear extension as a sum over the Boolean hypercube.
+    fn mask_by_hypercube_sum(intervals: &[(usize, usize)], r_address: &[Fr]) -> Fr {
+        (0..1 << r_address.len())
+            .filter(|&k| {
+                intervals
+                    .iter()
+                    .any(|&(start, end)| (start..end).contains(&k))
+            })
+            .map(|k| eq_at_index(k, r_address))
+            .sum()
+    }
+
+    /// The output check equals the relation's output expression with each
+    /// public term computed by brute force: the cycle equality as a product of
+    /// per-variable factors and each mask as a sum over all `2^log_k` addresses.
     #[test]
-    fn expected_output_matches_per_leaf_derivation() {
+    fn expected_output_matches_brute_force_public_terms() {
         let (log_t, log_k) = (4, 5);
+        let tau: Vec<Fr> = (11..).take(log_t).map(fr).collect();
+        let masks = RamWordMasks {
+            write_protected: vec![(0, 2), (3, 6)],
+            unmapped: vec![(6, 9), (20, 32)],
+        };
         let relation = RamReadWriteChecking::new(
             ReadWriteDimensions::new(log_t, log_k, 2, 1),
             log_k,
-            (11..).take(log_t).map(fr).collect(),
-            RamWordMasks {
-                write_protected: vec![(0, 2), (3, 6)],
-                unmapped: vec![(6, 9), (20, 32)],
-            },
+            tau.clone(),
+            masks.clone(),
         );
         let point: Vec<Fr> = (0..).take(log_k + log_t).map(|i| fr(3 + 2 * i)).collect();
+        let (r_address, r_cycle) = point.split_at(log_k);
+        let eq_cycle: Fr = tau
+            .iter()
+            .zip(r_cycle)
+            .map(|(&t, &r)| t * r + (Fr::one() - t) * (Fr::one() - r))
+            .product();
+        let code = mask_by_hypercube_sum(&masks.write_protected, r_address);
+        let unmapped = mask_by_hypercube_sum(&masks.unmapped, r_address);
+
         let output_points = RamReadWriteOutputClaims {
             val: point.clone(),
             ra: point.clone(),
-            inc: point,
+            inc: point.clone(),
         };
         let output_values = RamReadWriteOutputClaims {
             val: fr(5),
@@ -232,19 +274,32 @@ mod tests {
             inc: fr(9),
         };
         let challenges = RamReadWriteChallenges { gamma: fr(13) };
-        let inputs = RamReadWriteInputClaims::default();
-        let shared = relation
-            .expected_output(&inputs, &output_values, &output_points, &challenges)
-            .unwrap();
-        let per_leaf = relation
+        let expected = relation
             .symbolic()
             .output_expression::<Fr>()
             .try_evaluate(
                 |id| Ok::<_, VerifierError>(output_values.resolve_output(id).unwrap()),
                 |id| Ok(challenges.resolve_challenge(id).unwrap()),
-                |id| relation.derive_output_term(id, &inputs, &output_points, &challenges),
+                |id| {
+                    let JoltDerivedId::RamReadWrite(public_id) = id else {
+                        return Err(VerifierError::MissingStageClaimDerived { id: (*id).into() });
+                    };
+                    Ok(match public_id {
+                        RamReadWritePublic::EqCycle => eq_cycle,
+                        RamReadWritePublic::CodeEqCycle => eq_cycle * code,
+                        RamReadWritePublic::UnmappedEqCycle => eq_cycle * unmapped,
+                    })
+                },
             )
             .unwrap();
-        assert_eq!(shared, per_leaf);
+        let actual = relation
+            .expected_output(
+                &RamReadWriteInputClaims::default(),
+                &output_values,
+                &output_points,
+                &challenges,
+            )
+            .unwrap();
+        assert_eq!(actual, expected);
     }
 }

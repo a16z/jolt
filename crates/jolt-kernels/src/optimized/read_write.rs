@@ -455,6 +455,30 @@ mod tests {
 
     use super::*;
 
+    /// A mask's value on `block` after binding the low `bindings.len()` bits:
+    /// the sum, over the indices of the block that lie in an interval, of the
+    /// equality polynomial between their low bits and the bindings.
+    fn block_sum(intervals: &[(usize, usize)], bindings: &[Fr], block: usize) -> Fr {
+        intervals
+            .iter()
+            .flat_map(|&(start, end)| start..end)
+            .filter(|index| index >> bindings.len() == block)
+            .map(|index| {
+                bindings
+                    .iter()
+                    .enumerate()
+                    .map(|(bit, &r)| {
+                        if (index >> bit) & 1 == 0 {
+                            Fr::one() - r
+                        } else {
+                            r
+                        }
+                    })
+                    .product::<Fr>()
+            })
+            .sum()
+    }
+
     #[test]
     fn distinguishes_invalid_splits_from_unsupported_mixed_orders() {
         for dimensions in [
@@ -493,22 +517,7 @@ mod tests {
                     ];
                     for bound in 0..=log_k {
                         for block in 0..size >> bound {
-                            let expected: Fr = (start..end)
-                                .filter(|index| index >> bound == block)
-                                .map(|index| {
-                                    bindings[..bound]
-                                        .iter()
-                                        .enumerate()
-                                        .map(|(bit, &r)| {
-                                            if (index >> bit) & 1 == 0 {
-                                                Fr::one() - r
-                                            } else {
-                                                r
-                                            }
-                                        })
-                                        .product::<Fr>()
-                                })
-                                .sum();
+                            let expected = block_sum(&[(start, end)], &bindings[..bound], block);
                             let [protected, unmapped] = &masks;
                             let label = format!("[{start},{end}), bound={bound}, block={block}");
                             assert_eq!(protected.value(block).protected(), expected, "{label}");
@@ -533,48 +542,56 @@ mod tests {
         assert_eq!(mask.value(0).unmapped(), Fr::zero());
     }
 
-    /// The merged list must give each mask the value it has on its own, both
-    /// through the unbound binary search and after every bind.
+    /// With interleaved intervals of both masks in one list, each mask keeps
+    /// its own value: membership before any bind, and the brute-force block sum
+    /// after every bind and after the address phase ends.
     #[test]
-    fn merged_masks_match_each_mask_alone() {
+    fn interleaved_masks_match_brute_force_sums() {
         use jolt_field::Ring;
 
         let log_k = 5;
         let protected = [(0, 2), (3, 6), (11, 12), (20, 27)];
         let unmapped = [(2, 3), (7, 11), (12, 13), (27, 32)];
-        let mut merged = AddressMasks::<Fr>::new(&protected, &unmapped).unwrap();
-        let mut alone = [
-            AddressMasks::<Fr>::new(&protected, &[]).unwrap(),
-            AddressMasks::<Fr>::new(&[], &unmapped).unwrap(),
-        ];
+        let mut masks = AddressMasks::<Fr>::new(&protected, &unmapped).unwrap();
         let contains = |intervals: &[(usize, usize)], index| {
             intervals
                 .iter()
                 .any(|&(start, end)| (start..end).contains(&index))
         };
         for index in 0..1 << log_k {
-            let bits = merged.contains_unbound(index);
+            let bits = masks.contains_unbound(index);
             assert_eq!(bits.protected, contains(&protected, index), "{index}");
             assert_eq!(bits.unmapped, contains(&unmapped, index), "{index}");
         }
+        let bindings: Vec<Fr> = (0..log_k).map(|bit| Fr::from_u64(7 + bit as u64)).collect();
         for bound in 0..=log_k {
             for block in 0..1 << (log_k - bound) {
-                let values = merged.value(block);
-                assert_eq!(values.protected(), alone[0].value(block).protected());
-                assert_eq!(values.unmapped(), alone[1].value(block).unmapped());
+                let values = masks.value(block);
+                let label = format!("bound={bound}, block={block}");
+                assert_eq!(
+                    values.protected(),
+                    block_sum(&protected, &bindings[..bound], block),
+                    "{label}"
+                );
+                assert_eq!(
+                    values.unmapped(),
+                    block_sum(&unmapped, &bindings[..bound], block),
+                    "{label}"
+                );
             }
-            if bound < log_k {
-                let r = Fr::from_u64(7 + bound as u64);
-                merged.bind(r);
-                for mask in &mut alone {
-                    mask.bind(r);
-                }
+            if let Some(&r) = bindings.get(bound) {
+                masks.bind(r);
             }
         }
-        merged.finish_address();
-        alone.iter_mut().for_each(AddressMasks::finish_address);
-        assert_eq!(merged.value(0).protected(), alone[0].value(0).protected());
-        assert_eq!(merged.value(0).unmapped(), alone[1].value(0).unmapped());
+        masks.finish_address();
+        assert_eq!(
+            masks.value(0).protected(),
+            block_sum(&protected, &bindings, 0)
+        );
+        assert_eq!(
+            masks.value(0).unmapped(),
+            block_sum(&unmapped, &bindings, 0)
+        );
 
         for (protected, unmapped) in [
             (&[(0, 4)][..], &[(3, 5)][..]),
