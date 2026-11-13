@@ -219,10 +219,24 @@ impl RamWordMasks {
         memory_layout: &MemoryLayout,
         ram_k: usize,
     ) -> Result<Self, PreprocessingError> {
-        Ok(Self {
+        let masks = Self {
             write_protected: write_protected_word_intervals(code_intervals, memory_layout, ram_k)?,
             unmapped: unmapped_word_intervals(memory_layout, ram_k)?,
-        })
+        };
+        // The prover classifies a word for both masks with one search over
+        // their merged intervals, which requires the masks to be disjoint.
+        let overlaps = masks.write_protected.iter().any(|&(start, end)| {
+            masks
+                .unmapped
+                .iter()
+                .any(|&(other_start, other_end)| start < other_end && other_start < end)
+        });
+        if overlaps {
+            return Err(PreprocessingError::InvalidUnmappedIntervals(
+                "unmapped words overlap write-protected words",
+            ));
+        }
+        Ok(masks)
     }
 }
 

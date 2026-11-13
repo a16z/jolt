@@ -281,7 +281,7 @@ impl<F: JoltField> CycleMajorMatrix<F> {
     }
 
     /// The quadratic factor `[q(0), q_∞]` of the phase-1 round message:
-    /// `q(t) = Σ_pairs eq_head(pair) · Σ_cols ra(t)·[(1+γ)val(t)+(γ+γ²C)inc(t)+γ³]`,
+    /// `q(t) = Σ_pairs eq_head(pair) · Σ_cols ra(t)·[(1+γ)val(t)+(γ+γ²C)inc(t)+γ³+γ⁴N]`,
     /// with `eq_head` supplied per pair index (the Gruen head weight) and
     /// `inc` the bound committed increment column.
     pub fn quadratic_coefficients(

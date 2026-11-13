@@ -2,7 +2,7 @@
 //! `RamReadWriteCheckingProver` ported onto the kernel seam.
 //!
 //! Same summand, variable order, and binding order as the reference kernel —
-//! `eq(τ_low,j)·ra(k,j)·[(1+γ)val(k,j)+(γ+γ²C(k))inc(j)+γ³]` over the
+//! `eq(τ_low,j)·ra(k,j)·[(1+γ)val(k,j)+(γ+γ²C(k))inc(j)+γ³+γ⁴N(k)]` over the
 //! joint `(address ‖ cycle)` domain, bound low-to-high — but the `(K × T)`
 //! `ra`/`val` grids are never materialized:
 //!
@@ -489,7 +489,7 @@ impl<F: JoltField> PrepareKernel<F, RamReadWriteChecking<F>> for OptimizedBacken
             mask: AddressMasks::new(
                 relation.write_protected_word_intervals(),
                 relation.unmapped_word_intervals(),
-            ),
+            )?,
             log_t,
             log_k,
         }))
