@@ -301,10 +301,22 @@ macro_rules! source_extension_for_marker {
     (AmoMaxUD) => {
         Some(SourceExtension::Rv64A)
     };
+    (Csrrc) => {
+        Some(SourceExtension::Zicsr)
+    };
+    (Csrrci) => {
+        Some(SourceExtension::Zicsr)
+    };
     (Csrrs) => {
         Some(SourceExtension::Zicsr)
     };
+    (Csrrsi) => {
+        Some(SourceExtension::Zicsr)
+    };
     (Csrrw) => {
+        Some(SourceExtension::Zicsr)
+    };
+    (Csrrwi) => {
         Some(SourceExtension::Zicsr)
     };
     (Mret) => {
@@ -616,10 +628,22 @@ macro_rules! source_side_effects_for_marker {
     (Bne) => {
         true
     };
+    (Csrrc) => {
+        true
+    };
+    (Csrrci) => {
+        true
+    };
     (Csrrs) => {
         true
     };
+    (Csrrsi) => {
+        true
+    };
     (Csrrw) => {
+        true
+    };
+    (Csrrwi) => {
         true
     };
     (Ebreak) => {
