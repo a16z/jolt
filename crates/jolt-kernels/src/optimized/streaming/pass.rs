@@ -48,8 +48,12 @@ pub(crate) fn task_ranges(cycles: usize, group: usize) -> Vec<Range<usize>> {
     let unit = group;
     let units = cycles / unit;
     let tasks = task_count(units);
+    // `⌊task·units/tasks⌋` without the product `task·units`, which exceeds
+    // `usize` for a pass over single cycles of a large enough domain (on a
+    // 32-bit target, `2^32 / tasks` cycles).
+    let start = |task: usize| (task * (units / tasks) + task * (units % tasks) / tasks) * unit;
     (0..tasks)
-        .map(|task| task * units / tasks * unit..(task + 1) * units / tasks * unit)
+        .map(|task| start(task)..start(task + 1))
         .collect()
 }
 
@@ -475,6 +479,7 @@ mod tests {
             (1 << 12, 1 << 12),
             (1 << 20, 1),
             (1, 1),
+            (1 << (usize::BITS - 1), 1),
         ] {
             let ranges = task_ranges(cycles, group);
             let mut next = 0;
