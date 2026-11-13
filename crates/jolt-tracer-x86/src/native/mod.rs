@@ -7,7 +7,7 @@ mod state;
 
 use std::sync::Arc;
 
-use common::jolt_device::{FlagWords, JoltDevice, JoltDeviceMemory};
+use common::jolt_device::JoltDevice;
 use jolt_program::execution::{
     ChunkedExecutionBackend, ExecutionBackend, ExecutionDimensions, ExecutionSummary, JoltProgram,
     MemoryImage, RamAddressBounds, TraceData, TraceError, TraceInputs, TraceOutput,
@@ -20,7 +20,7 @@ use jolt_riscv::{
 
 use compile::CompiledProgram;
 use memory::MemoryPlane;
-use state::{ExitReason, GuestState, HostContext, Observation};
+use state::{ExitReason, GuestState, HostContext, MachineExit, Observation};
 
 /// AOT x86-64 transpiling execution backend.
 ///
@@ -95,20 +95,22 @@ pub struct FastRunOutput {
     pub advice_tape: Vec<u8>,
 }
 
-/// Machine execution before the Jolt public-I/O contract is checked.
-/// The ACT4 runner uses `tohost` instead of the Jolt flag words.
+/// A run to the machine's stop. The ACT4 runner reports through `tohost`; a Jolt run must end
+/// at a halt (see `fast_run`).
 pub struct MachineRunOutput {
     pub trace_len: usize,
-    pub device: JoltDeviceMemory,
+    pub device: JoltDevice,
     pub final_memory: MemoryImage,
     pub advice_tape: Vec<u8>,
+    exit: MachineExit,
 }
 
 impl MachineRunOutput {
     fn finalize(self) -> Result<FastRunOutput, TraceError> {
+        self.exit.require_halt()?;
         Ok(FastRunOutput {
             trace_len: self.trace_len,
-            device: self.device.into_public()?,
+            device: self.device,
             final_memory: self.final_memory,
             advice_tape: self.advice_tape,
         })
@@ -155,7 +157,7 @@ impl X86TracerBackend {
     ) -> Result<RecordRunOutput, TraceError> {
         let compiled = self.compiled(program)?;
 
-        let mut device = JoltDeviceMemory::new(&inputs.memory_config);
+        let mut device = JoltDevice::new(&inputs.memory_config);
         device.inputs.clone_from(&inputs.inputs);
         device.trusted_advice.clone_from(&inputs.trusted_advice);
         device.untrusted_advice.clone_from(&inputs.untrusted_advice);
@@ -195,26 +197,26 @@ impl X86TracerBackend {
         });
 
         compiled.run_record(&mut guest)?;
-        guest.check_exit(&mut host)?;
+        guest.check_exit(&mut host)?.require_halt()?;
 
         let recorded =
             (guest.obs_cursor as usize - obs_start as usize) / core::mem::size_of::<Observation>();
         observations.truncate(recorded);
 
-        let final_memory = MemoryImage {
-            bytes: plane.final_memory_bytes(&host.device),
-        };
-        let device = host.device.into_public()?;
         Ok(RecordRunOutput {
             observations,
             compiled,
-            device,
-            final_memory,
+            device: host.device,
+            final_memory: MemoryImage {
+                bytes: plane.materialized_nonzero_bytes(),
+            },
             advice_tape: host.advice_tape,
         })
     }
 
-    /// Runs to a machine halt and validates the final Jolt flag words.
+    /// Fast pass: run the program to completion without materializing trace
+    /// rows. A Jolt run must end at a halt instruction
+    /// ([`TraceError::EndedWithoutHalt`] otherwise).
     pub fn fast_run(
         &mut self,
         program: &JoltProgram,
@@ -226,8 +228,8 @@ impl X86TracerBackend {
         self.run_machine(program, inputs)?.finalize()
     }
 
-    /// Runs to a machine halt without constructing a public Jolt I/O statement.
-    /// ACT4 guests report through `tohost` and need not write Jolt flag words.
+    /// Runs to the machine's stop, a halt or a PC stall, with no Jolt end-of-run contract: the
+    /// ACT4 runner (`jolt-emu-x86`) reports through `tohost`.
     pub fn run_machine(
         &mut self,
         program: &JoltProgram,
@@ -235,7 +237,7 @@ impl X86TracerBackend {
     ) -> Result<MachineRunOutput, TraceError> {
         let compiled = self.compiled(program)?;
 
-        let mut device = JoltDeviceMemory::new(&inputs.memory_config);
+        let mut device = JoltDevice::new(&inputs.memory_config);
         device.inputs.clone_from(&inputs.inputs);
         device.trusted_advice.clone_from(&inputs.trusted_advice);
         device.untrusted_advice.clone_from(&inputs.untrusted_advice);
@@ -269,17 +271,16 @@ impl X86TracerBackend {
         });
 
         compiled.run(&mut guest)?;
-        guest.check_exit(&mut host)?;
+        let exit = guest.check_exit(&mut host)?;
 
-        let final_memory = MemoryImage {
-            bytes: plane.final_memory_bytes(&host.device),
-        };
-        let device = host.device;
         Ok(MachineRunOutput {
             trace_len: guest.trace_len as usize,
-            device,
-            final_memory,
+            device: host.device,
+            final_memory: MemoryImage {
+                bytes: plane.materialized_nonzero_bytes(),
+            },
             advice_tape: host.advice_tape,
+            exit,
         })
     }
 }
@@ -492,7 +493,7 @@ struct Boundary {
     device_trusted_advice: Vec<u8>,
     device_untrusted_advice: Vec<u8>,
     device_outputs: Vec<u8>,
-    device_flags: FlagWords,
+    device_panic: bool,
     advice_tape: Vec<u8>,
     advice_cursor: usize,
 }
@@ -513,14 +514,14 @@ impl Boundary {
             device_trusted_advice: host.device.trusted_advice.clone(),
             device_untrusted_advice: host.device.untrusted_advice.clone(),
             device_outputs: host.device.outputs.clone(),
-            device_flags: host.device.flags,
+            device_panic: host.device.panic,
             advice_tape: host.advice_tape.clone(),
             advice_cursor: host.advice_cursor,
         })
     }
 
-    fn restore_device(&self) -> JoltDeviceMemory {
-        let mut device = JoltDeviceMemory::new(&self.memory_config);
+    fn restore_device(&self) -> JoltDevice {
+        let mut device = JoltDevice::new(&self.memory_config);
         device.inputs.clone_from(&self.device_inputs);
         device
             .trusted_advice
@@ -529,7 +530,7 @@ impl Boundary {
             .untrusted_advice
             .clone_from(&self.device_untrusted_advice);
         device.outputs.clone_from(&self.device_outputs);
-        device.flags = self.device_flags;
+        device.panic = self.device_panic;
         device
     }
 }
@@ -564,7 +565,7 @@ impl ChunkedExecutionBackend for X86TracerBackend {
         }
         let compiled = self.compiled(program)?;
 
-        let mut device = JoltDeviceMemory::new(&inputs.memory_config);
+        let mut device = JoltDevice::new(&inputs.memory_config);
         device.inputs.clone_from(&inputs.inputs);
         device.trusted_advice.clone_from(&inputs.trusted_advice);
         device.untrusted_advice.clone_from(&inputs.untrusted_advice);
@@ -619,7 +620,7 @@ impl ChunkedExecutionBackend for X86TracerBackend {
                 ));
                 continue;
             }
-            guest.check_exit(&mut host)?;
+            guest.check_exit(&mut host)?.require_halt()?;
             break;
         }
         let trace_len = guest.trace_len as usize;
@@ -642,15 +643,13 @@ impl ChunkedExecutionBackend for X86TracerBackend {
             });
         }
 
-        let final_memory = MemoryImage {
-            bytes: plane.final_memory_bytes(&host.device),
-        };
-        let device = host.device.into_public()?;
         Ok(ExecutionSummary {
             checkpoints,
             trace_len,
-            device,
-            final_memory: Some(final_memory),
+            device: host.device,
+            final_memory: Some(MemoryImage {
+                bytes: plane.materialized_nonzero_bytes(),
+            }),
             advice_tape: Some(host.advice_tape),
         })
     }
@@ -698,7 +697,7 @@ impl ChunkedExecutionBackend for X86TracerBackend {
 
         checkpoint.compiled.run_record_pausable(&mut guest)?;
         if guest.exit != ExitReason::Paused as u64 {
-            guest.check_exit(&mut host)?;
+            guest.check_exit(&mut host)?.require_halt()?;
         }
 
         let recorded =
@@ -726,10 +725,12 @@ impl ChunkedExecutionBackend for X86TracerBackend {
 #[cfg(test)]
 #[expect(clippy::expect_used)]
 mod tests {
+    use super::harness::{memory_config, terminal_row};
     use super::*;
     use jolt_riscv::{
         Flags, JoltInstruction, NormalizedOperands, RV64IMAC_JOLT, RV64IMAC_JOLT_ALL_INLINES,
     };
+    use tracer::HaltKind;
 
     fn program_with_profile(profile: jolt_riscv::JoltInstructionProfile) -> JoltProgram {
         let terminal = JoltInstructionRow {
@@ -756,68 +757,31 @@ mod tests {
         )
     }
 
+    /// A machine-level run stops at a halt or a PC stall; a Jolt run accepts
+    /// only the halt.
     #[test]
-    fn raw_htif_execution_preserves_absolute_memory_and_strict_flags() {
-        use common::constants::RAM_START_ADDRESS;
-        use jolt_program::expand::{expand_instruction, ExpansionAllocator};
-        use tracer::instruction::Instruction;
-
-        let address = 0x8000_1000;
-        let config = harness::memory_config();
-        let layout = JoltDeviceMemory::new(&config).memory_layout;
-        let make_program = |words: &[u32]| {
-            let mut allocator = ExpansionAllocator::new();
-            let mut rows = Vec::new();
-            for (i, word) in words.iter().enumerate() {
-                let source =
-                    Instruction::decode(*word, address + 4 * i as u64, false).expect("decode");
-                rows.extend(
-                    expand_instruction(&source.source_instruction(), &mut allocator, RV64IMAC_JOLT)
-                        .expect("expand")
-                        .into_iter()
-                        .map(JoltInstructionRow::from),
-                );
-            }
-            rows.push(harness::terminal_row(address + 4 * words.len() as u64));
-            JoltProgram::from_parts(
-                Vec::new(),
-                rows,
-                Vec::new(),
-                RAM_START_ADDRESS + 1024,
-                address,
-            )
+    fn fast_run_requires_a_halt_that_run_machine_does_not() {
+        let stalls = program_with_profile(RV64IMAC_JOLT);
+        let mut halts = stalls.clone();
+        halts.expanded_bytecode = vec![terminal_row(0x8000_1000)];
+        // A backend each: the two programs share a compile-cache key.
+        let run = |program: &JoltProgram| {
+            let inputs = TraceInputs::new(Vec::new(), Vec::new(), Vec::new(), memory_config());
+            X86TracerBackend::new()
+                .run_machine(program, inputs)
+                .expect("machine run")
         };
-        // auipc ra, 0; li sp, 1; sd sp, 512(ra): an HTIF-only halt.
-        let mut words = vec![0x0000_0097, 0x0010_0113, 0x2020_b023];
-        let mut backend = X86TracerBackend::new();
-        let output = backend
-            .run_machine(
-                &make_program(&words),
-                TraceInputs::new(Vec::new(), Vec::new(), Vec::new(), config),
-            )
-            .expect("HTIF execution");
-        assert!(output.final_memory.bytes.contains(&(address + 512, 1)));
+
+        let halted = run(&halts);
+        assert_eq!(halted.exit, MachineExit::Halted(HaltKind::Success));
+        assert_eq!(halted.finalize().expect("a Jolt run").trace_len, 1);
+
+        let stalled = run(&stalls);
+        assert_eq!(stalled.exit, MachineExit::Stalled { pc: 0x8000_1000 });
         assert!(matches!(
-            output.finalize(),
-            Err(TraceError::InvalidFlagWords(_))
+            stalled.finalize(),
+            Err(TraceError::EndedWithoutHalt { pc: 0x8000_1000 })
         ));
-        let termination = layout.termination as u32;
-        words.extend([
-            ((termination + 0x800) & 0xffff_f000) | 0x1b7,
-            ((termination & 0xfff) << 20) | 0x18193,
-            0x0010_0213,
-            0x0041_b023,
-        ]);
-        let output = backend
-            .run_machine(
-                &make_program(&words),
-                TraceInputs::new(Vec::new(), Vec::new(), Vec::new(), config),
-            )
-            .expect("canonical execution")
-            .finalize()
-            .expect("canonical flags");
-        assert!(!output.device.panic);
-        assert!(output.final_memory.bytes.contains(&(layout.termination, 1)));
     }
 
     /// `JoltTraceRow::new` rejects a row whose RAM access disagrees with its

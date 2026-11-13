@@ -587,6 +587,10 @@ mod tests {
 mod execution_witness_tests {
     use super::*;
     use jolt_field::{Fr, Ring};
+    use jolt_riscv::{
+        Flags, JoltInstruction, JoltInstructionKind, JoltInstructionRow, NormalizedOperands,
+        CIRCUIT_FLAGS,
+    };
     use num_traits::Zero;
 
     // Constraint row indices, matching the push order in
@@ -1225,8 +1229,8 @@ mod execution_witness_tests {
         w
     }
 
-    /// The guest's final `j .` stall: `JAL x0, 0` at 0x8000_0100, whose
-    /// target is its own address.
+    /// A `j .` self-loop: `JAL x0, 0` at 0x8000_0100, whose target is its own
+    /// address.
     fn jal_self_loop_witness() -> Vec<Fr> {
         const UNEXPANDED_PC: u64 = 0x8000_0100;
 
@@ -1296,5 +1300,54 @@ mod execution_witness_tests {
         let mut w = w;
         w[V_UNEXPANDED_PC] = Fr::zero();
         assert_eq!(check(&w), Err(NEXT_PC_EQ_PC_PLUS_ONE_IF_INLINE));
+    }
+
+    /// A halt row as tracers emit it: `jolt.success` (`vsr = None`) or EBREAK's one-row `Panic`
+    /// lowering (`vsr = Some(0)`, first, optionally compressed). Its circuit flags come from the
+    /// production flag table; it has no lookup table (output 0), no instruction flags (inputs 0),
+    /// and writes its link to a temporary.
+    fn halt_witness(
+        instruction_kind: JoltInstructionKind,
+        virtual_sequence_remaining: Option<u16>,
+        is_compressed: bool,
+    ) -> Vec<Fr> {
+        const UNEXPANDED_PC: u64 = 0x8000_0200;
+
+        let row = JoltInstructionRow {
+            instruction_kind,
+            address: UNEXPANDED_PC as usize,
+            operands: NormalizedOperands {
+                rd: Some(40),
+                rs1: Some(0),
+                rs2: None,
+                imm: 0,
+            },
+            virtual_sequence_remaining,
+            is_first_in_sequence: virtual_sequence_remaining.is_some(),
+            is_compressed,
+        };
+        let flags = JoltInstruction::from(row).circuit_flags();
+        let mut w = cycle_witness();
+        for flag in CIRCUIT_FLAGS {
+            if flags[flag] {
+                w[flag_column(flag)] = Fr::from_u64(1);
+            }
+        }
+        w[V_PC] = Fr::from_u64(12);
+        w[V_UNEXPANDED_PC] = Fr::from_u64(UNEXPANDED_PC);
+        w[V_RD_WRITE_VALUE] = Fr::from_u64(UNEXPANDED_PC + if is_compressed { 2 } else { 4 });
+        w
+    }
+
+    #[test]
+    fn last_row_accepts_final_halt() {
+        for (kind, virtual_sequence_remaining, is_compressed) in [
+            (JoltInstructionKind::JoltSuccess, None, false),
+            (JoltInstructionKind::JoltPanic, Some(0), false),
+            (JoltInstructionKind::JoltPanic, Some(0), true),
+        ] {
+            let w = halt_witness(kind, virtual_sequence_remaining, is_compressed);
+            assert_eq!(check(&at_last_row(&w)), Ok(()), "{kind:?}");
+        }
     }
 }

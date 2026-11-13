@@ -29,7 +29,7 @@ use super::{Instruction, RISCVInstruction, RISCVTrace};
 use crate::emulator::terminal::DummyTerminal;
 
 use common::constants::RISCV_REGISTER_COUNT;
-use common::jolt_device::{JoltDeviceMemory, MemoryConfig};
+use common::jolt_device::{JoltDevice, MemoryConfig};
 
 use rand::{rngs::StdRng, SeedableRng};
 
@@ -115,7 +115,7 @@ fn test_cpu() -> Cpu {
         ..Default::default()
     };
     let mut cpu = Cpu::new(Box::new(DummyTerminal::default()));
-    cpu.get_mut_mmu().jolt_device = Some(JoltDeviceMemory::new(&memory_config));
+    cpu.get_mut_mmu().jolt_device = Some(JoltDevice::new(&memory_config));
     cpu.get_mut_mmu().init_memory(TEST_MEMORY_CAPACITY);
     cpu
 }
@@ -144,6 +144,7 @@ fn jolt_program_rv64_decode_matches_tracer_normalization() {
         (0x3020_0073, false),
         (0x3001_10f3, false),
         (0x0000_10db, false),
+        (0x0000_305b, false),
         (0x0020_802b, false),
         (uncompress_instruction(0x107a), true),
     ];

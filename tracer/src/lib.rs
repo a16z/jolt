@@ -11,10 +11,7 @@ use tracing::{error, info};
 #[cfg(not(feature = "std"))]
 use alloc::{boxed::Box, vec::Vec};
 
-use common::{
-    self,
-    jolt_device::{JoltDeviceMemory, MemoryConfig},
-};
+use common::{self, jolt_device::MemoryConfig};
 use emulator::{cpu, default_terminal::DefaultTerminal};
 use instruction::{Cycle, Instruction};
 use jolt_program::execution::TraceError;
@@ -35,7 +32,7 @@ pub mod trace_row;
 pub mod utils;
 
 pub use common::jolt_device::JoltDevice;
-pub use cpu::{advice_tape_read, advice_tape_write, AdviceTape};
+pub use cpu::{advice_tape_read, advice_tape_write, AdviceTape, HaltKind};
 pub use execution_backend::TracerBackend;
 pub use instruction::inline::{
     list_registered_inlines, InlineAdviceContext, InlineAdviceError, InlineRegistration,
@@ -80,7 +77,13 @@ fn env_rows(name: &str, default: usize) -> usize {
 ///
 /// Tracing is serial by default. Setting `TRACER_PARALLEL=<workers>` opts
 /// into two-pass parallel tracing (bit-identical output); see [`parallel`].
-#[tracing::instrument(skip_all)]
+///
+/// Panics if the run does not end at a halt instruction
+/// ([`TraceError::EndedWithoutHalt`]).
+#[expect(
+    clippy::expect_used,
+    reason = "the infallible trace API panics when a run does not end at a halt; TracerBackend returns TraceError::EndedWithoutHalt"
+)]
 pub fn trace(
     elf_contents: &[u8],
     elf_path: Option<&PathBuf>,
@@ -105,9 +108,10 @@ pub fn trace(
         memory_config,
         advice_tape,
     )
-    .expect("guest execution violated the I/O contract")
+    .expect("a guest run must end at a halt instruction")
 }
 
+#[tracing::instrument(skip_all, name = "trace")]
 pub(crate) fn try_trace(
     elf_contents: &[u8],
     elf_path: Option<&PathBuf>,
@@ -149,7 +153,8 @@ pub(crate) fn try_trace(
             // Drive the emulator straight into the output vec, bypassing the
             // lazy iterator's per-cycle buffer/reverse/pop round-trip.
             // Termination matches the lazy path: stop on the first step that
-            // emits no rows (PC stall or a trap that produced no trace).
+            // emits no rows (after a halt or a PC stall, or a trap that
+            // produced no trace); `finish_emulator` accepts only a halt.
             let mut trace: Vec<Cycle> = Vec::with_capacity(trace_capacity_reserve());
             loop {
                 let rows_before = trace.len();
@@ -173,38 +178,40 @@ pub(crate) fn try_trace(
 }
 
 /// Shared teardown for every execution path (eager [`trace`], execute-only
-/// [`execute`], and the chunked fast pass): report a guest panic (log +
-/// backtrace), then extract the advice tape, final memory, and device.
+/// [`execute`], and the chunked fast pass). A Jolt run must end at a halt
+/// instruction; a run that stopped anywhere else returns
+/// [`TraceError::EndedWithoutHalt`]. Reports a panic halt (log + backtrace),
+/// then extracts the advice tape, final memory, and device.
 #[expect(clippy::expect_used)]
 pub(crate) fn finish_emulator(
     mut emulator: Emulator,
 ) -> Result<(AdviceTape, Memory, JoltDevice), TraceError> {
-    if emulator
-        .get_cpu()
-        .mmu
-        .jolt_device
-        .as_ref()
-        .expect("JoltDevice was not initialized")
-        .flags
-        .outcome()?
-    {
-        error!(
-            "Guest program terminated due to panic after {} cycles.",
-            emulator.get_cpu().trace_len
-        );
-        utils::panic::display_panic_backtrace(&emulator);
+    let cpu = emulator.get_cpu();
+    let Some(halt) = cpu.halted() else {
+        return Err(TraceError::EndedWithoutHalt { pc: cpu.read_pc() });
+    };
+    if halt == HaltKind::Panic {
+        report_panic_halt(&emulator);
     }
 
     let advice_tape = emulator.take_advice_tape();
     let cpu = emulator.get_mut_cpu();
-    let mut final_memory = cpu.mmu.memory.memory.take_memory();
+    let final_memory = cpu.mmu.memory.memory.take_memory();
     let jolt_device = cpu
         .get_mut_mmu()
         .jolt_device
         .take()
         .expect("JoltDevice was not initialized");
-    final_memory.flag_memory = Some((jolt_device.memory_layout.panic, jolt_device.flags));
-    Ok((advice_tape, final_memory, jolt_device.into_public()?))
+    Ok((advice_tape, final_memory, jolt_device))
+}
+
+/// Logs a run that ended at Jolt's failure halt, with the guest backtrace.
+fn report_panic_halt(emulator: &Emulator) {
+    error!(
+        "Guest program halted at ebreak (abnormal end) after {} cycles.",
+        emulator.get_cpu().trace_len
+    );
+    utils::panic::display_panic_backtrace(emulator);
 }
 
 /// Executes a RISC-V program to completion without materializing trace rows
@@ -217,12 +224,14 @@ pub(crate) fn finish_emulator(
 /// (instructions whose trace path expands a virtual sequence walk the same
 /// cached sequence, just without row emission).
 ///
-/// Termination is *almost* the same as [`trace`]: both stop on a PC stall,
-/// but [`trace`] additionally stops on any step that emits zero rows (a
-/// trap or WFI-sleep tick), which this loop does not check — the parallel
-/// pass-1 driver does, via the `trace_len` delta. No valid Jolt guest hits
-/// a zero-row step mid-program.
+/// Termination is the same as [`trace`]: both stop at a halt, a PC stall, or
+/// a tick that emits no rows (observed here as a zero `trace_len` delta), and
+/// both panic unless the run stopped at a halt.
 #[tracing::instrument(skip_all)]
+#[expect(
+    clippy::expect_used,
+    reason = "the infallible execute API panics when a run does not end at a halt; TracerBackend's chunked execute returns TraceError::EndedWithoutHalt"
+)]
 pub fn execute(
     elf_contents: &[u8],
     elf_path: Option<&PathBuf>,
@@ -241,13 +250,17 @@ pub fn execute(
         memory_config,
         advice_tape,
     );
-    while !emulator.get_cpu().has_stalled() {
+    while emulator.get_cpu().halted().is_none() && !emulator.get_cpu().has_stalled() {
+        let rows = emulator.get_cpu().trace_len;
         emulator.tick(None);
+        if emulator.get_cpu().trace_len == rows {
+            break;
+        }
     }
 
     let executed = emulator.get_cpu().trace_len;
     let (advice_tape_result, _final_memory, jolt_device) =
-        finish_emulator(emulator).expect("guest execution violated the I/O contract");
+        finish_emulator(emulator).expect("a guest run must end at a halt instruction");
     (executed, jolt_device, advice_tape_result)
 }
 
@@ -363,7 +376,8 @@ pub(crate) fn parallel_config_from_env() -> Option<TwoPassConfig> {
 }
 
 fn step_emulator(emulator: &mut Emulator, trace: Option<&mut Vec<Cycle>>) {
-    if !emulator.get_cpu().has_stalled() {
+    let cpu = emulator.get_cpu();
+    if cpu.halted().is_none() && !cpu.has_stalled() {
         emulator.tick(trace);
     }
 }
@@ -393,6 +407,10 @@ fn setup_emulator(
 ///
 /// Public seam for drivers that need to tick the emulator themselves
 /// (mode-equivalence gates, two-pass parallel tracing).
+#[expect(
+    clippy::expect_used,
+    reason = "create_emulator has no error path: like its input-size asserts, it panics on a program image jolt-program rejects"
+)]
 pub fn create_emulator(
     elf_contents: &[u8],
     elf_path: Option<&PathBuf>,
@@ -427,10 +445,11 @@ pub fn create_emulator(
         memory_config.max_input_size,
     );
 
-    let mut jolt_device = JoltDeviceMemory::new(memory_config);
+    let mut jolt_device = JoltDevice::new(memory_config);
     jolt_device.inputs = inputs.to_vec();
     jolt_device.trusted_advice = trusted_advice.to_vec();
     jolt_device.untrusted_advice = untrusted_advice.to_vec();
+    let lowest_address = jolt_device.memory_layout.get_lowest_address();
     emulator.get_mut_cpu().get_mut_mmu().jolt_device = Some(jolt_device);
     if let Some(elf_path) = elf_path {
         emulator.set_elf_path(elf_path);
@@ -442,14 +461,7 @@ pub fn create_emulator(
     let profile = RV64IMAC_JOLT_FIELD_INLINE;
     let image = jolt_program::image::decode_elf(elf_contents, profile)
         .expect("program ELF decoding failed");
-    let mmu = emulator.get_mut_cpu().get_mut_mmu();
-    let lowest_address = mmu
-        .jolt_device
-        .as_ref()
-        .expect("JoltDevice initialized before loading the ELF")
-        .memory_layout
-        .get_lowest_address();
-    mmu.code_word_intervals = code_word_intervals(
+    emulator.get_mut_cpu().get_mut_mmu().code_word_intervals = code_word_intervals(
         image.instructions.iter().map(|instruction| {
             let row = instruction.row();
             (row.address as u64, row.is_compressed)
@@ -563,15 +575,7 @@ impl LazyTracer for Checkpoint {
     }
 
     fn has_panicked(&self) -> bool {
-        self.emulator_state
-            .get_cpu()
-            .mmu
-            .jolt_device
-            .as_ref()
-            .unwrap()
-            .flags
-            .outcome()
-            == Ok(true)
+        self.emulator_state.get_cpu().halted() == Some(HaltKind::Panic)
     }
 
     fn at_tick_boundary(&self) -> bool {
@@ -579,11 +583,7 @@ impl LazyTracer for Checkpoint {
     }
 
     fn print_panic_log(&self) {
-        error!(
-            "Guest program terminated due to panic after {} cycles.",
-            self.emulator_state.get_cpu().trace_len
-        );
-        utils::panic::display_panic_backtrace(&self.emulator_state);
+        report_panic_halt(&self.emulator_state);
     }
 
     fn lazy_step_cycle(&mut self) -> Option<Cycle> {
@@ -611,8 +611,6 @@ impl LazyTracer for Checkpoint {
             .jolt_device
             .take()
             .unwrap()
-            .into_public()
-            .expect("guest execution violated the I/O contract")
     }
 }
 
@@ -708,15 +706,7 @@ impl LazyTracer for CheckpointingTracer {
     }
 
     fn has_panicked(&self) -> bool {
-        self.emulator_state
-            .get_cpu()
-            .mmu
-            .jolt_device
-            .as_ref()
-            .unwrap()
-            .flags
-            .outcome()
-            == Ok(true)
+        self.emulator_state.get_cpu().halted() == Some(HaltKind::Panic)
     }
 
     fn at_tick_boundary(&self) -> bool {
@@ -724,11 +714,7 @@ impl LazyTracer for CheckpointingTracer {
     }
 
     fn print_panic_log(&self) {
-        error!(
-            "Guest program terminated due to panic after {} cycles.",
-            self.emulator_state.get_cpu().trace_len
-        );
-        utils::panic::display_panic_backtrace(&self.emulator_state);
+        report_panic_halt(&self.emulator_state);
     }
 
     fn lazy_step_cycle(&mut self) -> Option<Cycle> {
@@ -744,16 +730,11 @@ impl LazyTracer for CheckpointingTracer {
             self.finished = true;
             let emulator = &mut self.emulator_state;
             let cpu = emulator.get_mut_cpu();
-            let device = cpu
-                .mmu
-                .jolt_device
-                .as_ref()
-                .expect("JoltDevice was not initialized");
-            device
-                .flags
-                .outcome()
-                .expect("guest execution violated the I/O contract");
-            cpu.mmu.memory.memory.flag_memory = Some((device.memory_layout.panic, device.flags));
+            // The iterator API is infallible, so a run that stopped short of
+            // a halt panics here, as `trace` does.
+            if cpu.halted().is_none() {
+                panic!("{}", TraceError::EndedWithoutHalt { pc: cpu.read_pc() });
+            }
             // When checkpoint saving is active, the caller still saves one
             // final checkpoint after termination, which snapshots the live
             // memory's capacity — clone instead of emptying it.
@@ -778,8 +759,6 @@ impl LazyTracer for CheckpointingTracer {
             .jolt_device
             .take()
             .expect("JoltDevice was not initialized")
-            .into_public()
-            .expect("guest execution violated the I/O contract")
     }
 }
 
@@ -810,26 +789,8 @@ pub fn decode(elf: &[u8]) -> (Vec<Instruction>, Vec<(u64, u8)>, u64, u64) {
 
 #[cfg(test)]
 pub(crate) mod test_utils {
-    use common::jolt_device::{MemoryConfig, MemoryLayout};
-
-    pub(crate) fn flag_exit_words(panic: u32, termination: u32) -> Vec<u32> {
-        let layout = MemoryLayout::new(&MemoryConfig {
-            program_size: Some(1024),
-            ..Default::default()
-        });
-        let address = layout.panic as u32;
-        vec![
-            ((address + 0x800) & 0xffff_f000) | 0x537,
-            ((address & 0xfff) << 20) | 0x50513,
-            (panic << 20) | 0x593,
-            0x00b5_3023,
-            (termination << 20) | 0x593,
-            0x00b5_3423,
-            0x0000_006f,
-        ]
-    }
-
     /// Build the muldiv guest and return the ELF bytes.
+    /// Mirrors the pattern used by `jolt_host::Program::build()`.
     pub(crate) fn build_muldiv_guest() -> Vec<u8> {
         let guest = "muldiv-guest";
         let func = "muldiv";
@@ -887,6 +848,7 @@ mod tests {
     use super::*;
     use crate::test_utils::build_muldiv_guest;
     use common::jolt_device::MemoryConfig;
+    use jolt_riscv::JOLT_SUCCESS_WORD;
 
     fn minimal_elf() -> Vec<u8> {
         vec![
@@ -986,11 +948,13 @@ mod tests {
 
     use crate::emulator::elf_analyzer::test_elf::{build_elf64, StrtabOrder};
 
-    /// addi x1, x0, 1 ; addi x2, x1, 2 ; j .  — terminates via PC stall.
+    /// addi x1, x0, 1 ; addi x2, x1, 2 ; jolt.success
     fn tiny_guest_elf() -> Vec<u8> {
-        let mut words = vec![0x0010_0093, 0x0020_8113];
-        words.extend(crate::test_utils::flag_exit_words(0, 1));
-        build_elf64(&words, &[], StrtabOrder::GnuLd)
+        build_elf64(
+            &[0x0010_0093, 0x0020_8113, JOLT_SUCCESS_WORD],
+            &[],
+            StrtabOrder::GnuLd,
+        )
     }
 
     fn tiny_guest_config(elf: &[u8]) -> MemoryConfig {
@@ -1002,8 +966,8 @@ mod tests {
 
     #[test]
     fn code_preserving_stores_agree_in_eager_lazy_and_parallel_replay() {
-        let mut words = vec![0x0000_0097, 0x0000_b103, 0x0020_b023];
-        words.extend(crate::test_utils::flag_exit_words(0, 1));
+        // auipc x1, 0; ld x2, 0(x1); sd x2, 0(x1) (same value); jolt.success
+        let words = [0x0000_0097, 0x0000_b103, 0x0020_b023, JOLT_SUCCESS_WORD];
         let elf = build_elf64(&words, &[], StrtabOrder::GnuLd);
         let config = tiny_guest_config(&elf);
         let (lazy, eager, _, _, _) = trace(&elf, None, &[], &[], &[], &config, None);
@@ -1032,7 +996,7 @@ mod tests {
                 0x0000_b103,
                 0x0000_b023,
                 0x0020_b023,
-                0x0000_006f,
+                JOLT_SUCCESS_WORD,
             ],
             &[],
             StrtabOrder::GnuLd,
@@ -1055,7 +1019,7 @@ mod tests {
         use crate::parallel::{ChunkCheckpoint, ChunkWorker, SnapshotPool};
         use std::panic::{catch_unwind, AssertUnwindSafe};
 
-        let elf = build_elf64(&[0x0020_b023, 0x0000_006f], &[], StrtabOrder::GnuLd);
+        let elf = build_elf64(&[0x0020_b023, JOLT_SUCCESS_WORD], &[], StrtabOrder::GnuLd);
         let config = tiny_guest_config(&elf);
         for region in 0..4 {
             for changed in [false, true] {
@@ -1107,9 +1071,9 @@ mod tests {
                 let sc = if word { 0x1820_a1af } else { 0x1820_b1af };
                 let lr = if word { 0x1000_a22f } else { 0x1000_b22f };
                 let words = if success {
-                    vec![lr, sc, 0x0000_006f]
+                    vec![lr, sc, JOLT_SUCCESS_WORD]
                 } else {
-                    vec![sc, 0x0000_006f]
+                    vec![sc, JOLT_SUCCESS_WORD]
                 };
                 let elf = build_elf64(&words, &[], StrtabOrder::GnuLd);
                 let config = tiny_guest_config(&elf);
@@ -1168,7 +1132,8 @@ mod tests {
         let (lazy, cycles, final_memory, device, _) =
             trace(&elf, None, &[], &[], &[], &memory_config, None);
 
-        assert!(cycles.len() >= 3, "two ADDIs plus the jump expansion");
+        assert_eq!(cycles.len(), 3, "two ADDIs and the halt");
+        assert!(matches!(cycles[2], Cycle::JoltSuccess(_)));
         assert_eq!(cycles[0].rd_write(), Some((1, 0, 1)));
         assert_eq!(cycles[1].rs1_read(), Some((1, 1)));
         assert_eq!(cycles[1].rd_write(), Some((2, 0, 3)));

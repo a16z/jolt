@@ -7,9 +7,9 @@
 //! specification for an M-mode-only hart with no F/D/V and IALIGN = 16, which
 //! is also what the Sail model computes for that configuration.
 
-use common::jolt_device::{JoltDeviceMemory, MemoryConfig};
+use common::jolt_device::{JoltDevice, MemoryConfig};
 
-use crate::emulator::cpu::Cpu;
+use crate::emulator::cpu::{Cpu, HaltKind};
 use crate::emulator::terminal::DummyTerminal;
 use crate::instruction::Cycle;
 
@@ -102,7 +102,7 @@ fn hart(program: &[u32], handler: &[u32], registers: &[(u8, u64)]) -> Cpu {
         ..Default::default()
     };
     let mut cpu = Cpu::new(Box::new(DummyTerminal::default()));
-    cpu.get_mut_mmu().jolt_device = Some(JoltDeviceMemory::new(&memory_config));
+    cpu.get_mut_mmu().jolt_device = Some(JoltDevice::new(&memory_config));
     cpu.get_mut_mmu().init_memory(TEST_MEMORY_CAPACITY);
     for (base, words) in [(CODE, program), (HANDLER, handler)] {
         for (i, word) in words.iter().enumerate() {
@@ -118,12 +118,13 @@ fn hart(program: &[u32], handler: &[u32], registers: &[(u8, u64)]) -> Cpu {
     cpu
 }
 
-/// Runs until the hart stalls on `EBREAK` (Jolt's halt).
+/// Runs until the hart halts at `EBREAK`.
 fn run(cpu: &mut Cpu) {
     let mut trace: Vec<Cycle> = Vec::new();
     for _ in 0..MAX_TICKS {
         cpu.tick(Some(&mut trace));
-        if cpu.has_stalled() {
+        if let Some(halt) = cpu.halted() {
+            assert_eq!(halt, HaltKind::Panic);
             return;
         }
     }

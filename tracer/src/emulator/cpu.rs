@@ -200,6 +200,14 @@ pub enum HostIo {
     Replay,
 }
 
+/// How a Jolt run ended: at `jolt.success`, or at Jolt's failure halt (`ebreak`, lowered to a
+/// `Panic` row).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HaltKind {
+    Success,
+    Panic,
+}
+
 /// Architectural CPU state captured at a tick boundary — everything a
 /// bit-exact trace-mode chunk replay needs, and nothing run-scoped: cycle
 /// markers and the call stack stay with pass-1 (host-side logging), and the
@@ -214,6 +222,7 @@ pub(crate) struct ChunkCpuState {
     x: [i64; REGISTER_COUNT as usize],
     f: [f64; 32],
     pc: u64,
+    halted: Option<HaltKind>,
     /// Boxed: 32 KB, keeps checkpoints cheap to move.
     csr: Box<[u64; CSR_CAPACITY]>,
     reservation: u64,
@@ -243,6 +252,9 @@ impl ChunkCpuState {
         }
         if self.pc != cpu.pc {
             return Some(format!("pc: {:#x} vs {:#x}", self.pc, cpu.pc));
+        }
+        if self.halted != cpu.halted {
+            return Some(format!("halted: {:?} vs {:?}", self.halted, cpu.halted));
         }
         for i in 0..REGISTER_COUNT as usize {
             if self.x[i] != cpu.x[i] {
@@ -318,9 +330,14 @@ pub struct Cpu {
     #[allow(dead_code)]
     f: [f64; 32],
     pub(crate) pc: u64,
-    /// Whether the last tick executed a repeatable source jump to itself
-    /// (`JoltInstructionRow::can_end`), including EBREAK's terminal expansion.
+    /// Whether the last tick left the PC where it was and re-running it would
+    /// too (`JoltInstructionRow::self_jump_repeats`). A halt also sets it;
+    /// `halted` tells a Jolt end from a bare stall, which ends HTIF test runs
+    /// (`Emulator::run_test`) but is an error for a Jolt run
+    /// (`TraceError::EndedWithoutHalt`).
     stalled: bool,
+    /// Set by the halt that ended the run; every later tick is a no-op.
+    halted: Option<HaltKind>,
     csr: [u64; CSR_CAPACITY],
     pub mmu: Mmu,
     reservation: u64,
@@ -448,6 +465,7 @@ impl Cpu {
             f: [0.0; 32],
             pc: 0,
             stalled: false,
+            halted: None,
             csr: [0; CSR_CAPACITY],
             mmu: Mmu::new(terminal),
             reservation: 0,
@@ -521,6 +539,21 @@ impl Cpu {
         self.stalled
     }
 
+    pub fn halted(&self) -> Option<HaltKind> {
+        self.halted
+    }
+
+    /// Executes a halt at `address`: writes the link (`pc`, already advanced
+    /// past the instruction) to `link` unless it is x0, leaves the PC on the
+    /// halt and halts the hart. Every later tick is a no-op.
+    pub(crate) fn halt(&mut self, kind: HaltKind, address: u64, link: u8) {
+        if link != 0 {
+            self.write_register(link as usize, self.sign_extend(self.pc as i64));
+        }
+        self.pc = address;
+        self.halted = Some(kind);
+    }
+
     pub fn set_reservation(&mut self, address: u64, width: ReservationWidth) {
         self.reservation = address;
         self.is_reservation_set = true;
@@ -551,6 +584,9 @@ impl Cpu {
 
     /// Runs program one cycle. Fetch, decode, and execution are completed in a cycle so far.
     pub fn tick(&mut self, trace: Option<&mut Vec<Cycle>>) {
+        if self.halted.is_some() {
+            return;
+        }
         let instruction_address = self.pc;
         let executed = match self.tick_operate(trace) {
             Ok(executed) => executed,
@@ -1231,6 +1267,7 @@ impl Cpu {
             f: self.f,
             pc: self.pc,
             stalled: self.stalled,
+            halted: self.halted,
             csr: self.csr,
             mmu: self.mmu.save_state_with_empty_memory(),
             reservation: self.reservation,
@@ -1265,8 +1302,9 @@ impl Cpu {
             pc,
             // Pass 1 owns termination; workers replay counted ticks.
             stalled: _,
+            halted,
             csr,
-            // Memory image, JoltDeviceMemory and decode cache are captured by the
+            // Memory image, JoltDevice and decode cache are captured by the
             // checkpoint layer (see `parallel::ChunkCheckpoint`).
             mmu: _,
             reservation,
@@ -1301,6 +1339,7 @@ impl Cpu {
             x: *x,
             f: *f,
             pc: *pc,
+            halted: *halted,
             csr: Box::new(*csr),
             reservation: *reservation,
             is_reservation_set: *is_reservation_set,
@@ -1314,7 +1353,7 @@ impl Cpu {
     }
 
     /// Install captured chunk state into this (worker) CPU. Counterpart of
-    /// [`Cpu::capture_chunk_state`]; the memory image, JoltDeviceMemory outputs and
+    /// [`Cpu::capture_chunk_state`]; the memory image, JoltDevice outputs and
     /// decode cache are installed by the checkpoint layer.
     pub(crate) fn install_chunk_state(&mut self, state: &ChunkCpuState) {
         debug_assert!(
@@ -1327,6 +1366,7 @@ impl Cpu {
         self.x = state.x;
         self.f = state.f;
         self.pc = state.pc;
+        self.halted = state.halted;
         self.csr = *state.csr;
         self.reservation = state.reservation;
         self.is_reservation_set = state.is_reservation_set;
@@ -1349,8 +1389,8 @@ impl Cpu {
     /// register file (including virtual registers), the CSR array, clock, wfi,
     /// privilege mode, the LR/SC reservation triple, the advice tape (data and
     /// read position), `executed_instrs`, `trace_len` (row-uniform across
-    /// trace and execute modes), and JoltDeviceMemory outputs and flag words. Excludes
-    /// host-side bookkeeping (markers, call stack) and the dead `f`
+    /// trace and execute modes), JoltDevice outputs/panic, and the halt state.
+    /// Excludes host-side bookkeeping (markers, call stack) and the dead `f`
     /// registers. Memory is not compared — callers hash it separately.
     pub fn arch_state_diff(&self, other: &Cpu) -> Option<String> {
         if self.trace_len != other.trace_len {
@@ -1361,6 +1401,9 @@ impl Cpu {
         }
         if self.pc != other.pc {
             return Some(format!("pc: {:#x} vs {:#x}", self.pc, other.pc));
+        }
+        if self.halted != other.halted {
+            return Some(format!("halted: {:?} vs {:?}", self.halted, other.halted));
         }
         for i in 0..REGISTER_COUNT as usize {
             if self.x[i] != other.x[i] {
@@ -1436,8 +1479,8 @@ impl Cpu {
                         b.outputs.len()
                     ));
                 }
-                if a.flags != b.flags {
-                    return Some(format!("jolt_device.flags: {:?} vs {:?}", a.flags, b.flags));
+                if a.panic != b.panic {
+                    return Some(format!("jolt_device.panic: {} vs {}", a.panic, b.panic));
                 }
             }
             (None, None) => {}
@@ -1519,8 +1562,9 @@ mod test_cpu {
     use crate::emulator::memory::Memory;
     use crate::emulator::mmu::DRAM_BASE;
     use crate::emulator::terminal::DummyTerminal;
-    use common::jolt_device::{JoltDeviceMemory, MemoryConfig};
+    use common::jolt_device::{JoltDevice, MemoryConfig};
     use jolt_platform::{JOLT_ADVICE_WRITE_CALL_ID, JOLT_PRINT_LINE, JOLT_PRINT_STRING};
+    use jolt_riscv::JOLT_SUCCESS_WORD;
 
     fn create_cpu() -> Cpu {
         Cpu::new(Box::new(DummyTerminal::default()))
@@ -1713,6 +1757,45 @@ mod test_cpu {
         );
     }
 
+    /// A halt writes its link to its instruction temporary, leaves the PC on
+    /// itself and stops the hart: a later tick emits no rows.
+    #[test]
+    fn halts_write_their_link_and_stop_the_hart() {
+        let success = JOLT_SUCCESS_WORD.to_le_bytes();
+        let ebreak = 0x0010_0073u32.to_le_bytes();
+        // c.ebreak, then c.nop.
+        let c_ebreak = [0x02, 0x90, 0x01, 0x00];
+        for (halt, kind, length) in [
+            (success, HaltKind::Success, 4),
+            (ebreak, HaltKind::Panic, 4),
+            (c_ebreak, HaltKind::Panic, 2),
+        ] {
+            let mut cpu = create_cpu();
+            cpu.get_mut_mmu().init_memory(1 << 16);
+            // addi x1, x0, 1, then the halt.
+            let code = [0x0010_0093u32.to_le_bytes(), halt].concat();
+            for (i, byte) in code.iter().enumerate() {
+                cpu.get_mut_mmu().store_raw(DRAM_BASE + i as u64, *byte);
+            }
+            cpu.update_pc(DRAM_BASE);
+            let mut rows = Vec::new();
+            for _ in 0..2 {
+                cpu.tick(Some(&mut rows));
+            }
+
+            let address = DRAM_BASE + 4;
+            assert_eq!(cpu.halted(), Some(kind));
+            assert_eq!(cpu.read_pc(), address);
+            assert!(cpu.has_stalled());
+            assert_eq!(rows.len(), 2);
+            assert_eq!(rows[1].rd_write(), Some((40, 0, address + length)));
+
+            let trace_len = cpu.trace_len;
+            cpu.tick(Some(&mut rows));
+            assert_eq!((rows.len(), cpu.trace_len), (2, trace_len));
+        }
+    }
+
     #[test]
     fn jalr_at_its_fixed_point_stops_after_one_run() {
         // jalr x5, -4(x5); jal x0, 0. The link it writes leads back to
@@ -1758,7 +1841,7 @@ mod test_cpu {
 
     fn create_cpu_with_layout() -> Cpu {
         let mut cpu = create_cpu();
-        let device = JoltDeviceMemory::new(&MemoryConfig {
+        let device = JoltDevice::new(&MemoryConfig {
             program_size: Some(1024),
             ..Default::default()
         });
@@ -1851,7 +1934,6 @@ mod test_cpu {
         assert!(cpu.advice_tape.is_empty());
         let reads = Memory {
             data: cpu.get_mut_mmu().memory.memory.data.save_checkpoint(),
-            flag_memory: None,
         };
         assert_eq!(reads.get_doubleword(56), 0, "a rejected range was loaded");
 
@@ -2013,7 +2095,7 @@ mod test_cpu {
             heap_size: 64,
             ..Default::default()
         };
-        let layout = JoltDeviceMemory::new(&config).memory_layout;
+        let layout = JoltDevice::new(&config).memory_layout;
         let scratch = DRAM_BASE + 32;
         // A rejected range leaves the tape empty and the run continues.
         for (address, tape) in [
@@ -2025,7 +2107,7 @@ mod test_cpu {
             let mut cpu = create_cpu();
             // Let heap_end reach the MMU check after trace_load reads its word.
             cpu.mmu.init_memory(layout.get_total_memory_size() + 8);
-            cpu.mmu.jolt_device = Some(JoltDeviceMemory::new(&config));
+            cpu.mmu.jolt_device = Some(JoltDevice::new(&config));
             // VirtualHostIO, as in test_run_two_pass_replays_advice_writes.
             for (i, byte) in 0x0000_205bu32.to_le_bytes().into_iter().enumerate() {
                 cpu.mmu.store_raw(DRAM_BASE + i as u64, byte);

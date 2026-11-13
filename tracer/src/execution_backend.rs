@@ -11,7 +11,7 @@ use jolt_program::{execution::FieldEvent, field_inline::FieldInlineTraceData};
 use jolt_riscv::{CircuitFlags, JoltTraceRow};
 use rayon::prelude::*;
 
-use common::jolt_device::{JoltDevice, JoltDeviceMemory};
+use common::jolt_device::JoltDevice;
 
 use crate::emulator::cpu::AdviceTape;
 use crate::emulator::decode_cache::DecodeCache;
@@ -79,7 +79,7 @@ impl TracerBackend {
         Ok(TraceExecution {
             cycles,
             final_memory: MemoryImage {
-                bytes: final_memory.final_memory_bytes(),
+                bytes: final_memory.materialized_nonzero_bytes(),
             },
             device,
             advice_tape: advice_tape.into_bytes(),
@@ -285,7 +285,7 @@ pub struct TracerChunkCheckpoint {
 }
 
 struct WorkerSeed {
-    device: Option<JoltDeviceMemory>,
+    device: Option<JoltDevice>,
     decode: DecodeCache,
     code_word_intervals: Arc<[(usize, usize)]>,
     bytecode: BytecodePreprocessing,
@@ -396,7 +396,7 @@ impl TracerBackend {
             trace_len,
             device,
             final_memory: Some(MemoryImage {
-                bytes: final_memory.final_memory_bytes(),
+                bytes: final_memory.materialized_nonzero_bytes(),
             }),
             advice_tape: Some(advice_tape.into_bytes()),
         })
@@ -661,9 +661,10 @@ mod chunked_tests {
 mod tests {
     use super::*;
     use crate::emulator::elf_analyzer::test_elf::{build_elf64, StrtabOrder};
-    use crate::parallel::TwoPassConfig;
+    use crate::parallel::{run_two_pass, TwoPassConfig};
     use common::jolt_device::MemoryConfig;
     use jolt_program::execution::{TraceError, TraceInputs};
+    use jolt_riscv::{JoltInstructionKind, JOLT_SUCCESS_WORD};
 
     #[cfg(feature = "field-inline")]
     use crate::{
@@ -671,31 +672,10 @@ mod tests {
         instruction::Instruction,
     };
 
-    #[test]
-    fn flag_amo_history_agrees_in_interpreter_and_parallel_replay() {
-        let exit = crate::test_utils::flag_exit_words(0, 1);
-        let mut words = exit[..2].to_vec();
-        for _ in 0..4 {
-            words.extend([
-                0x0050_0593, // li a1, 5
-                0x00b5_262f, // amoadd.w a2, a1, (a0)
-                0xffb0_0593, // li a1, -5
-                0x00b5_262f,
-                0x0045_0513, // addi a0, a0, 4
-            ]);
-        }
-        words.push(0xff05_0513); // addi a0, a0, -16
-        for _ in 0..2 {
-            words.extend([
-                0x0070_0593,
-                0x00b5_362f,
-                0xff90_0593,
-                0x00b5_362f,
-                0x0085_0513,
-            ]);
-        }
-        words.extend(exit);
-        let elf = build_elf64(&words, &[], StrtabOrder::GnuLd);
+    /// A program of `text` words at 0x8000_0000, with inputs that size its
+    /// memory to the ELF.
+    fn tiny_program(text: &[u32]) -> (Vec<u8>, JoltProgram, TraceInputs) {
+        let elf = build_elf64(text, &[], StrtabOrder::GnuLd);
         let program = jolt_program::build_jolt_program(&elf).expect("prepare program");
         let inputs = TraceInputs {
             memory_config: MemoryConfig {
@@ -704,130 +684,24 @@ mod tests {
             },
             ..Default::default()
         };
-        let mut backend = TracerBackend::new();
-        let eager = backend
-            .trace(&program, inputs.clone())
-            .expect("trace accepts restored flags");
-        let summary = backend
-            .execute(&program, inputs.clone(), 1)
-            .expect("execute accepts restored flags");
-        let mut replay = Vec::new();
-        for checkpoint in &summary.checkpoints {
-            replay.extend_from_slice(
-                backend
-                    .replay_chunk(checkpoint)
-                    .expect("replay raw flags")
-                    .rows(),
-            );
-        }
-        assert_eq!(replay, eager.trace.rows());
-        assert_eq!(summary.device, eager.device);
-        assert_eq!(summary.final_memory, eager.final_memory);
-        let emulator =
-            crate::create_emulator(&elf, None, &[], &[], &[], &inputs.memory_config, None);
-        let (cycles, finished) = crate::parallel::run_two_pass(
-            emulator,
-            &TwoPassConfig {
-                workers: 2,
-                chunk_rows: 1,
-                capacity_rows: 1024,
-            },
-        );
-        let bytecode = BytecodePreprocessing::preprocess(
-            program.expanded_bytecode.clone(),
-            program.entry_address,
-            program.profile,
-        )
-        .expect("bytecode");
-        assert_eq!(
-            collect_rows(&cycles, &bytecode)
-                .expect("convert parallel rows")
-                .0
-                .rows(),
-            eager.trace.rows()
-        );
-        let (_, final_memory, device) =
-            crate::finish_emulator(finished).expect("finalize parallel flags");
-        assert_eq!(device, eager.device);
-        assert_eq!(
-            Some(MemoryImage {
-                bytes: final_memory.final_memory_bytes()
-            }),
-            eager.final_memory
-        );
-    }
-
-    #[test]
-    fn final_flag_contract_is_checked_by_eager_and_chunked_execution() {
-        for (panic_word, termination_word, expected) in [
-            (0, 1, Some(false)),
-            (1, 0, Some(true)),
-            (0, 0, None),
-            (2, 0, None),
-            (1, 1, None),
-        ] {
-            let words = crate::test_utils::flag_exit_words(panic_word, termination_word);
-            let elf = build_elf64(&words, &[], StrtabOrder::GnuLd);
-            let program = jolt_program::build_jolt_program(&elf).expect("prepare program");
-            let inputs = TraceInputs {
-                memory_config: MemoryConfig {
-                    program_size: Some(elf.len() as u64),
-                    ..Default::default()
-                },
-                ..Default::default()
-            };
-            let mut backend = TracerBackend::new();
-            let eager = backend.trace(&program, inputs.clone());
-            let chunked = backend.execute(&program, inputs, 1);
-            if let Some(panic) = expected {
-                let eager = eager.expect("canonical flags accepted");
-                let chunked = chunked.expect("canonical flags accepted");
-                assert_eq!(eager.device.panic, panic);
-                assert_eq!(eager.final_memory, chunked.final_memory);
-                let mut replay = Vec::new();
-                for checkpoint in &chunked.checkpoints {
-                    replay.extend_from_slice(
-                        backend
-                            .replay_chunk(checkpoint)
-                            .expect("replay flags")
-                            .rows(),
-                    );
-                }
-                assert_eq!(eager.trace.rows(), replay);
-                let bytes = &eager.final_memory.expect("final memory").bytes;
-                assert!(bytes.contains(&(eager.device.memory_layout.panic, panic_word as u8)));
-                assert!(bytes.contains(&(
-                    eager.device.memory_layout.termination,
-                    termination_word as u8
-                )));
-            } else {
-                assert!(matches!(eager, Err(TraceError::InvalidFlagWords(_))));
-                assert!(matches!(chunked, Err(TraceError::InvalidFlagWords(_))));
-            }
-        }
+        (elf, program, inputs)
     }
 
     #[test]
     #[expect(clippy::expect_used, reason = "test-only assertions")]
     fn tracer_backend_traces_a_guest_elf_into_jolt_rows() {
-        // addi x1, x0, 1 ; addi x2, x1, 2 ; j .
-        let mut words = vec![0x0010_0093, 0x0020_8113];
-        words.extend(crate::test_utils::flag_exit_words(0, 1));
-        let elf = build_elf64(&words, &[], StrtabOrder::GnuLd);
-        let program = jolt_program::build_jolt_program(&elf).expect("prepare program");
-        let inputs = TraceInputs {
-            memory_config: MemoryConfig {
-                program_size: Some(elf.len() as u64),
-                ..Default::default()
-            },
-            ..Default::default()
-        };
+        // addi x1, x0, 1 ; addi x2, x1, 2 ; jolt.success
+        let (_, program, inputs) = tiny_program(&[0x0010_0093, 0x0020_8113, JOLT_SUCCESS_WORD]);
 
         let mut backend = TracerBackend::new();
         let output = backend.trace(&program, inputs).expect("trace succeeds");
 
         let rows = output.trace.rows();
-        assert!(rows.len() >= 3, "two ADDIs plus the jump expansion");
+        assert_eq!(rows.len(), 3, "two ADDIs and the halt");
+        assert_eq!(
+            rows[2].instruction().instruction_kind,
+            JoltInstructionKind::JoltSuccess
+        );
         let rd = rows[0].registers().rd.expect("first ADDI writes rd");
         assert_eq!((rd.register, rd.pre_value, rd.post_value), (1, 0, 1));
         let rs1 = rows[1].registers().rs1.expect("second ADDI reads rs1");
@@ -838,6 +712,84 @@ mod tests {
         let image = output.final_memory.expect("memory image present");
         assert!(!image.bytes.is_empty());
         assert!(!output.device.panic);
+    }
+
+    /// Every driver ends a run at its halt row and rejects a run that stops
+    /// at a PC stall instead.
+    #[test]
+    fn jolt_runs_end_at_halts() {
+        // addi x1, x0, 1, then jolt.success, ebreak, or c.ebreak and c.nop.
+        for (halt, kind, is_compressed) in [
+            (JOLT_SUCCESS_WORD, JoltInstructionKind::JoltSuccess, false),
+            (0x0010_0073, JoltInstructionKind::JoltPanic, false),
+            (0x0001_9002, JoltInstructionKind::JoltPanic, true),
+        ] {
+            let (_, program, inputs) = tiny_program(&[0x0010_0093, halt]);
+            let mut backend = TracerBackend::new();
+            let eager = backend
+                .trace(&program, inputs.clone())
+                .expect("eager trace");
+            let rows = eager.trace.rows();
+            let last = rows.last().expect("nonempty trace").instruction();
+            assert_eq!(
+                (last.instruction_kind, last.is_compressed),
+                (kind, is_compressed)
+            );
+            // No panic byte was written: the device latch, not the halt kind,
+            // sets the public panic bit.
+            assert!(!eager.device.panic);
+
+            let summary = backend
+                .execute(&program, inputs, 1)
+                .expect("chunked execute");
+            assert!(!summary.device.panic);
+            let replayed: Vec<JoltTraceRow> = summary
+                .checkpoints
+                .iter()
+                .flat_map(|checkpoint| {
+                    backend
+                        .replay_chunk(checkpoint)
+                        .expect("replay")
+                        .rows()
+                        .to_vec()
+                })
+                .collect();
+            assert_eq!(replayed, rows);
+        }
+
+        // addi x1, x0, 1, then j . or beq x0, x0, 0: a PC stall, not a halt.
+        for stall in [0x0000_006f, 0x0000_0063] {
+            let (elf, program, inputs) = tiny_program(&[0x0010_0093, stall]);
+            let mut backend = TracerBackend::new();
+            assert!(matches!(
+                backend.trace(&program, inputs.clone()),
+                Err(TraceError::EndedWithoutHalt { pc: 0x8000_0004 })
+            ));
+            assert!(matches!(
+                backend.execute(&program, inputs.clone(), 1),
+                Err(TraceError::EndedWithoutHalt { pc: 0x8000_0004 })
+            ));
+            let emulator =
+                crate::create_emulator(&elf, None, &[], &[], &[], &inputs.memory_config, None);
+            let config = TwoPassConfig {
+                workers: 2,
+                chunk_rows: 1,
+                capacity_rows: 64,
+            };
+            assert!(matches!(
+                crate::finish_emulator(run_two_pass(emulator, &config).1),
+                Err(TraceError::EndedWithoutHalt { pc: 0x8000_0004 })
+            ));
+            // The infallible lazy iterator panics with the same error.
+            let panic = std::panic::catch_unwind(|| {
+                crate::trace_lazy(&elf, None, &[], &[], &[], &inputs.memory_config, None).count()
+            })
+            .expect_err("the lazy iterator must reject a stall");
+            assert_eq!(
+                panic.downcast_ref::<String>(),
+                Some(&TraceError::EndedWithoutHalt { pc: 0x8000_0004 }.to_string())
+            );
+        }
     }
 
     #[test]

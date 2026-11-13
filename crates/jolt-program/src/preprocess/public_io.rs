@@ -47,7 +47,7 @@ impl PublicIoMemory {
         // A witness may end after any jump: at the last cycle the end-of-trace
         // boundary zeroes ShouldJump, so the jump target goes unchecked. For a
         // non-panic claim this word is what rules out a truncated execution;
-        // the SDK writes it last, just before the exit stall.
+        // the SDK writes it last, just before `jolt.success`.
         if !public_io.panic {
             segments.push(PublicMemorySegment {
                 start_index: layout.remapped_word_address(layout.termination)? as u128,
@@ -113,49 +113,5 @@ mod tests {
 
         assert_eq!(memory.segments.len(), 1);
         assert_eq!(memory.segments[0].words, vec![1]);
-    }
-
-    #[test]
-    fn output_mask_fixes_both_complete_flag_words() {
-        let mut device = JoltDevice::new(&MemoryConfig {
-            program_size: Some(1024),
-            max_trusted_advice_size: 0,
-            max_untrusted_advice_size: 0,
-            ..Default::default()
-        });
-        for (panic, expected) in [(false, [0, 1]), (true, [1, 0])] {
-            device.panic = panic;
-            let memory = PublicIoMemory::new(&device).expect("valid public I/O");
-            for (address, expected_word) in
-                [device.memory_layout.panic, device.memory_layout.termination]
-                    .into_iter()
-                    .zip(expected)
-            {
-                let index = device
-                    .memory_layout
-                    .remapped_word_address(address)
-                    .expect("mapped flag word") as u128;
-                assert!(memory.io_mask_start <= index && index < memory.io_mask_end);
-                let word = memory
-                    .segments
-                    .iter()
-                    .flat_map(|segment| {
-                        segment
-                            .words
-                            .iter()
-                            .enumerate()
-                            .map(move |(offset, &word)| {
-                                (segment.start_index + offset as u128, word)
-                            })
-                    })
-                    .find_map(|(word_index, word)| (word_index == index).then_some(word))
-                    .unwrap_or(0);
-                assert_eq!(word, expected_word);
-                assert_eq!(
-                    word.to_le_bytes(),
-                    [expected_word as u8, 0, 0, 0, 0, 0, 0, 0]
-                );
-            }
-        }
     }
 }

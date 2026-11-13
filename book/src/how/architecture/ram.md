@@ -109,7 +109,10 @@ a temporary modification.
 The interpreter, replay tracer and native tracer reject a changed protected
 word before writing it, and reject loads below `lowest_address`. These checks
 match the new relations' intended memory behavior. They do not add constraints
-for the rest of the tracer's store-permission policy.
+for the rest of the tracer's store-permission policy. Host calls (prints, cycle
+markers and advice writes) never stop the run: a call whose buffer has a byte
+below `lowest_address`, or any other byte a guest load would reject, is logged
+and ignored.
 
 ## Deviations from the Twist algorithm as described in the paper
 
@@ -204,24 +207,14 @@ This arrangement minimizes verifier computation. If we placed untrusted advice f
 ## Output Check
 
 Jolt ensures correctness of guest program outputs via the **output check** sumcheck.
-Guest I/O operations, including outputs, inputs, and the panic and termination words, occur within a designated [memory region](#address-remapping).
-Each flag occupies one eight-byte word, starts at zero, and stores ordinary little-endian bytes.
-Loads return those bytes; stores and AMOs update them, including partial-word accesses.
-Intermediate flag values are unrestricted. LR/SC remains restricted to ordinary RAM and cannot access the I/O window.
+Guest I/O operations, including outputs, inputs, and termination or panic bits, occur within a designated [memory region](#address-remapping).
+At execution completion, outputs and relevant status bits are written into this region.
 
-At finalization, the tracer accepts exactly `(panic_word, termination_word) = (0, 1)` for success or `(1, 0)` for panic.
-It rejects every other pair and derives the public `panic` Boolean from the accepted pair.
-The SDK writes both complete words before its exit self-jump so earlier flag writes cannot leave a noncanonical final value.
-The final-memory witness reads the stored flag bytes instead of constructing them from the public Boolean.
-
-Verifying that the claimed outputs and flag words are correct amounts to checking that the following polynomials agree at the indices corresponding to the program I/O memory region:
+Verifying that the claimed outputs and status bits are correct amounts to checking that the following polynomials agree at the indices corresponding to the program I/O memory region:
 
 ![final memory](../../imgs/final_memory_state.png)
 
-`val_io` contains only information known by the verifier.
-Its existing I/O mask covers both complete flag words.
-It sets panic to the public Boolean and termination to one on success; the omitted termination segment on panic evaluates to zero under the same mask.
-The output check therefore requires the same two final pairs without adding a constraint or opening.
+Note that `val_io` is only contains information known by the verifier.
 To check that these two polynomials are equal, we use the following sumcheck:
 
 $$

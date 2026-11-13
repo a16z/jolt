@@ -8,7 +8,6 @@
 //! reach this plane; generated code routes them to `extern "C"` helpers.
 
 use common::constants::RAM_START_ADDRESS;
-use common::jolt_device::JoltDeviceMemory;
 use jolt_program::execution::TraceError;
 
 pub struct MemoryPlane {
@@ -86,19 +85,19 @@ impl MemoryPlane {
         unsafe { self.base.copy_from_nonoverlapping(image.as_ptr(), len) };
     }
 
-    /// Final witness bytes at absolute guest addresses, including stored flags.
-    pub fn final_memory_bytes(&self, device: &JoltDeviceMemory) -> Vec<(u64, u8)> {
+    /// Copy out all nonzero bytes as `(address, byte)` pairs, RAM-relative
+    /// (address 0 = `RAM_START_ADDRESS`) — the convention the reference
+    /// backend's `Memory::materialized_nonzero_bytes` uses for
+    /// `TraceOutput::final_memory`.
+    pub fn materialized_nonzero_bytes(&self) -> Vec<(u64, u8)> {
         let mut bytes = Vec::new();
         // SAFETY: new maps backing_size bytes, including the final partial word.
         let slice = unsafe { core::slice::from_raw_parts(self.base, self.backing_size) };
         for (offset, &byte) in slice.iter().enumerate() {
             if byte != 0 {
-                bytes.push((RAM_START_ADDRESS + offset as u64, byte));
+                bytes.push((offset as u64, byte));
             }
         }
-        device
-            .flags
-            .append_memory(device.memory_layout.panic, &mut bytes);
         bytes
     }
 }
