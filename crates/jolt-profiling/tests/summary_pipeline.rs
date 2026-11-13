@@ -19,9 +19,10 @@ fn fixture_events() -> Vec<Value> {
 
 fn fixture_context() -> SummaryContext {
     SummaryContext {
-        workload: "fibonacci".to_string(),
+        workload: "fibonacci_streaming_instruction_input".to_string(),
         scale_log2: 16,
-        backend: "reference".to_string(),
+        backend: "optimized".to_string(),
+        streaming_families: vec!["instruction-input".to_string()],
     }
 }
 
@@ -455,12 +456,25 @@ fn finalize_trace_rewrites_and_summarizes_atomically() {
 #[test]
 fn summary_round_trips_through_strict_schema_structs() {
     let summary = fixture_summary(&fixture_events());
+    assert_eq!(summary.run.streaming_families, ["instruction-input"]);
     let json = serde_json::to_string(&summary).unwrap();
     let reparsed: ProfileSummary = serde_json::from_str(&json).unwrap();
     assert_eq!(
         serde_json::to_value(&reparsed).unwrap(),
         serde_json::to_value(&summary).unwrap()
     );
+}
+
+/// A run without a streaming selection omits `run.streaming_families`, as
+/// summaries did before the field existed; a selection is written out.
+#[test]
+fn summary_omits_empty_streaming_families() {
+    let mut summary = fixture_summary(&fixture_events());
+    let selected = serde_json::to_value(&summary.run).unwrap();
+    assert_eq!(selected["streaming_families"][0], "instruction-input");
+    summary.run.streaming_families.clear();
+    let ordinary = serde_json::to_value(&summary.run).unwrap();
+    assert!(ordinary.get("streaming_families").is_none());
 }
 
 #[test]
@@ -494,6 +508,7 @@ fn summary_deserializes_without_hardware_extensions() {
     )
     .unwrap();
     assert!(summary.hardware_counters.is_none());
+    assert_eq!(summary.run.streaming_families, [] as [String; 0]);
     let root = summary.root.unwrap();
     assert_eq!(root.instructions, Some(12));
     assert_eq!(root.cycles, None);

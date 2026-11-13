@@ -868,7 +868,7 @@ fn materialize_paired_rows<F: JoltField, S: ChunkIndexSource>(
 mod prefix_tests {
     use super::{ChunkIndexSource, LazyFoldedRa};
     #[cfg(feature = "akita")]
-    use jolt_field::Prime128OffsetA7F7;
+    use jolt_field::Prime128Offset6A23801F;
     use jolt_field::{Fr, JoltField};
 
     struct Source {
@@ -954,7 +954,9 @@ mod prefix_tests {
                 let challenge = F::from_u64([0, 1, 13, 29, 41, 53, 67][round % 7]);
                 for values in &mut dense {
                     *values = values
-                        .chunks_exact(2)
+                        .as_chunks::<2>()
+                        .0
+                        .iter()
                         .map(|p| p[0] + challenge * (p[1] - p[0]))
                         .collect();
                 }
@@ -969,7 +971,7 @@ mod prefix_tests {
     #[cfg(feature = "akita")]
     #[test]
     fn constant_tail_binds_match_dense_multilinears_fp128() {
-        check::<Prime128OffsetA7F7>();
+        check::<Prime128Offset6A23801F>();
     }
 }
 

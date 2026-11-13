@@ -138,6 +138,11 @@ pub struct RunMetadata {
     /// log2 of the padded trace length the workload was scaled to.
     pub scale_log2: u32,
     pub backend: String,
+    // Omitted when empty, so a run without a streaming selection serializes
+    // as it did before this field existed and earlier strict readers of
+    // schema version 1 still accept it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub streaming_families: Vec<String>,
     pub timestamp_unix_secs: u64,
     pub git_rev: Option<String>,
 }
@@ -311,6 +316,7 @@ pub struct SummaryContext {
     pub workload: String,
     pub scale_log2: u32,
     pub backend: String,
+    pub streaming_families: Vec<String>,
 }
 
 /// The `memory_gib` counter name both peak-memory metrics sample.
@@ -703,6 +709,7 @@ pub fn build_summary(
             workload: ctx.workload.clone(),
             scale_log2: ctx.scale_log2,
             backend: ctx.backend.clone(),
+            streaming_families: ctx.streaming_families.clone(),
             timestamp_unix_secs,
             git_rev,
         },

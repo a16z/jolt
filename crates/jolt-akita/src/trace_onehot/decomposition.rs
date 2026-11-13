@@ -285,24 +285,26 @@ fn add_byte_partial(dst: &mut [i32], partial: &[i8; 512]) {
 }
 
 fn collect_ring_column_shifts(
-    coefficients: &mut Vec<usize>,
+    coefficients: &mut [usize],
     selected_rows: &[u8],
     committed_zero_masks: &[u64],
     num_columns: usize,
     one_hot_k: usize,
     column: usize,
-) {
-    coefficients.clear();
+) -> usize {
+    let mut count = 0;
     for (row_offset, (row_indices, &mask)) in selected_rows
         .chunks_exact(num_columns)
         .zip(committed_zero_masks)
         .enumerate()
     {
         let hot = row_indices[column];
-        if row_is_committed(hot, mask, column) {
-            coefficients.push(row_offset * one_hot_k + usize::from(hot));
-        }
+        // The caller reserves one slot per ring row; at most row_offset
+        // entries precede this row, so the speculative store stays in bounds.
+        coefficients[count] = row_offset * one_hot_k + usize::from(hot);
+        count += usize::from(row_is_committed(hot, mask, column));
     }
+    count
 }
 
 #[inline(always)]
@@ -312,12 +314,12 @@ fn add_subring_columns<const S: usize>(
     selected_rows: &[u8],
     committed_zero_masks: &[u64],
     one_hot_k: usize,
-    coefficients: &mut Vec<usize>,
+    coefficients: &mut [usize],
 ) {
     let mut partial = [0i8; 512];
     let mut accumulated_bound = 0;
     for (column, challenge) in challenges.iter().enumerate() {
-        collect_ring_column_shifts(
+        let count = collect_ring_column_shifts(
             coefficients,
             selected_rows,
             committed_zero_masks,
@@ -325,8 +327,9 @@ fn add_subring_columns<const S: usize>(
             one_hot_k,
             column,
         );
-        if coefficients.len() < 4 {
-            for &shift in coefficients.iter() {
+        let shifts = &coefficients[..count];
+        if shifts.len() < 4 {
+            for &shift in shifts {
                 challenge.add_shift(dst, shift);
             }
             continue;
@@ -340,7 +343,7 @@ fn add_subring_columns<const S: usize>(
             partial.fill(0);
             accumulated_bound = 0;
         }
-        challenge.add_byte_rows(&mut partial, coefficients);
+        challenge.add_byte_rows(&mut partial, shifts);
         accumulated_bound += challenge.l1_bound;
     }
     if accumulated_bound != 0 {
@@ -360,6 +363,8 @@ fn restore_coefficient_order<const D: usize, const S: usize>(rows: &mut [[i32; D
     });
 }
 
+// Subring variants write residue-major until decompose_fold_columns_with_mode
+// restores coefficient order once, after every contribution has been added.
 pub(super) enum PreparedRotations<const D: usize> {
     Compact(Vec<[i8; D]>),
     Dense(Vec<[i16; D]>),
@@ -921,7 +926,7 @@ pub(super) fn decompose_fold_columns_with_mode<const D: usize>(
                     if source.one_hot_k < D {
                         let num_columns = source.rows.num_columns();
                         let rows_per_ring = D / source.one_hot_k;
-                        let mut coefficients = Vec::with_capacity(rows_per_ring);
+                        let mut coefficients = vec![0usize; rows_per_ring];
                         visit_segment_ring_row_range::<D>(
                             source,
                             ring_start,
@@ -982,7 +987,7 @@ pub(super) fn decompose_fold_columns_with_mode<const D: usize>(
                                     for column in 0..num_columns {
                                         let dst = &mut compressed
                                             [(position - position_start) * num_chunks + chunk];
-                                        collect_ring_column_shifts(
+                                        let count = collect_ring_column_shifts(
                                             &mut coefficients,
                                             selected_rows,
                                             committed_zero_masks,
@@ -995,7 +1000,7 @@ pub(super) fn decompose_fold_columns_with_mode<const D: usize>(
                                             dst,
                                             &rotations,
                                             prepared_block,
-                                            &coefficients,
+                                            &coefficients[..count],
                                         );
                                     }
                                 }
@@ -1115,11 +1120,10 @@ pub(super) fn decompose_fold_columns_with_mode<const D: usize>(
         num_digits,
     )
     .entered();
-    let witnesses = expanded
+    Ok(expanded
         .into_iter()
         .map(DecomposeFoldWitness::from_centered_rows::<D>)
-        .collect();
-    Ok(witnesses)
+        .collect())
 }
 
 #[cfg(test)]
@@ -1260,46 +1264,49 @@ mod subring_convolution_tests {
 
     fn check_batch_bound<const S: usize>() {
         const D: usize = 512;
-        for sign in [-1i8, 1] {
-            let challenges = (0..3)
-                .map(|column| SparseChallenge {
-                    positions: (0..32).map(|i| (16 * i) as u32).collect(),
-                    coeffs: (0..32)
-                        .map(|i| sign * if column == 0 && i == 0 { 1 } else { 2 })
-                        .collect(),
-                })
-                .collect::<Vec<_>>();
-            let prepared = challenges
-                .iter()
-                .map(|c| PreparedSubringChallenge::<S>::new(c).unwrap())
-                .collect::<Vec<_>>();
-            let mut expected = [0i32; D];
-            for challenge in &challenges {
-                for shift in (0..32).map(|i| 16 * i + 15) {
-                    for (&position, &coefficient) in
-                        challenge.positions.iter().zip(&challenge.coeffs)
-                    {
-                        let degree = shift + position as usize;
-                        expected[degree % D] += if degree < D {
-                            i32::from(coefficient)
-                        } else {
-                            -i32::from(coefficient)
-                        };
+        for weights in [&[63, 64, 64][..], &[64, 64][..]] {
+            for sign in [-1i8, 1] {
+                let challenges = weights
+                    .iter()
+                    .map(|&weight| SparseChallenge {
+                        positions: (0..32).map(|i| (16 * i) as u32).collect(),
+                        coeffs: (0..32)
+                            .map(|i| sign * if weight == 63 && i == 0 { 1 } else { 2 })
+                            .collect(),
+                    })
+                    .collect::<Vec<_>>();
+                let prepared = challenges
+                    .iter()
+                    .map(|c| PreparedSubringChallenge::<S>::new(c).unwrap())
+                    .collect::<Vec<_>>();
+                let mut expected = [0i32; D];
+                for challenge in &challenges {
+                    for shift in (0..32).map(|i| 16 * i + 15) {
+                        for (&position, &coefficient) in
+                            challenge.positions.iter().zip(&challenge.coeffs)
+                        {
+                            let degree = shift + position as usize;
+                            expected[degree % D] += if degree < D {
+                                i32::from(coefficient)
+                            } else {
+                                -i32::from(coefficient)
+                            };
+                        }
                     }
                 }
+                assert_eq!(expected[511], i32::from(sign) * weights.iter().sum::<i32>());
+                let mut actual = [[0i32; D]];
+                add_subring_columns(
+                    &mut actual[0],
+                    &prepared,
+                    &vec![15; 32 * weights.len()],
+                    &[0; 32],
+                    16,
+                    &mut [0; 32],
+                );
+                restore_coefficient_order::<D, S>(&mut actual);
+                assert_eq!(actual[0], expected);
             }
-            assert_eq!(expected[511], i32::from(sign) * 191);
-            let mut actual = [[0i32; D]];
-            add_subring_columns(
-                &mut actual[0],
-                &prepared,
-                &[15; 32 * 3],
-                &[0; 32],
-                16,
-                &mut Vec::new(),
-            );
-            restore_coefficient_order::<D, S>(&mut actual);
-            assert_eq!(actual[0], expected);
         }
     }
 

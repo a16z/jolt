@@ -204,7 +204,9 @@ fn assert_digit_windows_match_shift_accumulation<const D: usize>() {
     for (column, actual) in actual.iter_mut().enumerate() {
         let mut shifts = Vec::new();
         for (row, (row_indices, &mask)) in selected_rows
-            .chunks_exact(COLUMNS)
+            .as_chunks::<COLUMNS>()
+            .0
+            .iter()
             .zip(&committed_zero_masks)
             .enumerate()
         {
@@ -608,6 +610,7 @@ fn subring_decomposition_matches_materialized_onehot() {
 fn zero_suffix_kernels_match_materialized_onehot() {
     for prefix in [0, 1, 3, 4, 5, 17, 31, 32] {
         assert_prefix_kernels_match_materialized::<64>(16, 32, 4, Some(1), 2, prefix, None);
+        assert_prefix_kernels_match_materialized::<512>(16, 32, 1, Some(1), 2, prefix, None);
         assert_prefix_kernels_match_materialized::<64>(256, 32, 16, Some(1), 2, prefix, None);
     }
 }
@@ -863,7 +866,7 @@ fn small_k256_blocks_commit_like_materialized_onehot() {
     for (streamed, materialized_source) in streamed.iter().zip(&materialized_columns) {
         let coefficients = materialized_source.source_coefficients().unwrap();
         let mut expected = vec![AkitaWideRing::<D>::zero(); plan.num_live_blocks];
-        for (ring, ring_coefficients) in coefficients.chunks_exact(D).enumerate() {
+        for (ring, ring_coefficients) in coefficients.as_chunks::<D>().0.iter().enumerate() {
             for (index, coefficient) in ring_coefficients.iter().enumerate() {
                 if *coefficient == AkitaField::one() {
                     a_wide[ring % POSITIONS_PER_BLOCK]
@@ -1005,7 +1008,7 @@ fn ntt_trace_commit_matches_materialized_convolution() {
                 .unwrap();
                 let coefficients = polynomial.source_coefficients().unwrap();
                 let mut expected = vec![AkitaWideRing::<D>::zero(); plan.num_live_blocks];
-                for (ring, coefficients) in coefficients.chunks_exact(D).enumerate() {
+                for (ring, coefficients) in coefficients.as_chunks::<D>().0.iter().enumerate() {
                     for (shift, coefficient) in coefficients.iter().enumerate() {
                         if *coefficient == AkitaField::one() {
                             a_wide[ring % positions]

@@ -13,9 +13,10 @@ jolt-crypto = { workspace = true }
 jolt-program = { workspace = true, features = ["serialization"] }
 jolt-tracer-x86 = { workspace = true }
 jolt-riscv = { workspace = true, features = ["serialization"] }
-jolt-field = { workspace = true }
+jolt-field = { workspace = true, features = ["bn254"] }
 jolt-poly = { workspace = true }
 jolt-transcript = { workspace = true, features = [
+  "prover-entropy",
   "bn254",
   "transcript-blake2b",
   "transcript-keccak",
@@ -57,6 +58,7 @@ libc = "0.2"
 criterion = { workspace = true }
 iai-callgrind.workspace = true
 iai-callgrind-runner.workspace = true
+rayon.workspace = true
 
 [[bench]]
 name = "bind_parallel_high_to_low"
@@ -109,6 +111,11 @@ harness = false
 [[bench]]
 name = "eq_evals"
 path = "benches/callgrind/eq_evals.rs"
+harness = false
+
+[[bench]]
+name = "eq_rounds"
+path = "benches/callgrind/eq_rounds.rs"
 harness = false
 
 [[bin]]
