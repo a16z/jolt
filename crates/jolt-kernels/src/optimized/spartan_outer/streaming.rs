@@ -34,7 +34,9 @@ pub struct StreamingOuterRemainder;
 /// whose tables fit `cap` bytes, or the round count when none does. Sizes are
 /// compared in cycles against the cycles `cap` holds, which is the same test
 /// as bytes against `cap` and cannot overflow where the byte count of
-/// `2^log_t` cycles would.
+/// `2^log_t` cycles would, for `log_t < usize::BITS`. That bound is the
+/// carry's: its uni-skip kernel sized the row store by `1 << log_t`, a shift
+/// no check guards.
 fn crossover_round<F: JoltField>(log_t: usize, cap: usize) -> usize {
     let cap_cycles = cap / (4 * size_of::<F>());
     dense_crossover(1 << log_t, cap_cycles, log_t + 1)
