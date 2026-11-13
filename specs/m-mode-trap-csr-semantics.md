@@ -368,7 +368,8 @@ With D/Zcd enabled, `C.FLDSP` with `rd = f0` is legal, but both decompressors re
 
 `EBREAK` and `c.ebreak` lower to one `Panic` row, Jolt's failure halt: a table-free jump (lookup output 0) that writes its link to an instruction temporary.
 Every tracer ends the run there.
-A run ends successfully only at `jolt.success` (the custom-2 word `0x0000_305B`), which lowers to the matching `Success` row.
+`jolt.success` (the custom-2 word `0x0000_305B`) is the success halt and lowers to the matching `Success` row; the SDK's `#[jolt::provable]` epilogue executes it right after storing the termination word.
+Which halt ends the run is not part of the proved claim: the constraints accept any final jump, and the public panic bit comes from the panic and termination words that ValIo binds (`PublicIoMemory::new` in `crates/jolt-program/src/preprocess/public_io.rs`), so a program that stores the termination word and then executes `EBREAK` without writing the panic word proves `panic = false`.
 The unprivileged specification says `EBREAK` "is used to return control to a debugging environment" (`src/unpriv/rv32.adoc:901`, `norm:ebreak_debug_env_op`).
 The debug specification makes that precise: with `dcsr.ebreakm = 1`, "`ebreak` instructions in M-mode enter Debug Mode" (`xml/core_registers.xml:158`), and in Debug Mode the hart is halted, so "there is no forward progress in the normal instruction stream" (`Sdext.adoc:22`).
 Entering Debug Mode is not a trap, so `mepc`, `mcause`, `mtval` and `mstatus` stay unchanged.
