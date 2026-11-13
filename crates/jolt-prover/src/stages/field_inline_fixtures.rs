@@ -495,6 +495,7 @@ pub(crate) mod twins {
     use jolt_claims::protocols::jolt::TraceDimensions;
     use jolt_claims::NoChallenges;
     use jolt_field::Ring;
+    use jolt_program::preprocess::ram::RamWordMasks;
     use jolt_program::preprocess::PublicIoMemory;
     use jolt_transcript::{Encoding, Keccak, ProverState};
     use jolt_verifier::config::JOLT_VERIFIER_CONFIG;
