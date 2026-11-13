@@ -10,6 +10,7 @@
 //!
 //! Supports cycle-first and full address-first binding.
 
+use crate::optimized::support::eq_round_error;
 use jolt_claims::protocols::jolt::geometry::dimensions::REGISTER_ADDRESS_BITS;
 use jolt_claims::protocols::jolt::{JoltDerivedId, ReadWriteDimensions, RegistersReadWritePublic};
 use jolt_field::{Accumulator, JoltField};
@@ -166,16 +167,22 @@ impl<F: JoltField> ReadWriteKernel<F> {
         let e_out = self.gruen.e_out_current();
         let quadratic = self.cycle.quadratic(e_in, e_out);
         self.gruen
+            .round()
+            .ok_or_else(|| eq_round_error(round))?
             .checked_cubic(quadratic[0], quadratic[1], previous_claim, round, || {
                 self.cycle
                     .q_at_one(self.gruen.e_in_current(), self.gruen.e_out_current())
             })
     }
 
-    fn bind(&mut self, r: F) {
+    fn bind(&mut self, r: F) -> Result<(), SumcheckError<F>> {
+        let round = self.challenges.bound();
         let mut layout_transitioned = false;
         if self.challenges.bound() < self.dimensions.log_t() {
-            self.gruen.bind(r);
+            self.gruen
+                .round_mut()
+                .ok_or_else(|| eq_round_error(round))?
+                .bind(r);
             layout_transitioned = self.cycle.bind(r);
         } else {
             self.address.bind(r);
@@ -197,6 +204,7 @@ impl<F: JoltField> ReadWriteKernel<F> {
         if layout_transitioned {
             crate::mem::purge_retained_memory(self.dimensions.log_t());
         }
+        Ok(())
     }
 
     /// `Σ_j [index_j hot] · eq(r_address, index_j) · eq(r_cycle, j)` for the
@@ -260,7 +268,7 @@ impl<F: JoltField> ProveRounds<F> for ReadWriteKernel<F> {
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
         if let Some(challenge) = bind {
-            self.bind(challenge);
+            self.bind(challenge)?;
         }
         if self.challenges.bound() < self.dimensions.log_t() {
             self.cycle_round_message(round, previous_claim)
@@ -270,8 +278,7 @@ impl<F: JoltField> ProveRounds<F> for ReadWriteKernel<F> {
     }
 
     fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {
-        self.bind(bind);
-        Ok(())
+        self.bind(bind)
     }
 }
 

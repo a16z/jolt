@@ -1,9 +1,11 @@
 //! End-to-end acceptance: one guest table per instruction profile, across all modes.
 //!
-//! Every case checks native expected output, proves with the optimized backend,
-//! and verifies through the public verifier API. Field-inline builds select the
+//! Table cases check native expected output, prove with the optimized backend,
+//! and verify through the public verifier API. Field-inline builds select the
 //! active field-ops and field-limbs cases and the inactive muldiv case; ordinary
-//! builds select the general guest table. Specialized suites retain tampering, reference-backend parity,
+//! builds select the general guest table. Akita builds also prove
+//! `fibonacci_ring_512` and assert the ring dimension of its trace commitment.
+//! Specialized suites retain tampering, reference-backend parity,
 //! committed programs, and other mode-specific checks.
 
 #[cfg(feature = "prover-fixtures")]
@@ -30,6 +32,8 @@ mod matrix {
 
     #[cfg(all(feature = "field-inline", feature = "akita"))]
     use jolt_akita::AkitaField as Field;
+    #[cfg(feature = "akita")]
+    use jolt_akita::{AkitaBatchProof, AkitaVerifierSetup};
     #[cfg(all(feature = "field-inline", not(feature = "akita")))]
     use jolt_field::Fr as Field;
     #[cfg(feature = "field-inline")]
@@ -159,6 +163,42 @@ mod matrix {
     }
 
     #[cfg(not(feature = "field-inline"))]
+    fn muldiv_full_domain() -> GuestCase {
+        GuestCase {
+            inputs: encode(&[9u32, 5, 3]),
+            expected_output: Some(encode(&15u32)),
+            max_padded_trace_length: None,
+            ..GuestCase::new("muldiv-guest")
+        }
+    }
+
+    /// The fibonacci guest's `fib(n)`, with the wrapping `u128` additions of
+    /// its release build.
+    #[cfg(feature = "akita")]
+    fn fibonacci_reference(n: u32) -> u128 {
+        let (mut a, mut b) = (0u128, 1u128);
+        for _ in 1..n {
+            (a, b) = (b, a.wrapping_add(b));
+        }
+        b
+    }
+
+    /// A trace padded to 2^18 rows, which Akita commits at inner ring dimension
+    /// 512; the test asserts the dimension its proof selected.
+    #[cfg(feature = "akita")]
+    fn fibonacci_ring_512() -> GuestCase {
+        const N: u32 = 20_000;
+        GuestCase {
+            inputs: postcard::to_stdvec(&N).expect("serialize guest input"),
+            expected_output: Some(
+                postcard::to_stdvec(&fibonacci_reference(N)).expect("serialize guest output"),
+            ),
+            max_padded_trace_length: Some(1 << 18),
+            ..GuestCase::new("fibonacci-guest")
+        }
+    }
+
+    #[cfg(not(feature = "field-inline"))]
     macro_rules! guests {
         ($emit:ident) => {
             $emit! {
@@ -167,6 +207,7 @@ mod matrix {
                     expected_output: Some(encode(&15u32)),
                     ..GuestCase::new("muldiv-guest")
                 };
+                muldiv_full_domain => super::muldiv_full_domain();
                 fibonacci => GuestCase {
                     inputs: encode(&100u32),
                     expected_output: Some(encode(&354_224_848_179_261_915_075u128)),
@@ -224,7 +265,7 @@ mod matrix {
                     func: Some("memory_copy"),
                     std: true,
                     stack_size: Some(1 << 20),
-                    max_padded_trace_length: 1 << 18,
+                    max_padded_trace_length: Some(1 << 18),
                     inputs: encode(&1031u32),
                     expected_output: Some(encode(&{
                         let n = 1031;
@@ -264,15 +305,40 @@ mod matrix {
         }
     }
 
+    /// The field-ops guest with no fixed padded bound: the harness repeats the
+    /// final `j .` stall until the trace fills its padded domain exactly.
+    #[cfg(feature = "field-inline")]
+    fn field_ops_full_domain() -> GuestCase {
+        GuestCase {
+            max_padded_trace_length: None,
+            ..crate::support::field_inline::field_ops()
+        }
+    }
+
     #[cfg(feature = "field-inline")]
     macro_rules! guests {
         ($emit:ident) => {
             $emit! {
                 field_ops => crate::support::field_inline::field_ops();
+                field_ops_full_domain => super::field_ops_full_domain();
                 field_limbs => super::field_limbs();
                 muldiv => crate::support::field_inline::muldiv();
             }
         };
+    }
+
+    /// Inner ring dimension of the root fold's own group in the schedule row
+    /// `opening` selected: the dimension at which Akita committed the trace group.
+    #[cfg(feature = "akita")]
+    fn trace_ring_dimension(setup: &AkitaVerifierSetup, opening: &AkitaBatchProof) -> usize {
+        let catalog = setup.one_hot_catalog().expect("one-hot schedule catalog");
+        catalog
+            .resolve_selection(opening.selection())
+            .expect("the proof selects a row of the verifier's catalog")
+            .schedule()
+            .root
+            .params
+            .d_a()
     }
 
     macro_rules! emit_tests {
@@ -291,6 +357,30 @@ mod matrix {
         #[cfg(not(feature = "field-inline"))]
         use super::*;
         guests!(emit_tests);
+
+        #[cfg(not(feature = "field-inline"))]
+        #[test]
+        fn muldiv_full_domain_cycle_first() {
+            use jolt_prover::JoltBackend;
+
+            super::mode::prove_with_config(
+                &super::muldiv_full_domain(),
+                JoltBackend::optimized(),
+                |_| {},
+            );
+        }
+
+        #[cfg(not(feature = "field-inline"))]
+        #[test]
+        fn muldiv_full_domain_reference() {
+            use jolt_prover::JoltBackend;
+
+            super::mode::prove_with_config(
+                &super::muldiv_full_domain(),
+                JoltBackend::reference(),
+                |_| {},
+            );
+        }
     }
 
     #[cfg(all(feature = "zk", not(feature = "akita")))]
@@ -305,6 +395,15 @@ mod matrix {
         #[cfg(not(feature = "field-inline"))]
         use super::*;
         guests!(emit_tests);
+
+        #[test]
+        fn fibonacci_ring_512() {
+            assert_eq!(
+                super::mode::prove_and_verify_trace_ring(&super::fibonacci_ring_512()),
+                512,
+                "the proof must commit its trace group at ring dimension 512",
+            );
+        }
     }
 
     #[cfg(all(not(feature = "akita"), not(feature = "field-inline")))]
@@ -329,6 +428,17 @@ mod matrix {
         }
 
         fn prove_case(case: &GuestCase) {
+            prove_with_config(case, JoltBackend::optimized(), |config| {
+                config.rw_config.ram_rw_phase1_num_rounds = 0;
+                config.rw_config.registers_rw_phase1_num_rounds = 0;
+            });
+        }
+
+        pub(super) fn prove_with_config(
+            case: &GuestCase,
+            backend: JoltBackend<Fr, DoryScheme>,
+            configure: impl FnOnce(&mut ProverConfig),
+        ) {
             let prepared = support::prepare(case);
             let mut config = ProverConfig::derive_from_dimensions::<Fr>(
                 prepared.trace.dimensions,
@@ -338,8 +448,7 @@ mod matrix {
                 prepared.preprocessing.max_padded_trace_length,
             )
             .expect("derive config");
-            config.rw_config.ram_rw_phase1_num_rounds = 0;
-            config.rw_config.registers_rw_phase1_num_rounds = 0;
+            configure(&mut config);
             let preprocessing = dory::from_shared(
                 JoltSharedPreprocessing::new(prepared.preprocessing).expect("shared preprocessing"),
             )
@@ -363,7 +472,7 @@ mod matrix {
                 JoltVmWitnessInputs::new(&prepared.program, &program_preprocessing, prepared.trace),
             );
             let proof = dory::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, ProverState<Keccak>>(
-                JoltBackend::optimized().with_witness(&witness),
+                backend.with_witness(&witness),
                 &preprocessing,
                 &config,
                 trusted.as_ref(),
@@ -393,6 +502,10 @@ mod matrix {
         use crate::support::{self, GuestCase};
 
         pub fn prove_and_verify(case: &GuestCase) {
+            let _ = prove_and_verify_trace_ring(case);
+        }
+
+        pub(super) fn prove_and_verify_trace_ring(case: &GuestCase) -> usize {
             let prepared = support::prepare(case);
             let mut config = ProverConfig::derive_from_dimensions::<AkitaField>(
                 prepared.trace.dimensions,
@@ -449,6 +562,10 @@ mod matrix {
                 trusted.as_ref().map(|object| &object.commitment),
             )
             .expect("Akita proof must verify");
+            super::trace_ring_dimension(
+                &preprocessing.verifier.pcs_setup,
+                &proof.joint_opening_proof,
+            )
         }
     }
     #[cfg(feature = "field-inline")]
@@ -485,14 +602,23 @@ mod matrix {
             }
             #[cfg(feature = "akita")]
             {
-                let (output, ()) = akita::prove(case, JoltBackend::optimized(), |_, _, _| ());
-                akita::verify_full(
-                    &output.verifier_preprocessing,
-                    &output.public_io,
-                    &output.proof,
-                )
-                .expect("field-inline Akita proof must verify");
+                let _ = prove_and_verify_trace_ring(case);
             }
+        }
+
+        #[cfg(feature = "akita")]
+        pub(super) fn prove_and_verify_trace_ring(case: &GuestCase) -> usize {
+            let (output, ()) = akita::prove(case, JoltBackend::optimized(), |_, _, _| ());
+            akita::verify_full(
+                &output.verifier_preprocessing,
+                &output.public_io,
+                &output.proof,
+            )
+            .expect("field-inline Akita proof must verify");
+            super::trace_ring_dimension(
+                &output.verifier_preprocessing.pcs_setup,
+                &output.proof.joint_opening_proof,
+            )
         }
     }
 }

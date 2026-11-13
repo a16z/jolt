@@ -12,18 +12,17 @@
 # NOTE: Privileged-mode tests (Sm/S/U CSRs, traps, PMP, virtual memory) are
 # excluded at generation time via `include_priv_tests: false` in
 # test_config.yaml, so they never reach this runner. Entries here are for
-# tests that are generated AND executed but fail against jolt-emu for
+# tests that are generated AND executed but fail against jolt-emu, either for
 # reasons spec-declared to be out of scope (Non-Goals: "No tracer semantics
-# changes").
+# changes") or because Jolt makes a different spec-legal choice than the Sail
+# model that computed ACT4's expected values.
 
-# ---------------------------------------------------------------------------
 # Zicsr / Zicntr / Zihpm — CSR read-modify-write instructions.
 # Jolt's tracer does not implement the full CSR behavior that these ACT4
 # tests probe (e.g., fine-grained mcycle/minstret semantics, illegal-CSR
 # traps, side-effect ordering on csrrc/csrrci/csrrsi/csrrwi). Fixing would
 # require tracer changes, which the spec (specs/act4-tests.md Non-Goals)
 # puts out of scope.
-# ---------------------------------------------------------------------------
 Zicsr-csrrc-00
 Zicsr-csrrci-00
 Zicsr-csrrsi-00
@@ -32,9 +31,13 @@ Zicntr-csrrc-00
 Zicntr-csrrs-00
 Zihpm-csrrc-00
 
-# ---------------------------------------------------------------------------
 # Jolt does not support the Zihpm extension (hardware performance counters
 # hpmcounter3-31). Reads of these CSRs are rejected at decode time.
-# ---------------------------------------------------------------------------
 Zihpm-csrrs-00
 
+# Reservation policy. ACT4's expected signature comes from Sail's permissive
+# reservation (an 8-byte granule with no width check), so this test expects
+# SC.D to succeed after an LR.W at the same address. Jolt's reservation set
+# is exactly the bytes the LR read, so an SC wider than its LR fails. The
+# reservation set is implementation-defined, so both outcomes are legal.
+Zalrsc-sc.d-00

@@ -11,11 +11,13 @@
 
 #[cfg(feature = "allocative")]
 use allocative::Allocative;
+use jolt_utils::alloc::{ZeroAllocError, ZeroBytesValid};
 use num_traits::{One, Zero};
 use rand_core::RngCore;
 use serde::{de::DeserializeOwned, Serialize};
 #[cfg(feature = "spongefish")]
 use spongefish::Encoding;
+use std::alloc::Layout;
 use std::fmt::{Debug, Display};
 use std::hash::Hash;
 use std::iter::{Product, Sum};
@@ -189,6 +191,23 @@ pub(crate) fn sum_of_products_fold<F: Ring, const K: usize>(terms: &[[F; K]]) ->
 }
 
 pub trait Field: Ring {
+    /// Allocates initialized additive identities. Fields with a valid zero-byte
+    /// representation may override this with a marker-backed allocation.
+    fn zeroed_vec(len: usize) -> Vec<Self> {
+        vec![Self::zero(); len]
+    }
+
+    /// Fallible allocation with the same layout validation as the zero-byte path.
+    fn try_zeroed_vec(len: usize) -> Result<Vec<Self>, ZeroAllocError> {
+        let layout = Layout::array::<Self>(len).map_err(|_| ZeroAllocError::CapacityOverflow)?;
+        let mut values = Vec::new();
+        values
+            .try_reserve_exact(len)
+            .map_err(|_| ZeroAllocError::AllocFailed { layout })?;
+        values.resize(len, Self::zero());
+        Ok(values)
+    }
+
     /// Multiplicative inverse, or `None` for the zero element.
     fn inverse(&self) -> Option<Self>;
 
@@ -265,7 +284,7 @@ pub trait Field: Ring {
 /// The exponent `k` is [`CanonicalEncoding::MODULUS_BITS`]; implementing
 /// this contract lights up the generic machinery bounded on it (extension
 /// towers, packed backends).
-pub trait PseudoMersenne: Field + CanonicalEncoding {
+pub trait PseudoMersenne: Field + CanonicalEncoding + ZeroBytesValid {
     /// Offset `c` in `2^k − c`.
     const OFFSET: u128;
 

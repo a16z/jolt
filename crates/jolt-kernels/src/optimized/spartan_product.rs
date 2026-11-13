@@ -10,6 +10,7 @@
 //! Only extension nodes are computed from the witness; the supplied claims
 //! fill the base nodes when the first-round polynomial is assembled.
 
+use crate::optimized::support::eq_round_error;
 #[cfg(feature = "field-inline")]
 use jolt_claims::protocols::composed::ComposedOpeningId;
 #[cfg(feature = "field-inline")]
@@ -69,6 +70,9 @@ use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
 
+mod streaming;
+pub use streaming::StreamingProductRemainder;
+
 const DOMAIN: usize = SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE;
 const EXTENDED_SIZE: usize = 2 * DOMAIN - 1;
 const EXTENSION_SIZE: usize = DOMAIN - 1;
@@ -96,6 +100,43 @@ pub struct SpartanProductRow {
     pub next_is_noop: NextIsNoop,
     #[opening(OpFlags(CircuitFlags::VirtualInstruction))]
     pub virtual_instruction: OpFlag,
+}
+
+impl SpartanProductRow {
+    // Two full-u64 lanes can exceed the small accumulator's Barrett window.
+    // Keep the left fold on the wide accumulator.
+    #[inline]
+    fn factors<F: JoltField>(
+        &self,
+        #[cfg(feature = "field-inline")] field_row: Option<&FieldInlineSpartanRow<F>>,
+        weights: &[F],
+    ) -> [F; 2] {
+        let mut left = F::Accumulator::default();
+        left.fmadd_u64(weights[0], self.left_instruction_input.0);
+        left.fmadd_u64(weights[1], self.lookup_output.0);
+        left.fmadd_u64(weights[2], u64::from(self.jump_flag.0));
+        let mut right = <F as WithAccumulator>::SignedProductAccumulator::default();
+        right.fmadd_i128(weights[0], self.right_instruction_input.0);
+        right.fmadd_u64(weights[1], u64::from(self.branch_flag.0));
+        right.fmadd_u64(weights[2], 1 - u64::from(self.next_is_noop.0));
+        let factors = [left.reduce(), right.reduce()];
+        #[cfg(feature = "field-inline")]
+        if let Some(field_row) = field_row {
+            #[expect(clippy::expect_used, reason = "the composed weights span DOMAIN nodes")]
+            let (field_left, field_right) = composed_remainder_factor_contributions(
+                weights,
+                SPARTAN_PRODUCT_BASE_LANES,
+                &FieldProductLaneFactors {
+                    rs1_value: field_row.rs1_value,
+                    rs2_value: field_row.rs2_value,
+                    rd_value: field_row.rd_value,
+                },
+            )
+            .expect("composed product weights cover the field-inline lanes");
+            return [factors[0] + field_left, factors[1] + field_right];
+        }
+        factors
+    }
 }
 
 fn extension_positions() -> impl Iterator<Item = usize> {
@@ -458,6 +499,22 @@ impl OptimizedProductRemainder {
     }
 }
 
+fn take_carry<F: JoltField>(
+    session: &mut ProofSession,
+) -> Result<SpartanProductCarry<F>, KernelError<F>> {
+    session
+        .take::<SpartanProductCarry<F>>()
+        .ok_or(KernelError::InvariantViolation {
+            reason: "the product uni-skip slot parked no carry for the remainder member",
+        })
+}
+
+fn rows_unavailable<F: JoltField>(_: WitnessError) -> SumcheckError<F> {
+    SumcheckError::MissingEvaluationSource {
+        kind: "Spartan product trace rows",
+    }
+}
+
 impl<F: JoltField> PrepareKernel<F, ProductRemainder<F>> for OptimizedProductRemainder {
     fn prepare(
         &self,
@@ -465,20 +522,25 @@ impl<F: JoltField> PrepareKernel<F, ProductRemainder<F>> for OptimizedProductRem
         _witness: &dyn JoltWitnessPlane<F>,
         inputs: ProverInputs<'_, F, ProductRemainder<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = ProductRemainder<F>>>, KernelError<F>> {
-        let carry =
-            session
-                .take::<SpartanProductCarry<F>>()
-                .ok_or(KernelError::InvariantViolation {
-                    reason: "the product uni-skip slot parked no carry for the remainder member",
-                })?;
+        let carry = take_carry(session)?;
         Ok(Box::new(ProductRemainderKernel::prepare(carry, &inputs)?))
     }
 }
 
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
+enum ProductTables<F: JoltField> {
+    Streamed {
+        dense_round: usize,
+    },
+    Dense {
+        left: PrefixColumn<F>,
+        right: PrefixColumn<F>,
+    },
+}
+
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct ProductRemainderKernel<F: JoltField> {
-    left: PrefixColumn<F>,
-    right: PrefixColumn<F>,
+    tables: ProductTables<F>,
     prefix_cycles: usize,
     purged: bool,
     split_eq: GruenSplitEqPolynomial<F>,
@@ -492,7 +554,7 @@ struct ProductRemainderKernel<F: JoltField> {
     lagrange_weights: Vec<F>,
 }
 impl<F: JoltField> ProductRemainderKernel<F> {
-    fn prepare(
+    fn unfilled(
         carry: SpartanProductCarry<F>,
         inputs: &ProverInputs<'_, F, ProductRemainder<F>>,
     ) -> Result<Self, KernelError<F>> {
@@ -521,14 +583,27 @@ impl<F: JoltField> ProductRemainderKernel<F> {
             Some(scale),
         );
 
-        // Fused round-0 materialization: one pass over the typed rows writes
-        // the weighted left/right tables and accumulates the first round's
-        // Gruen endpoints. Left folds through the WIDE accumulator: two
-        // full-u64 lanes exceed the small-scalar accumulator's Barrett
-        // window (`reduce_nplus1` needs the magnitude under 2^318; two
-        // full-range terms reach ~2^318.6, a latent wrong-answer for unlucky
-        // weight draws that the composed 5-node Lagrange weights actually
-        // hit). Right's i128 lane goes through the signed-product path.
+        Ok(Self {
+            tables: ProductTables::Streamed {
+                dense_round: rounds,
+            },
+            prefix_cycles,
+            purged: false,
+            split_eq,
+            pending_endpoints: None,
+            challenges: RoundChallenges::new(rounds),
+            rows,
+            #[cfg(feature = "field-inline")]
+            field_rows,
+            lagrange_weights: weights,
+        })
+    }
+
+    fn fill_eager_tables(&mut self) -> Result<(), KernelError<F>> {
+        let log_t = self.challenges.total();
+        let prefix_cycles = self.prefix_cycles;
+        let rows = &self.rows;
+        let split_eq = &self.split_eq;
         let cycles = 1usize << log_t;
         // Keep the odd boundary pair explicit; its second row is a tail representative.
         let stored_cycles = prefix_cycles.div_ceil(2) * 2;
@@ -539,39 +614,18 @@ impl<F: JoltField> ProductRemainderKernel<F> {
         let in_len = e_in.len();
         let width = 2 * in_len;
         let access = rows.access();
-        let weights_ref = &weights;
-        let cell = |row: &SpartanProductRow| -> (F, F) {
-            let mut left_acc = F::Accumulator::default();
-            left_acc.fmadd_u64(weights_ref[0], row.left_instruction_input.0);
-            left_acc.fmadd_u64(weights_ref[1], row.lookup_output.0);
-            left_acc.fmadd_u64(weights_ref[2], u64::from(row.jump_flag.0));
-            let mut right_acc = <F as WithAccumulator>::SignedProductAccumulator::default();
-            right_acc.fmadd_i128(weights_ref[0], row.right_instruction_input.0);
-            right_acc.fmadd_u64(weights_ref[1], u64::from(row.branch_flag.0));
-            right_acc.fmadd_u64(weights_ref[2], 1 - u64::from(row.next_is_noop.0));
-            (left_acc.reduce(), right_acc.reduce())
-        };
-        let (left_tail, right_tail) = if prefix_cycles < cycles {
-            cell(&access.row(prefix_cycles)?)
-        } else {
-            (F::zero(), F::zero())
-        };
-        #[cfg(feature = "field-inline")]
-        let field_rows_ref: &[(usize, FieldInlineSpartanRow<F>)] = &field_rows;
-        #[cfg(feature = "field-inline")]
-        let field_factors = |field_row: &FieldInlineSpartanRow<F>| -> (F, F) {
-            #[expect(clippy::expect_used, reason = "the composed weights span DOMAIN nodes")]
-            composed_remainder_factor_contributions(
+        let weights_ref = &self.lagrange_weights;
+        let [left_tail, right_tail] = if prefix_cycles < cycles {
+            access.row(prefix_cycles)?.factors(
+                #[cfg(feature = "field-inline")]
+                None,
                 weights_ref,
-                SPARTAN_PRODUCT_BASE_LANES,
-                &FieldProductLaneFactors {
-                    rs1_value: field_row.rs1_value,
-                    rs2_value: field_row.rs2_value,
-                    rd_value: field_row.rd_value,
-                },
             )
-            .expect("composed product weights cover the field-inline lanes")
+        } else {
+            [F::zero(); 2]
         };
+        #[cfg(feature = "field-inline")]
+        let field_rows_ref: &[(usize, FieldInlineSpartanRow<F>)] = &self.field_rows;
         let block = |x_out: usize,
                      left_chunk: &mut [F],
                      right_chunk: &mut [F]|
@@ -580,29 +634,18 @@ impl<F: JoltField> ProductRemainderKernel<F> {
             let mut inner_infinity = F::zero();
             #[cfg(feature = "field-inline")]
             let mut field_cursor = FieldInlineRowCursor::seek(field_rows_ref, 2 * x_out * in_len);
-            #[cfg(feature = "field-inline")]
-            let cell = |t: usize,
-                        field_cursor: &mut FieldInlineRowCursor<'_, F>|
-             -> Result<(F, F), WitnessError> {
-                let (left, right) = cell(&access.row(t)?);
-                Ok(match field_cursor.advance(t) {
-                    Some(field_row) => {
-                        let (field_left, field_right) = field_factors(field_row);
-                        (left + field_left, right + field_right)
-                    }
-                    None => (left, right),
-                })
-            };
             for (x_in, &e) in e_in.iter().take(left_chunk.len() / 2).enumerate() {
                 let pair = x_out * in_len + x_in;
-                #[cfg(feature = "field-inline")]
-                let (left_low, right_low) = cell(2 * pair, &mut field_cursor)?;
-                #[cfg(feature = "field-inline")]
-                let (left_high, right_high) = cell(2 * pair + 1, &mut field_cursor)?;
-                #[cfg(not(feature = "field-inline"))]
-                let (left_low, right_low) = cell(&access.row(2 * pair)?);
-                #[cfg(not(feature = "field-inline"))]
-                let (left_high, right_high) = cell(&access.row(2 * pair + 1)?);
+                let [left_low, right_low] = access.row(2 * pair)?.factors(
+                    #[cfg(feature = "field-inline")]
+                    field_cursor.advance(2 * pair),
+                    weights_ref,
+                );
+                let [left_high, right_high] = access.row(2 * pair + 1)?.factors(
+                    #[cfg(feature = "field-inline")]
+                    field_cursor.advance(2 * pair + 1),
+                    weights_ref,
+                );
                 left_chunk[2 * x_in] = left_low;
                 left_chunk[2 * x_in + 1] = left_high;
                 right_chunk[2 * x_in] = right_low;
@@ -641,7 +684,7 @@ impl<F: JoltField> ProductRemainderKernel<F> {
             endpoints.0 + split_eq.suffix_weight(stored_cycles / 2) * left_tail * right_tail,
             endpoints.1,
         );
-        Ok(Self {
+        self.tables = ProductTables::Dense {
             left: PrefixColumn {
                 values: left,
                 tail: [left_tail; 2],
@@ -650,28 +693,38 @@ impl<F: JoltField> ProductRemainderKernel<F> {
                 values: right,
                 tail: [right_tail; 2],
             },
-            prefix_cycles,
-            purged: false,
-            split_eq,
-            pending_endpoints: Some(endpoints),
-            challenges: RoundChallenges::new(rounds),
-            rows,
-            #[cfg(feature = "field-inline")]
-            field_rows,
-            lagrange_weights: weights,
-        })
+        };
+        self.pending_endpoints = Some(endpoints);
+        Ok(())
     }
 
-    fn bind(&mut self, challenge: F) {
-        let shrunk = self.left.bind(challenge);
-        let _ = self.right.bind(challenge);
-        if shrunk && !self.purged {
-            self.purged = true;
-            crate::mem::purge_retained_memory(self.challenges.total());
+    fn prepare(
+        carry: SpartanProductCarry<F>,
+        inputs: &ProverInputs<'_, F, ProductRemainder<F>>,
+    ) -> Result<Self, KernelError<F>> {
+        let mut kernel = Self::unfilled(carry, inputs)?;
+        kernel.fill_eager_tables()?;
+        Ok(kernel)
+    }
+
+    fn bind(&mut self, challenge: F) -> Result<(), SumcheckError<F>> {
+        let round = self.challenges.bound();
+        let gruen_round = self
+            .split_eq
+            .round_mut()
+            .ok_or_else(|| eq_round_error(round))?;
+        if let ProductTables::Dense { left, right } = &mut self.tables {
+            let shrunk = left.bind(challenge);
+            let _ = right.bind(challenge);
+            if shrunk && !self.purged {
+                self.purged = true;
+                crate::mem::purge_retained_memory(self.challenges.total());
+            }
         }
-        self.split_eq.bind(challenge);
+        gruen_round.bind(challenge);
         self.challenges.push(challenge);
         self.pending_endpoints = None;
+        Ok(())
     }
 
     fn cycle_weights(&self) -> PrefixCycleWeights<F> {
@@ -756,21 +809,30 @@ impl<F: JoltField> ProveRounds<F> for ProductRemainderKernel<F> {
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
         if let Some(challenge) = bind {
-            self.bind(challenge);
+            self.bind(challenge)?;
         }
-        let (q_zero, q_infinity) = match self.pending_endpoints.take() {
-            Some(endpoints) => endpoints,
-            None => self.left.product_endpoints(&self.right, &self.split_eq),
-        };
-        self.split_eq
-            .checked_cubic(q_zero, q_infinity, previous_claim, round, || {
-                self.left.product_at_one(&self.right, &self.split_eq)
-            })
+        if let ProductTables::Streamed { dense_round } = self.tables {
+            if self.challenges.bound() == dense_round {
+                self.pending_endpoints = Some(self.fill_tables().map_err(rows_unavailable)?);
+            }
+        }
+        match &self.tables {
+            ProductTables::Streamed { .. } => self.streamed_round(round, previous_claim),
+            ProductTables::Dense { left, right } => {
+                let gruen_round = self.split_eq.round().ok_or_else(|| eq_round_error(round))?;
+                let (q_zero, q_infinity) = self
+                    .pending_endpoints
+                    .take()
+                    .unwrap_or_else(|| left.product_endpoints(right, &self.split_eq));
+                gruen_round.checked_cubic(q_zero, q_infinity, previous_claim, round, || {
+                    left.product_at_one(right, &self.split_eq)
+                })
+            }
+        }
     }
 
     fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {
-        self.bind(bind);
-        Ok(())
+        self.bind(bind)
     }
 }
 
@@ -1098,10 +1160,21 @@ mod tests {
         tau_low: Vec<Fr>,
         tau_high: Fr,
         r0: Fr,
+        depth: Option<usize>,
+    }
+
+    fn streamed_remainder<F: JoltField>(
+        session: &mut ProofSession,
+        inputs: &ProverInputs<'_, F, ProductRemainder<F>>,
+        log_t: usize,
+        depth: usize,
+    ) -> ProductRemainderKernel<F> {
+        let cap = ((2 * size_of::<F>()) << log_t) >> depth;
+        ProductRemainderKernel::prepare_streamed(take_carry(session).unwrap(), inputs, cap).unwrap()
     }
 
     fn parity_case(dummy_plane: &dyn JoltWitnessPlane<Fr>, log_t: usize, seed: u64) {
-        parity_case_with_eq(dummy_plane, log_t, seed, None, false, None);
+        parity_case_with_eq(dummy_plane, log_t, seed, None, false, None, None);
     }
 
     fn parity_case_with_eq(
@@ -1111,6 +1184,7 @@ mod tests {
         exceptional: Option<ExceptionalEq>,
         zero_scale: bool,
         prefix: Option<usize>,
+        depth: Option<usize>,
     ) {
         let mut rows = synthetic_rows(log_t, seed);
         if let Some(prefix) = prefix {
@@ -1132,6 +1206,7 @@ mod tests {
         parity_run(
             dummy_plane,
             ParityInputs {
+                depth,
                 log_t,
                 seed,
                 rows,
@@ -1161,6 +1236,7 @@ mod tests {
             tau_low,
             tau_high,
             r0,
+            depth,
         } = inputs;
         let backend = fixed_backend_from_rows(
             log_t,
@@ -1230,18 +1306,20 @@ mod tests {
                 },
             )
             .unwrap();
-        let mut optimized_kernel = OptimizedProductRemainder
-            .prepare(
-                &mut optimized_session,
-                dummy_plane,
-                ProverInputs {
-                    relation: &relation,
-                    claims: &claims,
-                    points: &points,
-                    challenges: &no_challenges,
-                },
+        let inputs = ProverInputs {
+            relation: &relation,
+            claims: &claims,
+            points: &points,
+            challenges: &no_challenges,
+        };
+        let mut optimized_kernel = match depth {
+            None => ProductRemainderKernel::prepare(
+                take_carry(&mut optimized_session).unwrap(),
+                &inputs,
             )
-            .unwrap();
+            .unwrap(),
+            Some(depth) => streamed_remainder(&mut optimized_session, &inputs, log_t, depth),
+        };
 
         let challenges: Vec<Fr> = (0..log_t)
             .map(|i| {
@@ -1257,6 +1335,16 @@ mod tests {
         for (round, &challenge) in challenges.iter().enumerate() {
             let reference_round = reference_kernel.prove_round(bind, round, previous).unwrap();
             let optimized_round = optimized_kernel.prove_round(bind, round, previous).unwrap();
+            if let Some(depth) = depth {
+                match &optimized_kernel.tables {
+                    ProductTables::Dense { left, right } => {
+                        assert!(round >= depth);
+                        assert_eq!(left.values.len(), 1 << (log_t - round));
+                        assert_eq!(left.values.len(), right.values.len());
+                    }
+                    ProductTables::Streamed { .. } => assert!(round < depth),
+                }
+            }
             assert_eq!(
                 optimized_round, reference_round,
                 "product round {round} polynomial, log_t = {log_t}"
@@ -1290,9 +1378,9 @@ mod tests {
     fn remainder_matches_reference_at_exceptional_eq_and_zero_scaling() {
         with_sample_backend(|dummy| {
             for case in ExceptionalEq::ALL {
-                parity_case_with_eq(dummy, 4, 379, Some(case), false, None);
+                parity_case_with_eq(dummy, 4, 379, Some(case), false, None, None);
             }
-            parity_case_with_eq(dummy, 4, 379, None, true, None);
+            parity_case_with_eq(dummy, 4, 379, None, true, None, None);
         });
     }
 
@@ -1301,13 +1389,36 @@ mod tests {
         with_sample_backend(|dummy| {
             for prefix in [0, 1, 3, 7, 8, 9, 15, 16] {
                 for seed in [379, 380] {
-                    parity_case_with_eq(dummy, 4, seed, None, false, Some(prefix));
+                    parity_case_with_eq(dummy, 4, seed, None, false, Some(prefix), None);
                     for case in ExceptionalEq::ALL {
-                        parity_case_with_eq(dummy, 4, seed, Some(case), false, Some(prefix));
+                        parity_case_with_eq(dummy, 4, seed, Some(case), false, Some(prefix), None);
                     }
                 }
-                parity_case_with_eq(dummy, 4, 379, None, true, Some(prefix));
+                parity_case_with_eq(dummy, 4, 379, None, true, Some(prefix), None);
             }
+        });
+    }
+
+    #[test]
+    fn streamed_remainder_matches_reference_at_every_crossover() {
+        with_sample_backend(|dummy| {
+            for log_t in [1, 3, 6] {
+                for depth in 0..=log_t {
+                    parity_case_with_eq(dummy, log_t, 379, None, false, None, Some(depth));
+                }
+            }
+            for depth in [0, 1, 3, 4] {
+                for case in ExceptionalEq::ALL {
+                    parity_case_with_eq(dummy, 4, 379, Some(case), false, None, Some(depth));
+                }
+                parity_case_with_eq(dummy, 4, 379, None, true, None, Some(depth));
+                for prefix in [0, 1, 3, 7, 16] {
+                    for seed in [379, 380] {
+                        parity_case_with_eq(dummy, 4, seed, None, false, Some(prefix), Some(depth));
+                    }
+                }
+            }
+            parity_case_with_eq(dummy, 13, 379, None, false, None, Some(12));
         });
     }
 
@@ -1361,26 +1472,36 @@ mod tests {
             })
             .unwrap();
         with_sample_backend(|dummy| {
-            parity_run(
-                dummy,
-                ParityInputs {
-                    log_t,
-                    seed,
-                    rows,
-                    #[cfg(feature = "field-inline")]
-                    field_rows: Vec::new(),
-                    tau_low: vec![Fr::from_u64(5), Fr::from_u64(16)],
-                    tau_high: Fr::from_u64(6007),
-                    r0,
-                },
-            );
+            for depth in [None, Some(0), Some(1), Some(log_t)] {
+                parity_run(
+                    dummy,
+                    ParityInputs {
+                        log_t,
+                        seed,
+                        rows: rows.clone(),
+                        #[cfg(feature = "field-inline")]
+                        field_rows: Vec::new(),
+                        tau_low: vec![Fr::from_u64(5), Fr::from_u64(16)],
+                        tau_high: Fr::from_u64(6007),
+                        r0,
+                        depth,
+                    },
+                );
+            }
         });
     }
+
+    type BuildRemainder = fn(
+        &mut ProofSession,
+        &TraceBackend,
+        ProverInputs<'_, Fr, ProductRemainder<Fr>>,
+        usize,
+    ) -> Box<dyn SumcheckKernel<Fr, Relation = ProductRemainder<Fr>>>;
 
     /// The trait-path parity body over a real trace backend, with the
     /// remainder driven by the true joint-domain sum (the trace fixtures are
     /// not constraint-satisfying; see the outer module's twin test).
-    fn sample_case(backend: &TraceBackend, log_t: usize) {
+    fn sample_case(backend: &TraceBackend, log_t: usize, build: BuildRemainder) {
         {
             let tau_low: Vec<Fr> = (0..log_t)
                 .map(|i| Fr::from_u64(41 + 19 * i as u64))
@@ -1465,18 +1586,17 @@ mod tests {
                     },
                 )
                 .unwrap();
-            let mut optimized_kernel = OptimizedProductRemainder
-                .prepare(
-                    &mut optimized_session,
-                    backend,
-                    ProverInputs {
-                        relation: &relation,
-                        claims: &claims,
-                        points: &points,
-                        challenges: &no_challenges,
-                    },
-                )
-                .unwrap();
+            let mut optimized_kernel = build(
+                &mut optimized_session,
+                backend,
+                ProverInputs {
+                    relation: &relation,
+                    claims: &claims,
+                    points: &points,
+                    challenges: &no_challenges,
+                },
+                log_t,
+            );
 
             let challenges: Vec<Fr> = (0..log_t)
                 .map(|i| Fr::from_u64(883 + 29 * i as u64))
@@ -1506,11 +1626,28 @@ mod tests {
     /// row seam.
     #[test]
     fn sample_trace_parity_through_the_trait_path() {
-        #[cfg(not(feature = "field-inline"))]
-        with_sample_backend(|backend| sample_case(backend, 2));
-        #[cfg(feature = "field-inline")]
-        crate::optimized::field_registers_testing::structured_field_register_fixture(12)
-            .with_plane(4, |backend| sample_case(backend, 4));
+        let default: BuildRemainder = |session, backend, inputs, _| {
+            OptimizedProductRemainder
+                .prepare(session, backend, inputs)
+                .unwrap()
+        };
+        let streaming: BuildRemainder = |session, backend, inputs, _| {
+            StreamingProductRemainder
+                .prepare(session, backend, inputs)
+                .unwrap()
+        };
+        let at_one: BuildRemainder =
+            |session, _, inputs, log_t| Box::new(streamed_remainder(session, &inputs, log_t, 1));
+        let all_rounds: BuildRemainder = |session, _, inputs, log_t| {
+            Box::new(streamed_remainder(session, &inputs, log_t, log_t))
+        };
+        for build in [default, streaming, at_one, all_rounds] {
+            #[cfg(not(feature = "field-inline"))]
+            with_sample_backend(|backend| sample_case(backend, 2, build));
+            #[cfg(feature = "field-inline")]
+            crate::optimized::field_registers_testing::structured_field_register_fixture(12)
+                .with_plane(4, |backend| sample_case(backend, 4, build));
+        }
     }
 
     #[test]

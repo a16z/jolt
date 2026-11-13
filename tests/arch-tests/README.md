@@ -81,19 +81,32 @@ the job.
 
 `tests/arch-tests/skip.txt` contains one test basename per line, with
 `#`-prefixed comments explaining why each entry (or group) is skipped.
-The only legitimate reason is that the test targets privileged state (M/S/U
-CSRs, traps, PMP, virtual memory) — those are out of scope per the ACT4
-migration spec (`specs/act4-tests.md` → Non-Goals).
+An entry must meet one of these conditions:
 
-If a non-privileged test starts failing, do **not** add it to `skip.txt`.
-Fix the tracer, the DUT config, or open an issue.
+- The test targets privileged state (M/S/U CSRs, traps, PMP, virtual memory),
+  which is out of scope per the ACT4 migration spec
+  (`specs/act4-tests.md` → Non-Goals).
+- The test expects a Sail reference-model choice where the ISA permits
+  Jolt's different behavior. The entry must state the narrow difference and
+  the evidence: the relevant test and Sail behavior, Jolt's behavior, and
+  the ISA rule that permits both outcomes.
+
+A skip drops the whole test file, including cases unrelated to the reason
+for exclusion. For example, skipping `Zalrsc-sc.d-00` drops every SC.D check
+in that file because its LR.W/SC.D case expects Sail's wider reservation granule.
+Jolt reserves exactly the bytes read by LR; this spec-legal difference does
+not require changing Jolt's LR/SC semantics.
+
+For other failures, fix the tracer or DUT config, or open an issue.
 
 ## Adding entries to the skip list
 
-1. Run `make arch-tests-64imac` and confirm the failing test is a
-   privileged-mode test (check the ACT4 test source under the submodule).
+1. Run `make arch-tests-64imac` and inspect the failing ACT4 test source
+   under the submodule. Confirm that it targets privileged state or document
+   a spec-legal difference from Sail with the evidence listed above.
 2. Add its basename to `skip.txt`, grouped with similar entries under a
-   `#`-prefixed comment explaining the category.
+   `#`-prefixed comment stating the reason and evidence. State the coverage
+   lost by excluding the whole file.
 
 ## Deliberate-failure smoke test
 
