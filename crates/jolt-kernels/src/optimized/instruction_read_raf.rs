@@ -637,10 +637,6 @@ impl<F: JoltField> RafScan<F> {
         clippy::expect_used,
         reason = "the vector is constructed with exactly CHUNK_SIZE entries"
     )]
-    #[expect(
-        clippy::unnecessary_box_returns,
-        reason = "initializing buckets on the heap avoids large temporary stack arrays"
-    )]
     fn buckets<A: Accumulator>() -> Box<[A; CHUNK_SIZE]> {
         vec![A::default(); CHUNK_SIZE]
             .into_boxed_slice()
