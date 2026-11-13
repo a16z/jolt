@@ -1,6 +1,7 @@
 use super::*;
 use jolt_riscv::JoltInstructionKind as Kind;
 
+mod csr;
 mod csrrs;
 mod csrrw;
 mod ebreak;

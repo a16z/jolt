@@ -50,8 +50,22 @@ static mut ARENA: Arena = Arena {
 #[inline]
 fn class_of(layout: Layout) -> u32 {
     let needed = layout.size().max(layout.align()).max(8);
-    let shift = usize::BITS - (needed - 1).leading_zeros();
-    shift - MIN_SHIFT
+    // Avoid software leading-zero counting for the small allocations.
+    static SMALL_CLASSES: [u8; 256] = {
+        let mut classes = [0; 256];
+        let mut i = 1usize;
+        while i < classes.len() {
+            classes[i] = (usize::BITS - i.leading_zeros()) as u8;
+            i += 1;
+        }
+        classes
+    };
+    let words = (needed - 1) >> MIN_SHIFT;
+    if words < SMALL_CLASSES.len() {
+        SMALL_CLASSES[words] as u32
+    } else {
+        usize::BITS - (needed - 1).leading_zeros() - MIN_SHIFT
+    }
 }
 
 /// Initialize the arena over `[heap_start, heap_start + heap_size)`.
@@ -218,6 +232,37 @@ mod tests {
 
     fn layout(size: usize, align: usize) -> Layout {
         Layout::from_size_align(size, align).unwrap()
+    }
+
+    #[test]
+    fn classes_are_minimal_covering_powers_of_two() {
+        let check = |size, align| {
+            let Ok(layout) = Layout::from_size_align(size, align) else {
+                return;
+            };
+            let class = class_of(layout);
+            let capacity = 1u128 << (class + MIN_SHIFT);
+            let needed = size.max(align).max(8) as u128;
+            assert!(capacity >= needed, "size={size}, align={align}");
+            assert!(
+                class == 0 || capacity / 2 < needed,
+                "size={size}, align={align}"
+            );
+        };
+        for size in 0..=65536 {
+            for shift in 0..=12 {
+                check(size, 1 << shift);
+            }
+        }
+        for bit in 0..usize::BITS - 1 {
+            let boundary = 1usize << bit;
+            for size in [boundary - 1, boundary, boundary + 1] {
+                for shift in 0..usize::BITS - 1 {
+                    check(size, 1 << shift);
+                }
+            }
+        }
+        check(isize::MAX as usize, 1);
     }
 
     /// Single test — the arena is a shared static and cargo runs tests in

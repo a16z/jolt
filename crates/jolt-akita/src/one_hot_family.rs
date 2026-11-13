@@ -1,5 +1,5 @@
 use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
-use akita_params::OpeningScheduleSelection;
+use akita_params::{OpeningScheduleSelection, SetupMode};
 use akita_pcs::{AkitaCommitmentScheme, AkitaError, AkitaVerifier, TrustedTerminalCache};
 use akita_types::AkitaVerifierSetup;
 
@@ -143,6 +143,7 @@ macro_rules! define_family_types {
                         scheme.schedules().clone(),
                         selection,
                         Some(terminal_cache),
+                        SetupMode::Check,
                     )
                     .map(AkitaOneHotBackendVerifier::$variant)),+
                 }
