@@ -70,8 +70,6 @@ pub struct BytecodeReadRafAddressPhaseInputClaims<C> {
     pub outer_is_first_in_sequence: C,
     #[opening(OpFlags(CircuitFlags::IsLastInSequence), from = SpartanOuter)]
     pub outer_is_last_in_sequence: C,
-    #[opening(OpFlags(CircuitFlags::CanEnd), from = SpartanOuter)]
-    pub outer_can_end: C,
     #[cfg(feature = "field-inline")]
     #[opening(OpFlags(CircuitFlags::FieldAdd), from = SpartanOuter)]
     pub outer_field_add: C,

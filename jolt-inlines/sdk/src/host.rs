@@ -301,7 +301,6 @@ pub fn store_trace<T: InlineOp>(file: &str, mode: AppendMode) -> Result<(), Stri
         operands: (&inputs).into(),
         virtual_sequence_remaining: None,
         is_first_in_sequence: false,
-        source_can_end: false,
         is_compressed: inputs.is_compressed,
     };
     let instructions = inline.inline_sequence(&VirtualRegisterAllocator::default());

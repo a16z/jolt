@@ -44,15 +44,16 @@ const MAX_REGISTER_ID: u8 = u8::MAX - 1;
 
 const REGISTER_NONE: u8 = u8::MAX;
 
-/// Field-inline builds use 25 circuit-flag bits; base builds use 16.
-/// Instruction flags follow them; the immediate sign uses the spare control bit.
+/// Field-inline builds use 24 circuit-flag bits; base builds retain the original
+/// 16-bit layout. Seven instruction flags and the immediate sign follow them.
 const META_INSTRUCTION_FLAGS_SHIFT: u32 = if cfg!(feature = "field-inline") {
-    25
+    24
 } else {
     16
 };
 const META_CIRCUIT_FLAGS_MASK: u32 = (1 << META_INSTRUCTION_FLAGS_SHIFT) - 1;
 const META_INSTRUCTION_FLAGS_MASK: u32 = (1u32 << (NUM_INSTRUCTION_FLAGS as u32)) - 1;
+const META_IMM_NEGATIVE_SHIFT: u32 = META_INSTRUCTION_FLAGS_SHIFT + NUM_INSTRUCTION_FLAGS as u32;
 
 const CAPTURE_RS1: u8 = 1;
 const CAPTURE_RS2: u8 = 1 << 1;
@@ -61,20 +62,21 @@ const VIRTUAL_SEQUENCE_PRESENT: u8 = 1 << 3;
 const INTEGER_RS1: u8 = 1 << 4;
 const INTEGER_RS2: u8 = 1 << 5;
 const INTEGER_RD: u8 = 1 << 6;
-const IMM_NEGATIVE: u8 = 1 << 7;
 
 const _: () = {
     assert!(NUM_CIRCUIT_FLAGS <= META_INSTRUCTION_FLAGS_SHIFT as usize);
-    assert!(META_INSTRUCTION_FLAGS_SHIFT + NUM_INSTRUCTION_FLAGS as u32 <= u32::BITS);
+    assert!(META_IMM_NEGATIVE_SHIFT < u32::BITS);
     let instruction_mask = META_INSTRUCTION_FLAGS_MASK << META_INSTRUCTION_FLAGS_SHIFT;
+    let sign_mask = 1 << META_IMM_NEGATIVE_SHIFT;
     assert!(META_CIRCUIT_FLAGS_MASK & instruction_mask == 0);
+    assert!((META_CIRCUIT_FLAGS_MASK | instruction_mask) & sign_mask == 0);
     let capture_mask = CAPTURE_RS1 | CAPTURE_RS2 | CAPTURE_RD;
     let integer_mask = INTEGER_RS1 | INTEGER_RS2 | INTEGER_RD;
     assert!(capture_mask.count_ones() == 3);
     assert!(integer_mask.count_ones() == 3);
     assert!(capture_mask & integer_mask == 0);
     assert!((capture_mask | integer_mask) & VIRTUAL_SEQUENCE_PRESENT == 0);
-    assert!(capture_mask | integer_mask | VIRTUAL_SEQUENCE_PRESENT | IMM_NEGATIVE == u8::MAX);
+    assert!(capture_mask | integer_mask | VIRTUAL_SEQUENCE_PRESENT == 0x7f);
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -167,8 +169,6 @@ pub enum TraceRowError {
     InvalidBytecodePc { kind: JoltInstructionKind, pc: u32 },
     #[error("no-op rows cannot be compressed or first in a virtual sequence")]
     NoOpMetadata,
-    #[error("source stopping permission requires a repeatable terminal jump")]
-    InvalidStoppingMetadata,
 }
 
 /// Four aliased 64-bit value slots. Their logical meaning depends on the row's
@@ -266,15 +266,8 @@ impl JoltTraceRow {
     ) -> Result<Self, TraceRowError> {
         let kind = instruction.instruction_kind;
         let lowered = JoltInstruction::from(instruction);
-        // CanEnd adds a static predicate to this existing decode and reuses the cached flag word.
         let circuit_flags = lowered.circuit_flags();
         let instruction_flags = lowered.instruction_flags();
-        if instruction.source_can_end
-            && (instruction.virtual_sequence_remaining != Some(0)
-                || !circuit_flags[CircuitFlags::CanEnd])
-        {
-            return Err(TraceRowError::InvalidStoppingMetadata);
-        }
         let is_noop = instruction_flags.get(InstructionFlags::IsNoop);
         if is_noop != (bytecode_pc == 0) {
             return Err(TraceRowError::InvalidBytecodePc {
@@ -373,15 +366,14 @@ impl JoltTraceRow {
                 * VIRTUAL_SEQUENCE_PRESENT)
             | (u8::from(integer_operands.rs1.is_some()) * INTEGER_RS1)
             | (u8::from(integer_operands.rs2.is_some()) * INTEGER_RS2)
-            | (u8::from(integer_operands.rd.is_some()) * INTEGER_RD)
-            | (u8::from(imm < 0) * IMM_NEGATIVE);
+            | (u8::from(integer_operands.rd.is_some()) * INTEGER_RD);
 
         Ok(Self {
             values,
             unexpanded_pc: instruction.address as u64,
             imm_abs: imm_magnitude as u64,
             bytecode_pc,
-            meta: pack_meta(circuit_flags, instruction_flags),
+            meta: pack_meta(circuit_flags, instruction_flags, imm < 0),
             jolt_tag: kind.tag().0,
             virtual_sequence_remaining: instruction.virtual_sequence_remaining.unwrap_or(0),
             rs1_id: checked_register_id(instruction.operands.rs1)?,
@@ -481,8 +473,6 @@ impl JoltTraceRow {
     )]
     pub fn instruction(&self) -> JoltInstructionRow {
         JoltInstructionRow {
-            source_can_end: self.virtual_sequence_remaining().is_some()
-                && self.circuit_flags().get(CircuitFlags::CanEnd),
             instruction_kind: self.instruction_kind().expect("checked instruction tag"),
             address: self.unexpanded_pc as usize,
             operands: NormalizedOperands {
@@ -500,7 +490,7 @@ impl JoltTraceRow {
     #[inline(always)]
     pub fn imm(&self) -> i128 {
         let magnitude = self.imm_abs as i128;
-        if self.control & IMM_NEGATIVE != 0 {
+        if self.meta & (1 << META_IMM_NEGATIVE_SHIFT) != 0 {
             -magnitude
         } else {
             magnitude
@@ -609,8 +599,14 @@ impl JoltTraceRow {
 }
 
 #[inline]
-fn pack_meta(circuit_flags: CircuitFlagSet, instruction_flags: InstructionFlagSet) -> u32 {
-    circuit_flags.bits() | ((instruction_flags.bits() as u32) << META_INSTRUCTION_FLAGS_SHIFT)
+fn pack_meta(
+    circuit_flags: CircuitFlagSet,
+    instruction_flags: InstructionFlagSet,
+    imm_negative: bool,
+) -> u32 {
+    circuit_flags.bits()
+        | ((instruction_flags.bits() as u32) << META_INSTRUCTION_FLAGS_SHIFT)
+        | ((imm_negative as u32) << META_IMM_NEGATIVE_SHIFT)
 }
 
 #[inline(always)]
@@ -635,7 +631,6 @@ mod tests {
 
     fn instruction(kind: JoltInstructionKind, operands: NormalizedOperands) -> JoltInstructionRow {
         JoltInstructionRow {
-            source_can_end: false,
             instruction_kind: kind,
             address: 0x8000_0000,
             operands,
@@ -976,36 +971,13 @@ mod tests {
     }
 
     #[test]
-    fn source_stopping_metadata_round_trips_or_is_rejected() {
-        let mut terminal = instruction(JoltInstructionKind::JAL, NormalizedOperands::default());
-        terminal.virtual_sequence_remaining = Some(0);
-        terminal.source_can_end = true;
-        let row =
-            JoltTraceRow::new(terminal, RegisterState::default(), RamAccess::NoOp, 1).unwrap();
-        assert_eq!(row.instruction(), terminal);
-        for (kind, remaining) in [
-            (JoltInstructionKind::JAL, None),
-            (JoltInstructionKind::JAL, Some(1)),
-            (JoltInstructionKind::ADDI, Some(0)),
-        ] {
-            terminal.instruction_kind = kind;
-            terminal.virtual_sequence_remaining = remaining;
-            assert!(matches!(
-                JoltTraceRow::new(terminal, RegisterState::default(), RamAccess::NoOp, 1),
-                Err(TraceRowError::InvalidStoppingMetadata)
-            ));
-        }
-    }
-
-    #[test]
     fn flags_round_trip_through_meta() {
         for circuit_flag in CIRCUIT_FLAGS {
             let circuit_flags = CircuitFlagSet::default().set(circuit_flag);
             let instruction_flags = InstructionFlagSet::default().set(InstructionFlags::IsNoop);
             for imm_negative in [false, true] {
                 let row = JoltTraceRow {
-                    meta: pack_meta(circuit_flags, instruction_flags),
-                    control: u8::from(imm_negative) * IMM_NEGATIVE,
+                    meta: pack_meta(circuit_flags, instruction_flags, imm_negative),
                     imm_abs: 7,
                     ..JoltTraceRow::default()
                 };

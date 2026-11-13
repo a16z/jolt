@@ -603,11 +603,10 @@ impl Cpu {
             self.handle_interrupt(self.pc);
         }
         self.stalled = self.pc == instruction_address
-            && executed.is_some_and(|instr| {
-                matches!(instr, Instruction::EBREAK(_))
-                    || instr
-                        .try_jolt_instruction_row()
-                        .is_ok_and(|row| row.can_end())
+            && executed.is_none_or(|instr| {
+                instr
+                    .try_jolt_instruction_row()
+                    .map_or(true, |row| row.self_jump_repeats())
             });
         self.clock = self.clock.wrapping_add(1);
     }
@@ -1700,57 +1699,20 @@ mod test_cpu {
     }
 
     #[test]
-    fn stopping_requires_a_repeatable_source_jump() {
-        for (code, expected) in [
-            (&[0x63, 0, 0, 0][..], false),       // beq x0, x0, 0
-            (&[0x6f, 0, 0, 0][..], true),        // jal x0, 0
-            (&[0x01, 0xa0][..], true),           // c.j 0
-            (&[0x73, 0, 0x10, 0][..], true),     // ebreak
-            (&[0x02, 0x90][..], true),           // c.ebreak
-            (&[0x67, 0x80, 0x02, 0][..], true),  // jalr x0, 0(x5)
-            (&[0xe7, 0x82, 0x02, 0][..], false), // jalr x5, 0(x5)
-            (&[0x82, 0x90][..], false),          // c.jalr ra
-            (&[0x73, 0, 0x20, 0x30][..], false), // mret
-            (&[0x73, 0, 0, 0][..], false),       // ecall
-        ] {
-            let mut cpu = create_cpu();
-            cpu.get_mut_mmu().init_memory(1 << 16);
-            for (index, byte) in code.iter().enumerate() {
-                cpu.get_mut_mmu().store_raw(DRAM_BASE + index as u64, *byte);
-            }
-            for register in [1, 5, 34, 36] {
-                cpu.x[register] = DRAM_BASE as i64;
-            }
-            cpu.update_pc(DRAM_BASE);
-            let mut trace = Vec::new();
-            cpu.tick(Some(&mut trace));
-            assert_eq!(cpu.read_pc(), DRAM_BASE, "{code:x?}");
-            assert_eq!(cpu.has_stalled(), expected, "{code:x?}");
-            let terminal = trace
-                .last()
-                .unwrap()
-                .instruction()
-                .try_jolt_instruction_row()
-                .unwrap();
-            assert_eq!(terminal.can_end(), expected, "{code:x?}");
-        }
-    }
-
-    #[test]
     fn jalr_overwriting_its_base_runs_again() {
-        // jalr x5, 0(x5); jal x0, 0. The second run targets the link.
+        // jalr x5, 0(x5); beq x0, x0, 0. The second run targets the link.
         let mut cpu = create_cpu();
         cpu.x[5] = DRAM_BASE as i64;
-        let rows = run_until_stalled(&mut cpu, &[0xe7, 0x82, 0x02, 0x00, 0x6f, 0, 0, 0]);
+        let rows = run_until_stalled(&mut cpu, &[0xe7, 0x82, 0x02, 0x00, 0x63, 0, 0, 0]);
         assert_eq!(
             (rows, cpu.read_pc(), cpu.x[5] as u64),
             (3, DRAM_BASE + 4, DRAM_BASE + 4)
         );
 
-        // c.jalr ra; jal x0, 0
+        // c.jalr ra; beq x0, x0, 0
         let mut cpu = create_cpu();
         cpu.x[1] = DRAM_BASE as i64;
-        let rows = run_until_stalled(&mut cpu, &[0x82, 0x90, 0x6f, 0, 0, 0]);
+        let rows = run_until_stalled(&mut cpu, &[0x82, 0x90, 0x63, 0, 0, 0]);
         assert_eq!(
             (rows, cpu.read_pc(), cpu.x[1] as u64),
             (3, DRAM_BASE + 2, DRAM_BASE + 2)
@@ -1798,11 +1760,11 @@ mod test_cpu {
 
     #[test]
     fn jalr_at_its_fixed_point_stops_after_one_run() {
-        // jalr x5, -4(x5); jal x0, 0. The link it writes leads back to
+        // jalr x5, -4(x5); beq x0, x0, 0. The link it writes leads back to
         // DRAM_BASE.
         let mut cpu = create_cpu();
         cpu.x[5] = (DRAM_BASE + 4) as i64;
-        let rows = run_until_stalled(&mut cpu, &[0xe7, 0x82, 0xc2, 0xff, 0x6f, 0, 0, 0]);
+        let rows = run_until_stalled(&mut cpu, &[0xe7, 0x82, 0xc2, 0xff, 0x63, 0, 0, 0]);
         assert_eq!(
             (rows, cpu.read_pc(), cpu.x[5] as u64),
             (1, DRAM_BASE, DRAM_BASE + 4)

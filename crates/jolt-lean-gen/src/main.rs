@@ -487,7 +487,6 @@ fn same_row_except_imm(lhs: &JoltInstructionRow, rhs: &JoltInstructionRow) -> bo
         && lhs.virtual_sequence_remaining == rhs.virtual_sequence_remaining
         && lhs.is_first_in_sequence == rhs.is_first_in_sequence
         && lhs.is_compressed == rhs.is_compressed
-        && lhs.source_can_end == rhs.source_can_end
 }
 
 fn source_imm_flags(

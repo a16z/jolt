@@ -287,7 +287,6 @@ fn check_store_rd_disjoint(instruction: &JoltInstructionRow) -> Result<(), Prepr
 
 const fn noop_instruction() -> JoltInstructionRow {
     JoltInstructionRow {
-        source_can_end: false,
         instruction_kind: JoltInstructionKind::NoOp,
         address: 0,
         operands: jolt_riscv::NormalizedOperands {
@@ -487,7 +486,6 @@ mod tests {
 
     fn instruction(address: usize, virtual_sequence_remaining: Option<u16>) -> JoltInstructionRow {
         JoltInstructionRow {
-            source_can_end: false,
             instruction_kind: JoltInstructionKind::ADDI,
             address,
             operands: NormalizedOperands {

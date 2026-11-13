@@ -310,6 +310,7 @@ impl DynasmEmitter {
     }
 
     fn emit_branch(e: &mut Emitter, row: &JoltInstructionRow, cc: Cc) {
+        let address = row.address as u64;
         let target = (row.address as i64).wrapping_add(row.operands.imm as i64) as u64;
         e.load_reg(RAX, row.operands.rs1);
         e.cmp_reg_operand(RAX, row.operands.rs2);
@@ -1009,7 +1010,7 @@ impl DynasmEmitter {
                 dynasm!(e.ops ; .arch x64 ; add rax, rcx ; and rax, -2);
                 e.load_imm(RCX, link_value(row));
                 e.store_rd(RCX, row.operands.rd);
-                if row.can_end() {
+                if row.self_jump_repeats() {
                     dynasm!(e.ops ; .arch x64 ; mov rcx, QWORD row.address as i64 ; cmp rax, rcx ; jne >go);
                     e.exit_at(row.address as u64, ExitReason::Stalled);
                     dynasm!(e.ops ; .arch x64 ; go:);

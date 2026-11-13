@@ -325,30 +325,6 @@ This second product relation should batch with the same field-product machinery
 if FINV is included in v1. The protocol fact is that the inverse relation is
 over native `F`.
 
-## Stopping and the outer row layout
-
-The ordinary `CanEnd` flag precedes the field flags in `CircuitFlags`.
-Bytecode read checking authenticates all 25 flags in field-inline builds.
-The ordinary outer opening vector has 46 columns (21 values and 25 flags);
-the five appended field value/product openings bring the composed total to
-51. In the R1CS variable vector, constant column 0 precedes the ordinary
-inputs, the two product-factor columns occupy 47 and 48, and the field
-suffix occupies columns 49–53.
-
-RV64 has 20 equality-conditional rows. Its stopping row is row 19:
-
-```text
-(Jump - ShouldJump) *
-  (LookupOutput - UnexpandedPC + 2^64 * (1 - CanEnd)) = 0.
-```
-
-The ten field rows occupy rows 20–29. The composed groups contain 15 rows
-each, with uni-skip domain 15 and first-round degree 42. The optimized kernel
-retains fourteen extended nodes and represents the stopping row's second
-factor as two signed limbs. Its field characteristic check requires more
-than 65 modulus bits. The source/expansion classification and last-index
-boundary are the same as for RV64, including when no field instruction runs.
-
 ## Protocol Composition And Points
 
 Field inline composes with the ordinary verifier by reusing the product
@@ -926,7 +902,7 @@ Twist records the read, and the register Twist records the scratch write.
 The field-inline row equates the field destination with the word folded into
 the old destination, read back as `FieldRs1Value` (`2^64` is a constant of
 `F`). This has the same accumulation semantics as x-register ingress. The
-Spartan outer has 30 equality-conditional rows, grouped as 15+15: a 16-node uni-skip domain would overflow the
+Spartan outer has 29 rows: a 16-node uni-skip domain would overflow the
 kernels' `i128` power sums. Encoding: opcode `0x7b`,
 `FIELD_LOAD_ACCUMULATE_FROM_REGISTER`'s funct3, funct7 `0x60 | offset` with bits 4..0
 holding the word offset; `rd` is the scratch x-register, `rs1` the x base,

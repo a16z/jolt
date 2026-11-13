@@ -255,15 +255,17 @@ mod field_inline_zk {
         )
         .unwrap();
 
-        // The hidden claims comprise 36 ordinary openings (including CanEnd),
-        // ten field flags, and five field value/product openings: 51 total.
+        // The committed shell carries the composed 50 output-claim values
+        // (45 common openings + five field value/product openings), row-committed in
+        // capacity-sized chunks — the shape the verifier's
+        // `composed_output_claim_count` check derives.
         let total: usize = out
             .committed_witness
             .output_claim_rows
             .iter()
             .map(Vec::len)
             .sum();
-        assert_eq!(total, 51);
+        assert_eq!(total, 50);
         let row_lens: Vec<usize> = out
             .committed_witness
             .output_claim_rows
@@ -271,7 +273,7 @@ mod field_inline_zk {
             .map(Vec::len)
             .collect();
         let expected_row_lens: Vec<usize> = {
-            let mut remaining = 51usize;
+            let mut remaining = 50usize;
             let mut lens = Vec::new();
             while remaining > 0 {
                 let take = remaining.min(CAPACITY);
@@ -284,7 +286,7 @@ mod field_inline_zk {
         let committed = out.sumcheck_proof.as_committed().unwrap();
         assert_eq!(
             committed.output_claims.commitments.len(),
-            51usize.div_ceil(CAPACITY)
+            50usize.div_ceil(CAPACITY)
         );
 
         let checked = CheckedInputs {

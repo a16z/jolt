@@ -31,7 +31,6 @@ const REGS: usize = common::constants::REGISTER_COUNT as usize;
 
 fn row(kind: Kind, rs1: Option<u8>, rd: Option<u8>, imm: i128) -> JoltInstructionRow {
     JoltInstructionRow {
-        source_can_end: false,
         instruction_kind: kind,
         address: TEST_ADDR as usize,
         operands: NormalizedOperands {

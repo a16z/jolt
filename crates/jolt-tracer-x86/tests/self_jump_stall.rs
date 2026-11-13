@@ -35,7 +35,6 @@ impl SelfJump {
     /// Runs the jump at `TEST_ADDR`, followed by a terminal halt.
     fn end(&self) -> End {
         let jump = JoltInstructionRow {
-            source_can_end: false,
             instruction_kind: JoltInstructionKind::JALR,
             address: TEST_ADDR as usize,
             operands: NormalizedOperands {

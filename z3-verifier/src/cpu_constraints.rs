@@ -110,7 +110,7 @@ struct JoltState<T = Int> {
 }
 
 fn signed_coefficient(value: &Fr) -> Int {
-    const COEFFICIENTS: [i128; 8] = [-(1i128 << 64), -4, -2, -1, 1, 2, 4, 1i128 << 64];
+    const COEFFICIENTS: [i128; 7] = [-(1i128 << 64), -4, -2, -1, 1, 2, 4];
     let coefficient = COEFFICIENTS
         .into_iter()
         .find(|candidate| *value == Fr::from_i128(*candidate))
@@ -474,7 +474,6 @@ macro_rules! test_instruction_constraints {
                     address: 8,
                     is_compressed: false,
                     is_first_in_sequence: false,
-                    source_can_end: false,
                     virtual_sequence_remaining: None,
                 });
                 do_test(stringify!(instr), &instr);

@@ -1,6 +1,6 @@
 use jolt_riscv::{
     CircuitFlags, Flags, JoltInstruction, JoltInstructionProfile, JoltInstructionRow,
-    NormalizedOperands, SourceInstruction, SourceInstructionKind, SourceInstructionRow,
+    NormalizedOperands, SourceInstruction, SourceInstructionRow,
 };
 use std::marker::PhantomData;
 use std::ops::RangeInclusive;
@@ -102,14 +102,7 @@ impl ExpansionState {
                 .map_err(ExpansionError::IllegalSourceInstruction);
         }
         let sequence = expand_source_only_instruction(instruction)?;
-        let mut rows = self.materialize(sequence)?;
-        // Stopping eligibility follows the source, never an internal generated jump.
-        if kind == SourceInstructionKind::EBREAK {
-            if let Some(terminal) = rows.last_mut() {
-                terminal.source_can_end = true;
-            }
-        }
-        Ok(rows)
+        self.materialize(sequence)
     }
 
     pub(super) fn allocate_register(&mut self) -> Result<u8, ExpansionError> {
@@ -184,7 +177,6 @@ impl ExpansionState {
         if options.append_inline_resets {
             for register in self.allocator.take_registers_for_reset()? {
                 rows.push(JoltInstructionRow {
-                    source_can_end: false,
                     instruction_kind: jolt_riscv::JoltInstructionKind::ADDI,
                     address: source.address,
                     operands: NormalizedOperands {
@@ -376,7 +368,6 @@ impl SequenceMaterializer {
 
     fn instruction(&self, row: RowTemplate) -> Result<JoltInstructionRow, ExpansionError> {
         Ok(JoltInstructionRow {
-            source_can_end: false,
             instruction_kind: row.instruction_kind,
             address: self.address,
             operands: self.resolve_operands(row.operands)?,

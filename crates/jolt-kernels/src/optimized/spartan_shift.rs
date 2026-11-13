@@ -615,7 +615,6 @@ mod tests {
         first: bool,
     ) -> JoltInstructionRow {
         JoltInstructionRow {
-            source_can_end: false,
             instruction_kind: JoltInstructionKind::ADDI,
             address,
             operands: NormalizedOperands {

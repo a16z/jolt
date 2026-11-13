@@ -158,7 +158,6 @@ mod tests {
                 virtual_sequence_remaining,
                 is_first_in_sequence: virtual_sequence_remaining == Some(1),
                 is_compressed,
-                source_can_end: false,
             },
         )
         .collect();

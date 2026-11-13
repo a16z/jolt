@@ -254,7 +254,6 @@ impl InlineTestHarness {
             funct7,
             virtual_sequence_remaining: None,
             is_first_in_sequence: false,
-            source_can_end: false,
             is_compressed: false,
         }
     }

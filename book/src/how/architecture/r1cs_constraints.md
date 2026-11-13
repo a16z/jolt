@@ -43,31 +43,3 @@ Some examples of circuit flags:
 
 These flags appear in the R1CS constraints.
 For example, the "load" flag enables the aforementioned RAM-to-register constraint specifically for load instructions.
-
-## Stopping at a repeatable self-jump
-
-A real trace may end only after a jump that targets its own source PC and
-repeats that target when executed again. The bytecode-authenticated `CanEnd`
-flag records whether the source instruction can do this. Direct JAL rows set
-it. Direct JALR rows use the source instruction length and the static
-`self_jump_repeats()` predicate: a JALR that overwrites its own base register
-must still target its PC after writing the link. Generated rows carry the
-source classification, and only the terminal row of an eligible expansion
-can set the flag. EBREAK's complete JAL+0 expansion is eligible.
-
-With `H = Jump - ShouldJump`, the outer R1CS includes
-
-```text
-H * (LookupOutput - UnexpandedPC + 2^64 * (1 - CanEnd)) = 0.
-```
-
-At a transition to padding, `ShouldJump` is zero. The same holds at the
-last domain index, where the shift relation treats the missing successor as
-a no-op. The target and source PC are 64-bit words, `CanEnd` is authenticated
-as a Boolean bytecode flag, and the field characteristic exceeds `2^65`.
-These bounds make the row enforce both `CanEnd = 1` and target equality.
-An unstable self-targeting JALR cannot end the trace.
-
-The prover pads to `max(256, next_power_of_two(executed_rows))`. A real
-terminal row can occupy the last domain index without an extra padding row
-or a verifier-side boundary assertion.

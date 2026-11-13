@@ -19,8 +19,6 @@ pub struct VirtualAdvice {
     /// in the sequence, `virtual_sequence_remaining` will be Some(1); etc.
     pub virtual_sequence_remaining: Option<u16>,
     pub is_first_in_sequence: bool,
-    #[serde(default)]
-    pub source_can_end: bool,
     pub advice: u64,
     pub is_compressed: bool,
 }
@@ -57,7 +55,6 @@ impl RISCVInstruction for VirtualAdvice {
             advice: rng.next_u64(),
             virtual_sequence_remaining: None,
             is_first_in_sequence: false,
-            source_can_end: false,
             is_compressed: false,
         }
     }
@@ -75,7 +72,6 @@ impl From<JoltInstructionRow> for VirtualAdvice {
             advice: 0,
             virtual_sequence_remaining: ni.virtual_sequence_remaining,
             is_first_in_sequence: ni.is_first_in_sequence,
-            source_can_end: ni.source_can_end,
             is_compressed: ni.is_compressed,
         }
     }
@@ -89,7 +85,6 @@ impl From<SourceInstructionRow> for VirtualAdvice {
             advice: 0,
             virtual_sequence_remaining: None,
             is_first_in_sequence: false,
-            source_can_end: false,
             is_compressed: row.is_compressed,
         }
     }

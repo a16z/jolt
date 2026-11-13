@@ -1,7 +1,7 @@
 //! Optimized stage-1 Spartan outer kernels with the reference kernels' exact
 //! wire behavior:
 //!
-//! - **Typed small-scalar row evaluation**: the 20 eq-conditional constraint
+//! - **Typed small-scalar row evaluation**: the 19 eq-conditional constraint
 //!   rows are evaluated per cycle as integers (`i64` guards, `i128` B values,
 //!   the second-group values split as `hi·2^64 + lo`) straight off a
 //!   typed witness bundle — the ordinary R1CS input tables are never
@@ -126,10 +126,6 @@ const DOMAIN: usize = SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE;
 const SECOND_GROUP_LEN: usize = SPARTAN_OUTER_SECOND_GROUP_ROW_COUNT;
 const EXTENDED_SIZE: usize = 2 * DOMAIN - 1;
 const EXTENDED_NODE_COUNT: usize = DOMAIN - 1;
-#[cfg(not(feature = "field-inline"))]
-const _: () = assert!(EXTENDED_NODE_COUNT == 9);
-#[cfg(feature = "field-inline")]
-const _: () = assert!(EXTENDED_NODE_COUNT == 14);
 const DOMAIN_START: i64 = -((DOMAIN as i64 - 1) / 2);
 const EXTENDED_START: i64 = -((EXTENDED_SIZE as i64 - 1) / 2);
 /// The rv64 prefixes of the composed stream groups
@@ -429,7 +425,7 @@ impl SpartanOuterRow {
                 - flag(self.circuit_flags[CircuitFlags::IsLastInSequence]),
             flag(self.next_is_virtual.0) - flag(self.next_is_first_in_sequence.0),
         ];
-        // Rows 0, 7, 8, 9, 10, 12, 13, 15, 16, 19.
+        // Rows 0, 7, 8, 9, 10, 12, 13, 15, 16.
         let rv64_a_second = [
             load + store,
             add,
@@ -440,7 +436,6 @@ impl SpartanOuterRow {
             jump,
             should_branch,
             1 - should_branch - jump,
-            jump - flag(self.should_jump.0),
         ];
 
         let mut first = [0; DOMAIN];
@@ -504,8 +499,6 @@ impl SpartanOuterRow {
         let left_input = word(self.left_instruction_input.0);
         let compressed = 2 * i128::from(self.circuit_flags[CircuitFlags::IsCompressed]);
         let pc_step = diff(self.next_unexpanded_pc.0, self.unexpanded_pc.0);
-        // The stopping row adds one low/high pair in this existing pass;
-        // its high limb is Boolean, preserving the second-group limb bound.
         let rv64_b_second_lo = [
             diff(self.ram_address.0, self.rs1_value.0) - imm_lo + word(self.lookup_output.0),
             right_lookup_lo - left_input - right_input_lo,
@@ -518,7 +511,6 @@ impl SpartanOuterRow {
             pc_step - 4
                 + 4 * i128::from(self.circuit_flags[CircuitFlags::DoNotUpdateUnexpandedPC])
                 + compressed,
-            diff(self.lookup_output.0, self.unexpanded_pc.0),
         ];
         let rv64_b_second_hi = [
             -imm_hi,
@@ -530,7 +522,6 @@ impl SpartanOuterRow {
             0,
             -imm_hi,
             0,
-            i128::from(!self.circuit_flags[CircuitFlags::CanEnd]),
         ];
 
         let mut values = RowGroupValues {
@@ -1247,7 +1238,7 @@ impl<F: JoltField> OuterRemainderKernel<F> {
 
     /// Az/Bz column weights at both stream values over the composed opening-column
     /// selection, from the same `jolt-claims` sources the verifier's coefficient build
-    /// uses (36 rv64 columns without field-inline; the non-contiguous 46 + 5 selection
+    /// uses (35 rv64 columns without field-inline; the non-contiguous 45 + 5 selection
     /// under `field-inline`).
     fn derived_weights(uniskip_challenge: F) -> Result<DerivedWeights<F>, KernelError<F>> {
         let matrices = spartan_outer_constraints::<F>();
@@ -1408,26 +1399,24 @@ impl<F: JoltField> ClaimAccumulator<F> {
         flag(32, row.circuit_flags[CircuitFlags::IsCompressed]);
         flag(33, row.circuit_flags[CircuitFlags::IsFirstInSequence]);
         flag(34, row.circuit_flags[CircuitFlags::IsLastInSequence]);
-        // One extra scalar accumulation in this existing pass authenticates the stopping flag.
-        flag(35, row.circuit_flags[CircuitFlags::CanEnd]);
         #[cfg(feature = "field-inline")]
         {
-            flag(36, row.circuit_flags[CircuitFlags::FieldAdd]);
-            flag(37, row.circuit_flags[CircuitFlags::FieldSub]);
-            flag(38, row.circuit_flags[CircuitFlags::FieldMul]);
-            flag(39, row.circuit_flags[CircuitFlags::FieldInv]);
-            flag(40, row.circuit_flags[CircuitFlags::FieldAssertEq]);
+            flag(35, row.circuit_flags[CircuitFlags::FieldAdd]);
+            flag(36, row.circuit_flags[CircuitFlags::FieldSub]);
+            flag(37, row.circuit_flags[CircuitFlags::FieldMul]);
+            flag(38, row.circuit_flags[CircuitFlags::FieldInv]);
+            flag(39, row.circuit_flags[CircuitFlags::FieldAssertEq]);
             flag(
-                41,
+                40,
                 row.circuit_flags[CircuitFlags::FieldLoadAccumulateFromRegister],
             );
-            flag(42, row.circuit_flags[CircuitFlags::FieldAssertZero]);
-            flag(43, row.circuit_flags[CircuitFlags::FieldLoadImm]);
+            flag(41, row.circuit_flags[CircuitFlags::FieldAssertZero]);
+            flag(42, row.circuit_flags[CircuitFlags::FieldLoadImm]);
             flag(
-                44,
+                43,
                 row.circuit_flags[CircuitFlags::FieldLoadAccumulateFromMemory],
             );
-            flag(45, row.circuit_flags[CircuitFlags::FieldAdviceLimb]);
+            flag(44, row.circuit_flags[CircuitFlags::FieldAdviceLimb]);
         }
 
         let mut word = |index: usize, magnitude: u128, is_positive: bool| {

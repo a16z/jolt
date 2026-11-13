@@ -734,7 +734,6 @@ mod tests {
 
     fn program_with_profile(profile: jolt_riscv::JoltInstructionProfile) -> JoltProgram {
         let terminal = JoltInstructionRow {
-            source_can_end: false,
             instruction_kind: JoltInstructionKind::BEQ,
             address: 0x8000_1000,
             operands: NormalizedOperands {

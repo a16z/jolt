@@ -228,8 +228,6 @@ pub struct INLINE {
     /// Tracks remaining virtual instructions (used by tracer)
     pub virtual_sequence_remaining: Option<u16>,
     pub is_first_in_sequence: bool,
-    #[serde(default)]
-    pub source_can_end: bool,
     pub is_compressed: bool,
 }
 
@@ -258,7 +256,6 @@ impl RISCVInstruction for INLINE {
             operands: FormatInline::parse(word),
             virtual_sequence_remaining: None,
             is_first_in_sequence: false,
-            source_can_end: false,
             is_compressed,
         }
     }
@@ -275,7 +272,6 @@ impl RISCVInstruction for INLINE {
             operands: FormatInline::random(rng),
             virtual_sequence_remaining: None,
             is_first_in_sequence: false,
-            source_can_end: false,
             is_compressed: false,
         }
     }

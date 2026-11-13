@@ -520,7 +520,6 @@ mod field_inline_tests {
     fn bytecode_rows() -> Vec<JoltInstructionRow> {
         let mut rows = vec![JoltInstructionRow::default(); 4];
         rows[0] = JoltInstructionRow {
-            source_can_end: false,
             instruction_kind: Kind::ADD,
             address: 9,
             operands: NormalizedOperands {

@@ -46,8 +46,6 @@ pub enum CircuitFlags {
     IsFirstInSequence,
     /// Last instruction in a virtual sequence.
     IsLastInSequence,
-    /// The source instruction may stop after this row when it jumps to itself.
-    CanEnd,
     #[cfg(feature = "field-inline")]
     FieldAdd,
     #[cfg(feature = "field-inline")]
@@ -87,7 +85,6 @@ pub const CIRCUIT_FLAGS: [CircuitFlags; NUM_CIRCUIT_FLAGS] = [
     CircuitFlags::IsCompressed,
     CircuitFlags::IsFirstInSequence,
     CircuitFlags::IsLastInSequence,
-    CircuitFlags::CanEnd,
     #[cfg(feature = "field-inline")]
     CircuitFlags::FieldAdd,
     #[cfg(feature = "field-inline")]

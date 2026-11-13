@@ -1043,51 +1043,29 @@ mod tests {
                 rd: Some(5),
                 imm: 1 << 40,
             },
-            NormalizedOperands {
-                rs1: Some(5),
-                rs2: None,
-                rd: Some(5),
-                imm: 0,
-            },
-            NormalizedOperands {
-                rs1: Some(5),
-                rs2: None,
-                rd: Some(5),
-                imm: -4,
-            },
-            NormalizedOperands {
-                rs1: Some(1),
-                rs2: None,
-                rd: Some(1),
-                imm: -2,
-            },
         ];
         let mut terms_by_class = HashMap::new();
         for &instruction_kind in JoltInstructionKind::ALL {
             for virtual_sequence_remaining in [None, Some(0), Some(3)] {
                 for is_compressed in [false, true] {
                     for is_first_in_sequence in [false, true] {
-                        for source_can_end in [false, true] {
-                            for (address, operands) in operands.into_iter().enumerate() {
-                                let row = JoltInstructionRow {
-                                    source_can_end,
-                                    instruction_kind,
-                                    address: 4 * address + 8,
-                                    operands,
-                                    virtual_sequence_remaining,
-                                    is_first_in_sequence,
-                                    is_compressed,
-                                };
-                                let mut hits = Vec::new();
-                                let store = read_raf_flag_terms(&row, |stage, index| {
-                                    hits.push((stage, index));
-                                });
-                                let terms = (hits, store);
-                                let first = terms_by_class
-                                    .entry(row.flag_class())
-                                    .or_insert_with(|| terms.clone());
-                                assert_eq!(*first, terms, "{row:?}");
-                            }
+                        for (address, operands) in operands.into_iter().enumerate() {
+                            let row = JoltInstructionRow {
+                                instruction_kind,
+                                address: 4 * address + 8,
+                                operands,
+                                virtual_sequence_remaining,
+                                is_first_in_sequence,
+                                is_compressed,
+                            };
+                            let mut hits = Vec::new();
+                            let store =
+                                read_raf_flag_terms(&row, |stage, index| hits.push((stage, index)));
+                            let terms = (hits, store);
+                            let first = terms_by_class
+                                .entry(row.flag_class())
+                                .or_insert_with(|| terms.clone());
+                            assert_eq!(*first, terms, "{row:?}");
                         }
                     }
                 }
@@ -1099,7 +1077,6 @@ mod tests {
     #[expect(clippy::unwrap_used)]
     fn folded_stage_values_match_weighted_row_values() {
         let row = |instruction_kind, address, rs1, rs2, rd, imm| JoltInstructionRow {
-            source_can_end: false,
             instruction_kind,
             address,
             operands: NormalizedOperands { rs1, rs2, rd, imm },

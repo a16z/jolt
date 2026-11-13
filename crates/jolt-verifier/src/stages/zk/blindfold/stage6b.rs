@@ -453,7 +453,6 @@ mod field_inline_tests {
         let stage_gammas = challenges.stage_gamma_powers();
         let mut bytecode = vec![JoltInstructionRow::default(); 4];
         *bytecode.get_mut(0).unwrap() = JoltInstructionRow {
-            source_can_end: false,
             instruction_kind: JoltInstructionKind::FIELD_MUL,
             address: 9,
             operands: NormalizedOperands {

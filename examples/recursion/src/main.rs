@@ -787,10 +787,10 @@ fn render_embedded_bytecode(rows: &[JoltInstructionRow]) -> String {
     let mut source = String::from("use jolt_riscv::{JoltInstructionKind as Kind, JoltInstructionRow, JoltInstructionTag, NormalizedOperands};\npub static EMBEDDED_BYTECODE: &[JoltInstructionRow] = &[\n");
     for row in rows {
         writeln!(source,
-            "JoltInstructionRow {{ instruction_kind: Kind::from_tag(JoltInstructionTag({})).unwrap(), address: {}, operands: NormalizedOperands {{ rs1: {:?}, rs2: {:?}, rd: {:?}, imm: {} }}, virtual_sequence_remaining: {:?}, is_first_in_sequence: {}, is_compressed: {}, source_can_end: {} }},",
+            "JoltInstructionRow {{ instruction_kind: Kind::from_tag(JoltInstructionTag({})).unwrap(), address: {}, operands: NormalizedOperands {{ rs1: {:?}, rs2: {:?}, rd: {:?}, imm: {} }}, virtual_sequence_remaining: {:?}, is_first_in_sequence: {}, is_compressed: {} }},",
             row.instruction_kind.tag().0, row.address, row.operands.rs1, row.operands.rs2,
             row.operands.rd, row.operands.imm, row.virtual_sequence_remaining,
-            row.is_first_in_sequence, row.is_compressed, row.source_can_end,
+            row.is_first_in_sequence, row.is_compressed,
         ).unwrap();
     }
     source.push_str("];\n");
