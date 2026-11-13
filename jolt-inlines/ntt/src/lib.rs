@@ -3,15 +3,11 @@
 
 mod pointwise;
 pub use pointwise::{pointwise_dot64, DOT_PRODUCTS};
-mod prepared;
-pub use prepared::{CenteredI16NttInput, PreparedForwardNtt64};
 
 pub const DEGREE: usize = 64;
 pub const OPCODE: u32 = 0x0b;
 pub const FUNCT3: u32 = 0;
 pub const FUNCT7: u32 = 8;
-// Selector 10 is the nonnegative pointwise operation.
-const MERGED_FUNCT7: u32 = 11;
 
 #[cfg(feature = "host")]
 mod pointwise_builder;
@@ -22,12 +18,12 @@ use jolt_inlines_sdk::host::InlineExtension;
 #[cfg(feature = "host")]
 use pointwise_builder::{NonnegativePointwiseDot64, PointwiseDot64};
 #[cfg(feature = "host")]
-use sequence_builder::{ForwardNtt64, MergedForwardNtt64};
+use sequence_builder::ForwardNtt64;
 #[cfg(feature = "host")]
 jolt_inlines_sdk::register_inlines! {
     trace_file: "ntt_trace.joltinline",
     extension: InlineExtension::Ntt,
-    ops: [ForwardNtt64, PointwiseDot64, NonnegativePointwiseDot64, MergedForwardNtt64],
+    ops: [ForwardNtt64, PointwiseDot64, NonnegativePointwiseDot64],
 }
 
 /// Twist, then forward DIF NTT, with bit-reversed output in the input's
@@ -35,9 +31,6 @@ jolt_inlines_sdk::register_inlines! {
 ///
 /// `psi[i]` is the Montgomery form of psi^i. Stage twiddles occupy
 /// `twiddles[len - 1..2*len - 1]`, for half-lengths 32 down to 1.
-/// This single-radix twist preserves the input representation. In contrast,
-/// [`PreparedForwardNtt64`] checks a double-radix twist, `psi^i * R^2`, which
-/// converts ordinary signed digits to Montgomery output; see its constructor.
 /// For NTT semantics, the caller supplies an odd prime `0 < p < 2^30`,
 /// `pinv = p^-1 mod 2^32`, valid roots, and coefficients and table entries
 /// in `(-p, p)`. Butterfly sums are reduced by a Montgomery product with
@@ -56,49 +49,25 @@ pub fn forward_ntt64(
     p: i32,
     pinv: i32,
 ) {
-    forward::<FUNCT7>(state, psi, twiddles, p, pinv);
-}
-
-#[inline]
-fn forward<const SELECTOR: u32>(
-    state: &mut [i32; DEGREE],
-    psi: &[i32; DEGREE],
-    twiddles: &[i32; DEGREE],
-    p: i32,
-    pinv: i32,
-) {
     #[cfg(target_arch = "riscv64")]
     {
-        // The merged instruction never reads psi. Reuse its aligned stage
-        // table in that unused parameter slot, avoiding alignment copies.
-        let psi = if SELECTOR == MERGED_FUNCT7 {
-            twiddles
-        } else {
-            psi
-        };
-        if (state.as_ptr() as usize | psi.as_ptr() as usize | twiddles.as_ptr() as usize)
-            .trailing_zeros()
-            >= 3
+        if (state.as_ptr() as usize).trailing_zeros() >= 3
+            && (psi.as_ptr() as usize).trailing_zeros() >= 3
+            && (twiddles.as_ptr() as usize).trailing_zeros() >= 3
         {
             // SAFETY: the guard establishes alignment for all paired accesses.
-            unsafe { forward_aligned::<SELECTOR>(state, psi, twiddles, p, pinv) };
+            unsafe { forward_aligned(state, psi, twiddles, p, pinv) };
         } else {
             #[repr(align(8))]
             struct Aligned([i32; DEGREE]);
             let mut aligned_state = Aligned(*state);
+            let aligned_psi = Aligned(*psi);
             let aligned_twiddles = Aligned(*twiddles);
-            let aligned_psi;
-            let psi = if SELECTOR == MERGED_FUNCT7 {
-                &aligned_twiddles.0
-            } else {
-                aligned_psi = Aligned(*psi);
-                &aligned_psi.0
-            };
             // SAFETY: the stack buffers have explicit doubleword alignment.
             unsafe {
-                forward_aligned::<SELECTOR>(
+                forward_aligned(
                     &mut aligned_state.0,
-                    psi,
+                    &aligned_psi.0,
                     &aligned_twiddles.0,
                     p,
                     pinv,
@@ -113,7 +82,7 @@ fn forward<const SELECTOR: u32>(
 
 #[cfg(target_arch = "riscv64")]
 #[inline]
-unsafe fn forward_aligned<const SELECTOR: u32>(
+unsafe fn forward_aligned(
     state: &mut [i32; DEGREE],
     psi: &[i32; DEGREE],
     twiddles: &[i32; DEGREE],
@@ -132,7 +101,7 @@ unsafe fn forward_aligned<const SELECTOR: u32>(
             ".insn r {opcode}, {funct3}, {funct7}, x0, {state}, {params}",
             opcode = const OPCODE,
             funct3 = const FUNCT3,
-            funct7 = const SELECTOR,
+            funct7 = const FUNCT7,
             state = in(reg) state.as_mut_ptr(),
             params = in(reg) params.as_ptr(),
             options(nostack),

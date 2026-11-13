@@ -244,7 +244,7 @@ mod tests {
         let expected = unique_summaries(&expected_cases);
         let actual = unique_summaries(&compute_cases()?);
 
-        assert_eq!(actual.len(), 29);
+        assert_eq!(actual.len(), 28);
         assert_eq!(actual, expected);
         Ok(())
     }

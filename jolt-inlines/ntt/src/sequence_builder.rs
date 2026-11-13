@@ -3,7 +3,7 @@ use jolt_inlines_sdk::host::{
     InlineOp, InlineOperands, InlineRegister, NoAdvice, SourceKind as Kind,
 };
 
-use crate::{DEGREE, FUNCT3, FUNCT7, MERGED_FUNCT7, OPCODE};
+use crate::{DEGREE, FUNCT3, FUNCT7, OPCODE};
 
 /// Selector 8 requires doubleword-aligned state, twist and stage-table arrays.
 /// Paired stage-table loads require 8-byte alignment even when the instruction
@@ -11,13 +11,6 @@ use crate::{DEGREE, FUNCT3, FUNCT7, MERGED_FUNCT7, OPCODE};
 /// Its expansion differs from the scalar-load schedule, so existing guest
 /// ELFs require traces and preprocessing generated with this expansion.
 pub struct ForwardNtt64;
-pub struct MergedForwardNtt64;
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Schedule {
-    Raw,
-    Merged,
-}
 
 struct NttBuilder {
     asm: InlineExpansionBuilder,
@@ -41,12 +34,9 @@ impl NttBuilder {
         })
     }
 
-    fn build(mut self, schedule: Schedule) -> Result<ExpandedInstructionSequence, ExpansionError> {
-        let merged = schedule == Schedule::Merged;
+    fn build(mut self) -> Result<ExpandedInstructionSequence, ExpansionError> {
         let [psi, twiddles, p, pinv, temp, _, _, _, weight, one] = self.scratch.map(|r| *r);
-        if !merged {
-            self.asm.emit_ld(Kind::LD, psi, self.operands.rs2, 0);
-        }
+        self.asm.emit_ld(Kind::LD, psi, self.operands.rs2, 0);
         self.asm.emit_ld(Kind::LD, twiddles, self.operands.rs2, 8);
         self.asm.emit_ld(Kind::LD, p, self.operands.rs2, 16);
         self.asm.emit_i(Kind::SRAI, pinv, p, 32);
@@ -61,29 +51,25 @@ impl NttBuilder {
         }
         // One table word supplies both twiddles; coefficients stay live across
         // every stage, using 74 of the 80 inline registers.
-        for i in (0..if merged { 0 } else { DEGREE }).step_by(2) {
+        for i in (0..DEGREE).step_by(2) {
             self.asm.emit_ld(Kind::LD, temp, psi, i as i64 * 4);
             self.asm.emit_i(Kind::ADDIW, weight, temp, 0);
             self.mont_mul(*self.values[i], *self.values[i], weight);
             self.asm.emit_i(Kind::SRAI, temp, temp, 32);
             self.mont_mul(*self.values[i + 1], *self.values[i + 1], temp);
         }
-        // DIF retains the identity weight; merged tables put the common
-        // final scale here. Both table layouts are checked by their wrapper.
+        // Every stage starts with the Montgomery identity weight. A paired
+        // load supplies it without an unaligned word-load expansion.
         self.asm.emit_ld(Kind::LD, one, twiddles, 0);
         self.asm.emit_i(Kind::ADDIW, one, one, 0);
         let mut len = DEGREE / 2;
         while len != 0 {
-            let groups = if merged { DEGREE / (2 * len) } else { len };
+            let groups = len;
             for group in 0..groups {
-                let twiddle = if !merged && len == 1 {
+                let twiddle = if len == 1 {
                     one
                 } else {
-                    let index = if merged {
-                        groups + group
-                    } else {
-                        len - 1 + group
-                    };
+                    let index = len - 1 + group;
                     // forward_ntt64 establishes doubleword alignment. Each
                     // pair stays inside the table; mont_mul preserves weight.
                     if group == 0 || index & 1 == 0 {
@@ -97,21 +83,11 @@ impl NttBuilder {
                     }
                     temp
                 };
-                let pairs = if merged { len } else { DEGREE / (2 * len) };
+                let pairs = DEGREE / (2 * len);
                 for pair in 0..pairs {
-                    let (start, j) = if merged {
-                        (group * 2 * len, pair)
-                    } else {
-                        (pair * 2 * len, group)
-                    };
+                    let (start, j) = (pair * 2 * len, group);
                     let u = *self.values[start + j];
                     let v = *self.values[start + j + len];
-                    if merged {
-                        self.mont_mul(psi, v, twiddle);
-                        self.asm.emit_r(Kind::SUB, v, u, psi);
-                        self.asm.emit_r(Kind::ADD, u, u, psi);
-                        continue;
-                    }
                     self.asm.emit_r(Kind::SUBW, psi, u, v);
                     self.asm.emit_r(Kind::ADDW, u, u, v);
                     self.mont_mul(u, u, one);
@@ -119,11 +95,6 @@ impl NttBuilder {
                 }
             }
             len /= 2;
-        }
-        if merged {
-            for i in 0..DEGREE {
-                self.mont_mul(*self.values[i], *self.values[i], one);
-            }
         }
         // Valid NTT parameters keep every stage output in (-p, p), so the
         // final pass only adds p to negative coefficients (see scalar_forward).
@@ -167,21 +138,6 @@ impl InlineOp for ForwardNtt64 {
         asm: InlineExpansionBuilder,
         operands: InlineOperands,
     ) -> Result<ExpandedInstructionSequence, ExpansionError> {
-        NttBuilder::new(asm, operands)?.build(Schedule::Raw)
-    }
-}
-
-impl InlineOp for MergedForwardNtt64 {
-    type Advice = NoAdvice;
-    const OPCODE: u32 = OPCODE;
-    const FUNCT3: u32 = FUNCT3;
-    const FUNCT7: u32 = MERGED_FUNCT7;
-    const NAME: &'static str = "NTT64_I16_FORWARD_MERGED";
-
-    fn build_sequence(
-        asm: InlineExpansionBuilder,
-        operands: InlineOperands,
-    ) -> Result<ExpandedInstructionSequence, ExpansionError> {
-        NttBuilder::new(asm, operands)?.build(Schedule::Merged)
+        NttBuilder::new(asm, operands)?.build()
     }
 }

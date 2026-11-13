@@ -142,8 +142,7 @@ field-inline instructions (`field_inline.rs`).
   hash through it, with the same bytes as the `blake2` crate. Akita's
   transcript is spongefish's own `Hash` sponge over that adapter.
 - **Keccak inline** for Akita's SHAKE challenge sampler (`keccak-inline`).
-- **64-point i32 NTT, six-product pointwise dot, and prepared signed-digit
-  forward NTT** (`jolt-inlines-ntt`).
+- **64-point i32 NTT and six-product pointwise dot** (`jolt-inlines-ntt`).
   These expand into existing proved integer instructions, with no advice and no
   new constraints. Akita's `ntt-inline` feature dispatches the 64-dimension CRT
   transforms and lazy Montgomery dots to them. The signed-digit conversion is
@@ -161,15 +160,6 @@ field-inline instructions (`field_inline.rs`).
   signed moduli. Selector 10 uses a six-row correction for $p \ge 0$; the guest
   wrapper selects it only for nonnegative moduli and aligned arrays, otherwise
   using the portable path. The measured recursion path uses selector 10.
-  Selector 11 is the prepared signed-digit transform, with no repository
-  consumer yet. Its constructor checks $R = 2^{32}$, $\psi^{64} = -1 \pmod p$,
-  twist entries $\psi^i R^2 \bmod p$, and stage entries
-  $\psi^{64j/\ell}R \bmod p$ at index $\ell-1+j$, for
-  $\ell \in \{1,2,4,8,16,32\}$ and $0 \le j < \ell$, represented in $(-p,p)$.
-  For signed 16-bit inputs it produces canonical Montgomery NTT coefficients
-  in bit-reversed order, exactly matching the raw transform with those tables.
-  It also checks the final range bound before admitting a table and does not
-  read the original twist table on the guest.
 
 ### Prepared verifier setup
 
