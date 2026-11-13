@@ -1,7 +1,8 @@
 //! Streaming instruction input virtualization: the eager kernel's rounds
 //! after a crossover, preceded by rounds that read the witness's resident
-//! rows in task-partitioned passes instead of materializing the ten tables
-//! at `T/2`. Round 0 evaluates native integer row pairs. Round `j ≥ 1`
+//! rows in task-partitioned passes instead of materializing the eager
+//! kernel's first-bind state at `T/2` (five operand tables and the packed
+//! flag words). Round 0 evaluates native integer row pairs. Round `j ≥ 1`
 //! contracts each column over the low and high halves of its
 //! `2^(j+1)`-cycle pairs with `eq(r_1..r_j, ·)` (LowToHigh binding gives
 //! `f^(j)(y) = Σ_b eq(r, b)·f(2^j·y + b)`). The first round whose tables fit
@@ -292,6 +293,8 @@ impl<F: JoltField> StreamingInstructionInputKernel<F> {
             .checked_cubic(q_terms[0], q_terms[1], previous_claim, round, || q_terms[2])?;
         if let Some(tables) = tables {
             let prefix_len = tables[0].len();
+            // `tail` is never used: the tables span the whole power-of-two
+            // domain that is left, so no entry lies in a constant suffix.
             let tail = core::array::from_fn(|i| tables[i][prefix_len - 1]);
             self.phase = Phase::Dense(OptimizedInstructionInputKernel {
                 progress: streamed.challenges.progress(),
