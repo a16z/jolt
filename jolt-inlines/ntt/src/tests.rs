@@ -4,7 +4,7 @@ use super::{
     forward_ntt64, pointwise_builder::PointwiseDot64, pointwise_dot64,
     sequence_builder::ForwardNtt64, DEGREE, DOT_PRODUCTS,
 };
-use crate::pointwise::DOT_NONNEGATIVE_FUNCT7;
+use crate::pointwise::{DOT_FUNCT7, DOT_NONNEGATIVE_FUNCT7};
 use jolt_inlines_sdk::{
     assert_edge_cases_match_reference, assert_random_cases_match_reference, InlineReference,
     InlineSpec,
@@ -371,7 +371,7 @@ fn pointwise_nonnegative_correction_preserves_every_word_domain() {
                 pinv,
             );
             let short = trace_dot(&input, p, pinv, DOT_NONNEGATIVE_FUNCT7);
-            let signed = trace_dot(&input, p, pinv, crate::pointwise::DOT_FUNCT7);
+            let signed = trace_dot(&input, p, pinv, DOT_FUNCT7);
             assert_eq!(short, expected, "p={p}, pinv={pinv}");
             assert_eq!(signed, short, "p={p}, pinv={pinv}");
         }
@@ -380,7 +380,7 @@ fn pointwise_nonnegative_correction_preserves_every_word_domain() {
 
 // Fixed signed-word vectors for the portable operation and selector 9.
 #[test]
-fn negative_moduli_match_frozen_base_words() {
+fn negative_moduli_match_signed_word_vectors() {
     use tracer::instruction::RISCVTrace;
     // Reducing the zero product gives 5; adding -6 presents x=-1, p=-5
     // to the final correction, where the two instruction domains differ.
@@ -389,10 +389,7 @@ fn negative_moduli_match_frozen_base_words() {
         lhs: [[0; DEGREE]; DOT_PRODUCTS],
         rhs: [[0; DEGREE]; DOT_PRODUCTS],
     };
-    assert_eq!(
-        trace_dot(&input, -5, 0, crate::pointwise::DOT_FUNCT7),
-        [4; DEGREE]
-    );
+    assert_eq!(trace_dot(&input, -5, 0, DOT_FUNCT7), [4; DEGREE]);
     assert_eq!(
         trace_dot(&input, -5, 0, DOT_NONNEGATIVE_FUNCT7),
         [-1; DEGREE]
