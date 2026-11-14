@@ -1183,13 +1183,6 @@ fn prove_workload(
     use jolt_transcript::{Keccak, ProverState, VerifierState};
     use jolt_verifier::{JoltVerifierPreprocessing, ProgramPreprocessing};
 
-    let backend = match args.backend {
-        BackendKind::Reference => JoltBackend::reference(),
-        BackendKind::Optimized => {
-            JoltBackend::optimized().with_streaming(args.streaming.unwrap_or_default())
-        }
-    };
-
     let memory_layout = program_preprocessing.memory_layout.clone();
     let max_trace_length = program_preprocessing.max_padded_trace_length;
 
@@ -1289,6 +1282,12 @@ fn prove_workload(
     // this interval; the Instant is the `--format none` baseline.
     let now = Instant::now();
     let prove = || {
+        let backend = match args.backend {
+            BackendKind::Reference => JoltBackend::reference(),
+            BackendKind::Optimized => {
+                JoltBackend::optimized().with_streaming(args.streaming.unwrap_or_default())
+            }
+        };
         crate::akita::prove::<AkitaField, AkitaScheme, AkitaVc, ProverState<Keccak>>(
             backend.with_witness(&witness),
             &prover_preprocessing,
