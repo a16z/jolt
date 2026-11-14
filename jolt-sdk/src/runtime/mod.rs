@@ -9,7 +9,8 @@
 //! The runtime works as follows:
 //! - Boot: `__platform_bootstrap` initializes ZeroOS subsystems (heap, VFS, scheduler)
 //! - Trap: `trap_handler` routes syscalls through ZeroOS's Linux syscall layer
-//! - Exit: `platform_exit` (in jolt-platform) uses infinite loop for clean termination
+//! - Exit: every exit path executes `ebreak` (Jolt's failure halt); the `#[jolt::provable]`
+//!   epilogue executes `jolt.success`
 
 mod boot;
 mod exit;
