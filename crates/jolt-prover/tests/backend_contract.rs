@@ -282,6 +282,9 @@ mod tests {
     /// domain, so stage 5's streamed cycle round, stage 6a's walks and stage
     /// 6b's streamed rounds each weigh a constant suffix once, and the tables
     /// those kernels turn dense hold it as their tail.
+    /// Stage 8's joint opening collects no columns: every fold of a trace
+    /// view reads the rows before the constant suffix and weighs the suffix
+    /// by its one row.
     #[test]
     fn streaming_kernels_reproduce_the_default_proof() {
         let Fixture {
