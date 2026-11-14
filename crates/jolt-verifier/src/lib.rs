@@ -45,6 +45,7 @@ pub(crate) mod num {
 }
 
 pub mod config;
+pub mod encoding;
 pub mod error;
 #[cfg(feature = "fs-audit")]
 #[doc(hidden)]
@@ -55,6 +56,9 @@ pub mod stages;
 pub mod verifier;
 
 pub use config::{validate_proof_config, JoltProtocolConfig, ZkConfig, JOLT_VERIFIER_CONFIG};
+pub use encoding::{
+    deserialize_verifier_object, serialize_verifier_object, VerifierObjectDecodeError,
+};
 pub use error::VerifierError;
 pub use preprocessing::{
     CommittedProgramPreprocessing, JoltVerifierPreprocessing, ProgramPreprocessing,

@@ -8,7 +8,9 @@ use jolt_akita::{
 };
 use jolt_crypto::NoVectorCommitment;
 use jolt_verifier::verifier::verify_with_context;
-use jolt_verifier::{JoltProof, JoltVerifierPreprocessing};
+use jolt_verifier::{
+    deserialize_verifier_object, JoltProof, JoltVerifierPreprocessing, VerifierObjectDecodeError,
+};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::slice::Iter;
 
@@ -105,11 +107,9 @@ impl SetupClaimAdvice<AkitaField> for AnswerTape<'_> {
     }
 }
 
-pub fn decode_exact<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, String> {
-    let (value, consumed) = bincode::serde::decode_from_slice(bytes, bincode::config::standard())
-        .map_err(|e| e.to_string())?;
-    if consumed != bytes.len() {
-        return Err("trailing transport bytes".into());
-    }
-    Ok(value)
+pub fn decode_exact<T>(bytes: &[u8]) -> Result<T, VerifierObjectDecodeError>
+where
+    T: DeserializeOwned + Serialize,
+{
+    deserialize_verifier_object(bytes)
 }

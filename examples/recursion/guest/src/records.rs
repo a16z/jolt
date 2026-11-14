@@ -1,10 +1,13 @@
 use crate::bounded;
 use crate::bounded::RecordLimits;
 use jolt_inlines_blake2::Blake2b;
-use serde::de::DeserializeOwned;
+use serde::{de::DeserializeOwned, Serialize};
 
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct RecordError;
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RecordError {
+    InvalidRecord,
+    NonCanonicalEncoding,
+}
 
 /// Length-prefixed records, padded with zeroes to eight bytes relative to base.
 pub(crate) struct Records<'a> {
@@ -24,18 +27,23 @@ impl<'a> Records<'a> {
         };
         let pad = records.len_prefix()?;
         if pad >= 8 {
-            return Err(RecordError);
+            return Err(RecordError::InvalidRecord);
         }
-        let end = records.offset.checked_add(pad).ok_or(RecordError)?;
-        let padding = buffer.get(records.offset..end).ok_or(RecordError)?;
+        let end = records
+            .offset
+            .checked_add(pad)
+            .ok_or(RecordError::InvalidRecord)?;
+        let padding = buffer
+            .get(records.offset..end)
+            .ok_or(RecordError::InvalidRecord)?;
         if padding.iter().any(|byte| *byte != 0)
             || (buffer.as_ptr() as usize)
                 .checked_add(end)
-                .ok_or(RecordError)?
+                .ok_or(RecordError::InvalidRecord)?
                 % 8
                 != 0
         {
-            return Err(RecordError);
+            return Err(RecordError::InvalidRecord);
         }
         records.offset = end;
         records.base = end;
@@ -43,40 +51,58 @@ impl<'a> Records<'a> {
     }
 
     fn len_prefix(&mut self) -> Result<usize, RecordError> {
-        let end = self.offset.checked_add(8).ok_or(RecordError)?;
-        let bytes = self.buffer.get(self.offset..end).ok_or(RecordError)?;
+        let end = self
+            .offset
+            .checked_add(8)
+            .ok_or(RecordError::InvalidRecord)?;
+        let bytes = self
+            .buffer
+            .get(self.offset..end)
+            .ok_or(RecordError::InvalidRecord)?;
         let mut length = [0; 8];
         length.copy_from_slice(bytes);
         self.offset = end;
-        usize::try_from(u64::from_le_bytes(length)).map_err(|_| RecordError)
+        usize::try_from(u64::from_le_bytes(length)).map_err(|_| RecordError::InvalidRecord)
     }
 
     pub(crate) fn raw(&mut self) -> Result<&'a [u8], RecordError> {
         let len = self.len_prefix()?;
-        let end = self.offset.checked_add(len).ok_or(RecordError)?;
-        let bytes = self.buffer.get(self.offset..end).ok_or(RecordError)?;
+        let end = self
+            .offset
+            .checked_add(len)
+            .ok_or(RecordError::InvalidRecord)?;
+        let bytes = self
+            .buffer
+            .get(self.offset..end)
+            .ok_or(RecordError::InvalidRecord)?;
         let padded = end
             .checked_sub(self.base)
             .and_then(|len| len.checked_next_multiple_of(8))
             .and_then(|len| self.base.checked_add(len))
-            .ok_or(RecordError)?;
-        let padding = self.buffer.get(end..padded).ok_or(RecordError)?;
+            .ok_or(RecordError::InvalidRecord)?;
+        let padding = self
+            .buffer
+            .get(end..padded)
+            .ok_or(RecordError::InvalidRecord)?;
         if padding.iter().any(|byte| *byte != 0) {
-            return Err(RecordError);
+            return Err(RecordError::InvalidRecord);
         }
         self.offset = padded;
         Ok(bytes)
     }
 
-    pub(crate) fn record<T: DeserializeOwned>(&mut self) -> Result<T, RecordError> {
+    pub(crate) fn record<T: DeserializeOwned + Serialize>(&mut self) -> Result<T, RecordError> {
         let bytes = self.raw()?;
         if bytes.len() > self.limits.bytes {
-            return Err(RecordError);
+            return Err(RecordError::InvalidRecord);
         }
         let mut budget = self.limits.allocation;
-        let (value, consumed) = bounded::decode(bytes, &mut budget).map_err(|_| RecordError)?;
-        if consumed != bytes.len() {
-            return Err(RecordError);
+        let (value, _) =
+            bounded::decode(bytes, &mut budget).map_err(|_| RecordError::InvalidRecord)?;
+        let canonical = bincode::serde::encode_to_vec(&value, bincode::config::standard())
+            .map_err(|_| RecordError::InvalidRecord)?;
+        if canonical != bytes {
+            return Err(RecordError::NonCanonicalEncoding);
         }
         Ok(value)
     }
@@ -84,7 +110,7 @@ impl<'a> Records<'a> {
     pub(crate) fn proof_count(&mut self) -> Result<u32, RecordError> {
         let count: u32 = self.record()?;
         if count == 0 {
-            return Err(RecordError);
+            return Err(RecordError::InvalidRecord);
         }
         self.check_count(count, 2)?;
         Ok(count)
@@ -92,7 +118,7 @@ impl<'a> Records<'a> {
 
     pub(crate) fn finish(&self) -> Result<(), RecordError> {
         if self.offset != self.buffer.len() {
-            return Err(RecordError);
+            return Err(RecordError::InvalidRecord);
         }
         Ok(())
     }
@@ -103,7 +129,7 @@ impl<'a> Records<'a> {
         &self,
         expected: Option<&[u8; 64]>,
     ) -> Result<(), RecordError> {
-        let expected = expected.ok_or(RecordError)?;
+        let expected = expected.ok_or(RecordError::InvalidRecord)?;
         let mut setup = Self {
             buffer: self.buffer,
             offset: self.offset,
@@ -119,9 +145,9 @@ impl<'a> Records<'a> {
         let section = self
             .buffer
             .get(self.offset..setup.offset)
-            .ok_or(RecordError)?;
+            .ok_or(RecordError::InvalidRecord)?;
         if &Blake2b::digest(section) != expected {
-            return Err(RecordError);
+            return Err(RecordError::InvalidRecord);
         }
         Ok(())
     }
@@ -135,9 +161,9 @@ impl<'a> Records<'a> {
             .ok()
             .and_then(|count| count.checked_mul(records_per_item))
             .and_then(|count| count.checked_mul(8))
-            .ok_or(RecordError)?;
+            .ok_or(RecordError::InvalidRecord)?;
         if minimum > self.buffer.len().saturating_sub(self.offset) {
-            return Err(RecordError);
+            return Err(RecordError::InvalidRecord);
         }
         Ok(())
     }
@@ -167,7 +193,7 @@ mod tests {
         bytes
     }
 
-    fn verdict<T: DeserializeOwned>(bytes: &[u8]) -> u32 {
+    fn verdict<T: DeserializeOwned + Serialize>(bytes: &[u8]) -> u32 {
         parse_records(bytes)
             .and_then(|mut records| records.record::<T>())
             .map(|_| 1)

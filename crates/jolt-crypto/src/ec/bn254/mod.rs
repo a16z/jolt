@@ -157,6 +157,16 @@ macro_rules! impl_jolt_group_wrapper {
                 }
                 let inner = <$projective>::deserialize_compressed(&buf[..])
                     .map_err(::serde::de::Error::custom)?;
+                let mut canonical = Vec::with_capacity(expected_len);
+                inner
+                    .serialize_compressed(&mut canonical)
+                    .map_err(::serde::de::Error::custom)?;
+                if canonical != buf {
+                    return Err(::serde::de::Error::custom(format!(
+                        "{} encoding is non-canonical",
+                        stringify!($wrapper)
+                    )));
+                }
                 Ok(Self(inner))
             }
         }

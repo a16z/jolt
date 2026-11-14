@@ -77,6 +77,10 @@ pub use jolt_openings::CommitmentScheme;
 pub use jolt_program::preprocess::JoltProgramPreprocessing;
 #[cfg(feature = "host")]
 pub use jolt_prover::{CommittedProgramProverData, JoltSharedPreprocessing, PreprocessingError};
+#[cfg(any(feature = "host", feature = "guest-verifier"))]
+pub use jolt_verifier::{
+    deserialize_verifier_object, serialize_verifier_object, VerifierObjectDecodeError,
+};
 #[cfg(feature = "host")]
 pub type JoltProverPreprocessing = GenericJoltProverPreprocessing<PCS, VerifierVC>;
 #[cfg(feature = "host")]
@@ -186,27 +190,6 @@ pub type RV64IMACProof = jolt_verifier::JoltProof<VerifierPCS, VerifierVC>;
 pub type JoltProof = RV64IMACProof;
 #[cfg(all(feature = "guest-verifier", not(feature = "host")))]
 pub type VerifierTrustedAdviceCommitment = DoryCommitment;
-
-#[cfg(any(feature = "host", feature = "guest-verifier"))]
-pub fn serialize_verifier_object<T: serde::Serialize>(
-    item: &T,
-) -> Result<Vec<u8>, bincode::error::EncodeError> {
-    bincode::serde::encode_to_vec(item, bincode::config::standard())
-}
-
-#[cfg(any(feature = "host", feature = "guest-verifier"))]
-pub fn deserialize_verifier_object<T: serde::de::DeserializeOwned>(
-    bytes: &[u8],
-) -> Result<T, bincode::error::DecodeError> {
-    let (value, consumed) = bincode::serde::decode_from_slice(bytes, bincode::config::standard())?;
-    if consumed == bytes.len() {
-        Ok(value)
-    } else {
-        Err(bincode::error::DecodeError::OtherString(
-            "trailing bytes in verifier object".to_string(),
-        ))
-    }
-}
 
 #[cfg(feature = "host")]
 pub fn serialize_and_print_size(
