@@ -68,7 +68,12 @@ register read-write check and the stage-5 register value evaluation, which
 read register operands and increments from the resident trace: no per-cycle
 `rd` index column passes from stage 4 to stage 5, and a cycle-first stage 4
 keeps no per-cycle columns (an address-first phase split keeps the eager
-stage-4 kernel). Combine
+stage-4 kernel). The `instruction-rows` family selects the stage-6b
+instruction RA virtualization kernel, which gathers its one-hot selectors
+from the resident trace until each fits 64 MiB dense, and not before the
+eager kernel's fourth bind. The other readers of the packed per-cycle
+instruction rows keep their eager kernels, so stage 5 still collects those
+rows. Combine
 families with `--streaming instruction-input,spartan,ram,registers`.
 Instruction-input, Spartan and register
 early rounds recompute from the resident trace until the dense tables, or for
@@ -76,8 +81,9 @@ the register read-write check one level of sparse entries, fit a fixed 4 GiB
 cap; the full trace remains resident. This is not a process-memory cap, and
 streaming can use more memory than eager kernels on small or padded traces.
 Streaming workload, CSV and trace names append `_streaming_<families>` in
-canonical order (`instruction_input`, `spartan`, `ram`, `registers`), so their run directories
-and `latest_` links stay separate from eager runs.
+canonical order (`instruction_input`, `spartan`, `ram`, `registers`,
+`instruction_rows`), so their run directories and `latest_` links stay separate
+from eager runs.
 The option belongs to `profile` only: `benchmark` sweeps have no streaming
 selection, and a resumed sweep ignores streaming profile artifacts.
 `summary.json` records the selection in `run.streaming_families`;

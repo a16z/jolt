@@ -4,8 +4,10 @@
 //! immediately. [`JoltBackend::optimized`] keeps the eager kernels;
 //! [`JoltBackend::with_streaming`] installs a selection.
 
+mod lazy_ra;
 mod pass;
 
+pub(crate) use lazy_ra::{RowIndexSource, StreamedFoldedRa, MATERIALIZE_BYTES};
 pub(crate) use pass::{
     bind_groups_in_place, dense_crossover, exact_task_fill, gruen_pair_pass, key_runs,
     product_endpoint_terms, split_at_tasks, task_ranges, FillMismatch, GruenSums, PairHalves,
@@ -16,6 +18,7 @@ use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
 
 use super::instruction_input::StreamingInstructionInput;
+use super::instruction_ra_virtualization::StreamingInstructionRaVirtualization;
 use super::ram_ra_claim_reduction::StreamingRamRaClaimReduction;
 use super::ram_ra_virtualization::StreamingRamRaVirtualization;
 use super::ram_raf_evaluation::StreamingRamRafEvaluation;
@@ -48,6 +51,14 @@ pub struct StreamingFamilies {
     /// stage 4 to stage 5, and under cycle-first binding stage 4 keeps no
     /// per-cycle columns. An address-first stage 4 keeps the default kernel.
     pub registers: bool,
+    /// Readers of the per-cycle instruction rows, which the default kernels
+    /// share from stage 5 on as a packed row cache: stage 6b's instruction RA
+    /// virtualization reads the witness's resident rows in its own passes.
+    /// The cache's other readers keep their default kernels, so stage 5 still
+    /// collects it. Stage 7's Hamming-weight claim reduction has no streaming
+    /// kernel: its default kernel reads the resident rows whenever no cache
+    /// is live.
+    pub instruction_rows: bool,
 }
 
 impl<F, PCS> JoltBackend<F, PCS>
@@ -64,6 +75,7 @@ where
             instruction_input,
             ram,
             registers,
+            instruction_rows,
         } = families;
         if spartan {
             self.spartan_outer_remainder = Box::new(StreamingOuterRemainder);
@@ -82,6 +94,9 @@ where
         if registers {
             self.registers_read_write = Box::new(StreamingRegistersReadWrite);
             self.registers_val_evaluation = Box::new(StreamingRegistersValEvaluation);
+        }
+        if instruction_rows {
+            self.instruction_ra_virtualization = Box::new(StreamingInstructionRaVirtualization);
         }
         self
     }

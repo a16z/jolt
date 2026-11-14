@@ -622,7 +622,11 @@ fn gather_product<F: JoltField, S: ChunkIndexSource>(
 /// second half by `challenge` (bit 1) — offset layout
 /// `b0 + 2·b1 + 4·b2`, matching the low bits of the original cycle index.
 /// Only lead columns carry branches; trailing columns pass through.
-fn double_branches<F: JoltField>(tables: Vec<Vec<F>>, factors: usize, challenge: F) -> Vec<Vec<F>> {
+pub(super) fn double_branches<F: JoltField>(
+    tables: Vec<Vec<F>>,
+    factors: usize,
+    challenge: F,
+) -> Vec<Vec<F>> {
     let one_minus = F::one() - challenge;
     let double = |(column, table): (usize, Vec<F>)| -> Vec<F> {
         if !column.is_multiple_of(factors) {
