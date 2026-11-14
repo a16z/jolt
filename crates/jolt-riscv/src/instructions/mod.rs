@@ -180,8 +180,12 @@ pub use a::LrD;
 pub use a::LrW;
 pub use a::ScD;
 pub use a::ScW;
+pub use i::Csrrc;
+pub use i::Csrrci;
 pub use i::Csrrs;
+pub use i::Csrrsi;
 pub use i::Csrrw;
+pub use i::Csrrwi;
 pub use i::Mret;
 pub use virt::AdviceLb;
 pub use virt::AdviceLd;
@@ -343,7 +347,8 @@ crate::for_each_instruction_kind!(define_source_instruction);
 /// satisfy `T: JoltInstructionRowData` on the `Flags` impls.
 ///
 /// Deliberately omitted instruction kinds (declared and re-exported above
-/// but not proven by Jolt): the Zicsr ops (`Csrrs`, `Csrrw`), `Mret`,
+/// but not proven by Jolt): the Zicsr ops (`Csrrw`, `Csrrs`, `Csrrc`,
+/// `Csrrwi`, `Csrrsi`, `Csrrci`), `Mret`,
 /// the atomic family (`Amo*`, `Lr*`, `Sc*`), and the advice-load helpers
 /// (`AdviceLb`/`Ld`/`Lh`/`Lw`). These are intentionally absent from
 /// `JoltInstruction` and from the flag-exclusivity tests below.
