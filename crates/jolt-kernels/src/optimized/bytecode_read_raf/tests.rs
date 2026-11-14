@@ -21,7 +21,7 @@ use jolt_witness::{JoltVmWitnessInputs, JoltWitnessOracle, ProgramSource, TraceB
 
 use super::super::instruction_read_raf::{SharedInstructionRows, SharedInstructionRowsWeak};
 use super::*;
-use crate::optimized::booleanity::testing::{alu_row, load_row, with_trace_backend};
+use crate::optimized::booleanity::testing::{alu_row, load_row, mixed_rows, with_trace_backend};
 #[cfg(feature = "field-inline")]
 use crate::optimized::field_registers_testing::structured_field_register_fixture;
 use crate::optimized::parity::{
@@ -141,7 +141,72 @@ impl AddressCase {
     }
 }
 
-/// `streaming` runs the address phase on the streaming kernel.
+/// The cycle-phase relation that follows an [`AddressCase`] bound to
+/// `r_address`, with its inputs.
+struct CycleCase {
+    relation: BytecodeReadRafCycle<Fr>,
+    challenges: BytecodeReadRafCyclePhaseCommittedChallenges<Fr>,
+    claims: BytecodeReadRafInputClaims<Fr>,
+    points: BytecodeReadRafInputClaims<Vec<Fr>>,
+}
+
+impl CycleCase {
+    fn new(backend: &TraceBackend, address: &AddressCase, r_address: Vec<Fr>) -> Self {
+        let stage_gammas = address.challenges.stage_gamma_powers();
+        let relation = BytecodeReadRafCycle::full(BytecodeReadRafCycleInputs {
+            dimensions: address.dimensions,
+            r_address,
+            stage_cycle_points: address.stage_points.stage_cycle_points.clone(),
+            entry_bytecode_index: address.entry_bytecode_index,
+            committed_chunk_bits: address.chunk_bits,
+            table_fold: Some(BytecodeReadRafTableFoldInputs {
+                bytecode: &backend.program_preprocessing().bytecode.bytecode,
+                register_read_write_point: &address.stage_points.register_read_write_point
+                    [..REGISTER_ADDRESS_BITS],
+                register_val_evaluation_point: &address.stage_points.register_val_evaluation_point
+                    [..REGISTER_ADDRESS_BITS],
+                stage_gammas: std::array::from_fn(|s| stage_gammas[s].as_slice()),
+            }),
+            #[cfg(feature = "field-inline")]
+            field_inline: FieldInlineBytecodeFold {
+                read_write_address: address.field_read_write_point[..FIELD_REGISTERS_LOG_K]
+                    .to_vec(),
+                read_write_cycle: address.field_read_write_point[FIELD_REGISTERS_LOG_K..].to_vec(),
+                val_evaluation_address: address.field_val_evaluation_point[..FIELD_REGISTERS_LOG_K]
+                    .to_vec(),
+                val_evaluation_cycle: address.field_val_evaluation_point[FIELD_REGISTERS_LOG_K..]
+                    .to_vec(),
+                gammas:
+                    jolt_verifier::stages::field_inline_bytecode::field_inline_stage_gamma_powers(
+                        &address.challenges,
+                    ),
+            },
+        })
+        .unwrap();
+        Self {
+            relation,
+            challenges: BytecodeReadRafCyclePhaseCommittedChallenges { gamma: fr(19) },
+            claims: BytecodeReadRafInputClaims::<Fr>::default(),
+            points: BytecodeReadRafInputClaims::<Vec<Fr>>::default(),
+        }
+    }
+
+    fn inputs(&self) -> ProverInputs<'_, Fr, BytecodeReadRafCycle<Fr>> {
+        ProverInputs {
+            relation: &self.relation,
+            claims: &self.claims,
+            points: &self.points,
+            challenges: &self.challenges,
+        }
+    }
+}
+
+fn session_holds_rows(session: &ProofSession) -> bool {
+    session.state::<SharedInstructionRows>().is_some()
+        || session.state::<SharedInstructionRowsWeak>().is_some()
+}
+
+/// `streaming` runs both phases on the streaming kernels.
 fn run_pair_on(backend: &TraceBackend, committed_program: bool, streaming: bool) {
     {
         let case = AddressCase::new(backend, committed_program);
@@ -162,8 +227,7 @@ fn run_pair_on(backend: &TraceBackend, committed_program: bool, streaming: bool)
             .prepare(&mut session, backend, case.inputs())
             .unwrap();
         assert_eq!(
-            session.state::<SharedInstructionRows>().is_some()
-                || session.state::<SharedInstructionRowsWeak>().is_some(),
+            session_holds_rows(&session),
             !streaming,
             "the default address phase parks the shared cycle rows; the streaming one collects none"
         );
@@ -192,65 +256,28 @@ fn run_pair_on(backend: &TraceBackend, committed_program: bool, streaming: bool)
         // cycle rows are reused, mirroring the production 6a→6b flow) and
         // the production r_address wiring (the reversed 6a point).
         let r_address: Vec<Fr> = address_sumcheck_challenges.iter().rev().copied().collect();
-        let stage_gammas = case.challenges.stage_gamma_powers();
-        let cycle_relation = BytecodeReadRafCycle::full(BytecodeReadRafCycleInputs {
-            dimensions: case.dimensions,
-            r_address,
-            stage_cycle_points: case.stage_points.stage_cycle_points.clone(),
-            entry_bytecode_index: case.entry_bytecode_index,
-            committed_chunk_bits: case.chunk_bits,
-            table_fold: Some(BytecodeReadRafTableFoldInputs {
-                bytecode: &backend.program_preprocessing().bytecode.bytecode,
-                register_read_write_point: &case.stage_points.register_read_write_point
-                    [..REGISTER_ADDRESS_BITS],
-                register_val_evaluation_point: &case.stage_points.register_val_evaluation_point
-                    [..REGISTER_ADDRESS_BITS],
-                stage_gammas: std::array::from_fn(|s| stage_gammas[s].as_slice()),
-            }),
-            #[cfg(feature = "field-inline")]
-            field_inline: FieldInlineBytecodeFold {
-                read_write_address: case.field_read_write_point[..FIELD_REGISTERS_LOG_K].to_vec(),
-                read_write_cycle: case.field_read_write_point[FIELD_REGISTERS_LOG_K..].to_vec(),
-                val_evaluation_address: case.field_val_evaluation_point[..FIELD_REGISTERS_LOG_K]
-                    .to_vec(),
-                val_evaluation_cycle: case.field_val_evaluation_point[FIELD_REGISTERS_LOG_K..]
-                    .to_vec(),
-                gammas:
-                    jolt_verifier::stages::field_inline_bytecode::field_inline_stage_gamma_powers(
-                        &case.challenges,
-                    ),
-            },
-        })
-        .unwrap();
-        let cycle_challenges = BytecodeReadRafCyclePhaseCommittedChallenges { gamma: fr(19) };
-        let cycle_claims = BytecodeReadRafInputClaims::<Fr>::default();
-        let cycle_input_points = BytecodeReadRafInputClaims::<Vec<Fr>>::default();
-
+        let cycle_case = CycleCase::new(backend, &case, r_address);
         let mut reference =
             <ReferenceBackend as PrepareKernel<Fr, BytecodeReadRafCycle<Fr>>>::prepare(
                 &ReferenceBackend,
                 &mut session,
                 backend,
-                ProverInputs {
-                    relation: &cycle_relation,
-                    claims: &cycle_claims,
-                    points: &cycle_input_points,
-                    challenges: &cycle_challenges,
-                },
+                cycle_case.inputs(),
             )
             .unwrap();
-        let mut optimized = OptimizedBytecodeReadRafCycle
-            .prepare(
-                &mut session,
-                backend,
-                ProverInputs {
-                    relation: &cycle_relation,
-                    claims: &cycle_claims,
-                    points: &cycle_input_points,
-                    challenges: &cycle_challenges,
-                },
-            )
+        let cycle: &dyn PrepareKernel<Fr, BytecodeReadRafCycle<Fr>> = if streaming {
+            &StreamingBytecodeReadRafCycle
+        } else {
+            &OptimizedBytecodeReadRafCycle
+        };
+        let mut optimized = cycle
+            .prepare(&mut session, backend, cycle_case.inputs())
             .unwrap();
+        assert_eq!(
+            session_holds_rows(&session),
+            !streaming,
+            "the streaming cycle phase collects no cycle rows"
+        );
 
         let claim = probe_input_claim(reference.as_mut());
         assert!(
@@ -265,8 +292,8 @@ fn run_pair_on(backend: &TraceBackend, committed_program: bool, streaming: bool)
             &cycle_sumcheck_challenges,
         );
         assert_eq!(
-            reference.output_claims(&cycle_claims).unwrap(),
-            optimized.output_claims(&cycle_claims).unwrap()
+            reference.output_claims(&cycle_case.claims).unwrap(),
+            optimized.output_claims(&cycle_case.claims).unwrap()
         );
     }
 }
@@ -287,20 +314,91 @@ fn bytecode_phases_match_reference_with_field_inline_instructions() {
     run_pair_with_field_inline_program(|backend| run_pair_on(backend, false, false));
 }
 
-/// The sample trace and 363 of 512 cycles leave a padding suffix, the latter
-/// after a walk that ends inside a block; 16 of 16 leave none.
+/// The sample trace, 363 of 512 cycles, 1,500 of 2,048 and 6,000 of 8,192
+/// leave a padding suffix, which the address walk meets inside a block; 16
+/// of 16 and 2,048 of 2,048 leave none; an empty trace is all suffix, and
+/// the cycle phase still holds cycle 0, for its entry term. The cycle
+/// phase's RA factors turn dense at the first bind on the sample trace, on
+/// 16 cycles and on the empty trace, at the third on 512 cycles and at the
+/// fourth on the longer traces: without doubling their branch tables for
+/// that bind up to 2,048 cycles, and after doubling them on 8,192, as on
+/// every long trace.
 #[test]
-fn streaming_address_phase_matches_reference_over_resident_rows() {
+fn streaming_phases_match_reference_over_resident_rows() {
     with_sample_backend(|backend| run_pair_on(backend, true, true));
     for (cycles, log_t) in [(363, 9), (16, 4)] {
         structured_fixture(cycles).with_plane(log_t, |backend| run_pair_on(backend, false, true));
+    }
+    for (log_t, rows) in [
+        (11, mixed_rows(1500)),
+        (11, mixed_rows(2048)),
+        (13, mixed_rows(6000)),
+        (2, Vec::new()),
+    ] {
+        with_trace_backend(log_t, 4, rows, |backend, _| {
+            run_pair_on(backend, false, true);
+        });
     }
 }
 
 #[cfg(feature = "field-inline")]
 #[test]
-fn streaming_address_phase_matches_reference_with_field_inline_instructions() {
+fn streaming_phases_match_reference_with_field_inline_instructions() {
     run_pair_with_field_inline_program(|backend| run_pair_on(backend, false, true));
+}
+
+/// A one-cycle domain has no round: the streaming cycle phase holds its RA
+/// factors dense from the start and opens the reference kernel's claims.
+#[test]
+fn streaming_cycle_phase_serves_a_one_cycle_domain() {
+    with_trace_backend(0, 4, mixed_rows(1), |backend, _| {
+        let address = AddressCase::new(backend, false);
+        let case = CycleCase::new(
+            backend,
+            &address,
+            synthetic_point(address.dimensions.log_k(), 101),
+        );
+        let mut session = ProofSession::default();
+        let mut reference =
+            <ReferenceBackend as PrepareKernel<Fr, BytecodeReadRafCycle<Fr>>>::prepare(
+                &ReferenceBackend,
+                &mut session,
+                backend,
+                case.inputs(),
+            )
+            .unwrap();
+        let mut streaming = StreamingBytecodeReadRafCycle
+            .prepare(&mut session, backend, case.inputs())
+            .unwrap();
+        assert_eq!(
+            reference.output_claims(&case.claims).unwrap(),
+            streaming.output_claims(&case.claims).unwrap()
+        );
+    });
+}
+
+/// Over a padded trace the streaming cycle kernel holds its coefficient
+/// table for the cycles before the padding only, and its dense RA rows for
+/// the bound indices that hold one.
+#[test]
+fn streaming_cycle_phase_tables_stop_at_the_padding() {
+    with_trace_backend(11, 4, mixed_rows(1500), |backend, _| {
+        let address = AddressCase::new(backend, false);
+        let case = CycleCase::new(
+            backend,
+            &address,
+            synthetic_point(address.dimensions.log_k(), 101),
+        );
+        let mut kernel = CycleKernel::streaming(backend, &case.inputs()).unwrap();
+        assert_eq!(kernel.combined.prefix_len(), 1500);
+        for round in 0..4 {
+            kernel.bind(fr(31 + round)).unwrap();
+        }
+        assert_eq!(
+            kernel.ra.lazy().map(LazyFoldedRa::prefix_len),
+            Some(1500usize.div_ceil(16))
+        );
+    });
 }
 
 #[test]
@@ -327,13 +425,13 @@ fn streaming_address_phase_rejects_a_bytecode_index_outside_the_table() {
     });
 }
 
-/// `with_streaming` puts the streaming kernel in the address slot. Streamed
-/// and default proofs are byte-equal, so only the kernel's behavior shows
-/// which one is installed: it refuses a witness without resident rows, which
-/// the default kernel collects. Dory stands in for the commitment scheme; the
-/// akita build's `optimized` takes another.
+/// `with_streaming` puts the streaming kernels in both bytecode read-RAF
+/// slots. Streamed and default proofs are byte-equal, so only a kernel's
+/// behavior shows which one is installed: each refuses a witness without
+/// resident rows, which the default kernels collect. Dory stands in for the
+/// commitment scheme; the akita build's `optimized` takes another.
 #[test]
-fn with_streaming_installs_the_bytecode_read_raf_address_kernel() {
+fn with_streaming_installs_both_bytecode_read_raf_kernels() {
     structured_fixture(7).with_plane(3, |resident| {
         // A configured domain shorter than the trace leaves no resident
         // rows; chunk visits still serve its `2^log_t` cycles.
@@ -346,19 +444,37 @@ fn with_streaming_installs_the_bytecode_read_raf_address_kernel() {
             ),
         );
         chunk_only.config.log_t = 1;
-        let case = AddressCase::new(&chunk_only, false);
+        let address = AddressCase::new(&chunk_only, false);
+        let cycle = CycleCase::new(
+            &chunk_only,
+            &address,
+            synthetic_point(address.dimensions.log_k(), 101),
+        );
         let prepare = |backend: JoltBackend<Fr, DoryScheme>| {
-            backend
-                .bytecode_read_raf_address
-                .prepare(&mut ProofSession::default(), &chunk_only, case.inputs())
-                .map(|_| ())
+            (
+                backend
+                    .bytecode_read_raf_address
+                    .prepare(&mut ProofSession::default(), &chunk_only, address.inputs())
+                    .map(|_| ()),
+                backend
+                    .bytecode_read_raf_cycle
+                    .prepare(&mut ProofSession::default(), &chunk_only, cycle.inputs())
+                    .map(|_| ()),
+            )
         };
-        prepare(JoltBackend::optimized()).unwrap();
+        let default = prepare(JoltBackend::optimized());
+        default.0.unwrap();
+        default.1.unwrap();
+        let streaming = prepare(JoltBackend::optimized().with_streaming(StreamingFamilies {
+            instruction_rows: true,
+            ..StreamingFamilies::default()
+        }));
         assert!(matches!(
-            prepare(JoltBackend::optimized().with_streaming(StreamingFamilies {
-                instruction_rows: true,
-                ..StreamingFamilies::default()
-            })),
+            streaming.0,
+            Err(KernelError::Witness(WitnessError::UnavailableView { .. }))
+        ));
+        assert!(matches!(
+            streaming.1,
             Err(KernelError::Witness(WitnessError::UnavailableView { .. }))
         ));
     });

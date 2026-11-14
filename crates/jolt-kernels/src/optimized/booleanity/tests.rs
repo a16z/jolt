@@ -5,7 +5,6 @@ use jolt_claims::{InputClaims, OutputClaims, SumcheckChallenges};
 use jolt_field::Prime128Offset6A23801F;
 use jolt_field::{Fr, Ring, Zero};
 use jolt_poly::EqPolynomial;
-use jolt_riscv::JoltTraceRow as TraceRow;
 use jolt_verifier::stages::relations::ConcreteSumcheckChallenges;
 use jolt_verifier::stages::stage6b::booleanity::BooleanityInputClaims;
 #[cfg(feature = "akita")]
@@ -16,10 +15,7 @@ use jolt_witness::{JoltVmWitnessInputs, WitnessError};
 use jolt_witness::{JoltWitnessOracle, TraceBackend};
 
 use super::super::instruction_read_raf::{SharedInstructionRows, SharedInstructionRowsWeak};
-use super::testing::{
-    alu_row, load_row, no_op_row, store_row, test_challenge, with_booleanity_backend,
-    with_trace_backend,
-};
+use super::testing::{mixed_rows, test_challenge, with_booleanity_backend, with_trace_backend};
 use super::*;
 use crate::optimized::one_hot_histograms::HistogramRow;
 use crate::optimized::support::BundleStore;
@@ -527,23 +523,6 @@ fn two_phase_flow_matches_reference_end_to_end() {
             )
             .unwrap();
     });
-}
-
-/// `len` rows of the fixture program: loads and stores over eleven RAM
-/// addresses, ALU rows of varied operands, and no-ops.
-fn mixed_rows(len: usize) -> Vec<TraceRow> {
-    (0..len as u64)
-        .map(|cycle| {
-            let address = 0x8000_1000 + 8 * (cycle % 11);
-            match cycle % 5 {
-                0 => load_row(address),
-                1 => alu_row(cycle.wrapping_mul(0x9E37_79B9_7F4A_7C15)),
-                2 => store_row(address),
-                3 => no_op_row(),
-                _ => alu_row(cycle),
-            }
-        })
-        .collect()
 }
 
 /// An address-phase relation over `dimensions` with its prover inputs.

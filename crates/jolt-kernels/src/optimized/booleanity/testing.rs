@@ -121,6 +121,23 @@ pub(crate) fn alu_row(value: u64) -> TraceRow {
     .unwrap()
 }
 
+/// `len` rows of the fixture program: loads and stores over eleven RAM
+/// addresses, ALU rows of varied operands, and no-ops.
+pub(crate) fn mixed_rows(len: usize) -> Vec<TraceRow> {
+    (0..len as u64)
+        .map(|cycle| {
+            let address = 0x8000_1000 + 8 * (cycle % 11);
+            match cycle % 5 {
+                0 => load_row(address),
+                1 => alu_row(cycle.wrapping_mul(0x9E37_79B9_7F4A_7C15)),
+                2 => store_row(address),
+                3 => no_op_row(),
+                _ => alu_row(cycle),
+            }
+        })
+        .collect()
+}
+
 pub(crate) fn with_booleanity_backend<R>(
     log_t: usize,
     log_k_chunk: u8,
