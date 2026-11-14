@@ -310,7 +310,7 @@ impl JoltDevice {
     }
 
     pub fn is_output(&self, address: u64) -> bool {
-        address >= self.memory_layout.output_start && address < self.memory_layout.termination
+        address >= self.memory_layout.output_start && address < self.memory_layout.output_end
     }
 
     pub fn is_panic(&self, address: u64) -> bool {

@@ -18,11 +18,11 @@ use jolt_program::execution::{
 use jolt_riscv::instructions::VirtualHostIO;
 use jolt_riscv::{JoltInstructionKind as Kind, JoltInstructionRow, NormalizedOperands};
 use jolt_tracer_x86::harness::{
-    compile_program, memory_config, run_program, single_row_program, terminal_row, Outcome,
-    SCRATCH_START, TEST_ADDR,
+    compile_program, memory_config, run_program, single_row_program, terminal_row, ExitReason,
+    Outcome, SCRATCH_START, TEST_ADDR,
 };
 
-use jolt_tracer_x86::X86TracerBackend;
+use jolt_tracer_x86::{RunOutput, X86TracerBackend};
 
 const REGS: usize = common::constants::REGISTER_COUNT as usize;
 
@@ -100,9 +100,11 @@ fn out_of_bounds_load_reports_a_fault() {
 
     let outcome = run_program(&program, &pre, &[], &[]).expect("run should not error");
     assert_eq!(
-        outcome.exit, 2,
+        outcome.exit,
+        ExitReason::FaultOutOfBounds as u64,
         "expected the out-of-bounds exit reason, got {} ({:?})",
-        outcome.exit, outcome.helper_error
+        outcome.exit,
+        outcome.helper_error
     );
     assert_eq!(
         outcome.fault_addr, pre[1],
@@ -123,9 +125,11 @@ fn out_of_bounds_store_reports_a_fault() {
 
     let outcome = run_program(&program, &pre, &[], &[]).expect("run should not error");
     assert_eq!(
-        outcome.exit, 2,
+        outcome.exit,
+        ExitReason::FaultOutOfBounds as u64,
         "expected the out-of-bounds exit reason, got {} ({:?})",
-        outcome.exit, outcome.helper_error
+        outcome.exit,
+        outcome.helper_error
     );
 }
 
@@ -155,9 +159,11 @@ fn store_into_stack_canary_reports_a_fault() {
     for address in [stack_end, stack_end + 8, last_doubleword] {
         let outcome = store_to(address);
         assert_eq!(
-            outcome.exit, 4,
+            outcome.exit,
+            ExitReason::FaultHelper as u64,
             "store to {address:#x}: expected the helper-fault exit reason, got {} ({:?})",
-            outcome.exit, outcome.helper_error
+            outcome.exit,
+            outcome.helper_error
         );
         let message = outcome.helper_error.expect("a helper error message");
         assert!(
@@ -177,9 +183,11 @@ fn stores_next_to_stack_canary_succeed() {
     for address in [stack_end - 8, stack_end + STACK_CANARY_SIZE] {
         let outcome = store_to(address);
         assert_eq!(
-            outcome.exit, 1,
-            "store to {address:#x}: expected a clean termination, got {} ({:?})",
-            outcome.exit, outcome.helper_error
+            outcome.exit,
+            ExitReason::HaltedSuccess as u64,
+            "store to {address:#x}: expected the terminal halt, got {} ({:?})",
+            outcome.exit,
+            outcome.helper_error
         );
     }
 }
@@ -194,9 +202,11 @@ fn in_range_unmapped_jump_reports_bad_target() {
 
     let outcome = run_program(&program, &pre, &[], &[]).expect("run should not error");
     assert_eq!(
-        outcome.exit, 3,
+        outcome.exit,
+        ExitReason::FaultBadJumpTarget as u64,
         "expected the bad-jump exit reason, got {} ({:?})",
-        outcome.exit, outcome.helper_error
+        outcome.exit,
+        outcome.helper_error
     );
     assert_eq!(outcome.fault_addr, TEST_ADDR + 2);
 }
@@ -207,16 +217,19 @@ fn in_range_unmapped_jump_reports_bad_target() {
 fn static_branch_to_unmapped_target_faults_only_when_taken() {
     let target = TEST_ADDR + 12;
     let program = single_row_program(row(Kind::BEQ, Some(1), None, (target - TEST_ADDR).into()));
-    for (x1, exit) in [(1, 1), (0, 3)] {
+    for (x1, exit) in [
+        (1, ExitReason::HaltedSuccess),
+        (0, ExitReason::FaultBadJumpTarget),
+    ] {
         let mut pre = [0u64; REGS];
         pre[1] = x1;
         let outcome = run_program(&program, &pre, &[], &[]).expect("run should not error");
         assert_eq!(
-            outcome.exit, exit,
+            outcome.exit, exit as u64,
             "x1 = {x1}: unexpected exit reason ({:?})",
             outcome.helper_error
         );
-        if exit == 3 {
+        if exit == ExitReason::FaultBadJumpTarget {
             assert_eq!(outcome.fault_addr, target);
         }
     }
@@ -263,7 +276,9 @@ fn loads_reject_the_padding_between_io_end_and_ram() {
                 TEST_ADDR,
             );
             let inputs = TraceInputs::new(Vec::new(), Vec::new(), Vec::new(), config);
-            let result = X86TracerBackend::new().fast_run(&program, inputs);
+            let result = X86TracerBackend::new()
+                .run_machine(&program, inputs)
+                .and_then(RunOutput::require_halt);
             if accepted {
                 let _ = result.expect("load of the final I/O word");
             } else {
@@ -283,7 +298,7 @@ fn device_load_failures_report_io_overflow() {
     pre[1] = layout.io_end + 8;
     let program = single_row_program(row(Kind::LD, Some(1), Some(2), 0));
     let load = run_program(&program, &pre, &[], &[]).expect("run overflowing load");
-    assert_eq!(load.exit, 4);
+    assert_eq!(load.exit, ExitReason::FaultHelper as u64);
     assert!(load
         .helper_error
         .expect("load error")
@@ -298,7 +313,12 @@ fn device_load_failures_report_io_overflow() {
         pre[12] = 1;
         pre[13] = u64::from(JOLT_PRINT_STRING);
         let read = run_program(&program, &pre, &[], &[]).expect("run overflowing host read");
-        assert_eq!(read.exit, 1, "{:?}", read.helper_error);
+        assert_eq!(
+            read.exit,
+            ExitReason::HaltedSuccess as u64,
+            "{:?}",
+            read.helper_error
+        );
         assert_eq!(read.advice_tape, [] as [u8; 0]);
     }
 }
@@ -319,7 +339,8 @@ fn advice_write_follows_guest_load_bounds() {
         pre[12] = 1;
         let outcome = run_program(&program, &pre, &[0xab], &[]).expect("run advice write");
         assert_eq!(
-            outcome.exit, 1,
+            outcome.exit,
+            ExitReason::HaltedSuccess as u64,
             "address {address:#x}: {:?}",
             outcome.helper_error
         );
@@ -403,8 +424,79 @@ fn last_heap_word_survives_checkpoints() {
     for offset in [1168, 1176] {
         let outside = heap_word_program(&config, offset, 0);
         let inputs = TraceInputs::new(Vec::new(), Vec::new(), Vec::new(), config);
-        assert!(X86TracerBackend::new().fast_run(&outside, inputs).is_err());
+        assert!(X86TracerBackend::new()
+            .run_machine(&outside, inputs)
+            .and_then(RunOutput::require_halt)
+            .is_err());
     }
+}
+
+#[test]
+fn run_machine_rejects_programs_without_elf_bytes() {
+    let program = single_row_program(terminal_row(TEST_ADDR));
+    let inputs = TraceInputs::new(Vec::new(), Vec::new(), Vec::new(), memory_config());
+    assert!(matches!(
+        X86TracerBackend::new().run_machine(&program, inputs),
+        Err(TraceError::MissingElfBytes)
+    ));
+}
+
+#[test]
+fn run_machine_accepts_stalls_until_halt_is_required() {
+    for kind in [Kind::JoltSuccess, Kind::JoltPanic, Kind::BEQ] {
+        let terminal = if kind == Kind::BEQ {
+            let mut branch = row(kind, Some(0), None, 0);
+            branch.operands.rs2 = Some(0);
+            branch
+        } else {
+            let mut halt = terminal_row(TEST_ADDR);
+            halt.instruction_kind = kind;
+            halt
+        };
+        let program = JoltProgram::from_parts(
+            minimal_elf(TEST_ADDR),
+            vec![terminal],
+            Vec::new(),
+            RAM_START_ADDRESS + 1024,
+            TEST_ADDR,
+        );
+        let inputs = TraceInputs::new(Vec::new(), Vec::new(), Vec::new(), memory_config());
+        let output = X86TracerBackend::new()
+            .run_machine(&program, inputs)
+            .expect("machine run");
+        assert_eq!(output.trace_len, 1);
+        if kind == Kind::BEQ {
+            assert!(matches!(
+                output.require_halt(),
+                Err(TraceError::EndedWithoutHalt { pc: TEST_ADDR })
+            ));
+        } else {
+            assert_eq!(output.require_halt().expect("halted run").trace_len, 1);
+        }
+    }
+}
+
+#[test]
+fn tracing_rejects_a_stall() {
+    let mut stall = row(Kind::BEQ, Some(0), None, 0);
+    stall.operands.rs2 = Some(0);
+    let program = JoltProgram::from_parts(
+        minimal_elf(TEST_ADDR),
+        vec![stall],
+        Vec::new(),
+        RAM_START_ADDRESS + 1024,
+        TEST_ADDR,
+    );
+    let inputs = TraceInputs::new(Vec::new(), Vec::new(), Vec::new(), memory_config());
+    let mut backend = X86TracerBackend::new();
+    assert!(matches!(
+        backend.trace(&program, inputs.clone()),
+        Err(TraceError::EndedWithoutHalt { pc: TEST_ADDR })
+    ));
+    assert!(matches!(
+        backend.execute(&program, inputs, 1),
+        Err(TraceError::EndedWithoutHalt { pc: TEST_ADDR })
+    ));
 }
 
 fn minimal_elf(entry: u64) -> Vec<u8> {
