@@ -190,7 +190,7 @@ mod tests {
         let second = guest_target_dir("/checkouts/second");
 
         assert_ne!(first, second);
-        // rust.yml deletes this directory by name before saving the cache.
+        // CI jobs that save a cache of target/ delete this directory by name.
         let cache_root = Some(Path::new("/shared/target/jolt-guest-targets"));
         assert_eq!(first.parent(), cache_root);
         assert_eq!(second.parent(), cache_root);

@@ -27,8 +27,8 @@ pub fn main() {
 
     let save_to_disk = std::env::args().any(|arg| arg == "--save");
 
-    let target_dir = "/tmp/jolt-guest-targets";
-    let mut program = guest::compile_recover(target_dir);
+    let target_dir = jolt_sdk::host::default_target_dir();
+    let mut program = guest::compile_recover(&target_dir.to_string_lossy());
 
     let shared_preprocessing = guest::preprocess_shared_recover(&mut program).unwrap();
     let prover_preprocessing = guest::preprocess_prover_recover(shared_preprocessing.clone());

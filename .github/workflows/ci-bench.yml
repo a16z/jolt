@@ -57,3 +57,10 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           # Push and deploy GitHub pages branch automatically
           auto-push: true
+
+      # The example hosts build their guests into target/jolt-guest-targets,
+      # and both caches above save target/. The toolchain action's cache is
+      # saved after a failed run too. See the same step in rust.yml.
+      - name: Drop guest builds before the cache saves
+        if: always()
+        run: rm -rf target/jolt-guest-targets

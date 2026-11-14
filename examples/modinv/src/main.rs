@@ -4,14 +4,14 @@ use tracing::info;
 pub fn main() {
     tracing_subscriber::fmt::init();
 
-    let target_dir = "/tmp/jolt-guest-targets";
+    let target_dir = jolt_sdk::host::default_target_dir();
 
     let a = 3u64;
     let m = 11u64;
 
     info!("Computing modular inverse of {} modulo {}", a, m);
 
-    let mut program = guest::compile_modinv(target_dir);
+    let mut program = guest::compile_modinv(&target_dir.to_string_lossy());
     let shared_preprocessing = guest::preprocess_shared_modinv(&mut program).unwrap();
     let prover_preprocessing = guest::preprocess_prover_modinv(shared_preprocessing.clone());
     let verifier_preprocessing =

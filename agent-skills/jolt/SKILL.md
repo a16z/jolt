@@ -142,8 +142,8 @@ pub fn main() {
         tracing_subscriber::EnvFilter::from_default_env()
     ).init();
 
-    let target_dir = "/tmp/jolt-guest-targets";
-    let mut program = guest::compile_<fn>(target_dir);
+    let target_dir = jolt_sdk::host::default_target_dir();
+    let mut program = guest::compile_<fn>(&target_dir.to_string_lossy());
     let shared = guest::preprocess_shared_<fn>(&mut program).unwrap();
     let prover_prep = guest::preprocess_prover_<fn>(shared);
     let verifier_prep = guest::verifier_preprocessing_from_prover_<fn>(&prover_prep);

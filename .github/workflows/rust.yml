@@ -471,8 +471,9 @@ jobs:
         run: cargo nextest run --cargo-profile ci -p jolt-prover --features akita,profiling --lib -E 'test(profile::tests)' --cargo-quiet
       # Guest builds land in target/jolt-guest-targets, and rust-cache saves
       # the dependency artifacts of every profile directory under target/:
-      # about 300 MB per guest. This job is the only cache saver that builds
-      # guests.
+      # about 300 MB per guest. Every job that saves a cache of target/ and
+      # builds guests ends with this step; ci-bench.yml and fuzz-crates.yml
+      # each have one such job.
       - name: Drop guest builds before the cache save
         run: rm -rf target/jolt-guest-targets
 

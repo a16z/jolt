@@ -15,13 +15,13 @@ fn main() {
     #[cfg(any(feature = "nostd", feature = "std"))]
     let should_panic = env_flag("JOLT_BT_TRIGGER").unwrap_or(true);
     #[cfg(any(feature = "nostd", feature = "std"))]
-    let target_dir = "/tmp/jolt-guest-targets";
+    let target_dir = jolt_sdk::host::default_target_dir();
 
     #[cfg(feature = "nostd")]
-    run_nostd(target_dir, should_panic);
+    run_nostd(&target_dir.to_string_lossy(), should_panic);
 
     #[cfg(feature = "std")]
-    run_std(target_dir, should_panic);
+    run_std(&target_dir.to_string_lossy(), should_panic);
 
     #[cfg(not(any(feature = "nostd", feature = "std")))]
     {

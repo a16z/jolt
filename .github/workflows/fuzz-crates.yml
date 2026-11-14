@@ -221,3 +221,9 @@ jobs:
           path: ${{ matrix.directory }}/coverage/
           if-no-files-found: error
           retention-days: 14
+      # The jolt-eval targets build guests into target/jolt-guest-targets, and
+      # the toolchain action's cache saves target/, after a failed run too.
+      # See the same step in rust.yml.
+      - name: Drop guest builds before the cache save
+        if: always()
+        run: rm -rf target/jolt-guest-targets

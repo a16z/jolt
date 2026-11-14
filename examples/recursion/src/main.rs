@@ -904,9 +904,10 @@ fn generate_proofs(
         guest.name()
     );
 
-    let target_dir = "/tmp/jolt-guest-targets";
+    let target_dir = jolt_sdk::host::default_target_dir();
 
-    let all_groups_data = collect_guest_proofs(guest, target_dir, false, mode, proofs);
+    let all_groups_data =
+        collect_guest_proofs(guest, &target_dir.to_string_lossy(), false, mode, proofs);
 
     save_proof_data(guest, &all_groups_data, workdir);
 
@@ -1064,10 +1065,10 @@ fn run_recursion_proof(
     memory_config: MemoryConfig,
     max_trace_length: usize,
 ) {
-    let target_dir = "/tmp/jolt-guest-targets";
+    let target_dir = jolt_sdk::host::default_target_dir();
 
     let mut program = configured_recursion_program(memory_config);
-    program.build(target_dir);
+    program.build(&target_dir.to_string_lossy());
     match run_config {
         RunConfig::CheckInputFraming => {
             // Build once: malformed inputs must not change the image or its capacity.
