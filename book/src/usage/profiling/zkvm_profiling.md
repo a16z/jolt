@@ -69,18 +69,19 @@ read register operands and increments from the resident trace: no per-cycle
 `rd` index column passes from stage 4 to stage 5, and a cycle-first stage 4
 keeps no per-cycle columns (an address-first phase split keeps the eager
 stage-4 kernel). The `instruction-rows` family selects the stage-5
-instruction read-RAF kernel, the booleanity kernels of stages 6a and 6b, the
-stage-6a bytecode read-RAF address phase and the stage-6b instruction RA
-virtualization kernel. Stage 5 scans the resident trace once per address
-phase and gathers its virtual RA polynomials from it until the bind at which
-the eager kernel's tables turn dense. The stage-6a address phases accumulate
-their tables from the resident trace; the stage-6b kernels gather their
-one-hot selectors from it until each fits 64 MiB dense, and not before the
-eager kernels' fourth bind. These passes and the tables they fill stop at the
-trace's constant padding suffix, as the eager kernels' tables do. The
-stage-6b bytecode read-RAF cycle phase keeps its eager kernel, so the packed
-per-cycle instruction rows are no longer collected in stage 5 but in stage
-6b, for that kernel alone. Combine
+instruction read-RAF kernel, the booleanity and bytecode read-RAF kernels of
+stages 6a and 6b and the stage-6b instruction RA virtualization kernel.
+Stage 5 scans the resident trace once per address phase and gathers its
+virtual RA polynomials from it until the bind at which the eager kernel's
+tables turn dense. The stage-6a address phases accumulate their tables from
+the resident trace. The stage-6b booleanity and instruction RA
+virtualization kernels gather their one-hot selectors from it until each
+fits 64 MiB dense, and not before the eager kernels' fourth bind; the
+stage-6b bytecode read-RAF cycle phase gathers its RA factors from it until
+the bind at which the eager kernel's turn dense. These passes and the tables
+they fill stop at the trace's constant padding suffix, as the eager kernels'
+tables do. With the family selected, no kernel collects the packed per-cycle
+instruction rows that the eager kernels share from stage 5 on. Combine
 families with `--streaming instruction-input,spartan,ram,registers`.
 Instruction-input, Spartan and register
 early rounds recompute from the resident trace until the dense tables, or for

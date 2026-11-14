@@ -197,8 +197,25 @@ impl<F: JoltField, S: RowIndexSource> StreamedFoldedRa<F, S> {
         Ok(family)
     }
 
-    fn num_polys(&self) -> usize {
+    pub(crate) fn num_polys(&self) -> usize {
         self.tables.len() / self.factors
+    }
+
+    /// The first cycle of the constant suffix, at most the domain's cycles.
+    pub(crate) fn prefix_len(&self) -> usize {
+        self.prefix
+    }
+
+    /// Every polynomial's value on the constant suffix, at any depth.
+    pub(crate) fn tail_values(&self) -> &[F] {
+        &self.tail
+    }
+
+    /// The current pair rows that hold a cycle before the constant suffix.
+    /// `prefix` is at most the domain's cycles ([`Self::over`]), so these are
+    /// at most its pair rows and their cycles cannot overflow.
+    fn prefix_pairs(&self) -> usize {
+        self.prefix.div_ceil(2usize << self.depth)
     }
 
     /// Every polynomial's bound value at the index whose `2^depth` unbound
@@ -241,20 +258,62 @@ impl<F: JoltField, S: RowIndexSource> StreamedFoldedRa<F, S> {
         }
     }
 
+    /// Folds the current pair rows `y` that hold a cycle before the constant
+    /// suffix: `visit(state, y, lo(y), hi(y))`, where `lo(y)` and `hi(y)` hold
+    /// every polynomial's bound values at indices `2y` and `2y + 1`. The rows
+    /// split into [`task_ranges`] of whole pairs; each task visits its rows
+    /// once, serially, folding them into one `init()`, and `merge` joins the
+    /// tasks' states, of which `init()` must be an identity. Every callback
+    /// holds whole pairs, so no row's values depend on where a callback or a
+    /// task ends. Every later pair row holds [`Self::tail_values`] at both
+    /// indices and is left to the caller.
+    pub(crate) fn fold_pairs<A: Send>(
+        &self,
+        init: impl Fn() -> A + Sync,
+        visit: impl Fn(&mut A, usize, &[F], &[F]) + Sync,
+        merge: impl Fn(A, A) -> A + Sync,
+    ) -> Result<A, WitnessError> {
+        let pair = 2usize << self.depth;
+        let task = |range: &Range<usize>| -> Result<A, WitnessError> {
+            let mut state = init();
+            let mut hot = vec![None; self.tables.len()];
+            let mut lo = vec![F::zero(); self.num_polys()];
+            let mut hi = vec![F::zero(); self.num_polys()];
+            self.rows
+                .visit(range.clone(), callback_rows(pair), |start, block| {
+                    for (y, rows) in (start / pair..).zip(block.chunks_exact(pair)) {
+                        let (low, high) = rows.split_at(pair / 2);
+                        self.gather(low, &mut hot, &mut lo);
+                        self.gather(high, &mut hot, &mut hi);
+                        visit(&mut state, y, &lo, &hi);
+                    }
+                    Ok(())
+                })?;
+            Ok(state)
+        };
+        let ranges = task_ranges(self.prefix_pairs() * pair, pair);
+        #[cfg(feature = "parallel")]
+        return ranges
+            .par_iter()
+            .map(task)
+            .try_reduce(&init, |left, right| Ok(merge(left, right)));
+        #[cfg(not(feature = "parallel"))]
+        ranges.iter().try_fold(init(), |state, range| {
+            task(range).map(|part| merge(state, part))
+        })
+    }
+
     /// `Σ_y E(y) · pair_terms(y, lo(y), hi(y))` over the current pair rows
-    /// `y`, where `lo(y)` and `hi(y)` hold every polynomial's bound values at
-    /// indices `2y` and `2y + 1`, `pair_terms(scratch, y, lo, hi, terms)`
-    /// writes the row's `terms` summands, and `E = e_out ⊗ e_in` are `eq`'s
-    /// current tables. The pair rows that hold a cycle before the constant
-    /// suffix split into [`task_ranges`] of whole pairs; each task visits its
-    /// rows once, serially, and keeps one `scratch()`. Every callback holds
-    /// whole pairs and a pair is weighted on its own, so no sum depends on
-    /// where a callback or a task ends. Every later pair row holds the suffix
-    /// values at both indices: `pair_terms` runs once for all of them, at the
-    /// first, and [`GruenSplitEqPolynomial::suffix_weight`] weighs its
-    /// summands. Whatever else `pair_terms` reads by `y` must therefore be
-    /// constant from that row on ([`Self::factored`]'s `min_prefix`).
-    pub(crate) fn sum_pair_terms<T>(
+    /// `y`, where `pair_terms(scratch, y, lo, hi, terms)` writes the row's
+    /// `terms` summands and `E = e_out ⊗ e_in` are `eq`'s current tables. The
+    /// pair rows that hold a cycle before the constant suffix are summed in
+    /// one [`Self::fold_pairs`], each task keeping one `scratch()` and each
+    /// pair weighted on its own. `pair_terms` runs once for all later pair
+    /// rows, at the first, and [`GruenSplitEqPolynomial::suffix_weight`]
+    /// weighs its summands. Whatever else `pair_terms` reads by `y` must
+    /// therefore be constant from that row on ([`Self::factored`]'s
+    /// `min_prefix`).
+    pub(crate) fn sum_pair_terms<T: Send>(
         &self,
         eq: &GruenSplitEqPolynomial<F>,
         terms: usize,
@@ -263,50 +322,29 @@ impl<F: JoltField, S: RowIndexSource> StreamedFoldedRa<F, S> {
     ) -> Result<Vec<F>, WitnessError> {
         let e_out = eq.e_out_current();
         let e_in = eq.e_in_current();
-        let pair = 2usize << self.depth;
-        // `prefix` is at most the domain's cycles ([`Self::over`]), so these
-        // are at most its pair rows and their cycles cannot overflow.
-        let prefix_pairs = self.prefix.div_ceil(pair);
-        let zero = || vec![F::Accumulator::default(); terms];
-        let task = |range: &Range<usize>| -> Result<Vec<F::Accumulator>, WitnessError> {
-            let mut scratch = scratch();
-            let mut hot = vec![None; self.tables.len()];
-            let mut lo = vec![F::zero(); self.num_polys()];
-            let mut hi = vec![F::zero(); self.num_polys()];
-            let mut values = vec![F::zero(); terms];
-            let mut total = zero();
-            self.rows
-                .visit(range.clone(), callback_rows(pair), |start, block| {
-                    for (y, rows) in (start / pair..).zip(block.chunks_exact(pair)) {
-                        let (low, high) = rows.split_at(pair / 2);
-                        self.gather(low, &mut hot, &mut lo);
-                        self.gather(high, &mut hot, &mut hi);
-                        pair_terms(&mut scratch, y, &lo, &hi, &mut values);
-                        let weight = e_out[y / e_in.len()] * e_in[y % e_in.len()];
-                        for (total, value) in total.iter_mut().zip(&values) {
-                            total.fmadd(weight, *value);
-                        }
-                    }
-                    Ok(())
-                })?;
-            Ok(total)
-        };
-        let merge = |mut left: Vec<F::Accumulator>, right: Vec<F::Accumulator>| {
-            for (left, right) in left.iter_mut().zip(right) {
-                left.merge(right);
-            }
-            left
-        };
-        let ranges = task_ranges(prefix_pairs * pair, pair);
-        #[cfg(feature = "parallel")]
-        let mut total = ranges
-            .par_iter()
-            .map(task)
-            .try_reduce(zero, |left, right| Ok(merge(left, right)))?;
-        #[cfg(not(feature = "parallel"))]
-        let mut total = ranges.iter().try_fold(zero(), |total, range| {
-            task(range).map(|part| merge(total, part))
-        })?;
+        let (_, _, mut total) = self.fold_pairs(
+            || {
+                (
+                    scratch(),
+                    vec![F::zero(); terms],
+                    vec![F::Accumulator::default(); terms],
+                )
+            },
+            |(scratch, values, total), y, lo, hi| {
+                pair_terms(scratch, y, lo, hi, values);
+                let weight = e_out[y / e_in.len()] * e_in[y % e_in.len()];
+                for (total, value) in total.iter_mut().zip(values.iter()) {
+                    total.fmadd(weight, *value);
+                }
+            },
+            |mut left, right| {
+                for (left, right) in left.2.iter_mut().zip(right.2) {
+                    left.merge(right);
+                }
+                left
+            },
+        )?;
+        let prefix_pairs = self.prefix_pairs();
         if prefix_pairs < e_out.len() * e_in.len() {
             let mut values = vec![F::zero(); terms];
             pair_terms(
@@ -544,14 +582,16 @@ mod tests {
 
     /// Binds `family`, whose polynomials are products of `factors` columns
     /// over [`padded_rows`] and whose constant suffix starts at cycle
-    /// `suffix`, beside dense multilinear binds of those products: before
-    /// each bind the pair sums of two summands, one mixing two polynomials
-    /// and both halves and one reading the pair row's index up to the first
-    /// row of the suffix, equal the dense sums over the whole domain. Bind
-    /// `target`, and none before it, returns the dense state: the bound
-    /// polynomials' rows that hold a cycle before the suffix, and their
-    /// values past those from its tail. Returns whether that bind doubled the
-    /// branch tables.
+    /// `suffix`, beside dense multilinear binds of those products: the
+    /// family's suffix values are the products' at the last cycle, and before
+    /// each bind a fold visits each pair row that holds a cycle before the
+    /// suffix once, with the dense pair values, and the pair sums of two
+    /// summands, one mixing two polynomials and both halves and one reading
+    /// the pair row's index up to the first row of the suffix, equal the
+    /// dense sums over the whole domain. Bind `target`, and none before it,
+    /// returns the dense state: the bound polynomials' rows that hold a cycle
+    /// before the suffix, and their values past those from its tail. Returns
+    /// whether that bind doubled the branch tables.
     fn check_family<F: JoltField>(
         rounds: usize,
         prefix: usize,
@@ -592,7 +632,29 @@ mod tests {
                 .is_none(),
             "{case}"
         );
+        assert_eq!(family.prefix_len(), suffix, "{case}");
+        let last_cycle: Vec<F> = dense
+            .iter()
+            .map(|poly| poly.evals()[poly.len() - 1])
+            .collect();
+        assert_eq!(family.tail_values(), last_cycle, "{case}");
         for depth in 0..target {
+            let at = |j: usize| -> Vec<F> { dense.iter().map(|poly| poly.evals()[j]).collect() };
+            let mut pairs = family
+                .fold_pairs(
+                    Vec::new,
+                    |pairs, y, lo, hi| pairs.push((y, lo.to_vec(), hi.to_vec())),
+                    |mut left, right| {
+                        left.extend(right);
+                        left
+                    },
+                )
+                .unwrap();
+            pairs.sort_unstable_by_key(|(y, _, _)| *y);
+            let expected_pairs: Vec<_> = (0..suffix.div_ceil(2 << depth))
+                .map(|y| (y, at(2 * y), at(2 * y + 1)))
+                .collect();
+            assert_eq!(pairs, expected_pairs, "{case}, depth {depth}");
             let (e_out, e_in) = (eq.e_out_current(), eq.e_in_current());
             let by_row = |y: usize| F::from_u64(y.min(suffix.div_ceil(2 << depth)) as u64);
             let mut expected = vec![F::zero(); 2];

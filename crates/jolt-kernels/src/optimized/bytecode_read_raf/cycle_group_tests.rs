@@ -30,7 +30,7 @@ fn check_group_samples<F: JoltField>() {
         let kernel = CycleKernel {
             progress: RoundProgress::new(GROUPS.ilog2() as usize + 1),
             degree,
-            ra: LazyFoldedRa::Dense(ra.clone()),
+            ra: CycleRa::Lazy(LazyFoldedRa::Dense(ra.clone())),
             combined: EqPrefix::from_evals(combined.evals().to_vec()),
             #[cfg(feature = "akita")]
             fused_inc: LazyFusedInc::Prefix {
@@ -62,7 +62,7 @@ fn check_group_samples<F: JoltField>() {
         for y in 0..GROUPS {
             let start: Vec<F> = (0..degree).map(|_| F::random(&mut rng)).collect();
             let mut acc = start.clone();
-            kernel.accumulate_group(y, &mut acc, &mut pairs);
+            kernel.accumulate_group(kernel.ra.lazy().unwrap(), y, &mut acc, &mut pairs);
             for (slot, (acc, start)) in acc.iter().zip(&start).enumerate() {
                 let t = F::from_u64(if slot == 0 { 0 } else { slot as u64 + 1 });
                 let coefficient = at(&combined, y, t);

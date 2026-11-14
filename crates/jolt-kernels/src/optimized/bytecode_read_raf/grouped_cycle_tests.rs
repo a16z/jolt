@@ -72,7 +72,7 @@ fn check<F: JoltField>(num_ra: usize, long_period: bool) {
     let mut kernel = CycleKernel {
         progress: RoundProgress::new(log_n),
         degree,
-        ra: LazyFoldedRa::new(tables, source),
+        ra: CycleRa::Lazy(LazyFoldedRa::new(tables, source)),
         combined: EqPrefix::from_evals(combined.evals().to_vec()),
         #[cfg(feature = "akita")]
         fused_inc: LazyFusedInc::Prefix {
@@ -118,7 +118,7 @@ fn check<F: JoltField>(num_ra: usize, long_period: bool) {
             1 => F::one(),
             _ => F::random(&mut rng),
         };
-        kernel.bind(challenge);
+        kernel.bind(challenge).unwrap();
         combined.bind_with_order(challenge, BindingOrder::LowToHigh);
         for poly in &mut dense {
             poly.bind_with_order(challenge, BindingOrder::LowToHigh);

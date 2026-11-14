@@ -274,10 +274,14 @@ mod tests {
     /// in `jolt-kernels` cover the routed one. Stage 6b's booleanity
     /// cycle phase and instruction RA virtualization read the rows in rounds
     /// 0–3 and hold their tables dense from the fourth bind, the earliest at
-    /// any budget; the parity tests cover later ones. The trace ends inside
-    /// its padded domain, so stage 5's streamed cycle round, stage 6a's walks
-    /// and stage 6b's rounds 0–3 each weigh a constant suffix once, and the
-    /// tables those kernels turn dense hold it as their tail.
+    /// any budget; the parity tests cover later ones. Its bytecode read-RAF
+    /// cycle phase gathers its three RA factors from the rows in rounds 0–2
+    /// and holds them dense from the third bind, where the default kernel's
+    /// turn dense on a trace this small; the parity tests cover the fourth
+    /// bind, which a long trace reaches. The trace ends inside its padded
+    /// domain, so stage 5's streamed cycle round, stage 6a's walks and stage
+    /// 6b's streamed rounds each weigh a constant suffix once, and the tables
+    /// those kernels turn dense hold it as their tail.
     #[test]
     fn streaming_kernels_reproduce_the_default_proof() {
         let Fixture {
