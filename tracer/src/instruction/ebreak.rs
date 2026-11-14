@@ -1,17 +1,22 @@
-//! EBREAK — Breakpoint / program termination.
+//! EBREAK — Jolt's failure halt.
 //!
 //! Encoding: 0x00100073 (SYSTEM opcode, funct3=000, imm=1)
 //!
 //! EBREAK halts the hart, as it does under an external debugger with
 //! `dcsr.ebreakm = 1` (RISC-V Debug Specification): M-mode EBREAK enters
 //! Debug Mode instead of trapping, so `mepc`, `mcause`, `mtval` and `mstatus`
-//! are unchanged. The emulator detects termination when PC doesn't change.
+//! are unchanged. Tracing runs its one-row `Panic` lowering. `exec` below is
+//! reached only by a direct `RISCVInstruction::execute` call and records the
+//! same halt without the temporary link.
 
 use crate::instruction::registers::i::RegisterStateI;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{declare_riscv_instr, emulator::cpu::Cpu};
+use crate::{
+    declare_riscv_instr,
+    emulator::cpu::{Cpu, HaltKind},
+};
 
 use super::{format::format_i::FormatI, Cycle, Instruction, RISCVInstruction, RISCVTrace};
 
@@ -26,8 +31,7 @@ declare_riscv_instr!(
 
 impl EBREAK {
     fn exec(&self, cpu: &mut Cpu, _: &mut <EBREAK as RISCVInstruction>::RamAccess) {
-        // Don't advance PC - emulator will detect the stall and terminate
-        cpu.pc = self.address;
+        cpu.halt(HaltKind::Panic, self.address, 0);
     }
 }
 

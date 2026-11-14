@@ -15,7 +15,7 @@ A guest can observe the difference: `mstatus` reads 0 at reset instead of `0x180
 A guest also cannot use the other four Zicsr instructions (`CSRRC`, `CSRRWI`, `CSRRSI`, `CSRRCI`): the decoder rejects them and the tracer panics, although the `riscv` crate that jolt-sdk depends on emits `CSRRC` to disable interrupts.
 This spec changes the four sequences so that they compute exactly what the specification prescribes for this hart, and adds the four missing Zicsr instructions with the same semantics. The result also matches the Sail RISC-V model configured the same way, except for one WLRL policy noted below (`mcause`).
 The change adds rows for CSR legalization and trap return, saves one row per trap entry, uses only instruction kinds that Jolt already proves, and changes no constraint.
-It also records why the LR/SC sequences and `EBREAK` stay as they are, and why tracer panics are acceptable as halting failures.
+It also records why the LR/SC sequences stay as they are, why `EBREAK` is Jolt's failure halt, and why tracer panics are acceptable as halting failures.
 
 The motivation is formal verification: a proof that Jolt's expansions refine the Sail model needs the two to agree on every reachable state, and these were the system-level places where they disagreed.
 
@@ -540,14 +540,17 @@ With D/Zcd enabled, `C.FLDSP` with `rd = f0` is legal, but both decompressors re
 
 ## `EBREAK` halts the hart
 
-`EBREAK` expands to `JAL t, 0`, a self-jump that the tracer treats as termination.
+`EBREAK` and `c.ebreak` lower to one `Panic` row, Jolt's failure halt: a table-free jump (lookup output 0) that writes its link to an instruction temporary.
+Every tracer ends the run there.
+`jolt.success` (the custom-2 word `0x0000_305B`) is the success halt and lowers to the matching `Success` row; the SDK's `#[jolt::provable]` epilogue executes it right after storing the termination word.
+Which halt ends the run is not part of the proved claim: the constraints accept any final jump, and the public panic bit comes from the panic and termination words that ValIo binds (`PublicIoMemory::new` in `crates/jolt-program/src/preprocess/public_io.rs`), so a program that stores the termination word and then executes `EBREAK` without writing the panic word proves `panic = false`.
 The unprivileged specification says `EBREAK` "is used to return control to a debugging environment" (`src/unpriv/rv32.adoc:901`, `norm:ebreak_debug_env_op`).
 The debug specification makes that precise: with `dcsr.ebreakm = 1`, "`ebreak` instructions in M-mode enter Debug Mode" (`xml/core_registers.xml:158`), and in Debug Mode the hart is halted, so "there is no forward progress in the normal instruction stream" (`Sdext.adoc:22`).
 Entering Debug Mode is not a trap, so `mepc`, `mcause`, `mtval` and `mstatus` stay unchanged.
 
-So Jolt implements an M-only hart whose external debugger has set `dcsr.ebreakm`. The end of the trace is the halt, and the final state is the state before `EBREAK`.
+So Jolt implements an M-only hart whose external debugger has set `dcsr.ebreakm`. The end of the trace is the halt, and the final architectural state is the state before `EBREAK`.
 A model with `ebreakm = 0` would instead take a breakpoint exception (cause 3, `mepc = mtval = pc`); that is a configuration difference, not a bug, so the model should be configured with `ebreakm = 1`.
-No code changes.
+A run that ends at `EBREAK` is an abnormal end: the SDK's panic, abort and exit paths execute it.
 
 ## Evaluation
 

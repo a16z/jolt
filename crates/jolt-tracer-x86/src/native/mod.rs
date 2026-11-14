@@ -20,7 +20,7 @@ use jolt_riscv::{
 
 use compile::CompiledProgram;
 use memory::MemoryPlane;
-use state::{ExitReason, GuestState, HostContext, Observation};
+use state::{ExitReason, GuestState, HostContext, MachineExit, Observation};
 
 /// AOT x86-64 transpiling execution backend.
 ///
@@ -88,11 +88,23 @@ impl CachedProgram {
     }
 }
 
-pub struct FastRunOutput {
+/// Final state after a halt or PC stall. Jolt callers must validate it with
+/// [`Self::require_halt`]; ACT4 determines the result through `tohost`.
+pub struct RunOutput {
     pub trace_len: usize,
     pub device: JoltDevice,
     pub final_memory: MemoryImage,
     pub advice_tape: Vec<u8>,
+    exit: MachineExit,
+}
+
+impl RunOutput {
+    /// Accepts success and panic halts, rejecting a PC stall with
+    /// [`TraceError::EndedWithoutHalt`].
+    pub fn require_halt(self) -> Result<Self, TraceError> {
+        self.exit.require_halt()?;
+        Ok(self)
+    }
 }
 
 impl X86TracerBackend {
@@ -177,7 +189,7 @@ impl X86TracerBackend {
         });
 
         compiled.run_record(&mut guest)?;
-        guest.check_exit(&mut host)?;
+        guest.check_exit(&mut host)?.require_halt()?;
 
         let recorded =
             (guest.obs_cursor as usize - obs_start as usize) / core::mem::size_of::<Observation>();
@@ -194,13 +206,15 @@ impl X86TracerBackend {
         })
     }
 
-    /// Fast pass: run the program to completion without materializing trace
-    /// rows. (Checkpoint logging joins in the chunked-execution slice.)
-    pub fn fast_run(
+    /// Runs without materializing trace rows until a halt or PC stall.
+    /// Requires ELF bytes to identify the program in the compile cache.
+    /// Jolt callers must use [`RunOutput::require_halt`]; the ACT4 runner
+    /// (`jolt-emu-x86`) reports through `tohost`.
+    pub fn run_machine(
         &mut self,
         program: &JoltProgram,
         inputs: TraceInputs,
-    ) -> Result<FastRunOutput, TraceError> {
+    ) -> Result<RunOutput, TraceError> {
         if program.elf_bytes().is_empty() {
             return Err(TraceError::MissingElfBytes);
         }
@@ -242,15 +256,16 @@ impl X86TracerBackend {
         });
 
         compiled.run(&mut guest)?;
-        guest.check_exit(&mut host)?;
+        let exit = guest.check_exit(&mut host)?;
 
-        Ok(FastRunOutput {
+        Ok(RunOutput {
             trace_len: guest.trace_len as usize,
             device: host.device,
             final_memory: MemoryImage {
                 bytes: plane.materialized_nonzero_bytes(),
             },
             advice_tape: host.advice_tape,
+            exit,
         })
     }
 }
@@ -271,7 +286,7 @@ impl ExecutionBackend for X86TracerBackend {
         program: &JoltProgram,
         inputs: TraceInputs,
     ) -> Result<TraceOutput, TraceError> {
-        let expected = self.fast_run(program, inputs.clone())?;
+        let expected = self.run_machine(program, inputs.clone())?.require_halt()?;
         let record = self.record_run(program, inputs, expected.trace_len)?;
 
         if record.observations.len() != expected.trace_len {
@@ -592,7 +607,7 @@ impl ChunkedExecutionBackend for X86TracerBackend {
                 ));
                 continue;
             }
-            guest.check_exit(&mut host)?;
+            guest.check_exit(&mut host)?.require_halt()?;
             break;
         }
         let trace_len = guest.trace_len as usize;
@@ -669,7 +684,7 @@ impl ChunkedExecutionBackend for X86TracerBackend {
 
         checkpoint.compiled.run_record_pausable(&mut guest)?;
         if guest.exit != ExitReason::Paused as u64 {
-            guest.check_exit(&mut host)?;
+            guest.check_exit(&mut host)?.require_halt()?;
         }
 
         let recorded =
