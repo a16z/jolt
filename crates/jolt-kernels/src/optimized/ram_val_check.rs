@@ -7,7 +7,7 @@
 //! for two rounds, then retains an explicit prefix with a zero suffix.
 
 use jolt_claims::protocols::jolt::{JoltDerivedId, RamValCheckPublic};
-use jolt_field::JoltField;
+use jolt_field::{Accumulator, JoltField};
 use jolt_poly::{bind_prefix_in_place, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
@@ -15,12 +15,17 @@ use jolt_verifier::stages::relations::{
 };
 use jolt_verifier::stages::stage4::ram_val_check::{RamValCheck, RamValCheckOutputClaims};
 use jolt_witness::JoltWitnessPlane;
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
 use std::sync::Arc;
 
 use super::lazy_ra::{ChunkIndexSource, LazyBind, LazyFoldedRa, DEFAULT_MAX_WIDTH};
+use super::ram_events::RamEventLog;
 use super::ram_trace::{ram_access_columns_bytes, RamAccessColumns, RamAddresses, NO_ACCESS};
+use super::rw_matrix::{ColumnEntry, SparseCycleColumn};
 use super::support::{
-    bound_pair, map_indices, pin_derived_term, triple_product_round_evals, RoundProgress, SplitLt,
+    accumulate_triple_product, bound_pair, map_indices, pin_derived_term,
+    triple_product_round_evals, RoundProgress, SplitLt,
 };
 use super::OptimizedBackend;
 use crate::reference::views::eq_table;
@@ -60,16 +65,12 @@ impl<F: JoltField> PrepareKernel<F, RamValCheck<F>> for OptimizedBackend {
         witness: &dyn JoltWitnessPlane<F>,
         inputs: ProverInputs<'_, F, RamValCheck<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = RamValCheck<F>>>, KernelError<F>> {
-        let relation = inputs.relation;
-        let log_t = relation.trace_dimensions().log_t();
-        let ram_log_k = relation.ram_log_k();
-        let ram_val_point: &[F] = &inputs.points.ram_val;
-        if ram_val_point.len() != ram_log_k + log_t {
-            return Err(KernelError::InvariantViolation {
-                reason: "RAM value-check input point has the wrong variable count",
-            });
-        }
-        let (r_address, r_cycle) = ram_val_point.split_at(ram_log_k);
+        let ValueCheckPoint {
+            log_t,
+            ram_log_k,
+            r_address,
+            r_cycle,
+        } = value_check_point(&inputs)?;
 
         // Reuse stage 2 addresses; collect only the short-lived values.
         let columns = RamAccessColumns::collect_full(session, witness, log_t)?;
@@ -83,6 +84,70 @@ impl<F: JoltField> PrepareKernel<F, RamValCheck<F>> for OptimizedBackend {
             lt: SplitLt::new_plus_constant(r_cycle, inputs.challenges.gamma),
         }))
     }
+}
+
+/// The value check's geometry, its input point split at the address
+/// variables.
+struct ValueCheckPoint<'a, F> {
+    log_t: usize,
+    ram_log_k: usize,
+    r_address: &'a [F],
+    r_cycle: &'a [F],
+}
+
+fn value_check_point<'a, F: JoltField>(
+    inputs: &ProverInputs<'a, F, RamValCheck<F>>,
+) -> Result<ValueCheckPoint<'a, F>, KernelError<F>> {
+    let log_t = inputs.relation.trace_dimensions().log_t();
+    let ram_log_k = inputs.relation.ram_log_k();
+    let ram_val_point: &'a [F] = &inputs.points.ram_val;
+    if ram_val_point.len() != ram_log_k + log_t {
+        return Err(KernelError::InvariantViolation {
+            reason: "RAM value-check input point has the wrong variable count",
+        });
+    }
+    let (r_address, r_cycle) = ram_val_point.split_at(ram_log_k);
+    Ok(ValueCheckPoint {
+        log_t,
+        ram_log_k,
+        r_address,
+        r_cycle,
+    })
+}
+
+/// The output claims at the bound `ra` and `inc`; advice outputs echo their
+/// input claims, which the check does not bind.
+fn output_claims_at<F: JoltField>(
+    inputs: &SumcheckInputClaims<F, RamValCheck<F>>,
+    ram_ra: F,
+    ram_inc: F,
+) -> RamValCheckOutputClaims<F> {
+    RamValCheckOutputClaims {
+        untrusted_advice: inputs.untrusted_advice,
+        trusted_advice: inputs.trusted_advice,
+        program_image: inputs.program_image,
+        ram_ra,
+        ram_inc,
+    }
+}
+
+/// Checks the bound split-LT value against the verifier's scalar path.
+fn pin_lt<F: JoltField>(
+    relation: &RamValCheck<F>,
+    input_points: &SumcheckInputPoints<F, RamValCheck<F>>,
+    output_points: &SumcheckOutputPoints<F, RamValCheck<F>>,
+    challenges: &ConcreteSumcheckChallenges<F, RamValCheck<F>>,
+    lt: &SplitLt<F>,
+) -> Result<(), SumcheckKernelError<F>> {
+    let id = JoltDerivedId::from(RamValCheckPublic::LtCyclePlusGamma);
+    pin_derived_term(
+        relation,
+        id,
+        input_points,
+        output_points,
+        challenges,
+        lt.final_value(),
+    )
 }
 
 /// Bytes the value check's scalar tables and the RAM access columns request
@@ -340,21 +405,14 @@ impl<F: JoltField> SumcheckKernel<F> for RamValCheckKernel<F> {
         inputs: &SumcheckInputClaims<F, Self::Relation>,
     ) -> Result<RamValCheckOutputClaims<F>, SumcheckKernelError<F>> {
         self.progress.require_complete()?;
-        // Advice outputs echo their input claims; they are not bound here.
-        Ok(RamValCheckOutputClaims {
-            untrusted_advice: inputs.untrusted_advice,
-            trusted_advice: inputs.trusted_advice,
-            program_image: inputs.program_image,
-            ram_ra: self.ra.final_values()[0],
-            ram_inc: match &self.inc {
-                IncColumn::Raw(columns) => columns.increment(0),
-                IncColumn::RawBound { columns, r1 } => bound_pair(|j| columns.increment(j), *r1, 0),
-                IncColumn::Bound(inc) => inc.first().copied().unwrap_or(F::zero()),
-            },
-        })
+        let ram_inc = match &self.inc {
+            IncColumn::Raw(columns) => columns.increment(0),
+            IncColumn::RawBound { columns, r1 } => bound_pair(|j| columns.increment(j), *r1, 0),
+            IncColumn::Bound(inc) => inc.first().copied().unwrap_or(F::zero()),
+        };
+        Ok(output_claims_at(inputs, self.ra.final_values()[0], ram_inc))
     }
 
-    /// Check the bound split-LT value against the verifier's scalar path.
     fn validate_derived_tables(
         &self,
         relation: &Self::Relation,
@@ -363,15 +421,146 @@ impl<F: JoltField> SumcheckKernel<F> for RamValCheckKernel<F> {
         challenges: &ConcreteSumcheckChallenges<F, Self::Relation>,
     ) -> Result<(), SumcheckKernelError<F>> {
         self.progress.require_complete()?;
-        let id = JoltDerivedId::from(RamValCheckPublic::LtCyclePlusGamma);
-        pin_derived_term(
-            relation,
-            id,
-            input_points,
-            output_points,
-            challenges,
-            self.lt.final_value(),
-        )
+        pin_lt(relation, input_points, output_points, challenges, &self.lt)
+    }
+}
+
+/// The streaming stage-4 value-check slot. `inc` and the address-folded
+/// `ra(j) = eq(r_address, address(j))` vanish off the [`RamEventLog`]'s
+/// events, so each binds as a row-sorted [`SparseCycleColumn`]: `inc` over
+/// the nonzero increments, `ra` over the remapped accesses. Neither support
+/// contains the other, and a row pair can hold an increment in one half and
+/// an access in the other: its product vanishes at `t ∈ {0, 1}` but not at
+/// the sampled `t ∈ {2, 3}`, so a round sums over the pairs where `inc` has
+/// an entry, merge-walking `ra`, never only over the rows both columns share.
+/// The split LT tables are the default kernel's.
+pub struct StreamingRamValCheck;
+
+impl<F: JoltField> PrepareKernel<F, RamValCheck<F>> for StreamingRamValCheck {
+    fn prepare(
+        &self,
+        session: &mut ProofSession,
+        witness: &dyn JoltWitnessPlane<F>,
+        inputs: ProverInputs<'_, F, RamValCheck<F>>,
+    ) -> Result<Box<dyn SumcheckKernel<F, Relation = RamValCheck<F>>>, KernelError<F>> {
+        let ValueCheckPoint {
+            log_t,
+            ram_log_k,
+            r_address,
+            r_cycle,
+        } = value_check_point(&inputs)?;
+        let fill_mismatch = |_| KernelError::InvariantViolation {
+            reason: "RAM event entries disagree between the count and fill passes",
+        };
+        // Shared, not taken: the stage-5 RA claim reduction consumes the log.
+        let log = RamEventLog::shared(session, witness, log_t, 1usize << ram_log_k)?;
+        let eq_address = eq_table(r_address);
+        Ok(Box::new(SparseValCheckKernel {
+            progress: RoundProgress::new(log_t),
+            inc: SparseCycleColumn::increments(&log).map_err(fill_mismatch)?,
+            ra: SparseCycleColumn::folded_ra(&log, &eq_address).map_err(fill_mismatch)?,
+            lt: SplitLt::new_plus_constant(r_cycle, inputs.challenges.gamma),
+        }))
+    }
+}
+
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
+struct SparseValCheckKernel<F: JoltField> {
+    progress: RoundProgress,
+    inc: SparseCycleColumn<F>,
+    ra: SparseCycleColumn<F>,
+    lt: SplitLt<F>,
+}
+
+impl<F: JoltField> SparseValCheckKernel<F> {
+    fn bind(&mut self, challenge: F) -> Result<(), SumcheckError<F>> {
+        let sparse_bind = |_| SumcheckError::MissingEvaluationSource {
+            kind: "RAM value-check sparse bind (count and fill disagree)",
+        };
+        self.inc.bind(challenge).map_err(sparse_bind)?;
+        self.ra.bind(challenge).map_err(sparse_bind)?;
+        self.lt.bind(challenge);
+        self.progress.advance();
+        Ok(())
+    }
+
+    /// `[s(0), s(2), s(3)]` of `Σ_y inc_y(t) · ra_y(t) · lt_y(t)` over the
+    /// pairs where `inc` has an entry: each run of whole pairs seeks `ra` once
+    /// and merge-walks it, a pair without an access reading zero.
+    fn round_evals(&self) -> [F; 3] {
+        let task = |run: &&[ColumnEntry<F>]| -> [F; 3] {
+            let mut pairs = SparseCycleColumn::run_pairs(run).peekable();
+            let mut ra = self.ra.cursor(pairs.peek().map_or(0, |&(pair, _)| pair));
+            let mut acc = [F::Accumulator::default(); 3];
+            for (pair, [inc_0, inc_1]) in pairs {
+                let [ra_0, ra_1] = ra.pair(pair);
+                accumulate_triple_product(
+                    &mut acc,
+                    (inc_0, inc_1),
+                    (ra_0, ra_1),
+                    self.lt.pair(pair),
+                );
+            }
+            acc.map(F::Accumulator::reduce)
+        };
+        let runs = self.inc.pair_runs();
+        let add = |a: [F; 3], b: [F; 3]| [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
+        #[cfg(feature = "parallel")]
+        return runs.par_iter().map(task).reduce(|| [F::zero(); 3], add);
+        #[cfg(not(feature = "parallel"))]
+        runs.iter().map(task).fold([F::zero(); 3], add)
+    }
+}
+
+impl<F: JoltField> ProveRounds<F> for SparseValCheckKernel<F> {
+    fn num_rounds(&self) -> usize {
+        self.progress.total()
+    }
+
+    fn prove_round(
+        &mut self,
+        bind: Option<F>,
+        _round: usize,
+        previous_claim: F,
+    ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
+        if let Some(challenge) = bind {
+            self.bind(challenge)?;
+        }
+        Ok(UnivariatePoly::from_evals_and_hint(
+            previous_claim,
+            &self.round_evals(),
+        ))
+    }
+
+    fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {
+        self.bind(bind)
+    }
+}
+
+impl<F: JoltField> SumcheckKernel<F> for SparseValCheckKernel<F> {
+    type Relation = RamValCheck<F>;
+
+    fn output_claims(
+        &mut self,
+        inputs: &SumcheckInputClaims<F, Self::Relation>,
+    ) -> Result<RamValCheckOutputClaims<F>, SumcheckKernelError<F>> {
+        self.progress.require_complete()?;
+        Ok(output_claims_at(
+            inputs,
+            self.ra.bound_value(),
+            self.inc.bound_value(),
+        ))
+    }
+
+    fn validate_derived_tables(
+        &self,
+        relation: &Self::Relation,
+        input_points: &SumcheckInputPoints<F, Self::Relation>,
+        output_points: &SumcheckOutputPoints<F, Self::Relation>,
+        challenges: &ConcreteSumcheckChallenges<F, Self::Relation>,
+    ) -> Result<(), SumcheckKernelError<F>> {
+        self.progress.require_complete()?;
+        pin_lt(relation, input_points, output_points, challenges, &self.lt)
     }
 }
 
@@ -388,89 +577,78 @@ mod tests {
     use jolt_field::{Fr, Ring};
     use jolt_poly::LtPolynomial;
 
+    use jolt_witness::{JoltWitnessOracle, TraceBackend};
+
     use super::super::testing::{
-        assert_parity, random_scalars, with_ram_fixture, FixtureShape, RamOp,
+        assert_parity, ram_fixture, random_scalars, silent_ram_fixture, FixtureShape, RamOp,
     };
     use super::*;
     use crate::reference::views::address_fold;
     use crate::ReferenceBackend;
 
     fn run_parity(shape: FixtureShape, ops: Vec<RamOp>, seed: u64) {
-        with_ram_fixture(shape, ops, |witness| {
-            let r_address = random_scalars(shape.log_k(), seed);
-            let r_cycle = random_scalars(shape.log_t, seed ^ 0x11);
-            let gamma = random_scalars(1, seed ^ 0x22)[0];
-            let relation = RamValCheck::<Fr>::new(
-                TraceDimensions::new(shape.log_t),
-                shape.log_k(),
-                RamValCheckInit::full(Fr::from_u64(0)),
-            );
-            let claims = RamValCheckInputClaims {
-                ram_val: Fr::from_u64(0),
-                ram_val_final: Fr::from_u64(0),
-                untrusted_advice: None,
-                trusted_advice: None,
-                program_image: None,
-            };
-            let points = RamValCheckInputClaims::<Vec<Fr>> {
-                ram_val: [r_address.clone(), r_cycle.clone()].concat(),
-                ram_val_final: r_address.clone(),
-                untrusted_advice: None,
-                trusted_advice: None,
-                program_image: None,
-            };
-            let challenges = RamValCheckChallenges { gamma };
+        parity_on(&ram_fixture(shape, Vec::new(), ops), shape, seed);
+    }
 
-            let mut reference_session = ProofSession::default();
+    /// The default and streaming slots against the reference tier; the
+    /// streaming slot leaves the event log parked for stage 5.
+    fn parity_on(witness: &TraceBackend, shape: FixtureShape, seed: u64) {
+        let r_address = random_scalars(shape.log_k(), seed);
+        let r_cycle = random_scalars(shape.log_t, seed ^ 0x11);
+        let gamma = random_scalars(1, seed ^ 0x22)[0];
+        let relation = RamValCheck::<Fr>::new(
+            TraceDimensions::new(shape.log_t),
+            shape.log_k(),
+            RamValCheckInit::full(Fr::from_u64(0)),
+        );
+        let claims = RamValCheckInputClaims {
+            ram_val: Fr::from_u64(0),
+            ram_val_final: Fr::from_u64(0),
+            untrusted_advice: None,
+            trusted_advice: None,
+            program_image: None,
+        };
+        let points = RamValCheckInputClaims::<Vec<Fr>> {
+            ram_val: [r_address.clone(), r_cycle.clone()].concat(),
+            ram_val_final: r_address.clone(),
+            untrusted_advice: None,
+            trusted_advice: None,
+            program_image: None,
+        };
+        let challenges = RamValCheckChallenges { gamma };
+
+        let inputs = || ProverInputs {
+            relation: &relation,
+            claims: &claims,
+            points: &points,
+            challenges: &challenges,
+        };
+
+        let ra_folded =
+            address_fold::<Fr>(witness, ram_ra_val_check(), shape.log_t, &r_address).unwrap();
+        let inc: Vec<Fr> = witness
+            .oracle_table(ram_inc_val_check().polynomial_id())
+            .unwrap();
+        let lt = LtPolynomial::evaluations(&r_cycle);
+        let input_claim = (0..1usize << shape.log_t)
+            .map(|j| inc[j] * ra_folded[j] * (lt[j] + gamma))
+            .sum();
+
+        let slots: [&dyn PrepareKernel<Fr, RamValCheck<Fr>>; 2] =
+            [&OptimizedBackend, &StreamingRamValCheck];
+        for (index, slot) in slots.into_iter().enumerate() {
             let reference = PrepareKernel::<Fr, _>::prepare(
                 &ReferenceBackend,
-                &mut reference_session,
+                &mut ProofSession::default(),
                 witness,
-                ProverInputs {
-                    relation: &relation,
-                    claims: &claims,
-                    points: &points,
-                    challenges: &challenges,
-                },
+                inputs(),
             )
             .unwrap();
             let mut session = ProofSession::default();
-            let optimized = PrepareKernel::<Fr, _>::prepare(
-                &OptimizedBackend,
-                &mut session,
-                witness,
-                ProverInputs {
-                    relation: &relation,
-                    claims: &claims,
-                    points: &points,
-                    challenges: &challenges,
-                },
-            )
-            .unwrap();
-
-            let ra_folded =
-                address_fold::<Fr>(witness, ram_ra_val_check(), shape.log_t, &r_address).unwrap();
-            let inc: Vec<Fr> = witness
-                .oracle_table(ram_inc_val_check().polynomial_id())
-                .unwrap();
-            let lt = LtPolynomial::evaluations(&r_cycle);
-            let input_claim = (0..1usize << shape.log_t)
-                .map(|j| inc[j] * ra_folded[j] * (lt[j] + gamma))
-                .sum();
-
-            assert_parity(
-                reference,
-                optimized,
-                input_claim,
-                &ProverInputs {
-                    relation: &relation,
-                    claims: &claims,
-                    points: &points,
-                    challenges: &challenges,
-                },
-                seed ^ 0x33,
-            );
-        });
+            let optimized = slot.prepare(&mut session, witness, inputs()).unwrap();
+            assert_eq!(session.state::<RamEventLog>().is_some(), index == 1);
+            assert_parity(reference, optimized, input_claim, &inputs(), seed ^ 0x33);
+        }
     }
 
     fn mixed_ops() -> Vec<RamOp> {
@@ -516,6 +694,30 @@ mod tests {
             ops,
             37,
         );
+    }
+
+    /// Increments without an access, in row pairs that hold one and in pairs
+    /// that do not, and a trace without any RAM event.
+    #[test]
+    fn matches_reference_with_unmapped_increments_and_without_events() {
+        let shape = FixtureShape {
+            log_t: 4,
+            ram_k: 16,
+        };
+        run_parity(
+            shape,
+            vec![
+                RamOp::UnmappedWrite { pre: 2, post: 9 },
+                RamOp::Read { word: 4 },
+                RamOp::Write { word: 4, post: 6 },
+                RamOp::UnmappedWrite { pre: 5, post: 1 },
+                RamOp::None,
+                RamOp::None,
+                RamOp::UnmappedWrite { pre: 0, post: 3 },
+            ],
+            43,
+        );
+        parity_on(&silent_ram_fixture(shape), shape, 47);
     }
 
     #[test]

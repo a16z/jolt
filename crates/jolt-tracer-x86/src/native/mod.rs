@@ -88,16 +88,9 @@ impl CachedProgram {
     }
 }
 
-pub struct FastRunOutput {
-    pub trace_len: usize,
-    pub device: JoltDevice,
-    pub final_memory: MemoryImage,
-    pub advice_tape: Vec<u8>,
-}
-
-/// A run to the machine's stop. The ACT4 runner reports through `tohost`; a Jolt run must end
-/// at a halt (see `fast_run`).
-pub struct MachineRunOutput {
+/// A run to the machine's stop. [`X86TracerBackend::fast_run`] requires a halt;
+/// [`X86TracerBackend::run_machine`] also accepts a PC stall for ACT4's `tohost` protocol.
+pub struct RunOutput {
     pub trace_len: usize,
     pub device: JoltDevice,
     pub final_memory: MemoryImage,
@@ -105,15 +98,10 @@ pub struct MachineRunOutput {
     exit: MachineExit,
 }
 
-impl MachineRunOutput {
-    fn finalize(self) -> Result<FastRunOutput, TraceError> {
+impl RunOutput {
+    fn require_halt(self) -> Result<Self, TraceError> {
         self.exit.require_halt()?;
-        Ok(FastRunOutput {
-            trace_len: self.trace_len,
-            device: self.device,
-            final_memory: self.final_memory,
-            advice_tape: self.advice_tape,
-        })
+        Ok(self)
     }
 }
 
@@ -223,11 +211,11 @@ impl X86TracerBackend {
         &mut self,
         program: &JoltProgram,
         inputs: TraceInputs,
-    ) -> Result<FastRunOutput, TraceError> {
+    ) -> Result<RunOutput, TraceError> {
         if program.elf_bytes().is_empty() {
             return Err(TraceError::MissingElfBytes);
         }
-        self.run_machine(program, inputs)?.finalize()
+        self.run_machine(program, inputs)?.require_halt()
     }
 
     /// Runs to the machine's stop, a halt or a PC stall, with no Jolt end-of-run contract: the
@@ -236,7 +224,7 @@ impl X86TracerBackend {
         &mut self,
         program: &JoltProgram,
         inputs: TraceInputs,
-    ) -> Result<MachineRunOutput, TraceError> {
+    ) -> Result<RunOutput, TraceError> {
         let compiled = self.compiled(program)?;
 
         let device = JoltDevice::try_with_io(
@@ -277,7 +265,7 @@ impl X86TracerBackend {
         compiled.run(&mut guest)?;
         let exit = guest.check_exit(&mut host)?;
 
-        Ok(MachineRunOutput {
+        Ok(RunOutput {
             trace_len: guest.trace_len as usize,
             device: host.device,
             final_memory: MemoryImage {
@@ -779,12 +767,12 @@ mod tests {
 
         let halted = run(&halts);
         assert_eq!(halted.exit, MachineExit::Halted(HaltKind::Success));
-        assert_eq!(halted.finalize().expect("a Jolt run").trace_len, 1);
+        assert_eq!(halted.require_halt().expect("a Jolt run").trace_len, 1);
 
         let stalled = run(&stalls);
         assert_eq!(stalled.exit, MachineExit::Stalled { pc: 0x8000_1000 });
         assert!(matches!(
-            stalled.finalize(),
+            stalled.require_halt(),
             Err(TraceError::EndedWithoutHalt { pc: 0x8000_1000 })
         ));
     }

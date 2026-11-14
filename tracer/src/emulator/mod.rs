@@ -43,17 +43,7 @@ use jolt_riscv::RV64IMAC_JOLT_FIELD_INLINE;
 use std::io::Write;
 use std::path::Path;
 
-/// The endcode [`Emulator::run_test`] returns when a test guest stalls after
-/// writing a value to `tohost` that is not an HTIF exit command.
-const UNRECOGNIZED_TOHOST_ENDCODE: u64 = 1;
-
-/// The endcode [`Emulator::run_test`] returns for a run that halts at
-/// `ebreak`, Jolt's failure halt.
-const PANIC_HALT_ENDCODE: u64 = 1;
-
-/// The endcode [`Emulator::run_test`] returns when an ELF without a `tohost`
-/// symbol (a Jolt guest) stops at a PC stall instead of a halt instruction.
-const ENDED_WITHOUT_HALT_ENDCODE: u64 = 1;
+const FAILURE_ENDCODE: u64 = 1;
 
 /// Returns `payload >> 1` only for an HTIF syscall-proxy exit command:
 /// device (bits 63..56) and command (bits 55..48) must both be zero, and
@@ -125,18 +115,16 @@ impl Emulator {
     ///
     /// Returns the termination code:
     /// * `0` for a Jolt guest that ends at `jolt.success`;
-    /// * `PANIC_HALT_ENDCODE` (1) for a guest that halts at `ebreak`, Jolt's
-    ///   failure halt;
+    /// * `1` for a guest that halts at `ebreak`, Jolt's failure halt;
     /// * `payload >> 1` for an HTIF exit command (device 0, command 0,
     ///   payload bit 0 set): `0` for RVMODEL_HALT_PASS, `1` for ACT4's
     ///   RVMODEL_HALT_FAIL, the failing test number for riscv-tests;
     /// * `0` for a PC stall in a test ELF (one that defines `tohost`) with
     ///   `tohost` untouched;
-    /// * `UNRECOGNIZED_TOHOST_ENDCODE` (1) for a PC stall after any other
-    ///   non-zero `tohost` write, such as a non-zero command or device byte;
-    /// * `ENDED_WITHOUT_HALT_ENDCODE` (1) for a PC stall in an ELF without a
-    ///   `tohost` symbol: such an ELF is a Jolt guest, whose run must end at a
-    ///   halt (`TraceError::EndedWithoutHalt`).
+    /// * `1` for a PC stall after any other non-zero `tohost` write, such as a
+    ///   non-zero command or device byte;
+    /// * `1` for a PC stall in an ELF without a `tohost` symbol: such an ELF
+    ///   is a Jolt guest, whose run must end at a halt (`TraceError::EndedWithoutHalt`).
     ///
     /// Callers typically collapse this to 0/1 for the OS exit status; see
     /// `tracer/src/main.rs`.
@@ -157,7 +145,7 @@ impl Emulator {
                         tracing::error!(
                             "Program halted at ebreak (abnormal end) after {cycle_count} cycles"
                         );
-                        PANIC_HALT_ENDCODE
+                        FAILURE_ENDCODE
                     }
                 };
             }
@@ -178,7 +166,7 @@ impl Emulator {
                 if self.tohost_addr == 0 {
                     let pc = self.cpu.read_pc();
                     tracing::error!("{}", TraceError::EndedWithoutHalt { pc });
-                    return ENDED_WITHOUT_HALT_ENDCODE;
+                    return FAILURE_ENDCODE;
                 }
                 let tohost_value = self.cpu.get_mut_mmu().load_doubleword_raw(self.tohost_addr);
                 if tohost_value != 0 {
@@ -186,7 +174,7 @@ impl Emulator {
                         "Program stalled after writing {tohost_value:#x} to tohost, \
                          which is not an HTIF exit command"
                     );
-                    return UNRECOGNIZED_TOHOST_ENDCODE;
+                    return FAILURE_ENDCODE;
                 }
                 tracing::info!("Program exited successfully (code 0) after {cycle_count} cycles");
                 return 0;
@@ -520,8 +508,7 @@ mod tests {
     #[test]
     fn run_test_reports_halts() {
         assert_eq!(run(&[JOLT_SUCCESS_WORD], 0), (0, 0));
-        assert_eq!(run(&[0x0010_0073], 0), (PANIC_HALT_ENDCODE, 0)); // ebreak
-        assert_ne!(PANIC_HALT_ENDCODE, 0);
+        assert_eq!(run(&[0x0010_0073], 0), (1, 0)); // ebreak
     }
 
     /// An ELF without `tohost` is a Jolt guest: a spin is not a valid end.
@@ -531,8 +518,7 @@ mod tests {
         let without_tohost = &symbols[..1];
         let mut emulator = emulator_with(&[0x0000_006f], without_tohost, StrtabOrder::GnuLd); // j .
         assert_eq!(emulator.tohost_addr, 0);
-        assert_eq!(emulator.run_test(false, false), ENDED_WITHOUT_HALT_ENDCODE);
-        assert_ne!(ENDED_WITHOUT_HALT_ENDCODE, 0);
+        assert_eq!(emulator.run_test(false, false), 1);
     }
 
     /// Encoding `(gp << 1) | 1` with gp = 0x1cadd5ae9e2ac9c5 sets the HTIF
@@ -551,13 +537,12 @@ mod tests {
         ];
         assert_eq!(
             run(&halt_with_wide_code, 0x1cad_d5ae_9e2a_c9c5),
-            (UNRECOGNIZED_TOHOST_ENDCODE, 0x395b_ab5d_3c55_938b)
+            (1, 0x395b_ab5d_3c55_938b)
         );
         assert_eq!(
             run(&halt_with_wide_code, 1 << 47),
-            (UNRECOGNIZED_TOHOST_ENDCODE, 0x0001_0000_0000_0001)
+            (1, 0x0001_0000_0000_0001)
         );
-        assert_ne!(UNRECOGNIZED_TOHOST_ENDCODE, 0);
     }
 
     #[test]
