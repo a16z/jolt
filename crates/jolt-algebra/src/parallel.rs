@@ -9,12 +9,8 @@
 //! the baseline's design, ported unchanged; within this crate the expansion
 //! site is this crate, so its `parallel` feature governs.
 //!
-//! Consumer audit (checkpoint 9): no crate in the workspace, and nothing in
-//! this rebuild, currently expands any of these macros — see the
-//! dropped-specialization notes in `specs/jolt-field-rebuild.md`. The component is ported whole
-//! because the approved parity scope names the rayon helpers and all seven
-//! macros are equally (un)consumed, leaving no evidence basis for a partial
-//! subset.
+//! The helpers are backend-independent, so they are available in every
+//! feature configuration.
 
 #[cfg(feature = "parallel")]
 pub use rayon::prelude::*;
@@ -90,7 +86,7 @@ macro_rules! cfg_chunks_mut {
 macro_rules! cfg_join {
     ($f_a:expr, $f_b:expr) => {{
         #[cfg(feature = "parallel")]
-        let result = $crate::solinas::parallel::__rayon_join($f_a, $f_b);
+        let result = $crate::parallel::__rayon_join($f_a, $f_b);
         #[cfg(not(feature = "parallel"))]
         let result = ($f_a(), $f_b());
         result
@@ -119,17 +115,21 @@ macro_rules! cfg_fold_reduce {
 
 /// Fallible parallel fold-reduce over a range.
 ///
-/// Without `parallel`, this uses the equivalent sequential `try_fold`.
+/// The identity argument is a zero-argument factory, evaluated once and
+/// shared by reference, matching Rayon's `try_fold` and `try_reduce`
+/// contracts. Without `parallel`, this uses the equivalent sequential
+/// `try_fold`, calling the factory once for its initial accumulator.
 #[macro_export]
 macro_rules! cfg_try_fold_reduce {
-    ($range:expr, $identity:expr, $fold_op:expr, $reduce_op:expr) => {{
+    ($range:expr, $identity_factory:expr, $fold_op:expr, $reduce_op:expr) => {{
+        let identity_factory = $identity_factory;
         #[cfg(feature = "parallel")]
         let result = $range
             .into_par_iter()
-            .try_fold($identity, $fold_op)
-            .try_reduce($identity, $reduce_op);
+            .try_fold(&identity_factory, $fold_op)
+            .try_reduce(&identity_factory, $reduce_op);
         #[cfg(not(feature = "parallel"))]
-        let result = $range.into_iter().try_fold(($identity)(), $fold_op);
+        let result = $range.into_iter().try_fold(identity_factory(), $fold_op);
         result
     }};
 }
