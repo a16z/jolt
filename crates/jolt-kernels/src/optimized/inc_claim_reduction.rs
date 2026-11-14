@@ -16,6 +16,7 @@ use jolt_claims::protocols::jolt::JoltOpeningId;
 use jolt_field::JoltField;
 use jolt_poly::{Polynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
+use jolt_utils::unsafe_allocate_zero_vec;
 use jolt_verifier::stages::relations::{ConcreteSumcheck, SumcheckInputClaims};
 use jolt_verifier::stages::stage6b::inc_claim_reduction::{
     IncClaimReduction, IncClaimReductionOutputClaims,
@@ -52,6 +53,15 @@ impl<F: JoltField> PrepareKernel<F, IncClaimReduction<F>> for OptimizedIncClaimR
         witness: &dyn JoltWitnessPlane<F>,
         inputs: ProverInputs<'_, F, IncClaimReduction<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = IncClaimReduction<F>>>, KernelError<F>> {
+        Ok(Box::new(IncKernel::new(witness, inputs)?))
+    }
+}
+
+impl<F: JoltField> IncKernel<F> {
+    fn new(
+        witness: &dyn JoltWitnessPlane<F>,
+        inputs: ProverInputs<'_, F, IncClaimReduction<F>>,
+    ) -> Result<Self, KernelError<F>> {
         let relation = inputs.relation;
         let cycle_points = relation.cycle_points();
         for point in cycle_points {
@@ -94,12 +104,12 @@ impl<F: JoltField> PrepareKernel<F, IncClaimReduction<F>> for OptimizedIncClaimR
             IncState::Rows(BundleStore::resolve(witness, cycles)?)
         };
 
-        Ok(Box::new(IncKernel {
+        Ok(Self {
             progress: RoundProgress::new(relation.rounds()),
             incs,
             ram_weights,
             rd_weights,
-        }))
+        })
     }
 }
 
@@ -254,22 +264,26 @@ impl<F: JoltField> IncKernel<F> {
                 rd_even + challenge * (rd_odd - rd_even),
             ))
         };
-        #[cfg(feature = "parallel")]
-        let (ram, rd) = (0..half)
-            .into_par_iter()
-            .map(bound)
-            .collect::<Result<(Vec<F>, Vec<F>), _>>()?;
-        #[cfg(not(feature = "parallel"))]
-        let (ram, rd) = {
-            let mut ram = Vec::with_capacity(half);
-            let mut rd = Vec::with_capacity(half);
-            for y in 0..half {
-                let (ram_y, rd_y) = bound(y)?;
-                ram.push(ram_y);
-                rd.push(rd_y);
-            }
-            (ram, rd)
+        // Both tables are written in place, in one row pass, into allocations
+        // of their length. A fallible parallel collect is unindexed: every
+        // split stages its entries in vectors of its own, which stay live
+        // beside the tables until a serial append copies them in.
+        let mut ram: Vec<F> = unsafe_allocate_zero_vec(half);
+        let mut rd: Vec<F> = unsafe_allocate_zero_vec(half);
+        let write = |(y, (ram_y, rd_y)): (usize, (&mut F, &mut F))| {
+            (*ram_y, *rd_y) = bound(y)?;
+            Ok::<_, SumcheckError<F>>(())
         };
+        #[cfg(feature = "parallel")]
+        ram.par_iter_mut()
+            .zip(rd.par_iter_mut())
+            .enumerate()
+            .try_for_each(write)?;
+        #[cfg(not(feature = "parallel"))]
+        ram.iter_mut()
+            .zip(rd.iter_mut())
+            .enumerate()
+            .try_for_each(write)?;
         Ok((Polynomial::new(ram), Polynomial::new(rd)))
     }
 
@@ -380,80 +394,133 @@ impl<F: JoltField> SumcheckKernel<F> for IncKernel<F> {
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod tests {
     use jolt_claims::protocols::jolt::geometry::dimensions::TraceDimensions;
-    use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, JoltPolynomialId};
     use jolt_field::{Fr, Ring};
+    use jolt_riscv::JoltTraceRow;
     use jolt_verifier::stages::stage6b::inc_claim_reduction::{
         IncClaimReductionChallenges, IncClaimReductionInputClaims,
     };
     use jolt_witness::testing::with_sample_backend;
-    use jolt_witness::JoltWitnessOracle;
+    use jolt_witness::TraceBackend;
 
     use super::*;
+    use crate::optimized::booleanity::testing::{
+        alu_row, load_row, no_op_row, store_row, with_trace_backend,
+    };
+    use crate::optimized::heap_peak::peak_above_start;
     use crate::optimized::parity::{probe_input_claim, run_lockstep, synthetic_point};
     use crate::ReferenceBackend;
 
+    /// The relation over a `2^log_t`-cycle domain, with its inputs.
+    struct Case {
+        relation: IncClaimReduction<Fr>,
+        challenges: IncClaimReductionChallenges<Fr>,
+        claims: IncClaimReductionInputClaims<Fr>,
+        points: IncClaimReductionInputClaims<Vec<Fr>>,
+    }
+
+    impl Case {
+        fn new(log_t: usize) -> Self {
+            Self {
+                relation: IncClaimReduction::new(
+                    TraceDimensions::new(log_t),
+                    synthetic_point(log_t, 3),
+                    synthetic_point(log_t, 5),
+                    synthetic_point(log_t, 7),
+                    synthetic_point(log_t, 11),
+                ),
+                challenges: IncClaimReductionChallenges {
+                    gamma: Fr::from_u64(29),
+                },
+                claims: IncClaimReductionInputClaims::default(),
+                points: IncClaimReductionInputClaims::default(),
+            }
+        }
+
+        fn inputs(&self) -> ProverInputs<'_, Fr, IncClaimReduction<Fr>> {
+            ProverInputs {
+                relation: &self.relation,
+                claims: &self.claims,
+                points: &self.points,
+                challenges: &self.challenges,
+            }
+        }
+    }
+
+    /// `len` rows whose RAM and register increments follow no period: loads,
+    /// stores, register writes and no-ops in a pseudo-random order.
+    fn rows(len: usize) -> Vec<JoltTraceRow> {
+        (0..len as u64)
+            .map(
+                |cycle| match cycle.wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 62 {
+                    0 => load_row(0x8000_1000),
+                    1 => store_row(0x8000_1008),
+                    2 => alu_row(cycle),
+                    _ => no_op_row(),
+                },
+            )
+            .collect()
+    }
+
+    /// The kernel proves the reference kernel's rounds and openings over
+    /// `backend`'s trace.
+    fn assert_matches_reference(backend: &TraceBackend) {
+        let log_t = backend.config.log_t;
+        let case = Case::new(log_t);
+        let mut session = ProofSession::default();
+        let mut reference =
+            <ReferenceBackend as PrepareKernel<Fr, IncClaimReduction<Fr>>>::prepare(
+                &ReferenceBackend,
+                &mut session,
+                backend,
+                case.inputs(),
+            )
+            .unwrap();
+        let mut optimized = OptimizedIncClaimReduction
+            .prepare(&mut session, backend, case.inputs())
+            .unwrap();
+        let claim = probe_input_claim(reference.as_mut());
+        run_lockstep(
+            reference.as_mut(),
+            optimized.as_mut(),
+            claim,
+            &synthetic_point(log_t, 401),
+        );
+        assert_eq!(
+            reference.output_claims(&case.claims).unwrap(),
+            optimized.output_claims(&case.claims).unwrap()
+        );
+    }
+
+    /// On the canned trace, and on a trace that ends inside its domain and
+    /// one that fills it, whose first bind fills its tables across parallel
+    /// splits.
     #[test]
     fn inc_claim_reduction_matches_reference() {
-        with_sample_backend(|backend| {
-            let log_t = JoltWitnessOracle::<Fr>::shape(
-                backend,
-                JoltPolynomialId::Committed(JoltCommittedPolynomial::RdInc),
-            )
-            .unwrap()
-            .rows()
-            .ilog2() as usize;
+        with_sample_backend(assert_matches_reference);
+        for len in [1500, 2048] {
+            with_trace_backend(11, 8, rows(len), |backend, _| {
+                assert_matches_reference(backend);
+            });
+        }
+    }
 
-            let relation = IncClaimReduction::new(
-                TraceDimensions::new(log_t),
-                synthetic_point(log_t, 3),
-                synthetic_point(log_t, 5),
-                synthetic_point(log_t, 7),
-                synthetic_point(log_t, 11),
-            );
-            let challenges = IncClaimReductionChallenges {
-                gamma: Fr::from_u64(29),
-            };
-            let claims = IncClaimReductionInputClaims::<Fr>::default();
-            let input_points = IncClaimReductionInputClaims::<Vec<Fr>>::default();
-
-            let mut session = ProofSession::default();
-            let mut reference =
-                <ReferenceBackend as PrepareKernel<Fr, IncClaimReduction<Fr>>>::prepare(
-                    &ReferenceBackend,
-                    &mut session,
-                    backend,
-                    ProverInputs {
-                        relation: &relation,
-                        claims: &claims,
-                        points: &input_points,
-                        challenges: &challenges,
-                    },
-                )
-                .unwrap();
-            let mut optimized = OptimizedIncClaimReduction
-                .prepare(
-                    &mut session,
-                    backend,
-                    ProverInputs {
-                        relation: &relation,
-                        claims: &claims,
-                        points: &input_points,
-                        challenges: &challenges,
-                    },
-                )
-                .unwrap();
-
-            let claim = probe_input_claim(reference.as_mut());
-            let sumcheck_challenges = synthetic_point(log_t, 401);
-            run_lockstep(
-                reference.as_mut(),
-                optimized.as_mut(),
-                claim,
-                &sumcheck_challenges,
-            );
-            assert_eq!(
-                reference.output_claims(&claims).unwrap(),
-                optimized.output_claims(&claims).unwrap()
+    /// The first bind holds its two `T/2`-entry tables and no vector of a
+    /// collect's beside them.
+    #[test]
+    fn first_bind_holds_only_its_tables() {
+        const LOG_T: usize = 12;
+        with_trace_backend(LOG_T, 8, rows(1 << LOG_T), |backend, _| {
+            let case = Case::new(LOG_T);
+            let kernel = || IncKernel::new(backend, case.inputs()).unwrap();
+            let challenge = Fr::from_u64(31);
+            // Keeps a first bind's one-time allocations out of the measurement.
+            kernel().bind(challenge).unwrap();
+            let mut kernel = kernel();
+            let ((), peak) = peak_above_start(|| kernel.bind(challenge).unwrap());
+            let tables = 2 * (1 << (LOG_T - 1)) * size_of::<Fr>();
+            assert!(
+                (tables..tables + tables / 8).contains(&peak),
+                "the first bind held {peak} bytes for {tables} bytes of tables"
             );
         });
     }
