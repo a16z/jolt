@@ -21,6 +21,7 @@ fn streaming_option_selects_the_requested_families() {
             StreamingFamilies {
                 instruction_input: true,
                 spartan: false,
+                ram: false,
             },
         ),
         (
@@ -28,13 +29,23 @@ fn streaming_option_selects_the_requested_families() {
             StreamingFamilies {
                 instruction_input: false,
                 spartan: true,
+                ram: false,
             },
         ),
         (
-            "instruction-input,spartan",
+            "ram",
+            StreamingFamilies {
+                instruction_input: false,
+                spartan: false,
+                ram: true,
+            },
+        ),
+        (
+            "instruction-input,spartan,ram",
             StreamingFamilies {
                 instruction_input: true,
                 spartan: true,
+                ram: true,
             },
         ),
     ] {
@@ -186,6 +197,20 @@ fn streaming_profiles_have_distinct_artifact_and_csv_names() {
         (
             Some("spartan,instruction-input"),
             "_streaming_instruction_input_spartan",
+        ),
+        (Some("ram"), "_streaming_ram"),
+        (
+            Some("ram,instruction-input"),
+            "_streaming_instruction_input_ram",
+        ),
+        (Some("ram,spartan"), "_streaming_spartan_ram"),
+        (
+            Some("instruction-input,spartan,ram"),
+            "_streaming_instruction_input_spartan_ram",
+        ),
+        (
+            Some("ram,spartan,instruction-input"),
+            "_streaming_instruction_input_spartan_ram",
         ),
     ] {
         let mut options = vec![

@@ -251,7 +251,9 @@ mod tests {
     /// instruction-input kernel reads the rows in rounds 0 and 1 and fills its
     /// dense tables in round 1, and the Spartan outer and product remainders
     /// fill their tables in the passes that yield round 0's endpoints; the
-    /// parity tests in `jolt-kernels` cover later crossovers.
+    /// parity tests in `jolt-kernels` cover later crossovers. The RAM kernels
+    /// have no crossover: stages 2–5 read the event log and stage 6b its own
+    /// address column at every trace size.
     #[test]
     fn streaming_kernels_reproduce_the_default_proof() {
         let Fixture {
@@ -273,6 +275,7 @@ mod tests {
         let streamed = prove(JoltBackend::optimized().with_streaming(StreamingFamilies {
             spartan: true,
             instruction_input: true,
+            ram: true,
         }));
         jolt_verifier::verify::<Fr, DoryScheme, Pedersen<Bn254G1>, VerifierState<'_, Keccak>>(
             &preprocessing.verifier,
