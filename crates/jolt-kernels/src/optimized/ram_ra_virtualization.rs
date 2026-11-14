@@ -53,6 +53,44 @@ impl<F: JoltField> PrepareKernel<F, RamRaVirtualization<F>> for OptimizedBackend
         witness: &dyn JoltWitnessPlane<F>,
         inputs: ProverInputs<'_, F, RamRaVirtualization<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = RamRaVirtualization<F>>>, KernelError<F>> {
+        RamRaVirtualizationKernel::prepare(inputs, |log_t, ram_log_k| {
+            let addresses = SharedRamAddresses::shared(session, witness, log_t)?;
+            // Last RAM consumer: release the session's address handle.
+            let _ = session.take::<SharedRamAddresses>();
+            super::ram_trace::validate_addresses(&addresses, 1usize << ram_log_k)?;
+            Ok(addresses)
+        })
+    }
+}
+
+/// The streaming stage-6b slot: no address column survives the earlier
+/// streaming RAM stages, so preparation collects one (at most `4·T` bytes,
+/// the default kernel's carry) and checks its addresses against `ram_K` for
+/// this stage alone.
+pub struct StreamingRamRaVirtualization;
+
+impl<F: JoltField> PrepareKernel<F, RamRaVirtualization<F>> for StreamingRamRaVirtualization {
+    fn prepare(
+        &self,
+        _session: &mut ProofSession,
+        witness: &dyn JoltWitnessPlane<F>,
+        inputs: ProverInputs<'_, F, RamRaVirtualization<F>>,
+    ) -> Result<Box<dyn SumcheckKernel<F, Relation = RamRaVirtualization<F>>>, KernelError<F>> {
+        RamRaVirtualizationKernel::prepare(inputs, |log_t, ram_log_k| {
+            let addresses = super::ram_trace::collect_addresses(witness, log_t)?;
+            super::ram_trace::validate_addresses(&addresses, 1usize << ram_log_k)?;
+            Ok(addresses)
+        })
+    }
+}
+
+impl<F: JoltField> RamRaVirtualizationKernel<F> {
+    /// The virtualization kernel over the address column `addresses(log_T,
+    /// log_K)` serves, after the relation's geometry checks.
+    fn prepare(
+        inputs: ProverInputs<'_, F, RamRaVirtualization<F>>,
+        addresses: impl FnOnce(usize, usize) -> Result<Arc<RamAddresses>, KernelError<F>>,
+    ) -> Result<Box<dyn SumcheckKernel<F, Relation = RamRaVirtualization<F>>>, KernelError<F>> {
         let relation = inputs.relation;
         let dimensions = relation.dimensions();
         let log_t = dimensions.log_t();
@@ -84,10 +122,7 @@ impl<F: JoltField> PrepareKernel<F, RamRaVirtualization<F>> for OptimizedBackend
             });
         }
 
-        let addresses = SharedRamAddresses::shared(session, witness, log_t)?;
-        // Last RAM consumer: release the session's address handle.
-        let _ = session.take::<SharedRamAddresses>();
-        super::ram_trace::validate_addresses(&addresses, 1usize << ram_reduced_address.len())?;
+        let addresses = addresses(log_t, ram_reduced_address.len())?;
 
         // One eq table per committed chunk point (each `2^w` entries); the
         // point-mass fold stays lazy — one table lookup per accessed cycle —
@@ -460,16 +495,61 @@ mod tests {
 
     const CHUNK_BITS: usize = 4;
 
+    #[test]
+    fn out_of_domain_address_fails_in_both_slots() {
+        let shape = FixtureShape {
+            log_t: 3,
+            ram_k: 16,
+        };
+        with_ram_fixture(shape, vec![RamOp::Read { word: 9 }], |witness| {
+            let relation = RamRaVirtualization::<Fr>::new(
+                RamRaVirtualizationDimensions::new(shape.log_t, 1),
+                vec![Fr::from_u64(0); 3],
+                vec![Fr::from_u64(0); shape.log_t],
+                CHUNK_BITS,
+            );
+            let claims = RamRaVirtualizationInputClaims {
+                ram_ra_reduced: Fr::from_u64(0),
+            };
+            let points = RamRaVirtualizationInputClaims::<Vec<Fr>>::default();
+            let challenges = NoChallenges::default();
+            let slots: [&dyn PrepareKernel<Fr, RamRaVirtualization<Fr>>; 2] =
+                [&OptimizedBackend, &StreamingRamRaVirtualization];
+            for slot in slots {
+                assert!(matches!(
+                    slot.prepare(
+                        &mut ProofSession::default(),
+                        witness,
+                        ProverInputs {
+                            relation: &relation,
+                            claims: &claims,
+                            points: &points,
+                            challenges: &challenges,
+                        },
+                    ),
+                    Err(KernelError::InvariantViolation { .. })
+                ));
+            }
+        });
+    }
+
+    /// The default slot, and the streaming slot that collects its own
+    /// address column, against the reference tier.
     fn run_parity(shape: FixtureShape, ops: Vec<RamOp>, seed: u64) {
-        run_parity_with(
-            shape,
-            ops,
-            seed,
-            None,
-            |reference, optimized, claim, inputs| {
-                assert_parity(reference, optimized, claim, inputs, seed);
-            },
-        );
+        let slots: [&dyn PrepareKernel<Fr, RamRaVirtualization<Fr>>; 2] =
+            [&OptimizedBackend, &StreamingRamRaVirtualization];
+        for slot in slots {
+            run_parity_with(
+                shape,
+                ops.clone(),
+                seed,
+                None,
+                slot,
+                |reference, optimized, claim, inputs| {
+                    assert_parity(reference, optimized, claim, inputs, seed);
+                },
+            );
+        }
     }
 
     type KernelBox = Box<dyn SumcheckKernel<Fr, Relation = RamRaVirtualization<Fr>>>;
@@ -479,6 +559,7 @@ mod tests {
         ops: Vec<RamOp>,
         seed: u64,
         exceptional: Option<ExceptionalEq>,
+        slot: &dyn PrepareKernel<Fr, RamRaVirtualization<Fr>>,
         finish: impl FnOnce(KernelBox, KernelBox, Fr, &ProverInputs<'_, Fr, RamRaVirtualization<Fr>>),
     ) {
         with_ram_fixture(shape, ops, |witness| {
@@ -545,18 +626,18 @@ mod tests {
             // reclaim path (the real pipeline parks them in stage 2).
             let mut session = ProofSession::default();
             let _ = SharedRamAddresses::shared::<Fr>(&mut session, witness, shape.log_t).unwrap();
-            let optimized = PrepareKernel::<Fr, _>::prepare(
-                &OptimizedBackend,
-                &mut session,
-                witness,
-                ProverInputs {
-                    relation: &relation,
-                    claims: &claims,
-                    points: &points,
-                    challenges: &challenges,
-                },
-            )
-            .unwrap();
+            let optimized = slot
+                .prepare(
+                    &mut session,
+                    witness,
+                    ProverInputs {
+                        relation: &relation,
+                        claims: &claims,
+                        points: &points,
+                        challenges: &challenges,
+                    },
+                )
+                .unwrap();
 
             finish(reference, optimized, input_claim, &inputs);
         });
@@ -689,6 +770,7 @@ mod tests {
                     mixed_ops(),
                     449,
                     Some(case),
+                    &OptimizedBackend,
                     |reference, optimized, claim, inputs| {
                         assert_parity(reference, optimized, claim, inputs, 449);
                     },
@@ -705,6 +787,7 @@ mod tests {
             vec![RamOp::None; 3],
             seed,
             None,
+            &OptimizedBackend,
             |mut reference, mut optimized, input_claim, inputs| {
                 let challenges = super::super::testing::drive_parity_rounds(
                     reference.as_mut(),

@@ -199,6 +199,10 @@ fn decode_system(word: u32) -> Result<SourceInstructionKind, ProgramError> {
         (0, 0x18, 2) if word == 0x30200073 => Ok(SourceInstructionKind::MRET),
         (1, _, _) => Ok(SourceInstructionKind::CSRRW),
         (2, _, _) => Ok(SourceInstructionKind::CSRRS),
+        (3, _, _) => Ok(SourceInstructionKind::CSRRC),
+        (5, _, _) => Ok(SourceInstructionKind::CSRRWI),
+        (6, _, _) => Ok(SourceInstructionKind::CSRRSI),
+        (7, _, _) => Ok(SourceInstructionKind::CSRRCI),
         _ => invalid("unsupported system instruction"),
     }
 }
