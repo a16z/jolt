@@ -362,6 +362,35 @@ fn device_load_failures_report_io_overflow() {
     }
 }
 
+/// Stores below `lowest_address` and at or above `io_end` fail with the
+/// interpreter's messages for the same stores.
+#[test]
+fn device_stores_outside_the_io_region_fault() {
+    let layout = JoltDevice::new(&memory_config()).memory_layout;
+    for (address, needle) in [
+        (
+            layout.get_lowest_address() - 8,
+            "Illegal device store: Unknown memory mapping",
+        ),
+        (layout.io_end, "I/O overflow: Attempted to write to"),
+        (layout.io_end + 8, "I/O overflow: Attempted to write to"),
+    ] {
+        let outcome = store_to(address);
+        assert_eq!(
+            outcome.exit,
+            ExitReason::FaultHelper as u64,
+            "store to {address:#x}: expected the helper-fault exit reason, got {} ({:?})",
+            outcome.exit,
+            outcome.helper_error
+        );
+        let message = outcome.helper_error.expect("a helper error message");
+        assert!(
+            message.contains(needle) && message.contains(&format!("{address:#X}")),
+            "store to {address:#x}: unexpected helper error: {message}"
+        );
+    }
+}
+
 #[test]
 fn advice_write_follows_guest_load_bounds() {
     let layout = JoltDevice::new(&memory_config()).memory_layout;
