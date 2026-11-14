@@ -271,9 +271,9 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
     }
 
     /// A cycle round before the virtual RA polynomials materialize: the
-    /// default round's `q` samples, summed over every pair row from one pass
-    /// over the rows. A failed `q(0)` pass is held and returned, so its
-    /// placeholder zero never reaches a round message.
+    /// default round's `q` samples, from the family's pair sums. A failed
+    /// `q(0)` pass is held and returned, so its placeholder zero never
+    /// reaches a round message.
     pub(super) fn streamed_cycle_message(
         &self,
         cycle: &CycleState<F>,
