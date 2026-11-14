@@ -400,7 +400,6 @@ impl DynasmEmitter {
             ; mov rdx, QWORD RAM_START as i64
             ; sub rcx, rdx
             ; mov rdx, QWORD [r12 + OFF_MEM_SIZE]
-            ; sub rdx, 7
             ; cmp rcx, rdx
             ; jae >slow
             ; test al, 7
@@ -456,7 +455,6 @@ impl DynasmEmitter {
             ; mov rsi, QWORD RAM_START as i64
             ; sub rcx, rsi
             ; mov rsi, QWORD [r12 + OFF_MEM_SIZE]
-            ; sub rsi, 7
             ; cmp rcx, rsi
             ; jae >slow
             ; test al, 7
@@ -1084,6 +1082,8 @@ impl DynasmEmitter {
             K::VirtualXorRot24(_) => Self::emit_xor_rot(e, row, 24),
             K::VirtualXorRot16(_) => Self::emit_xor_rot(e, row, 16),
             K::VirtualXorRot63(_) => Self::emit_xor_rot(e, row, 63),
+            K::VirtualXorRot2(_) => Self::emit_xor_rot(e, row, 2),
+            K::VirtualXorRot61(_) => Self::emit_xor_rot(e, row, 61),
             K::VirtualXorRotW16(_) => Self::emit_xor_rotw(e, row, 16),
             K::VirtualXorRotW12(_) => Self::emit_xor_rotw(e, row, 12),
             K::VirtualXorRotW8(_) => Self::emit_xor_rotw(e, row, 8),
