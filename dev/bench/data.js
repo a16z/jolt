@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794634158626,
+  "lastUpdate": 1794639277730,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -251218,6 +251218,270 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 888520,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "qvd@andrew.cmu.edu",
+            "name": "Quang Dao",
+            "username": "quangvdao"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "8005bf4e9b894ec0dd6e0932e5daad40757add58",
+          "message": "feat!: end guest runs at halt instructions (jolt.success, ebreak) (#2417)\n\n* fix(program): enforce memory layout and ELF admission checks\n\n* fix(tracer): align native backing and guest-read bounds\n\nPort dbd1978787, 95cf8d053f and f78f8785dd without protected-store, flag-word or general low-load rules. Preserve logical bounds while rounding native backing and checkpoint images to whole doublewords. Check each device-load byte against io_end and propagate bounded host-read failures.\n\nRetain this branch’s JoltDevice APIs, fast_run entry point and RAM-relative final-memory convention. Exercise the final partial heap word at offset 1160 with heap_size 8: offset 1152 with zero heap remains inside the existing canary and cannot succeed without changing excluded store rules. Omit the interpreter host-read underflow case until the general low-load guard is ported.\n\nValidation: cargo fmt --all -- --check; workspace host clippy; x86_64-unknown-linux-gnu tracer clippy; all 180 tracer nextest tests. Native runtime tests require x86 Linux.\n\n* fix(tracer): treat panic and termination words as plain memory\n\n* test(kernels): store the termination word in the output-check fixture\n\n* test(memory): complete plain flag-word fixture coverage\n\nStore the final termination word explicitly in the field-inline prover fixture and port the public-I/O mask test from FINAL.\n\n* fix(tracer): preserve host-read parity before low-load guards\n\n* docs(program): describe stored flag bytes in memory images\n\n* Drop the plain flag-word contract from #2417\n\nHalt instructions replace the plain flag-word contract, and the halt work\nkeeps main's panic latch, flag words, ValIo segments and witness synthesis.\nRevert FlagWords, InvalidFlagWords, JoltDeviceMemory, the absolute-address\nfinal memory image, the canonical SDK flag-pair stores, and their tests,\nfixtures and docs to #2416's text.\n\nWhat stays: the fallible tracer plumbing (try_trace, and finish_emulator\nreturning Result), JoltDevice::is_output ending at output_end, and the x86\nrun_machine entry point for the ACT4 runner.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* Add the jolt.success and Panic halt instructions\n\nIntroduce Jolt's halt instructions on unchanged constraints:\n\n- jolt-riscv: JOLT_SUCCESS_WORD (0x0000_305B, `.insn i 0x5B, 3, x0, x0, 0`)\n  and two source/final kinds, JoltSuccess => Success (\"jolt.success\", tag\n  0x00a8) and JoltPanic => Panic (\"jolt.panic\", tag 0x00a9). Both carry only\n  the Jump circuit flag, no instruction flags, have side effects and target\n  ControlFlow.\n- jolt-lookup-tables: both kinds are table-free (lookup output 0, so their\n  jump targets address 0, where only padding sits). A registry test pins\n  that exactly the halts are table-free jumps.\n- jolt-program: the image decoder accepts jolt.success with I-type operands\n  and rejects every other funct3-3 custom-2 word; EBREAK lowers to one Panic\n  row that links into a temporary instead of `JAL discard, 0`. The three\n  EBREAK expansion goldens are re-blessed.\n- tracer: Cpu gains `halted: Option<HaltKind>` (captured, installed and\n  compared with chunk state), `Cpu::halt` writes the link and halts in\n  place, and a tick after a halt is a no-op. The JoltSuccess/JoltPanic\n  instructions and EBREAK's direct exec use it. The halt tick also sets the\n  stall flag, so drivers that still stop on stalls stop at halts.\n- jolt-tracer-x86: ExitReason::Terminated is renamed Stalled (value 1) and\n  HaltedSuccess (7) and HaltedPanic (8) are appended; the JIT emits halt\n  rows that write their link and exit in place. check_exit accepts the\n  halts exactly as it accepts a stall until the drivers require a halt.\n- jolt-claims: R1CS witness tests show a final halt row satisfies the\n  unchanged constraints and a halt cannot be followed by a real row.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* End guests at jolt.success and ebreak\n\nSDK and platform:\n- The #[jolt::provable] epilogue writes the outputs and the termination\n  byte, then executes jolt.success (`.insn i 0x5B, 3, x0, x0, 0`) instead\n  of spinning in `j .`.\n- jolt_panic writes the panic byte and halts at ebreak (it now diverges);\n  __platform_abort calls it.\n- __platform_exit, jolt_platform::platform_exit and the std trap\n  handler's fallback execute ebreak for every code. The trap handler no\n  longer steps past a trapping EBREAK: EBREAK never traps in Jolt.\n- Exit-style paths that write no panic byte (std::process::exit,\n  __platform_exit, the trap fallback) stay unprovable, as on main: the\n  witness still synthesizes termination = 1 for a non-panic claim.\n\nGuests and e2e harness:\n- The memory-ops guest gains two entries: exact_rows, a no-op sled whose\n  run length is affine in its input, and panic_halt.\n- A halt cannot be followed by a real row, so the harness no longer fills\n  a full-domain case by repeating its final `j .`. The exact_domain case\n  replaces muldiv_full_domain and field_ops_full_domain: it runs\n  exact_rows padded so the run fills 2^12 rows, which is Akita's padding\n  floor and above Dory's, so the proof has no padding row and the halt\n  sits at T-1. The harness asserts that such a case fills its domain\n  exactly.\n- panic_halt proves a guest panic with panic = true, in both profiles.\n- Every case asserts its panic flag and that its run ends at the\n  expected halt (JoltSuccess, or JoltPanic for a panic).\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* Require Jolt runs to end at a halt\n\nA Jolt run now ends only at a halt instruction: jolt.success, or ebreak,\nJolt's failure halt. A run that stops anywhere else, such as a `j .` or\nother PC stall, fails with the new TraceError::EndedWithoutHalt { pc }.\nConstraints, layout, the device panic latch and witness synthesis are\nunchanged.\n\ntracer:\n- finish_emulator, shared by the eager, execute-only, parallel and\n  chunked paths, returns EndedWithoutHalt unless the hart halted. It\n  logs a panic halt with the guest backtrace, keyed on HaltKind::Panic\n  rather than the device latch. The infallible trace/execute wrappers\n  and the lazy iterator panic with that error.\n- Every driver stops at a halt, a PC stall, or a zero-row tick.\n  `execute` now also stops on a zero-row tick, as `trace` does.\n  LazyTracer::has_panicked reports a Panic halt. HaltKind is re-exported.\n- Emulator::run_test returns 0 for jolt.success and PANIC_HALT_ENDCODE\n  (1) for an ebreak halt, so jolt-emu and `jolt run` exit 1 for an\n  abnormal end. HTIF tohost handling and bare stalls are unchanged.\n\njolt-tracer-x86:\n- check_exit returns a MachineExit (a halt kind or a stall PC). Jolt\n  paths (fast_run, record, chunked execute and replay) call\n  require_halt. run_machine still accepts a stall for the ACT4 runner.\n- The harness terminal row is a jolt.success halt that links into x0.\n  ExitReason is re-exported for tests, which now name exit reasons\n  instead of using raw numbers.\n\nTests cover the halt state and link at the CPU level, every TracerBackend\ndriver with each halt and with both stall shapes, run_test's halt\nendcodes, run_machine against fast_run, a JIT-versus-interpreter\ndifferential for both halt rows, and a real panicking guest\n(memory-ops panic_halt) through the x86 fast and record paths.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* Document halt instructions\n\n- specs/m-mode-trap-csr-semantics.md: EBREAK and c.ebreak lower to one\n  Panic row, Jolt's failure halt; a run ends successfully only at\n  jolt.success. The Debug-Mode argument stays; the SDK's panic, abort\n  and exit paths end at EBREAK.\n- book emulation page: EBREAK is the failure halt and jolt.success the\n  success halt; the tracer rejects a run that stops anywhere else.\n- book guests page: foreign toolchains end a run with the termination\n  byte and jolt.success, or the panic byte and ebreak.\n- specs/x86-tracer-backend.md: Jolt runs end at halt rows\n  (HaltedSuccess/HaltedPanic); PC stalls exit with Stalled, which the\n  Jolt paths reject with EndedWithoutHalt and run_machine, used by the\n  ACT4 runner, accepts.\n- book testing-gates page: the exact_domain and panic_halt cases, the\n  halt check, and the new case counts.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* Update CLAUDE.md e2e matrix case lists\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* Say where the end-at-a-halt rule is enforced\n\nThese texts described the halt rule as a property of every Jolt run, or\nstill described the old self-jump exit:\n\n- specs/m-mode-trap-csr-semantics.md said a run ends successfully only\n  at jolt.success. The tracers stop at either halt, but the proved\n  claim does not depend on which one ends the run: the constraints\n  accept any final jump, and the public panic bit comes from the panic\n  and termination words that ValIo binds. Say so.\n- JoltInstructionRow::self_jump_repeats said a run that stops at the\n  PC-stall fixed point \"is rejected\"; name the tracers and their\n  TraceError::EndedWithoutHalt.\n- ProverError::TraceDoesNotEndInJump told users that only a jump to\n  itself ends a provable trace, the exit every tracer now rejects. The\n  variant and its check stay: the halt rows carry the jump flag.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* Fail a jolt-emu run that stalls without a halt\n\nEmulator::run_test, which jolt-emu and therefore `jolt run` use, still\nreported a PC stall in an ELF without a `tohost` symbol as a success.\nEvery riscv-tests and ACT4 ELF defines `tohost`, so only a Jolt guest\nreaches that branch, and a Jolt run must end at a halt: a guest built\nby an older SDK or a foreign toolchain that ends at `j .` passed\n`jolt run` and then failed to trace.\n\nSuch a stall now logs TraceError::EndedWithoutHalt and returns the\nnonzero ENDED_WITHOUT_HALT_ENDCODE. A test ELF that spins with `tohost`\nuntouched still returns 0. The tohost probe after each tick now runs\nonly for test ELFs; without `tohost` it read address 0, which only the\nJoltDevice jolt-emu installs happened to serve.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* Annotate the expect calls in trace and execute\n\nBoth infallible entry points panic through .expect when a run does not\nend at a halt. Give each the #[expect(clippy::expect_used)] the lint\npolicy asks for, with the reason, as finish_emulator already has.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* Test stall rejection on the lazy iterator and x86 chunked execute\n\nTwo drivers enforce the end-at-a-halt rule in their own code, and no\ntest reached either check: CheckpointingTracer::lazy_step_cycle, the\nonly guard for trace_lazy, trace_to_file and trace_checkpoints, and the\nx86 backend's chunked execute. jolt_runs_end_at_halts now also drains\ntrace_lazy on each stall program and requires the EndedWithoutHalt\npanic, and chunked_execute_rejects_a_stall runs a BEQ x0, x0, 0 program\nthrough the x86 chunked execute. Deleting either check fails its test.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* Check that the panic_halt equivalence guests panic\n\nThe panic_halt equivalence tests compared the x86 backend with the\nreference interpreter but never checked that the guest panicked. Had\n`trigger` decoded as false, both runs would end at jolt.success and\nagree, and the tests would pass without running the JIT's panic halt.\n\nBoth helpers now take the expected panic flag and check the reference\nrun against it; record mode also checks that the reference run ends at\nthe matching halt row.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* Drop a duplicate halt R1CS test\n\nhalt_rejects_a_real_successor writes ShouldJump and a nonzero\nNextUnexpandedPC by hand and expects row 14 to fail, which\njal_rejects_fall_through_next_pc and\nlast_row_rejects_final_jump_that_still_claims_to_jump already check.\nIts LookupOutput of 0 is the witness default, not a halt table's\noutput, so it cannot notice a halt that gains a lookup table\n(table_free_jumps_are_exactly_the_halts pins that), and a halt that\nloses Jump already fails last_row_accepts_final_halt.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* Adopt #2416's pushed host-call tests\n\nTake the host-call bound tests as #2416 now has them (a VirtualHostIO\nrow in both tracers, `advice_write_follows_guest_load_bounds`) and\nexpect the success halt the x86 harness now ends each program with.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* Check I/O lengths against the rounded layout and align heap_end\n\nBuild the checked layout first and compare trusted advice, untrusted advice\nand input lengths with the layout's rounded capacities, in the tracer and in\nthe native x86 tracer. The rounded size is the effective maximum: the\nverifier already checks lengths against it, and the SDK now slices the I/O\nregions by it.\n\nRound heap_end up to a doubleword in MemoryLayout::try_new, matching the\nlinker's 8-aligned __heap_end, and reject an unaligned heap_end at admission.\n\nAdd e2e cases for 16 bytes of advice under a 12-byte maximum and for a store\nto the last heap byte.\n\n* Expect a doubleword-aligned heap_end in the last-heap-word tests\n\nThe layout now rounds heap_end up to a doubleword, so with a 1025-byte\nprogram the heap ends at RAM_START + 1168 instead of 1161. The interpreter\nand native tests now accept stores to the whole last word and reject the\nnext two doublewords.\n\n* Move the rounded-advice entry point into the memory-ops guest\n\nThe advice-consumer guest is built without a function name by the verifier\nand Akita tests, so a second provable function there emits a second main.\nmemory-ops already holds several guest_only entry points selected by name.\n\n* Import UntrustedAdvice in the memory-ops guest\n\n* Scope the memory-ops guest helpers to the entry points that use them\n\nA guest build compiles only the guest_only entry point that JOLT_FUNC_NAME\nselects, so with -D warnings the heap_top, rounded_advice and memory_ops\nbuilds failed on unused items. Import asm inside the two functions that use\nit, declare the linker's layout symbol inside heap_top, make Scratch public\nso the builds that skip its users do not see dead code, and drop guest_only\nfrom rounded_advice, which compiles on the host.\n\n* docs(guests): name the jolt.success halt in the foreign-toolchain environment\n\nThe foreign-toolchain intro called the guest environment plain RV64IMAC\nwith a halt-instruction exit, but a successful run ends at jolt.success,\nJolt's custom-2 instruction (opcode 0x5B), which is not RV64IMAC. Name it,\nand ebreak for a failed run, as the \"Ending the run\" bullet below does.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* refactor(tracer): consolidate failure endcodes and run outputs\n\n* refactor(tracer): consolidate machine execution entry points\n\nReplace fast_run with run_machine and explicit halt validation at Jolt call sites. Require ELF bytes in the shared runner.\n\n---------\n\nCo-authored-by: Michael Zhu <mchl.zhu.96@gmail.com>\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-13T21:43:42-08:00",
+          "tree_id": "397aad6c6e65770c13fefb49295a3bd3c673abb0",
+          "url": "https://github.com/a16z/jolt/commit/8005bf4e9b894ec0dd6e0932e5daad40757add58"
+        },
+        "date": 1794639269120,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 3.7656,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 888972,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.465,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 464012,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 463944,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 464192,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.8257,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 463508,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-mem",
+            "value": 889068,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 1.8366,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 464024,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 4.8833,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 464440,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 4.8782,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 130424,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.9593,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 889412,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.6357,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 464360,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.4751,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 464532,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 25.6266,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 464076,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 6.6421,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 464008,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 36.802,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 699684,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 17.7191,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 616456,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 73.5277,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 638676,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.8571,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 463736,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 2.1869,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 464276,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 18.1396,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 888684,
             "unit": "KB",
             "extra": ""
           }
