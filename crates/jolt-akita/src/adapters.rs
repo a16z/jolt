@@ -6,7 +6,7 @@ use std::{
     io::{Error as IoError, ErrorKind},
 };
 
-#[cfg(feature = "profiling")]
+#[cfg(feature = "parallel")]
 use std::{cell::Cell, num::NonZeroUsize};
 
 use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
@@ -28,7 +28,7 @@ use jolt_openings::OpeningsError;
 use jolt_poly::{MultilinearPoly, OneHotIndexOrder, OneHotPolynomial, Polynomial};
 use jolt_transcript::{BytesMsg, Encoding};
 #[cfg(feature = "parallel")]
-use rayon::{ThreadPool, ThreadPoolBuilder};
+use rayon::{ThreadPool, ThreadPoolBuildError, ThreadPoolBuilder};
 use serde::{Deserialize, Serialize};
 
 use crate::configs::{AkitaChunkProfile, JoltDenseBounded, JoltDenseFull};
@@ -198,8 +198,9 @@ pub fn host_parallel_verifier_threads() -> usize {
 /// (the bridge splitter re-splits whenever a job migrates to a stealing
 /// worker, and the fold kernels carry large frames), which overflows rayon's
 /// default 2 MiB worker stacks nondeterministically — observed as SIGABRT in
-/// the Akita prover at trace-scale shapes. Every backend setup/commit/
-/// prove/verify entry funnels through this pool. Nested calls reuse it.
+/// the Akita prover at trace-scale shapes. Setup and verification use this
+/// pool. Prover calls can instead reuse an installed `AkitaProverPool`,
+/// whose workers have the same stack size.
 ///
 /// Without `parallel` (a single-core zkVM guest) `f` runs inline. Where the
 /// platform cannot spawn threads (wasm32), no dedicated pool can exist: `f`
@@ -220,6 +221,47 @@ pub(crate) fn with_backend_pool<R: Send>(f: impl FnOnce() -> R + Send) -> R {
         Some(pool) => pool.install(f),
         None => f(),
     }
+}
+
+/// A shared worker pool for a Jolt prover and its Akita commitments/openings.
+///
+/// Wrap the entire prover operation in [`Self::install`]; Akita prover calls
+/// automatically reuse these large-stack workers. Setup and verifier calls
+/// retain their existing pools. Rayon's released waiting policy is unchanged.
+#[cfg(feature = "parallel")]
+#[derive(Debug)]
+pub struct AkitaProverPool(ThreadPool);
+
+#[cfg(feature = "parallel")]
+thread_local! {
+    static IN_PROVER_POOL: Cell<bool> = const { Cell::new(false) };
+}
+
+#[cfg(feature = "parallel")]
+impl AkitaProverPool {
+    /// Creates a pool with the stack space required by Akita's recursive kernels.
+    pub fn new(num_threads: NonZeroUsize) -> Result<Self, ThreadPoolBuildError> {
+        ThreadPoolBuilder::new()
+            .num_threads(num_threads.get())
+            .thread_name(|index| format!("jolt-akita-prover-{index}"))
+            .stack_size(BACKEND_WORKER_STACK_BYTES)
+            .start_handler(|_| IN_PROVER_POOL.with(|flag| flag.set(true)))
+            .build()
+            .map(Self)
+    }
+
+    /// Runs the whole prover, including nested Akita work, on these workers.
+    pub fn install<R: Send>(&self, operation: impl FnOnce() -> R + Send) -> R {
+        self.0.install(operation)
+    }
+}
+
+pub(crate) fn with_prover_backend<R: Send>(f: impl FnOnce() -> R + Send) -> R {
+    #[cfg(feature = "parallel")]
+    if IN_PROVER_POOL.with(Cell::get) {
+        return f();
+    }
+    with_backend_pool(f)
 }
 
 /// Regenerable recipe for constructing an Akita setup.

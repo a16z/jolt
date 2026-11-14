@@ -394,3 +394,16 @@ fn transported_setups_verify_a_proof_through_a_setup_prefix_fold() {
     assert!(verifies(&attached, evaluation));
     assert!(!verifies(&attached, evaluation + AkitaField::from_u64(1)));
 }
+
+#[cfg(all(feature = "parallel", not(target_family = "wasm")))]
+#[test]
+fn prover_pool_commitment_and_opening_verify_outside_the_pool() {
+    use crate::AkitaProverPool;
+    use std::num::NonZeroUsize;
+
+    let pool = AkitaProverPool::new(NonZeroUsize::new(2).unwrap()).unwrap();
+    let fixture = pool.install(|| DenseFixture::new(14));
+    let setup = metadata(&params(14));
+    assert!(fixture.verify(&setup, fixture.evaluation));
+    assert!(!fixture.verify(&setup, fixture.evaluation + AkitaField::from_u64(1)));
+}

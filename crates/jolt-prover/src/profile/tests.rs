@@ -285,6 +285,7 @@ fn chunk_profiles_have_distinct_artifact_and_csv_names() {
             input_file: None,
             result_json: None,
             akita_chunk_profile: profile,
+            akita_prover_pool: false,
             memory_budget: None,
         };
         assert_eq!(args.workload_name(), workload_name);

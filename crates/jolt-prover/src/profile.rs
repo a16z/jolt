@@ -35,7 +35,6 @@
 use std::error::Error;
 use std::fs;
 use std::io::{Result, Write as _};
-#[cfg(not(feature = "akita"))]
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 use std::result::Result as StdResult;
@@ -44,7 +43,7 @@ use std::time::{Duration, Instant};
 
 use clap::ValueEnum;
 #[cfg(feature = "akita")]
-use jolt_akita::{AkitaChunkProfile, AkitaField};
+use jolt_akita::{AkitaChunkProfile, AkitaField, AkitaProverPool};
 #[cfg(not(feature = "akita"))]
 use jolt_crypto::{Bn254G1, Pedersen};
 #[cfg(not(feature = "akita"))]
@@ -344,6 +343,11 @@ pub struct ProfileArgs {
     #[clap(long, value_parser = parse_akita_chunk_profile, default_value = "w1r0")]
     pub akita_chunk_profile: AkitaChunkProfile,
 
+    /// Run Jolt and Akita prover work in one dedicated large-stack worker pool.
+    #[cfg(feature = "akita")]
+    #[clap(long)]
+    pub akita_prover_pool: bool,
+
     /// Explicit memory budget in bytes: an integer with an optional binary
     /// suffix (KiB, MiB, GiB or TiB; e.g. 32GiB). Requires `--backend
     /// optimized`. The profile reserves against it in turn and returns an
@@ -418,12 +422,17 @@ impl ProfileArgs {
 
     #[cfg(feature = "akita")]
     fn chunk_profile_suffix(&self) -> String {
-        match self.akita_chunk_profile {
+        let geometry = match self.akita_chunk_profile {
             AkitaChunkProfile {
                 chunks: 1,
                 levels: 0,
             } => String::new(),
             profile => format!("_w{}r{}", profile.chunks, profile.levels),
+        };
+        if self.akita_prover_pool {
+            format!("{geometry}_proverpool")
+        } else {
+            geometry
         }
     }
 
@@ -945,6 +954,12 @@ fn run_workload(args: &ProfileArgs, scale: u32, run_dir: &Path) -> ProfileResult
             "trace_rows": trace_length,
             "padded_trace_rows": run.padded_trace_rows,
         });
+        #[cfg(feature = "akita")]
+        let metrics = {
+            let mut metrics = metrics;
+            metrics["akita_prover_pool"] = serde_json::json!(args.akita_prover_pool);
+            metrics
+        };
         fs::write(
             path,
             serde_json::to_vec(&metrics).expect("encode measurement"),
@@ -1162,13 +1177,6 @@ fn prove_workload(
     use jolt_transcript::{Keccak, ProverState, VerifierState};
     use jolt_verifier::{JoltVerifierPreprocessing, ProgramPreprocessing};
 
-    let backend = match args.backend {
-        BackendKind::Reference => JoltBackend::reference(),
-        BackendKind::Optimized => {
-            JoltBackend::optimized().with_streaming(args.streaming.unwrap_or_default())
-        }
-    };
-
     let memory_layout = program_preprocessing.memory_layout.clone();
     let max_trace_length = program_preprocessing.max_padded_trace_length;
 
@@ -1221,6 +1229,10 @@ fn prove_workload(
         }
         None => AkitaScheme::setup(params)?,
     };
+    let prover_pool = args.akita_prover_pool.then(|| {
+        let threads = NonZeroUsize::new(rayon::current_num_threads()).expect("nonzero pool size");
+        AkitaProverPool::new(threads).expect("create explicit prover pool")
+    });
     let setup_duration = setup_now.elapsed();
     drop(setup_guard);
     let prover_preprocessing = JoltProverPreprocessing::<AkitaScheme, AkitaVc> {
@@ -1248,16 +1260,28 @@ fn prove_workload(
     );
     // --- The measured window: the full Akita prove (OneHotTrace assembly
     // and native commit, all sumcheck stages, and the native grouped opening).
-    // The `jolt_prover::prove` root span covers exactly
-    // this interval; the Instant is the `--format none` baseline.
+    // This interval also includes backend construction and optional pool dispatch,
+    // which sit outside the `jolt_prover::prove` root span.
     let now = Instant::now();
-    let proof = crate::akita::prove::<AkitaField, AkitaScheme, AkitaVc, ProverState<Keccak>>(
-        backend.with_witness(&witness),
-        &prover_preprocessing,
-        &config,
-        None,
-        &public_io,
-    )
+    let prove = || {
+        let backend = match args.backend {
+            BackendKind::Reference => JoltBackend::reference(),
+            BackendKind::Optimized => {
+                JoltBackend::optimized().with_streaming(args.streaming.unwrap_or_default())
+            }
+        };
+        crate::akita::prove::<AkitaField, AkitaScheme, AkitaVc, ProverState<Keccak>>(
+            backend.with_witness(&witness),
+            &prover_preprocessing,
+            &config,
+            None,
+            &public_io,
+        )
+    };
+    let proof = match &prover_pool {
+        Some(pool) => pool.install(prove),
+        None => prove(),
+    }
     .expect("modular Akita prove");
     let duration = now.elapsed();
 
