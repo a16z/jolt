@@ -268,7 +268,10 @@ mod tests {
     /// rows. Stage 6b's booleanity cycle phase and instruction RA
     /// virtualization read the rows in rounds 0–3 and hold their tables dense
     /// from the fourth bind, the earliest at any budget; the parity tests
-    /// cover later ones.
+    /// cover later ones. The trace ends inside its padded domain, so stage
+    /// 5's streamed cycle round and stage 6b's rounds 0–3 each weigh a
+    /// constant suffix once, and the tables those kernels turn dense hold it
+    /// as their tail.
     #[test]
     fn streaming_kernels_reproduce_the_default_proof() {
         let Fixture {
@@ -277,6 +280,11 @@ mod tests {
             public_io,
             witness,
         } = fixture();
+        let rows = witness.random_access().expect("resident rows");
+        assert!(
+            rows.physical_cycles() < rows.cycles(),
+            "the instruction-rows kernels must meet a constant suffix",
+        );
         let prove = |backend: JoltBackend<Fr, DoryScheme>| {
             dory::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, ProverState<Keccak>>(
                 backend.with_witness(&witness),

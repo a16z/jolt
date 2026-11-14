@@ -722,12 +722,26 @@ fn streaming_cycle_case<F: JoltField>(
 /// phase over a witness's resident rows, against the reference, in both
 /// fields: at every materializing bind a budget selects (the fourth through
 /// the last, which leaves one entry per polynomial) and at the production
-/// budget through the slot, on domains whose padded suffix is three eighths
-/// of the cycles or empty, with 8-bit chunks, and on domains shorter than
-/// four binds.
+/// budget through the slot, with 8-bit chunks, and on domains shorter than
+/// four binds. The traces fill their domain, end one cycle short of it, hold
+/// no cycle, one or two, and end inside a pair and a split-eq group or on a
+/// pair boundary.
 #[test]
 fn streaming_cycle_kernel_matches_reference_at_every_materialization() {
-    for (log_t, bits, rows) in [(6, 4, 40), (6, 4, 64), (6, 8, 40), (3, 4, 5), (1, 4, 2)] {
+    for (log_t, bits, rows) in [
+        (6, 4, 0),
+        (6, 4, 1),
+        (6, 4, 2),
+        (6, 4, 37),
+        (6, 4, 40),
+        (6, 4, 63),
+        (6, 4, 64),
+        (6, 8, 40),
+        (3, 4, 5),
+        (3, 4, 8),
+        (1, 4, 1),
+        (1, 4, 2),
+    ] {
         with_trace_backend(log_t, bits, mixed_rows(rows), |backend, dimensions| {
             for depth in (4..=log_t).map(Some).chain([None]) {
                 streaming_cycle_case::<Fr>(

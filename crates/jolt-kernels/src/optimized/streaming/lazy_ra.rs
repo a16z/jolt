@@ -16,6 +16,14 @@
 //! kernel continues over the default family's dense state. A gather combines
 //! the table entries the default family combines, so every value equals its
 //! value.
+//!
+//! Like the default family, this one stops at the rows' constant suffix. A
+//! bound index whose cycles all lie in the suffix holds the polynomial's
+//! value there at every depth, because the branch weights sum to one. A pass
+//! therefore visits the pair rows that hold a cycle before the suffix and
+//! weighs the others once ([`GruenSplitEqPolynomial::suffix_weight`]), and
+//! the dense state holds the rows that hold such a cycle, with the suffix
+//! values as its tail.
 
 use std::ops::Range;
 
@@ -38,10 +46,11 @@ pub(crate) const MATERIALIZE_BYTES: usize = 1 << 26;
 const DEFAULT_MATERIALIZE_DEPTH: usize = (2 * DEFAULT_MAX_WIDTH).ilog2() as usize;
 
 /// The bind depth at which a family over `2^rounds` cycles materializes: the
-/// first whose polynomials, `2^rounds >> depth` entries each, fit `bytes`; at
-/// least the default family's, so no streamed polynomial is longer than the
-/// default family's where the domain has that many binds; and at most the
-/// last bind, so the final claims are always dense entries. Sizes are
+/// first at which a polynomial over the whole domain, `2^rounds >> depth`
+/// entries, fits `bytes`, so one that stops at a constant suffix fits too; at
+/// least the default family's, whose polynomials are no shorter where they
+/// stop at the same suffix and the domain has that many binds; and at most
+/// the last bind, so the final claims are always dense entries. Sizes are
 /// compared in entries against the entries `bytes` holds, which is the same
 /// test as bytes against `bytes` and cannot overflow where the byte count of
 /// `2^rounds` entries would, for `rounds < usize::BITS`
@@ -61,7 +70,7 @@ fn callback_rows(unit: usize) -> usize {
 /// The hot scale-table index of each point-mass column in one cycle's typed
 /// witness row.
 pub(crate) trait RowIndexSource: Send + Sync {
-    type Row: WitnessBundle + Copy + Send + Sync;
+    type Row: WitnessBundle + Copy + PartialEq + Send + Sync;
 
     /// Calls `visit(column, index)` once for every column that is hot in
     /// `row`, with that column's scale-table index.
@@ -98,6 +107,11 @@ pub(crate) struct StreamedFoldedRa<F: JoltField, S: RowIndexSource> {
     schedule: Schedule,
     /// log2 of the cycle domain `rows` span.
     rounds: usize,
+    /// The first cycle of the constant suffix, at most the domain's
+    /// `2^rounds` cycles: every row from it on gathers `tail`.
+    prefix: usize,
+    /// Every polynomial's value on the constant suffix, at any depth.
+    tail: Vec<F>,
     source: S,
     rows: BundleStore<S::Row>,
 }
@@ -112,23 +126,19 @@ impl<F: JoltField, S: RowIndexSource> StreamedFoldedRa<F, S> {
         rows: BundleStore<S::Row>,
         rounds: usize,
         materialize_bytes: usize,
-    ) -> Self {
-        Self {
-            tables,
-            factors: 1,
-            depth: 0,
-            schedule: Schedule::Depth(materialize_depth::<F>(rounds, materialize_bytes)),
-            rounds,
-            source,
-            rows,
-        }
+    ) -> Result<Self, WitnessError> {
+        let schedule = Schedule::Depth(materialize_depth::<F>(rounds, materialize_bytes));
+        Self::over(tables, 1, schedule, source, rows, rounds, 0)
     }
 
     /// One base table per column, in `source`'s column order, over the
     /// `2^rounds` cycles of `rows`; each run of `factors` consecutive columns
     /// is one polynomial. The family materializes at the bind at which
     /// [`LazyFoldedRa::factored`] over the same tables does, and holds that
-    /// family's branch tables until then.
+    /// family's branch tables until then. Its constant suffix starts no
+    /// earlier than cycle `min_prefix`: a caller whose pair terms read other
+    /// tables by pair row passes the first cycle from which those are
+    /// constant ([`Self::sum_pair_terms`]).
     pub(crate) fn factored(
         tables: Vec<Vec<F>>,
         factors: usize,
@@ -136,17 +146,55 @@ impl<F: JoltField, S: RowIndexSource> StreamedFoldedRa<F, S> {
         source: S,
         rows: BundleStore<S::Row>,
         rounds: usize,
-    ) -> Self {
+        min_prefix: usize,
+    ) -> Result<Self, WitnessError> {
         debug_assert!(factors > 0 && tables.len().is_multiple_of(factors));
-        Self {
+        let schedule = Schedule::Default { max_width };
+        Self::over(tables, factors, schedule, source, rows, rounds, min_prefix)
+    }
+
+    /// The family at depth zero. Its suffix values are the gather of the
+    /// domain's last cycle. Its constant suffix starts where the rows' does
+    /// ([`constant_suffix_start`](crate::optimized::support::BundleAccess::constant_suffix_start)),
+    /// which is the domain's end where they establish none, or at
+    /// `min_prefix` where that is later, and never past the domain's end.
+    fn over(
+        tables: Vec<Vec<F>>,
+        factors: usize,
+        schedule: Schedule,
+        source: S,
+        rows: BundleStore<S::Row>,
+        rounds: usize,
+        min_prefix: usize,
+    ) -> Result<Self, WitnessError> {
+        // `rounds` is below `usize::BITS`, as in [`materialize_depth`].
+        let cycles = 1usize << rounds;
+        let mut family = Self {
             tables,
             factors,
             depth: 0,
-            schedule: Schedule::Default { max_width },
+            schedule,
             rounds,
+            prefix: cycles,
+            tail: Vec::new(),
             source,
             rows,
-        }
+        };
+        let mut tail = vec![F::zero(); family.num_polys()];
+        // This visit refuses a store that ends inside the domain, so the
+        // suffix search below never indexes past one.
+        family.rows.visit(cycles - 1..cycles, 1, |_, last| {
+            family.gather(last, &mut vec![None; family.tables.len()], &mut tail);
+            Ok(())
+        })?;
+        family.prefix = family
+            .rows
+            .access()
+            .constant_suffix_start(cycles)?
+            .max(min_prefix)
+            .min(cycles);
+        family.tail = tail;
+        Ok(family)
     }
 
     fn num_polys(&self) -> usize {
@@ -197,10 +245,15 @@ impl<F: JoltField, S: RowIndexSource> StreamedFoldedRa<F, S> {
     /// `y`, where `lo(y)` and `hi(y)` hold every polynomial's bound values at
     /// indices `2y` and `2y + 1`, `pair_terms(scratch, y, lo, hi, terms)`
     /// writes the row's `terms` summands, and `E = e_out ⊗ e_in` are `eq`'s
-    /// current tables. The domain splits into [`task_ranges`] of whole pairs;
-    /// each task visits its rows once, serially, and keeps one `scratch()`.
-    /// Every callback holds whole pairs and a pair is weighted on its own, so
-    /// no sum depends on where a callback or a task ends.
+    /// current tables. The pair rows that hold a cycle before the constant
+    /// suffix split into [`task_ranges`] of whole pairs; each task visits its
+    /// rows once, serially, and keeps one `scratch()`. Every callback holds
+    /// whole pairs and a pair is weighted on its own, so no sum depends on
+    /// where a callback or a task ends. Every later pair row holds the suffix
+    /// values at both indices: `pair_terms` runs once for all of them, at the
+    /// first, and [`GruenSplitEqPolynomial::suffix_weight`] weighs its
+    /// summands. Whatever else `pair_terms` reads by `y` must therefore be
+    /// constant from that row on ([`Self::factored`]'s `min_prefix`).
     pub(crate) fn sum_pair_terms<T>(
         &self,
         eq: &GruenSplitEqPolynomial<F>,
@@ -211,6 +264,9 @@ impl<F: JoltField, S: RowIndexSource> StreamedFoldedRa<F, S> {
         let e_out = eq.e_out_current();
         let e_in = eq.e_in_current();
         let pair = 2usize << self.depth;
+        // `prefix` is at most the domain's cycles ([`Self::over`]), so these
+        // are at most its pair rows and their cycles cannot overflow.
+        let prefix_pairs = self.prefix.div_ceil(pair);
         let zero = || vec![F::Accumulator::default(); terms];
         let task = |range: &Range<usize>| -> Result<Vec<F::Accumulator>, WitnessError> {
             let mut scratch = scratch();
@@ -241,16 +297,30 @@ impl<F: JoltField, S: RowIndexSource> StreamedFoldedRa<F, S> {
             }
             left
         };
-        let ranges = task_ranges(e_out.len() * e_in.len() * pair, pair);
+        let ranges = task_ranges(prefix_pairs * pair, pair);
         #[cfg(feature = "parallel")]
-        let total = ranges
+        let mut total = ranges
             .par_iter()
             .map(task)
             .try_reduce(zero, |left, right| Ok(merge(left, right)))?;
         #[cfg(not(feature = "parallel"))]
-        let total = ranges.iter().try_fold(zero(), |total, range| {
+        let mut total = ranges.iter().try_fold(zero(), |total, range| {
             task(range).map(|part| merge(total, part))
         })?;
+        if prefix_pairs < e_out.len() * e_in.len() {
+            let mut values = vec![F::zero(); terms];
+            pair_terms(
+                &mut scratch(),
+                prefix_pairs,
+                &self.tail,
+                &self.tail,
+                &mut values,
+            );
+            let weight = eq.suffix_weight(prefix_pairs);
+            for (total, value) in total.iter_mut().zip(values) {
+                total.fmadd(weight, value);
+            }
+        }
         Ok(total.into_iter().map(Accumulator::reduce).collect())
     }
 
@@ -293,23 +363,24 @@ impl<F: JoltField, S: RowIndexSource> StreamedFoldedRa<F, S> {
     }
 
     /// The default family's row-major dense state: every polynomial gathered
-    /// at each of its `2^rounds >> depth` bound indices. With `bind`, a
-    /// challenge for the next cycle variable, each dense row is instead the
-    /// pair of gathers `(lo, hi)` of the next depth's index bound once,
+    /// at each bound index that holds a cycle before the constant suffix,
+    /// with the suffix values as its tail. With `bind`, a challenge for the
+    /// next cycle variable, each dense row is instead the pair of gathers
+    /// `(lo, hi)` of the next depth's index bound once,
     /// `lo + bind · (hi − lo)`, so the branch tables never double for it. The
-    /// rows cover the bound domain, so the state's tail, their last row,
-    /// never stands in for a row they lack. The storage is allocated once at
-    /// its final size and split at the task boundaries; each task visits its
-    /// cycles once, serially.
+    /// storage is allocated once at its final size and split at the task
+    /// boundaries; each task visits its cycles once, serially.
     fn materialize<I>(&self, bind: Option<F>) -> Result<LazyFoldedRa<F, I>, WitnessError> {
         let polys = self.num_polys();
         let width = 1usize << self.depth;
         let unit = if bind.is_some() { 2 * width } else { width };
-        let len = (1usize << self.rounds) / unit;
+        // `prefix` is at most the domain's cycles ([`Self::over`]), so these
+        // are at most its `2^rounds / unit` rows.
+        let len = self.prefix.div_ceil(unit);
         // A product past `usize` overflows the allocation's capacity check
         // instead of wrapping to a shorter vector.
         let mut values: Vec<F> = unsafe_allocate_zero_vec(polys.saturating_mul(len));
-        let ranges = task_ranges(1 << self.rounds, unit);
+        let ranges = task_ranges(len * unit, unit);
         let mut rest = values.as_mut_slice();
         let slices: Vec<&mut [F]> = ranges
             .iter()
@@ -345,8 +416,10 @@ impl<F: JoltField, S: RowIndexSource> StreamedFoldedRa<F, S> {
         ranges.par_iter().zip(slices).try_for_each(fill)?;
         #[cfg(not(feature = "parallel"))]
         ranges.iter().zip(slices).try_for_each(fill)?;
-        let tail = values[values.len() - polys..].to_vec();
-        Ok(LazyFoldedRa::Rows { values, tail })
+        Ok(LazyFoldedRa::Rows {
+            values,
+            tail: self.tail.clone(),
+        })
     }
 }
 
@@ -438,6 +511,29 @@ mod tests {
             .collect()
     }
 
+    /// [`test_rows`] with one row, hot in every column, from `prefix` on.
+    fn padded_rows(rounds: usize, prefix: usize) -> Vec<TestRow> {
+        let mut rows = test_rows(rounds);
+        rows[prefix..].fill(TestRow {
+            lookup_index: LookupIndex(6),
+            remapped_ram_address: RemappedRamAddress(Some(0x2d)),
+        });
+        rows
+    }
+
+    /// The prefixes of a `2^rounds`-cycle domain the suffix cases cover: no
+    /// padding row, one, every row, one or two rows before the padding, and
+    /// suffixes that start inside a pair and a split-eq group, on a pair
+    /// boundary and at the middle of the domain.
+    fn prefixes(rounds: usize) -> Vec<usize> {
+        let cycles = 1usize << rounds;
+        let mut prefixes = vec![cycles, cycles - 1, 0, 1, 2, 37, 40, cycles / 2];
+        prefixes.retain(|prefix| *prefix <= cycles);
+        prefixes.sort_unstable();
+        prefixes.dedup();
+        prefixes
+    }
+
     fn test_tables<F: JoltField>() -> Vec<Vec<F>> {
         [(4, 11, 7), (8, 101, 13), (8, 211, 17), (4, 307, 19)]
             .into_iter()
@@ -445,20 +541,25 @@ mod tests {
             .collect()
     }
 
-    /// Binds `family`, whose polynomials are products of `factors` columns,
-    /// beside dense multilinear binds of those products: before each bind
-    /// the pair sums of two summands, one mixing two polynomials and both
-    /// halves and one reading the pair row's index, equal the dense sums.
-    /// Bind `target`, and none before it, returns the dense state: exactly
-    /// the bound polynomials, with their last row as its tail. Returns
-    /// whether that bind doubled the branch tables.
+    /// Binds `family`, whose polynomials are products of `factors` columns
+    /// over [`padded_rows`] and whose constant suffix starts at cycle
+    /// `suffix`, beside dense multilinear binds of those products: before
+    /// each bind the pair sums of two summands, one mixing two polynomials
+    /// and both halves and one reading the pair row's index up to the first
+    /// row of the suffix, equal the dense sums over the whole domain. Bind
+    /// `target`, and none before it, returns the dense state: the bound
+    /// polynomials' rows that hold a cycle before the suffix, and their
+    /// values past those from its tail. Returns whether that bind doubled the
+    /// branch tables.
     fn check_family<F: JoltField>(
         rounds: usize,
+        prefix: usize,
+        suffix: usize,
         factors: usize,
         target: usize,
         family: impl FnOnce(Vec<Vec<F>>, BundleStore<TestRow>) -> StreamedFoldedRa<F, TestSource>,
     ) -> bool {
-        let rows = test_rows(rounds);
+        let rows = padded_rows(rounds, prefix);
         let tables = test_tables::<F>();
         let mut dense: Vec<Polynomial<F>> = tables
             .chunks_exact(factors)
@@ -482,7 +583,7 @@ mod tests {
             .collect();
         let mut eq = GruenSplitEqPolynomial::new(&point, BindingOrder::LowToHigh);
         let mut family = family(tables, BundleStore::Retained(rows));
-        let case = format!("rounds {rounds}, factors {factors}, target {target}");
+        let case = format!("rounds {rounds}, prefix {prefix}, factors {factors}, target {target}");
         assert!(
             family
                 .single_cycle::<LookupIndexChunks>()
@@ -492,13 +593,14 @@ mod tests {
         );
         for depth in 0..target {
             let (e_out, e_in) = (eq.e_out_current(), eq.e_in_current());
+            let by_row = |y: usize| F::from_u64(y.min(suffix.div_ceil(2 << depth)) as u64);
             let mut expected = vec![F::zero(); 2];
             for y in 0..dense[0].len() / 2 {
                 let weight = e_out[y / e_in.len()] * e_in[y % e_in.len()];
                 let [lo, hi] =
                     [2 * y, 2 * y + 1].map(|j| [dense[0].evals()[j], dense[last].evals()[j]]);
                 expected[0] += weight * lo[0] * hi[1];
-                expected[1] += weight * (hi[0] + lo[1] + F::from_u64(y as u64));
+                expected[1] += weight * (hi[0] + lo[1] + by_row(y));
             }
             let sums = family
                 .sum_pair_terms(
@@ -507,7 +609,7 @@ mod tests {
                     || (),
                     |(), y, lo, hi, terms| {
                         terms[0] = lo[0] * hi[last];
-                        terms[1] = hi[0] + lo[last] + F::from_u64(y as u64);
+                        terms[1] = hi[0] + lo[last] + by_row(y);
                     },
                 )
                 .unwrap();
@@ -523,22 +625,32 @@ mod tests {
                 continue;
             };
             assert_eq!(depth + 1, target, "{case}");
-            let len = (1 << rounds) >> target;
-            assert_eq!(materialized.prefix_len(), len, "{case}");
+            assert_eq!(
+                materialized.prefix_len(),
+                suffix.div_ceil(1 << target),
+                "{case}"
+            );
             for (poly, dense) in dense.iter().enumerate() {
-                assert_eq!(dense.len(), len, "{case}");
+                assert_eq!(dense.len(), (1 << rounds) >> target, "{case}");
                 for (j, value) in dense.evals().iter().enumerate() {
                     assert_eq!(materialized.value(poly, j), *value, "{case}, {poly}, {j}");
                 }
-                assert_eq!(materialized.tail_values()[poly], dense.evals()[len - 1]);
             }
         }
         family.depth == target
     }
 
-    /// A [`StreamedFoldedRa::new`] family that materializes at bind `target`.
-    fn check_budgeted<F: JoltField>(rounds: usize, target: usize) {
-        let doubled = check_family::<F>(rounds, 1, target, |tables, rows| {
+    /// Where the constant suffix of [`padded_rows`] starts: at `prefix`, and
+    /// at the last row, a suffix of its own, where no row is padding.
+    fn suffix_start(rounds: usize, prefix: usize) -> usize {
+        prefix.min((1 << rounds) - 1)
+    }
+
+    /// A [`StreamedFoldedRa::new`] family over [`padded_rows`] that
+    /// materializes at bind `target`.
+    fn check_budgeted<F: JoltField>(rounds: usize, prefix: usize, target: usize) {
+        let suffix = suffix_start(rounds, prefix);
+        let doubled = check_family::<F>(rounds, prefix, suffix, 1, target, |tables, rows| {
             StreamedFoldedRa::new(
                 tables,
                 TestSource,
@@ -546,19 +658,23 @@ mod tests {
                 rounds,
                 size_of::<F>() << (rounds - target),
             )
+            .unwrap()
         });
-        assert!(doubled, "rounds {rounds}, target {target}");
+        assert!(doubled, "rounds {rounds}, prefix {prefix}, target {target}");
     }
 
-    /// Every materializing bind of domains up to 2^7 cycles: the last bind of
-    /// domains shorter than four binds, and the fourth through the last.
+    /// Every materializing bind of domains up to 2^7 cycles, the last bind of
+    /// domains shorter than four binds and the fourth through the last, for
+    /// every suffix of [`prefixes`].
     #[test]
     fn pair_sums_and_materialized_rows_match_dense_binds() {
         for (rounds, targets) in [(1, 1..=1), (2, 2..=2), (3, 3..=3), (5, 4..=5), (7, 4..=7)] {
             for target in targets {
-                check_budgeted::<Fr>(rounds, target);
-                #[cfg(feature = "akita")]
-                check_budgeted::<AkitaField>(rounds, target);
+                for prefix in prefixes(rounds) {
+                    check_budgeted::<Fr>(rounds, prefix, target);
+                    #[cfg(feature = "akita")]
+                    check_budgeted::<AkitaField>(rounds, prefix, target);
+                }
             }
         }
     }
@@ -566,12 +682,18 @@ mod tests {
     /// 2^16 cycles on one pool thread, so that a task holds more rows than a
     /// callback: materializing at the fourth bind, every pass and the gather
     /// visit a task's rows in several callbacks; at the thirteenth, the last
-    /// passes' pairs and the gather's bound rows each fill a callback.
+    /// passes' pairs and the gather's bound rows each fill a callback. The
+    /// suffix starts at a callback's end and one row past it, at an eighth of
+    /// the domain, where a task of the whole domain would end, where every
+    /// task is one callback and where it is a callback and a part, and at the
+    /// domain's last row.
     #[test]
     fn tasks_of_several_callbacks_match_dense_binds() {
         let check = || {
-            check_budgeted::<Fr>(16, 4);
-            check_budgeted::<Fr>(16, 13);
+            for prefix in [1 << 12, (1 << 12) + 1, 1 << 13, 1 << 15, 9 << 12, 1 << 16] {
+                check_budgeted::<Fr>(16, prefix, 4);
+                check_budgeted::<Fr>(16, prefix, 13);
+            }
         };
         #[cfg(feature = "parallel")]
         ThreadPoolBuilder::new()
@@ -586,8 +708,9 @@ mod tests {
     /// A [`StreamedFoldedRa::factored`] family materializes at the bind at
     /// which the default family over the same tables leaves its lazy state,
     /// with the dense binds' values, for polynomials of one, two and four
-    /// columns. The cases cover a first, a second and a third materializing
-    /// bind, each both fused and after doubling.
+    /// columns and every suffix of [`prefixes`]. The cases cover a first, a
+    /// second and a third materializing bind, each both fused and after
+    /// doubling.
     #[test]
     fn factored_family_materializes_where_the_default_family_does() {
         fn check<F: JoltField>(rounds: usize, factors: usize, max_width: usize) -> (usize, bool) {
@@ -603,10 +726,18 @@ mod tests {
                     !matches!(default, LazyFoldedRa::Lazy { .. })
                 })
                 .unwrap();
-            let doubled = check_family::<F>(rounds, factors, target, |tables, rows| {
-                StreamedFoldedRa::factored(tables, factors, max_width, TestSource, rows, rounds)
+            let doubled = prefixes(rounds).into_iter().map(|prefix| {
+                let suffix = suffix_start(rounds, prefix);
+                check_family::<F>(rounds, prefix, suffix, factors, target, |tables, rows| {
+                    StreamedFoldedRa::factored(
+                        tables, factors, max_width, TestSource, rows, rounds, 0,
+                    )
+                    .unwrap()
+                })
             });
-            (target, doubled)
+            let doubled: Vec<bool> = doubled.collect();
+            assert!(doubled.iter().all(|step| *step == doubled[0]));
+            (target, doubled[0])
         }
         for (rounds, factors, max_width, expected) in [
             (4, 1, 8, (1, false)),
@@ -627,6 +758,19 @@ mod tests {
                 expected,
                 "{case}"
             );
+        }
+    }
+
+    /// A family's suffix starts at its floor where the rows' own starts
+    /// earlier, and at the domain's end, without a suffix, where the floor
+    /// lies past it, up to the largest `usize`.
+    #[test]
+    fn suffix_starts_no_earlier_than_the_floor() {
+        let (rounds, prefix) = (7, 37);
+        for (floor, suffix) in [(0, 37), (36, 37), (38, 38), (128, 128), (usize::MAX, 128)] {
+            let _ = check_family::<Fr>(rounds, prefix, suffix, 2, 3, |tables, rows| {
+                StreamedFoldedRa::factored(tables, 2, 8, TestSource, rows, rounds, floor).unwrap()
+            });
         }
     }
 
@@ -675,7 +819,9 @@ mod tests {
             TestSource,
             BundleStore::Retained(vec![row]),
             0,
-        );
+            0,
+        )
+        .unwrap();
         let dense = family.single_cycle::<LookupIndexChunks>().unwrap().unwrap();
         let rows = IndexedRows(vec![row]);
         let expected: Vec<Fr> = tables
@@ -697,33 +843,22 @@ mod tests {
         assert_eq!(dense.final_values(), expected);
     }
 
-    /// A row store that ends inside the domain fails a pass and the
-    /// materializing gather typed instead of reading past it.
+    /// A row store that ends inside the domain is refused typed at
+    /// construction, which reads the domain's last cycle, instead of being
+    /// read past.
     #[test]
     fn rows_missing_from_the_domain_fail_typed() {
         let rounds = 4;
         let mut rows = test_rows(rounds);
         let _ = rows.pop();
-        let mut family = StreamedFoldedRa::new(
-            test_tables::<Fr>(),
-            TestSource,
-            BundleStore::Retained(rows),
-            rounds,
-            0,
-        );
-        let eq = GruenSplitEqPolynomial::new(&[Fr::from_u64(5); 4], BindingOrder::LowToHigh);
         assert!(matches!(
-            family.sum_pair_terms(&eq, 1, || (), |(), _, _, _, _| ()),
-            Err(WitnessError::InvalidDimensions { .. })
-        ));
-        for depth in 0..rounds as u64 - 1 {
-            assert!(family
-                .bind::<LookupIndexChunks>(Fr::from_u64(3 + depth))
-                .unwrap()
-                .is_none());
-        }
-        assert!(matches!(
-            family.bind::<LookupIndexChunks>(Fr::from_u64(7)),
+            StreamedFoldedRa::new(
+                test_tables::<Fr>(),
+                TestSource,
+                BundleStore::Retained(rows),
+                rounds,
+                0,
+            ),
             Err(WitnessError::InvalidDimensions { .. })
         ));
     }

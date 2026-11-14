@@ -75,7 +75,9 @@ trace once per address phase and gathers its virtual RA polynomials from it
 until the bind at which the eager kernel's tables turn dense. The stage-6a
 address phase accumulates its tables from the resident trace; the stage-6b
 kernels gather their one-hot selectors from it until each fits 64 MiB dense,
-and not before the eager kernels' fourth bind. The bytecode read-RAF kernels
+and not before the eager kernels' fourth bind. These passes and the tables
+they fill stop at the trace's constant padding suffix, as the eager kernels'
+tables do. The bytecode read-RAF kernels
 keep their eager kernels, so the packed per-cycle instruction rows are no
 longer collected in stage 5 but in stage 6a, and held into stage 6b. Combine
 families with `--streaming instruction-input,spartan,ram,registers`.

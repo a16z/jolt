@@ -38,12 +38,12 @@ fn task_count(units: usize) -> usize {
     }
 }
 
-/// The task partition of one pass over the cycle domain `0..cycles`: units of
+/// The task partition of one pass over the cycles `0..cycles`: units of
 /// `group` cycles and [`task_count`] tasks, task `i` holding units
 /// `⌊i·n/tasks⌋..⌊(i+1)·n/tasks⌋` of the
-/// `n = cycles / group`. Both sizes are powers of two, with `group ≤ cycles`,
-/// so every task covers whole `group`-cycle kernel groups. Per-task state
-/// allocated before the pass is held `tasks` times at once.
+/// `n = cycles / group`. `cycles` is a multiple of `group`, so every task
+/// covers whole `group`-cycle kernel groups; no cycles make one empty task.
+/// Per-task state allocated before the pass is held `tasks` times at once.
 pub(crate) fn task_ranges(cycles: usize, group: usize) -> Vec<Range<usize>> {
     let unit = group;
     let units = cycles / unit;
