@@ -1254,13 +1254,12 @@ impl<const P: u128> Fp128<P> {
 #[cfg(any(test, all(feature = "field-inline-guest", target_arch = "riscv64")))]
 impl<const P: u128> Fp128<P> {
     #[inline(always)]
-    #[expect(
-        clippy::expect_used,
-        reason = "invalid limb advice must abort the guest"
-    )]
     fn from_inline_limbs(limbs: [u64; 2]) -> Self {
-        // Advice limbs determine only a residue until the integer is range checked.
-        Self::from_u128_checked(join(limbs)).expect("noncanonical field-inline result")
+        use jolt_platform::UnwrapOrSpoilProof;
+        // The advice rows fix the result only modulo p: the limbs of p also
+        // encode zero. A panic would give a dishonest prover a valid proof of
+        // a panicking guest, so noncanonical limbs spoil the proof instead.
+        Self::from_u128_checked(join(limbs)).unwrap_or_spoil_proof()
     }
 }
 
@@ -1482,9 +1481,15 @@ mod wide_tests {
     }
 
     #[test]
-    #[should_panic(expected = "noncanonical field-inline result")]
-    fn inline_readout_rejects_modulus_as_zero() {
+    #[should_panic(expected = "proof spoiled")]
+    fn inline_readout_spoils_modulus_as_zero() {
         let _ = Fp128::<P>::from_inline_limbs(split(P));
+    }
+
+    #[test]
+    #[should_panic(expected = "proof spoiled")]
+    fn inline_readout_spoils_largest_integer() {
+        let _ = Fp128::<P>::from_inline_limbs([u64::MAX; 2]);
     }
 
     #[test]

@@ -436,8 +436,13 @@ impl Fr {
     #[inline(always)]
     fn from_inline_limbs(limbs: [u64; 4]) -> Self {
         let raw = BigInt(limbs);
-        // Montgomery storage is also canonical: allowing f + p breaks limb operations.
-        assert!(raw < ArkFr::MODULUS, "noncanonical field-inline result");
+        // Montgomery storage is also canonical: allowing f + p breaks limb
+        // operations. The advice rows fix the result only modulo p, so the
+        // limbs of p also encode zero. A panic would give a dishonest prover a
+        // valid proof of a panicking guest; spoil the proof instead.
+        if raw >= ArkFr::MODULUS {
+            jolt_platform::spoil_proof();
+        }
         Fr(Fp(raw, PhantomData))
     }
 }
@@ -484,8 +489,8 @@ mod inline_readout_tests {
     }
 
     #[test]
-    #[should_panic(expected = "noncanonical field-inline result")]
-    fn inline_readout_rejects_modulus_as_zero() {
+    #[should_panic(expected = "proof spoiled")]
+    fn inline_readout_spoils_modulus_as_zero() {
         let _ = Fr::from_inline_limbs(ArkFr::MODULUS.0);
     }
 }
