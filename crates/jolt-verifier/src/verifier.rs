@@ -1536,6 +1536,12 @@ mod tests {
                 )
                 .unwrap();
             }),
+            // Derived during validation from the code intervals and memory
+            // layout, which the preprocessing digest binds, and from ram_K,
+            // which is bound.
+            ("ram_word_masks", |c, _| {
+                c.ram_word_masks.unmapped.push((0, 1));
+            }),
         ];
         for (field, edit) in unbound {
             let (mut edited, mut edited_config) = (checked.clone(), config);
