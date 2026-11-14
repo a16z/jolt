@@ -637,8 +637,10 @@ mod halting {
         SelfJump,
         /// `JALR x5, 0(x6)` with x6 = 0: a jump to address 0, as a halt's is.
         JalrToZero,
-        /// The first row of a two-row JAL sequence; the second exists only in
-        /// the bytecode.
+        /// The first row of a two-row JALR sequence whose target is 0; the
+        /// second exists only in the bytecode. Row 14 holds, so stage 1 can
+        /// reject it only through the sequence rule, row 17
+        /// (`NextPC = 0 ≠ PC + 1`).
         ExpansionMidpoint,
         /// `JoltSuccess`, then one more real row.
         HaltThenReal,
@@ -723,7 +725,7 @@ mod halting {
             End::ExpansionMidpoint => JoltInstructionRow {
                 virtual_sequence_remaining: Some(1),
                 is_first_in_sequence: true,
-                ..row(Kind::JAL, None, 0)
+                ..row(Kind::JALR, Some(6), 0)
             },
         };
         let (bytecode_row, traced) = match end {

@@ -164,8 +164,8 @@ mod tests {
     /// The composed uni-skip input claim over the feature-aware 5-lane domain equals the
     /// ordinary symbolic fold (lanes 0..3, weights over the SAME composed domain) plus the
     /// field-inline lanes at the following indices — pinned against a from-scratch
-    /// Lagrange-weighted sum over all five lane values, lane 3's being
-    /// `jump − (1 − 2Π)·halt − 2·halt_panic`, under both claimed panic bits.
+    /// Lagrange-weighted sum over all five lane values, with lane 3's literal value
+    /// for jump 7, halt 17 and halt_panic 19 under each claimed panic bit.
     #[test]
     fn composed_input_claim_matches_five_lane_fold() {
         assert_eq!(SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE, 5);
@@ -193,12 +193,10 @@ mod tests {
         for claimed_panic in [false, true] {
             let relation =
                 ProductUniskip::new(SpartanProductDimensions::new(4), tau_high, claimed_panic);
-            let pi = Fr::from_bool(claimed_panic);
             let lane_values = [
                 inputs.product,
                 inputs.should_branch,
-                jump - (Fr::from_u64(1) - Fr::from_u64(2) * pi) * halt
-                    - Fr::from_u64(2) * halt_panic,
+                Fr::from_i64(if claimed_panic { -14 } else { -48 }),
                 field_product,
                 field_inv_product,
             ];

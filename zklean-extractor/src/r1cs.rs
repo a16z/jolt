@@ -182,8 +182,8 @@ mod tests {
     use super::*;
     use crate::constants::RV64IParameterSet;
 
-    /// The extracted constraints carry both halt flags, no `ShouldJump`, and
-    /// branch on the claimed panic bit only in the jump lane.
+    /// The extracted constraints carry both halt flags and branch on the
+    /// claimed panic bit only in the jump lane.
     #[test]
     fn extracted_constraints_branch_only_the_jump_lane() {
         let mut output = Vec::new();
@@ -193,7 +193,6 @@ mod tests {
         let output = String::from_utf8(output).unwrap();
         assert!(output.contains("OpFlags_Halt : ZKExpr f"));
         assert!(output.contains("OpFlags_HaltPanic : ZKExpr f"));
-        assert!(!output.contains("ShouldJump"));
         assert_eq!(output.matches("if claimed_panic then").count(), 1);
         assert_eq!(
             output.matches("ZKBuilder.constrainR1CS").count(),

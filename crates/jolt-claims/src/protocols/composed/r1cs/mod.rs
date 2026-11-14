@@ -388,7 +388,7 @@ mod tests {
     fn default_composed_constraints_match_rv64_shape() {
         for claimed_panic in [false, true] {
             let composed = trace_constraints::<Fr>(claimed_panic);
-            let rv64 = rv64::rv64_trace_constraints::<Fr>(claimed_panic);
+            let rv64 = rv64_trace_constraints::<Fr>(claimed_panic);
 
             assert_eq!(composed.num_constraints, rv64.num_constraints);
             assert_eq!(composed.num_vars, rv64.num_vars);

@@ -409,7 +409,7 @@ fn bake_product_weights<F: JoltField>(
 }
 
 #[cfg(test)]
-#[cfg_attr(feature = "field-inline", expect(clippy::unwrap_used))]
+#[expect(clippy::unwrap_used, reason = "test fixtures fail loudly")]
 #[cfg_attr(
     not(feature = "field-inline"),
     expect(
@@ -537,7 +537,6 @@ mod tests {
     /// (with field-inline enabled: all five lanes, the field-inline inputs read from the
     /// stage-1 field-inline carrier rows).
     #[test]
-    #[expect(clippy::unwrap_used, reason = "test fixture")]
     fn lowered_uniskip_input_matches_the_clear_claim() {
         use crate::stages::relations::ConcreteSumcheck as _;
         use crate::stages::stage2::product_uniskip::{ProductUniskip, ProductUniskipInputClaims};
