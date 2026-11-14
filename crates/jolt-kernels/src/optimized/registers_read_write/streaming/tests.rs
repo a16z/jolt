@@ -1,8 +1,9 @@
 #[cfg(feature = "akita")]
 use jolt_akita::AkitaField;
 use jolt_claims::protocols::jolt::geometry::dimensions::REGISTER_ADDRESS_BITS;
-use jolt_claims::protocols::jolt::{JoltPolynomialId, JoltVirtualPolynomial};
+use jolt_claims::protocols::jolt::{JoltPolynomialId, JoltVirtualPolynomial, ReadWriteDimensions};
 use jolt_field::{Fr, Ring};
+use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::ConcreteSumcheck;
 use jolt_verifier::stages::stage4::registers_read_write_checking::{
     RegistersReadWriteChallenges, RegistersReadWriteInputClaims,
@@ -107,8 +108,18 @@ fn trace_rows<F: JoltField>(
     BundleStore::resident::<F>(resident, log_t, ROWS).unwrap()
 }
 
-/// The reference kernel over the resident plane against the streaming kernel
-/// over its rows with frontier cap `cap`, in lockstep through every round:
+/// A streamed source's cycle state and rows.
+fn streamed<F: JoltField>(
+    kernel: &mut ReadWriteKernel<F>,
+) -> Option<(&StreamedCycleState<F>, &mut BundleStore<RegisterCycleRow>)> {
+    match &mut kernel.cycle {
+        CycleSource::Streamed { state, rows } => Some((state, rows)),
+        CycleSource::Collected { .. } => None,
+    }
+}
+
+/// The reference kernel over the resident plane against the kernel streaming
+/// its rows with frontier cap `cap`, in lockstep through every round:
 /// equal round polynomials, `EqCycle` pins and output claims. The cycle point
 /// is pseudo-random or `exceptional`, and the round challenges start with
 /// `leading`. Each streamed round counts the next level's entries by
@@ -141,7 +152,7 @@ fn assert_rows_parity<F: JoltField>(
             .prepare(&mut ProofSession::default(), resident, reference_inputs)
             .unwrap();
         let mut streaming =
-            StreamingReadWriteKernel::new(trace_rows::<F>(resident, log_t), &inputs, cap).unwrap();
+            ReadWriteKernel::streamed(trace_rows::<F>(resident, log_t), &inputs, cap).unwrap();
         let input_claim = probe_input_claim(reference.as_mut());
         if exceptional.is_none() {
             assert!(
@@ -162,8 +173,9 @@ fn assert_rows_parity<F: JoltField>(
                 actual.coefficients(),
                 "round {round}, cap {cap}"
             );
+            let (cycle, _) = streamed(&mut streaming).unwrap();
             if round < log_t {
-                match streaming.cycle.filled() {
+                match cycle.filled() {
                     Some(shape) => {
                         let fill_round = *filled.get_or_insert(round);
                         assert_eq!(
@@ -177,13 +189,13 @@ fn assert_rows_parity<F: JoltField>(
                         );
                     }
                     None => assert_eq!(
-                        streaming.cycle.counted(),
+                        cycle.counted(),
                         structure.get(round + 1).copied(),
                         "round {round}, cap {cap}"
                     ),
                 }
             } else {
-                assert_eq!(streaming.cycle.filled(), Some((0, 0, 0)), "round {round}");
+                assert_eq!(cycle.filled(), Some((0, 0, 0)), "round {round}");
             }
             claim = expected.evaluate(challenge);
         }
@@ -291,11 +303,11 @@ fn row_failures_and_count_divergence_are_typed_and_publish_no_entries() {
     let challenges = challenge_sequence::<Fr>(3 + REGISTER_ADDRESS_BITS, 11);
     let new_kernel = |witness: &TraceBackend, cap| {
         with_inputs(3, challenge_sequence(3, 3), |inputs| {
-            StreamingReadWriteKernel::new(trace_rows::<Fr>(witness, 3), &inputs, cap)
+            ReadWriteKernel::streamed(trace_rows::<Fr>(witness, 3), &inputs, cap)
         })
         .unwrap()
     };
-    let prove = |kernel: &mut StreamingReadWriteKernel<Fr>, round: usize| {
+    let prove = |kernel: &mut ReadWriteKernel<Fr>, round: usize| {
         let bind = round.checked_sub(1).map(|previous| challenges[previous]);
         kernel.prove_round(bind, round, Fr::from_u64(0))
     };
@@ -313,7 +325,7 @@ fn row_failures_and_count_divergence_are_typed_and_publish_no_entries() {
             foreign.with_plane(3, |foreign| {
                 let mut kernel = new_kernel(foreign, DENSE_TABLE_CAP);
                 assert_eq!(failure(prove(&mut kernel, 0)), Some(ROWS));
-                assert_eq!(kernel.cycle.filled(), None);
+                assert_eq!(streamed(&mut kernel).unwrap().0.filled(), None);
             });
             for (counted, filled) in [(resident, fewer), (fewer, resident)] {
                 let structure = structural_counts::<Fr>(counted, 3);
@@ -322,17 +334,17 @@ fn row_failures_and_count_divergence_are_typed_and_publish_no_entries() {
                     for round in 0..depth {
                         let _ = prove(&mut kernel, round).unwrap();
                     }
-                    kernel.rows = trace_rows::<Fr>(filled, 3);
+                    *streamed(&mut kernel).unwrap().1 = trace_rows::<Fr>(filled, 3);
                     assert_eq!(
                         failure(prove(&mut kernel, depth)),
                         Some(DIVERGED),
                         "depth {depth}"
                     );
-                    assert_eq!(kernel.cycle.filled(), None);
+                    assert_eq!(streamed(&mut kernel).unwrap().0.filled(), None);
                 }
             }
             let wide = with_inputs(33, challenge_sequence::<Fr>(33, 3), |inputs| {
-                StreamingReadWriteKernel::new(trace_rows::<Fr>(resident, 3), &inputs, 0).map(drop)
+                ReadWriteKernel::streamed(trace_rows::<Fr>(resident, 3), &inputs, 0).map(drop)
             });
             assert!(matches!(wide, Err(KernelError::InvariantViolation { .. })));
         });

@@ -1,4 +1,4 @@
-//! The streaming kernel's cycle state: rounds read the witness's rows in
+//! The read/write kernel's streamed cycle state: rounds read the witness's rows in
 //! task-partitioned passes ([`pass`]) that regenerate their level's entries
 //! and count the next level's. The first round from 1 on whose counted
 //! entries and increments fit the cap, at the latest the last cycle round,
@@ -153,9 +153,10 @@ impl<F: JoltField> StreamedCycleState<F> {
         }
     }
 
-    /// Binds a cycle challenge. A streamed bind adds the next level's
+    /// Binds a cycle challenge; returns whether a full entry generation was
+    /// replaced. A streamed bind holds no entries: it adds the next level's
     /// coefficient tables, through level [`LUT_LEVELS`].
-    pub(in crate::optimized::registers_read_write) fn bind(&mut self, r: F) {
+    pub(in crate::optimized::registers_read_write) fn bind(&mut self, r: F) -> bool {
         match &mut self.0 {
             Phase::Streamed(frontier) => {
                 if frontier.luts.len() <= LUT_LEVELS {
@@ -169,10 +170,9 @@ impl<F: JoltField> StreamedCycleState<F> {
                     }
                     frontier.luts.push(next);
                 }
+                false
             }
-            Phase::Filled(cycle) => {
-                let _ = cycle.bind(r);
-            }
+            Phase::Filled(cycle) => cycle.bind(r),
         }
     }
 
