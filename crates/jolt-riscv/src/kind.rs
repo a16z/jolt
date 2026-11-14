@@ -442,6 +442,9 @@ macro_rules! source_extension_for_marker {
     (ShiftDataB) => {
         Some(SourceExtension::JoltCustom)
     };
+    (ExtractByteUnsigned) => {
+        Some(SourceExtension::JoltCustom)
+    };
     (ShiftDataH) => {
         Some(SourceExtension::JoltCustom)
     };
@@ -961,6 +964,9 @@ macro_rules! source_side_effects_for_marker {
     (ShiftDataB) => {
         false
     };
+    (ExtractByteUnsigned) => {
+        false
+    };
     (ShiftDataH) => {
         false
     };
@@ -1271,6 +1277,9 @@ macro_rules! jolt_target_extension_for_marker {
         Some(JoltTargetExtension::VirtualShifts)
     };
     (ShiftDataB) => {
+        Some(JoltTargetExtension::VirtualShifts)
+    };
+    (ExtractByteUnsigned) => {
         Some(JoltTargetExtension::VirtualShifts)
     };
     (ShiftDataH) => {
@@ -1625,6 +1634,9 @@ macro_rules! jolt_side_effects_for_marker {
         false
     };
     (ShiftDataB) => {
+        false
+    };
+    (ExtractByteUnsigned) => {
         false
     };
     (ShiftDataH) => {

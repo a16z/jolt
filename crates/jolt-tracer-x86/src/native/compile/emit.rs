@@ -889,6 +889,18 @@ impl DynasmEmitter {
                 );
                 e.store_rd(RAX, row.operands.rd);
             }
+            K::ExtractByteUnsigned(_) => {
+                Self::emit_shift_data_address(e, row);
+                e.load_reg(RAX, row.operands.rs1);
+                dynasm!(e.ops
+                    ; .arch x64
+                    ; and ecx, 7
+                    ; shl ecx, 3
+                    ; shr rax, cl
+                    ; movzx eax, al
+                );
+                e.store_rd(RAX, row.operands.rd);
+            }
             K::ShiftDataB(_) => {
                 // rd = (x[rs1] & 0xFF) << (8 * (ea & 7)): the store byte moved
                 // into its lane within the containing doubleword (rs1 holds

@@ -132,6 +132,7 @@ const SUPPORTED: &[&str] = &[
     "WindowMaskB",
     "WindowMaskH",
     "ShiftDataB",
+    "ExtractByteUnsigned",
     "ShiftDataH",
     "ShiftDataW",
     "LoadB",
@@ -887,6 +888,7 @@ difftests! {
     diff_window_mask_h => |r| alu_ri(r, kind_by_name("VirtualWindowMaskH"), false);
     diff_pext_signed => |r| alu_rr(r, kind_by_name("VirtualPextSigned"));
     diff_pext => |r| alu_rr(r, kind_by_name("VirtualPext"));
+    diff_extract_byte_unsigned => |r| shift_data(r, kind_by_name("VirtualExtractByteUnsigned"));
     diff_shift_data_b => |r| shift_data(r, kind_by_name("VirtualShiftDataB"));
     diff_shift_data_h => |r| shift_data(r, kind_by_name("VirtualShiftDataH"));
     diff_shift_data_w => |r| shift_data(r, kind_by_name("VirtualShiftDataW"));

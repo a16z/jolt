@@ -248,6 +248,7 @@ macro_rules! for_each_instruction_kind {
                 VirtualXORROT61 => VirtualXorRot61 => "jolt.virtual.xorrot61",
                 JoltSuccess => Success => "jolt.success",
                 JoltPanic => Panic => "jolt.panic",
+                VirtualExtractByteUnsigned => ExtractByteUnsigned => "jolt.virtual.extractbyteunsigned",
             ]
         }
     };
@@ -384,6 +385,7 @@ macro_rules! for_each_jolt_instruction_kind {
                 VirtualXORROT61 => VirtualXorRot61 => (0x00a9, "jolt.virtual.xorrot61"),
                 JoltSuccess => Success => (0x00aa, "jolt.success"),
                 JoltPanic => Panic => (0x00ab, "jolt.panic"),
+                VirtualExtractByteUnsigned => ExtractByteUnsigned => (0x00ac, "jolt.virtual.extractbyteunsigned"),
                 #[cfg(feature = "field-inline")]
                 FIELD_ADD => FieldAdd => (0x0100, "field.add"),
                 #[cfg(feature = "field-inline")]

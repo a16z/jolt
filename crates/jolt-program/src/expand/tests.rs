@@ -643,3 +643,41 @@ fn expansion_matches_main_golden_fixture() -> Result<(), Box<dyn std::error::Err
 
     Ok(())
 }
+
+#[test]
+fn lbu_binds_the_same_signed_address_in_both_rows() -> Result<(), ExpansionError> {
+    for destination in [0, 1, 3] {
+        for compressed in [false, true] {
+            for imm in [-2048, -1, 0, 2047] {
+                let mut row = source_row(SourceInstructionKind::LBU, Some(destination), compressed);
+                row.operands.imm = imm;
+                let source = SourceInstruction::new(SourceInstructionKind::LBU, row);
+                let expanded = rows(expand_instruction(
+                    &source,
+                    &mut ExpansionAllocator::new(),
+                    RV64IMAC_JOLT,
+                )?);
+                assert_eq!(expanded.len(), 2);
+                assert_eq!(expanded[0].instruction_kind, Kind::VirtualLoadB);
+                assert_eq!(
+                    expanded[1].instruction_kind,
+                    Kind::VirtualExtractByteUnsigned
+                );
+                assert_eq!(expanded[0].operands.imm, imm);
+                assert_eq!(expanded[1].operands.imm, imm);
+                assert_eq!(expanded[0].operands.rs1, Some(1));
+                assert_eq!(expanded[1].operands.rs2, Some(1));
+                assert_eq!(expanded[0].operands.rd, expanded[1].operands.rs1);
+                assert_ne!(expanded[0].operands.rd, Some(1));
+                assert_ne!(expanded[0].operands.rd, expanded[1].operands.rd);
+                if destination == 0 {
+                    assert_ne!(expanded[1].operands.rd, Some(0));
+                } else {
+                    assert_eq!(expanded[1].operands.rd, Some(destination));
+                }
+                assert_eq!(expanded[1].is_compressed, compressed);
+            }
+        }
+    }
+    Ok(())
+}

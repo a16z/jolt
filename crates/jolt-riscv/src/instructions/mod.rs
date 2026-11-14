@@ -104,6 +104,7 @@ pub use m::Rem;
 pub use m::RemU;
 pub use m::RemUW;
 pub use m::RemW;
+pub use virt::ExtractByteUnsigned;
 pub use virt::LoadB;
 pub use virt::LoadH;
 pub use virt::LoadW;
@@ -455,6 +456,7 @@ pub enum JoltInstruction<T = JoltInstructionRow> {
     VirtualXorRot61(VirtualXorRot61<T>),
     Success(Success<T>),
     Panic(Panic<T>),
+    ExtractByteUnsigned(ExtractByteUnsigned<T>),
     #[cfg(feature = "field-inline")]
     FieldAdd(FieldAdd<T>),
     #[cfg(feature = "field-inline")]
@@ -673,6 +675,7 @@ impl_jolt_instructions_flags! {
     WindowMaskB => VirtualWindowMaskB,
     WindowMaskH => VirtualWindowMaskH,
     ShiftDataB => VirtualShiftDataB,
+    ExtractByteUnsigned => VirtualExtractByteUnsigned,
     ShiftDataH => VirtualShiftDataH,
     ShiftDataW => VirtualShiftDataW,
     VirtualXorRotL1 => VirtualXORROTL1,
@@ -726,19 +729,20 @@ mod tests {
     }
 
     #[test]
-    fn only_store_data_shifters_sum_both_right_operands() {
+    fn effective_address_readers_sum_both_right_operands() {
         for instr in JoltInstruction::iter() {
             let flags = instr.instruction_flags();
             let sums_both = flags[InstructionFlags::RightOperandIsRs2Value]
                 && flags[InstructionFlags::RightOperandIsImm];
-            let is_store_data_shifter = matches!(
+            let reads_effective_address = matches!(
                 instr,
                 JoltInstruction::ShiftDataB(_)
                     | JoltInstruction::ShiftDataH(_)
                     | JoltInstruction::ShiftDataW(_)
+                    | JoltInstruction::ExtractByteUnsigned(_)
             );
             assert_eq!(
-                sums_both, is_store_data_shifter,
+                sums_both, reads_effective_address,
                 "unexpected right operand flags for {instr:?}",
             );
         }

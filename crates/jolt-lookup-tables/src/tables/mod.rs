@@ -19,6 +19,7 @@ pub mod address_offset;
 pub mod and;
 pub mod andn;
 pub mod equal;
+pub mod extract_byte_unsigned;
 pub mod lower_half_word;
 pub mod mulu_no_overflow;
 pub mod not_equal;
@@ -69,6 +70,7 @@ use address_offset::AddressOffsetTable;
 use and::AndTable;
 use andn::AndnTable;
 use equal::EqualTable;
+use extract_byte_unsigned::ExtractByteUnsignedTable;
 use lower_half_word::LowerHalfWordTable;
 use mulu_no_overflow::MulUNoOverflowTable;
 use not_equal::NotEqualTable;
@@ -192,6 +194,7 @@ pub enum LookupTableKind<const XLEN: usize> {
     AddressOffsetW(AddressOffsetTable<XLEN, 4>),
     VirtualXORROT2(VirtualXORROTTable<XLEN, 2>),
     VirtualXORROT61(VirtualXORROTTable<XLEN, 61>),
+    ExtractByteUnsigned(ExtractByteUnsignedTable<XLEN>),
 }
 
 macro_rules! dispatch {
@@ -254,6 +257,7 @@ macro_rules! dispatch {
             Self::AddressOffsetB($t) => $expr,
             Self::AddressOffsetH($t) => $expr,
             Self::AddressOffsetW($t) => $expr,
+            Self::ExtractByteUnsigned($t) => $expr,
         }
     };
 }
@@ -349,7 +353,7 @@ mod tests {
 
     #[test]
     fn proof_format_indices_are_stable() {
-        const EXPECTED: [&str; 57] = [
+        const EXPECTED: [&str; 58] = [
             "RangeCheck",
             "RangeCheckAligned",
             "And",
@@ -407,6 +411,7 @@ mod tests {
             "AddressOffsetW",
             "VirtualXORROT2",
             "VirtualXORROT61",
+            "ExtractByteUnsigned",
         ];
 
         let actual = LookupTableKind::<64>::iter()

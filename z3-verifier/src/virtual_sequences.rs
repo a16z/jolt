@@ -74,6 +74,7 @@ use tracer::{
         virtual_assert_mulu_no_overflow::VirtualAssertMulUNoOverflow,
         virtual_assert_valid_div0::VirtualAssertValidDiv0,
         virtual_assert_valid_unsigned_remainder::VirtualAssertValidUnsignedRemainder,
+        virtual_extract_byte_unsigned::VirtualExtractByteUnsigned,
         virtual_load_b::VirtualLoadB,
         virtual_load_h::VirtualLoadH,
         virtual_load_w::VirtualLoadW,
@@ -524,6 +525,16 @@ fn symbolic_exec(instr: &Instruction, cpu: &mut SymbolicCpu) {
             let shift = offset * cpu.bv_u64(half_bits);
             let half_mask = cpu.bv_u64((1u64 << half_bits) - 1);
             cpu.x[operands.rd as usize] = half_mask.bvshl(shift);
+        }
+        Instruction::VirtualExtractByteUnsigned(VirtualExtractByteUnsigned {
+            operands, ..
+        }) => {
+            let byte_bits = (cpu.bv_bits / 8) as u64;
+            let data = cpu.x[operands.rs1 as usize].clone();
+            let ea = cpu.x[operands.rs2 as usize].clone() + operands.imm;
+            let offset = ea.extract(2, 0).zero_ext(cpu.bv_bits - 3);
+            let shift = offset * cpu.bv_u64(byte_bits);
+            cpu.x[operands.rd as usize] = data.bvlshr(shift) & cpu.bv_u64((1u64 << byte_bits) - 1);
         }
         Instruction::VirtualShiftDataB(VirtualShiftDataB { operands, .. }) => {
             let byte_bits = (cpu.bv_bits / 8) as u64;
