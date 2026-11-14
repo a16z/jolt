@@ -133,7 +133,14 @@ fn inline_requires_provider() {
 
 #[test]
 fn csr_zero_is_rejected() {
-    for instruction_kind in [SourceInstructionKind::CSRRW, SourceInstructionKind::CSRRS] {
+    for instruction_kind in [
+        SourceInstructionKind::CSRRW,
+        SourceInstructionKind::CSRRS,
+        SourceInstructionKind::CSRRC,
+        SourceInstructionKind::CSRRWI,
+        SourceInstructionKind::CSRRSI,
+        SourceInstructionKind::CSRRCI,
+    ] {
         let mut allocator = ExpansionAllocator::new();
         let mut input = source_row(instruction_kind, Some(3), false);
         input.operands.imm = 0;
@@ -474,7 +481,7 @@ fn source_only_expanders_are_not_target_legal() {
         LRD, LRW,
         DIV, DIVU, DIVW, DIVUW, REM, REMU, REMW, REMUW,
         SB, SCD, SCW, SH, SW,
-        CSRRW, CSRRS, EBREAK, ECALL, MRET,
+        CSRRW, CSRRS, CSRRC, CSRRWI, CSRRSI, CSRRCI, EBREAK, ECALL, MRET,
         SLL, SLLI, SLLIW, SLLW, SRL, SRLI, SRA, SRAI,
         SRLIW, SRAIW, SRLW, SRAW,
     }

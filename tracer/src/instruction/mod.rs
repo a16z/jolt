@@ -52,8 +52,12 @@ use bgeu::BGEU;
 use blt::BLT;
 use bltu::BLTU;
 use bne::BNE;
+use csrrc::CSRRC;
+use csrrci::CSRRCI;
 use csrrs::CSRRS;
+use csrrsi::CSRRSI;
 use csrrw::CSRRW;
+use csrrwi::CSRRWI;
 use div::DIV;
 use divu::DIVU;
 use divuw::DIVUW;
@@ -166,7 +170,10 @@ use virtual_store_w::VirtualStoreW;
 use virtual_window_mask_b::VirtualWindowMaskB;
 use virtual_window_mask_h::VirtualWindowMaskH;
 use virtual_window_mask_w::VirtualWindowMaskW;
-use virtual_xor_rot::{VirtualXORROT16, VirtualXORROT24, VirtualXORROT32, VirtualXORROT63};
+use virtual_xor_rot::{
+    VirtualXORROT16, VirtualXORROT2, VirtualXORROT24, VirtualXORROT32, VirtualXORROT61,
+    VirtualXORROT63,
+};
 use virtual_xor_rotl1::VirtualXORROTL1;
 use virtual_xor_rotw::{
     VirtualXORROTW12, VirtualXORROTW16, VirtualXORROTW19, VirtualXORROTW22, VirtualXORROTW6,
@@ -276,8 +283,12 @@ pub mod bgeu;
 pub mod blt;
 pub mod bltu;
 pub mod bne;
+pub mod csrrc;
+pub mod csrrci;
 pub mod csrrs;
+pub mod csrrsi;
 pub mod csrrw;
+pub mod csrrwi;
 pub mod div;
 pub mod divu;
 pub mod divuw;
@@ -470,9 +481,13 @@ where
     }
 }
 
-macro_rules! define_rv64imac_enums {
+/// Declares `Instruction` and `Cycle`. Postcard encodes their variants by
+/// position, so the kinds `jolt_riscv::for_each_instruction_kind!` lists as
+/// `appended` come after `INLINE` and existing positions stay fixed.
+macro_rules! define_rv64imac_enum_types {
     (
         instructions: [$($(#[$meta:meta])* $instr:ident => $marker:ident => $canonical_name:expr),* $(,)?]
+        appended: [$($(#[$ameta:meta])* $ainstr:ident => $amarker:ident => $acanonical_name:expr),* $(,)?]
     ) => {
         #[derive(Debug, IntoStaticStr, From, Clone, Copy, Serialize, Deserialize, EnumIter, PartialEq)]
         pub enum Instruction {
@@ -484,6 +499,10 @@ macro_rules! define_rv64imac_enums {
             )*
             /// Inline instruction from external crates
             INLINE(INLINE),
+            $(
+                $(#[$ameta])*
+                $ainstr($ainstr),
+            )*
         }
 
         #[derive(
@@ -496,7 +515,20 @@ macro_rules! define_rv64imac_enums {
                 $instr(RISCVCycle<$instr>),
             )*
             INLINE(RISCVCycle<INLINE>),
+            $(
+                $(#[$ameta])*
+                $ainstr(RISCVCycle<$ainstr>),
+            )*
         }
+    };
+}
+
+jolt_riscv::for_each_instruction_kind!(split define_rv64imac_enum_types);
+
+macro_rules! define_rv64imac_enum_impls {
+    (
+        instructions: [$($(#[$meta:meta])* $instr:ident => $marker:ident => $canonical_name:expr),* $(,)?]
+    ) => {
 
         impl Cycle {
             pub fn ram_access(&self) -> RamAccess {
@@ -935,7 +967,7 @@ macro_rules! define_rv64imac_enums {
     };
 }
 
-jolt_riscv::for_each_instruction_kind!(define_rv64imac_enums);
+jolt_riscv::for_each_instruction_kind!(define_rv64imac_enum_impls);
 
 #[cfg(feature = "field-inline")]
 fn is_field_inline_instruction(instruction: &Instruction) -> bool {
@@ -1324,6 +1356,36 @@ impl Instruction {
                             return Err("Unsupported CSR in CSRRS");
                         }
                         Ok(CSRRS::new(instr, address, true, compressed).into())
+                    }
+                    // CSRRC, CSRRWI, CSRRSI, CSRRCI: funct3 = 3, 5, 6, 7. Same
+                    // rationale as CSRRW above.
+                    (3, _, _) => {
+                        let csr_addr = ((instr >> 20) & 0xFFF) as u16;
+                        if !is_supported_csr(csr_addr) {
+                            return Err("Unsupported CSR in CSRRC");
+                        }
+                        Ok(CSRRC::new(instr, address, true, compressed).into())
+                    }
+                    (5, _, _) => {
+                        let csr_addr = ((instr >> 20) & 0xFFF) as u16;
+                        if !is_supported_csr(csr_addr) {
+                            return Err("Unsupported CSR in CSRRWI");
+                        }
+                        Ok(CSRRWI::new(instr, address, true, compressed).into())
+                    }
+                    (6, _, _) => {
+                        let csr_addr = ((instr >> 20) & 0xFFF) as u16;
+                        if !is_supported_csr(csr_addr) {
+                            return Err("Unsupported CSR in CSRRSI");
+                        }
+                        Ok(CSRRSI::new(instr, address, true, compressed).into())
+                    }
+                    (7, _, _) => {
+                        let csr_addr = ((instr >> 20) & 0xFFF) as u16;
+                        if !is_supported_csr(csr_addr) {
+                            return Err("Unsupported CSR in CSRRCI");
+                        }
+                        Ok(CSRRCI::new(instr, address, true, compressed).into())
                     }
                     _ => Err("Unsupported SYSTEM instruction"),
                 }
@@ -2459,9 +2521,13 @@ mod tests {
             (0x0000_0073, "ECALL"),
             (0x0010_0073, "EBREAK"),
             (0x3020_0073, "MRET"),
-            // CSRRW/CSRRS on a supported CSR (mtvec = 0x305)
+            // Zicsr instructions on a supported CSR (mtvec = 0x305)
             (i_type(0x305, 1, 0b001, 2, 0x73), "CSRRW"),
             (i_type(0x305, 1, 0b010, 2, 0x73), "CSRRS"),
+            (i_type(0x305, 1, 0b011, 2, 0x73), "CSRRC"),
+            (i_type(0x305, 1, 0b101, 2, 0x73), "CSRRWI"),
+            (i_type(0x305, 1, 0b110, 2, 0x73), "CSRRSI"),
+            (i_type(0x305, 1, 0b111, 2, 0x73), "CSRRCI"),
             // Reserved inline opcodes decode as INLINE without validation
             (0x0000_000b, "INLINE"),
             (0x0000_002b, "INLINE"),
@@ -2524,12 +2590,25 @@ mod tests {
                 "Invalid LR rs2",
             ),
             (
-                i_type(0, 1, 0b101, 2, 0x73),
+                i_type(0x300, 1, 0b100, 2, 0x73),
                 "Unsupported SYSTEM instruction",
             ),
             // cycle CSR (0xc00) is not modelled; rejected at decode time
             (i_type(0xc00, 1, 0b001, 2, 0x73), "Unsupported CSR in CSRRW"),
             (i_type(0xc00, 1, 0b010, 2, 0x73), "Unsupported CSR in CSRRS"),
+            (i_type(0xc00, 1, 0b011, 2, 0x73), "Unsupported CSR in CSRRC"),
+            (
+                i_type(0xc00, 1, 0b101, 2, 0x73),
+                "Unsupported CSR in CSRRWI",
+            ),
+            (
+                i_type(0xc00, 1, 0b110, 2, 0x73),
+                "Unsupported CSR in CSRRSI",
+            ),
+            (
+                i_type(0xc00, 1, 0b111, 2, 0x73),
+                "Unsupported CSR in CSRRCI",
+            ),
             (0x0800_00db, "Invalid funct7 for virtual R-type instruction"),
             (
                 r_type(0x7f, 0, 1, 0, 2, 0x5b),
@@ -3222,6 +3301,234 @@ mod tests {
                 jolt_riscv::uncompress_rv64_instruction(halfword),
                 "halfword {halfword:#06x}"
             );
+        }
+    }
+
+    /// `Cycle` variants after `NoOp` in a16z/jolt `main` `9407f93f`, in
+    /// declaration order: the source kinds without the `field-inline` ones.
+    /// Postcard encodes a variant by its position, so traces persisted by
+    /// `trace_to_file` stay readable only while these positions hold.
+    const PERSISTED_KIND_VARIANTS: &[&str] = &[
+        "ADD",
+        "ADDI",
+        "AND",
+        "ANDI",
+        "ANDN",
+        "AUIPC",
+        "BEQ",
+        "BGE",
+        "BGEU",
+        "BLT",
+        "BLTU",
+        "BNE",
+        "CSRRS",
+        "CSRRW",
+        "DIV",
+        "DIVU",
+        "EBREAK",
+        "ECALL",
+        "FENCE",
+        "JAL",
+        "JALR",
+        "LB",
+        "LBU",
+        "LD",
+        "LH",
+        "LHU",
+        "LUI",
+        "LW",
+        "MRET",
+        "MUL",
+        "MULH",
+        "MULHSU",
+        "MULHU",
+        "OR",
+        "ORI",
+        "REM",
+        "REMU",
+        "SB",
+        "SD",
+        "SH",
+        "SLL",
+        "SLLI",
+        "SLT",
+        "SLTI",
+        "SLTIU",
+        "SLTU",
+        "SRA",
+        "SRAI",
+        "SRL",
+        "SRLI",
+        "SUB",
+        "SW",
+        "XOR",
+        "XORI",
+        "ADDIW",
+        "SLLIW",
+        "SRLIW",
+        "SRAIW",
+        "ADDW",
+        "SUBW",
+        "SLLW",
+        "SRLW",
+        "SRAW",
+        "LWU",
+        "DIVUW",
+        "DIVW",
+        "MULW",
+        "REMUW",
+        "REMW",
+        "LRW",
+        "SCW",
+        "AMOSWAPW",
+        "AMOADDW",
+        "AMOANDW",
+        "AMOORW",
+        "AMOXORW",
+        "AMOMINW",
+        "AMOMAXW",
+        "AMOMINUW",
+        "AMOMAXUW",
+        "LRD",
+        "SCD",
+        "AMOSWAPD",
+        "AMOADDD",
+        "AMOANDD",
+        "AMOORD",
+        "AMOXORD",
+        "AMOMIND",
+        "AMOMAXD",
+        "AMOMINUD",
+        "AMOMAXUD",
+        "AdviceLB",
+        "AdviceLD",
+        "AdviceLH",
+        "AdviceLW",
+        "VirtualAdvice",
+        "VirtualAdviceLoad",
+        "VirtualAssertEQ",
+        "VirtualAssertLTE",
+        "VirtualHostIO",
+        "VirtualAssertValidDiv0",
+        "VirtualAssertValidUnsignedRemainder",
+        "VirtualAssertMulUNoOverflow",
+        "VirtualNegateIf",
+        "VirtualZeroExtendWord",
+        "VirtualSignExtendWord",
+        "VirtualPow2W",
+        "VirtualPow2IW",
+        "VirtualMovsign",
+        "VirtualMULI",
+        "VirtualMULIW",
+        "VirtualPow2",
+        "VirtualPow2I",
+        "VirtualRev8W",
+        "VirtualROTRI",
+        "VirtualROTRIW",
+        "VirtualShiftRightBitmask",
+        "VirtualShiftRightBitmaskI",
+        "VirtualSRA",
+        "VirtualSRAI",
+        "VirtualSRL",
+        "VirtualSRLI",
+        "VirtualXORROT32",
+        "VirtualXORROT24",
+        "VirtualXORROT16",
+        "VirtualXORROT63",
+        "VirtualXORROTW16",
+        "VirtualXORROTW12",
+        "VirtualXORROTW8",
+        "VirtualXORROTW7",
+        "VirtualWindowMaskW",
+        "VirtualPextSigned",
+        "VirtualXORROTW22",
+        "VirtualXORROTW19",
+        "VirtualXORROTW6",
+        "VirtualShiftRightBitmaskW",
+        "VirtualSRLW",
+        "VirtualSRLIW",
+        "VirtualSRAW",
+        "VirtualSRAIW",
+        "VirtualPext",
+        "VirtualWindowMaskB",
+        "VirtualWindowMaskH",
+        "VirtualShiftDataB",
+        "VirtualShiftDataH",
+        "VirtualShiftDataW",
+        "VirtualXORROTL1",
+        "VirtualLoadB",
+        "VirtualLoadH",
+        "VirtualLoadW",
+        "VirtualStoreB",
+        "VirtualStoreH",
+        "VirtualStoreW",
+    ];
+
+    /// The `field-inline` kinds of the same commit, which come next when
+    /// that feature is on.
+    const PERSISTED_FIELD_INLINE_VARIANTS: &[&str] = &[
+        "FIELD_ADD",
+        "FIELD_SUB",
+        "FIELD_MUL",
+        "FIELD_INV",
+        "FIELD_ASSERT_EQ",
+        "FIELD_LOAD_ACCUMULATE_FROM_REGISTER",
+        "FIELD_ASSERT_ZERO",
+        "FIELD_LOAD_IMM",
+        "FIELD_LOAD_ACCUMULATE_FROM_MEMORY",
+        "FIELD_ADVICE_LIMB",
+    ];
+
+    fn postcard_variant_index(bytes: &[u8]) -> usize {
+        let mut index = 0;
+        for (i, byte) in bytes.iter().enumerate() {
+            index |= usize::from(byte & 0x7f) << (7 * i);
+            if byte & 0x80 == 0 {
+                return index;
+            }
+        }
+        panic!("unterminated postcard varint");
+    }
+
+    #[test]
+    fn persisted_variants_keep_their_postcard_positions() {
+        use strum::IntoEnumIterator;
+
+        let field_inline: &[&str] = if cfg!(feature = "field-inline") {
+            PERSISTED_FIELD_INLINE_VARIANTS
+        } else {
+            &[]
+        };
+        let persisted = || {
+            PERSISTED_KIND_VARIANTS
+                .iter()
+                .chain(field_inline)
+                .chain(&["INLINE"])
+                .copied()
+        };
+
+        let cycles: Vec<Cycle> = Cycle::iter().collect();
+        for (index, name) in std::iter::once("NoOp").chain(persisted()).enumerate() {
+            let cycle = cycles
+                .iter()
+                .find(|cycle| <&'static str>::from(*cycle) == name)
+                .unwrap();
+            let bytes = postcard::to_stdvec(cycle).unwrap();
+            assert_eq!(postcard_variant_index(&bytes), index, "Cycle::{name}");
+        }
+
+        let instructions: Vec<Instruction> = Instruction::iter().collect();
+        for (index, name) in ["NoOp", "UNIMPL"]
+            .into_iter()
+            .chain(persisted())
+            .enumerate()
+        {
+            let instruction = instructions
+                .iter()
+                .find(|instruction| <&'static str>::from(*instruction) == name)
+                .unwrap();
+            let bytes = postcard::to_stdvec(instruction).unwrap();
+            assert_eq!(postcard_variant_index(&bytes), index, "Instruction::{name}");
         }
     }
 }

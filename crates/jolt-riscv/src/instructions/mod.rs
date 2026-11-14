@@ -143,8 +143,10 @@ pub use virt::VirtualSrli;
 pub use virt::VirtualSrliw;
 pub use virt::VirtualSrlw;
 pub use virt::VirtualXorRot16;
+pub use virt::VirtualXorRot2;
 pub use virt::VirtualXorRot24;
 pub use virt::VirtualXorRot32;
+pub use virt::VirtualXorRot61;
 pub use virt::VirtualXorRot63;
 pub use virt::VirtualXorRotL1;
 pub use virt::VirtualXorRotW12;
@@ -181,8 +183,12 @@ pub use a::LrD;
 pub use a::LrW;
 pub use a::ScD;
 pub use a::ScW;
+pub use i::Csrrc;
+pub use i::Csrrci;
 pub use i::Csrrs;
+pub use i::Csrrsi;
 pub use i::Csrrw;
+pub use i::Csrrwi;
 pub use i::Mret;
 pub use virt::AdviceLb;
 pub use virt::AdviceLd;
@@ -344,7 +350,8 @@ crate::for_each_instruction_kind!(define_source_instruction);
 /// satisfy `T: JoltInstructionRowData` on the `Flags` impls.
 ///
 /// Deliberately omitted instruction kinds (declared and re-exported above
-/// but not proven by Jolt): the Zicsr ops (`Csrrs`, `Csrrw`), `Mret`,
+/// but not proven by Jolt): the Zicsr ops (`Csrrw`, `Csrrs`, `Csrrc`,
+/// `Csrrwi`, `Csrrsi`, `Csrrci`), `Mret`,
 /// the atomic family (`Amo*`, `Lr*`, `Sc*`), and the advice-load helpers
 /// (`AdviceLb`/`Ld`/`Lh`/`Lw`). These are intentionally absent from
 /// `JoltInstruction` and from the flag-exclusivity tests below.
@@ -443,6 +450,8 @@ pub enum JoltInstruction<T = JoltInstructionRow> {
     VirtualAdvice(VirtualAdvice<T>),
     VirtualAdviceLoad(VirtualAdviceLoad<T>),
     VirtualHostIO(VirtualHostIO<T>),
+    VirtualXorRot2(VirtualXorRot2<T>),
+    VirtualXorRot61(VirtualXorRot61<T>),
     ExtractByteUnsigned(ExtractByteUnsigned<T>),
     #[cfg(feature = "field-inline")]
     FieldAdd(FieldAdd<T>),
@@ -642,6 +651,8 @@ impl_jolt_instructions_flags! {
     VirtualXorRot24 => VirtualXORROT24,
     VirtualXorRot16 => VirtualXORROT16,
     VirtualXorRot63 => VirtualXORROT63,
+    VirtualXorRot2 => VirtualXORROT2,
+    VirtualXorRot61 => VirtualXORROT61,
     VirtualXorRotW16 => VirtualXORROTW16,
     VirtualXorRotW12 => VirtualXORROTW12,
     VirtualXorRotW8 => VirtualXORROTW8,

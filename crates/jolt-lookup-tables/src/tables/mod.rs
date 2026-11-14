@@ -192,6 +192,8 @@ pub enum LookupTableKind<const XLEN: usize> {
     AddressOffsetB(AddressOffsetTable<XLEN, 1>),
     AddressOffsetH(AddressOffsetTable<XLEN, 2>),
     AddressOffsetW(AddressOffsetTable<XLEN, 4>),
+    VirtualXORROT2(VirtualXORROTTable<XLEN, 2>),
+    VirtualXORROT61(VirtualXORROTTable<XLEN, 61>),
     ExtractByteUnsigned(ExtractByteUnsignedTable<XLEN>),
 }
 
@@ -231,6 +233,8 @@ macro_rules! dispatch {
             Self::VirtualXORROT24($t) => $expr,
             Self::VirtualXORROT16($t) => $expr,
             Self::VirtualXORROT63($t) => $expr,
+            Self::VirtualXORROT2($t) => $expr,
+            Self::VirtualXORROT61($t) => $expr,
             Self::VirtualXORROTW16($t) => $expr,
             Self::VirtualXORROTW12($t) => $expr,
             Self::VirtualXORROTW8($t) => $expr,
@@ -349,7 +353,7 @@ mod tests {
 
     #[test]
     fn proof_format_indices_are_stable() {
-        const EXPECTED: [&str; 56] = [
+        const EXPECTED: [&str; 58] = [
             "RangeCheck",
             "RangeCheckAligned",
             "And",
@@ -405,6 +409,8 @@ mod tests {
             "AddressOffsetB",
             "AddressOffsetH",
             "AddressOffsetW",
+            "VirtualXORROT2",
+            "VirtualXORROT61",
             "ExtractByteUnsigned",
         ];
 

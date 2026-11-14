@@ -98,6 +98,8 @@ const SUPPORTED: &[&str] = &[
     "VirtualXorRot24",
     "VirtualXorRot16",
     "VirtualXorRot63",
+    "VirtualXorRot2",
+    "VirtualXorRot61",
     "VirtualXorRotW16",
     "VirtualXorRotW12",
     "VirtualXorRotW8",
@@ -835,6 +837,8 @@ difftests! {
     diff_xorrot24 => |r| alu_rr(r, K::VirtualXORROT24);
     diff_xorrot16 => |r| alu_rr(r, K::VirtualXORROT16);
     diff_xorrot63 => |r| alu_rr(r, K::VirtualXORROT63);
+    diff_xorrot2 => |r| alu_rr(r, K::VirtualXORROT2);
+    diff_xorrot61 => |r| alu_rr(r, K::VirtualXORROT61);
     diff_xorrotw16 => |r| alu_rr(r, K::VirtualXORROTW16);
     diff_xorrotw12 => |r| alu_rr(r, K::VirtualXORROTW12);
     diff_xorrotw8 => |r| alu_rr(r, K::VirtualXORROTW8);

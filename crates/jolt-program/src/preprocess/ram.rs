@@ -28,6 +28,13 @@ pub enum RamDomainError {
     HeapBelowLowest { heap_end: u64, lowest_address: u64 },
     #[error("RAM domain size exceeds this platform's addressable usize range")]
     DomainTooLarge,
+    #[error(
+        "maximum padded RAM domain of {max_ram_k} words from {lowest_address} exceeds the 64-bit address space"
+    )]
+    AddressSpaceOverflow {
+        lowest_address: u64,
+        max_ram_k: usize,
+    },
 }
 
 impl From<MemoryLayoutError> for RamDomainError {
@@ -116,21 +123,33 @@ pub fn compute_min_ram_k(
 }
 
 pub fn compute_max_ram_k(memory_layout: &MemoryLayout) -> Result<usize, RamDomainError> {
-    let lowest_address = memory_layout.get_lowest_address();
-    let total_bytes = memory_layout.heap_end.checked_sub(lowest_address).ok_or(
-        RamDomainError::HeapBelowLowest {
-            heap_end: memory_layout.heap_end,
+    memory_layout.max_ram_k().map_err(|error| match error {
+        MemoryLayoutError::HeapBelowLowest {
+            heap_end,
+            lowest_address,
+        } => RamDomainError::HeapBelowLowest {
+            heap_end,
             lowest_address,
         },
-    )?;
-    // Count every word that starts below `heap_end`, including a partial last
-    // word: the tracer admits an access whose start lies below `heap_end`, so
-    // the highest touched word index is at most `total_bytes.div_ceil(8) - 1`.
-    let total_words =
-        usize::try_from(total_bytes.div_ceil(8)).map_err(|_| RamDomainError::DomainTooLarge)?;
-    total_words
-        .checked_next_power_of_two()
-        .ok_or(RamDomainError::DomainTooLarge)
+        MemoryLayoutError::RamDomainTooLarge => RamDomainError::DomainTooLarge,
+        MemoryLayoutError::RamAddressSpaceOverflow {
+            lowest_address,
+            max_ram_k,
+        } => RamDomainError::AddressSpaceOverflow {
+            lowest_address,
+            max_ram_k,
+        },
+        error @ (MemoryLayoutError::ZeroAddress
+        | MemoryLayoutError::AddressBelowLowest { .. }
+        | MemoryLayoutError::MissingProgramSize
+        | MemoryLayoutError::SizeOverflow { .. }
+        | MemoryLayoutError::InvalidTrustedAdviceSize { .. }
+        | MemoryLayoutError::InvalidUntrustedAdviceSize { .. }
+        | MemoryLayoutError::IoRegionTooLarge { .. }
+        | MemoryLayoutError::HeapEndTooHigh { .. }
+        | MemoryLayoutError::HeapEndUnaligned { .. }
+        | MemoryLayoutError::IoTooLong { .. }) => RamDomainError::MemoryLayout(error),
+    })
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -253,6 +272,50 @@ mod tests {
     }
 
     #[test]
+    fn compute_max_ram_k_checks_the_padded_address_extent() {
+        let mut layout = bounded_device().memory_layout;
+        let lowest_address = layout.get_lowest_address();
+        layout.heap_end = lowest_address + (1u64 << 63);
+        assert_eq!(compute_max_ram_k(&layout), Ok(1usize << 60));
+        layout.heap_end += 8;
+        assert_eq!(
+            compute_max_ram_k(&layout),
+            Err(RamDomainError::AddressSpaceOverflow {
+                lowest_address,
+                max_ram_k: 1usize << 61
+            })
+        );
+
+        layout.trusted_advice_start = 1u64 << 63;
+        layout.untrusted_advice_start = 1u64 << 63;
+        layout.heap_end = u64::MAX - 7;
+        assert_eq!(compute_max_ram_k(&layout), Ok(1usize << 60));
+        layout.trusted_advice_start += 8;
+        layout.untrusted_advice_start += 8;
+        assert_eq!(
+            compute_max_ram_k(&layout),
+            Err(RamDomainError::AddressSpaceOverflow {
+                lowest_address: (1u64 << 63) + 8,
+                max_ram_k: 1usize << 60
+            })
+        );
+    }
+
+    #[test]
+    fn compute_max_ram_k_rechecks_deserialized_heap_headroom() {
+        let mut layout = bounded_device().memory_layout;
+        layout.heap_end = u64::MAX - 6;
+        assert_eq!(
+            compute_max_ram_k(&layout),
+            Err(RamDomainError::MemoryLayout(
+                MemoryLayoutError::HeapEndTooHigh {
+                    heap_end: u64::MAX - 6
+                }
+            ))
+        );
+    }
+
+    #[test]
     fn compute_max_ram_k_rejects_heap_end_below_lowest_address() {
         let mut layout = bounded_device().memory_layout;
         let lowest_address = layout.get_lowest_address();
@@ -267,14 +330,20 @@ mod tests {
     }
 
     #[test]
-    fn compute_max_ram_k_counts_a_partial_last_word() {
+    fn compute_max_ram_k_rejects_an_unaligned_heap_end() {
         let mut layout = bounded_device().memory_layout;
         let lowest_address = layout.get_lowest_address();
         layout.heap_end = lowest_address + 8 * 1024;
         assert_eq!(compute_max_ram_k(&layout), Ok(1024));
-        // Word 1024 starts below `heap_end`, so a run may touch it.
         layout.heap_end = lowest_address + 8 * 1024 + 4;
-        assert_eq!(compute_max_ram_k(&layout), Ok(2048));
+        assert_eq!(
+            compute_max_ram_k(&layout),
+            Err(RamDomainError::MemoryLayout(
+                MemoryLayoutError::HeapEndUnaligned {
+                    heap_end: lowest_address + 8 * 1024 + 4
+                }
+            ))
+        );
     }
 
     #[test]
