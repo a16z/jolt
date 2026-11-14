@@ -79,8 +79,9 @@ fn mask_mle<F: JoltField>(
 }
 
 impl<F: JoltField> RamReadWriteChecking<F> {
-    /// Splits the opening point `[r_address(log_k) || r_cycle(log_t)]`.
-    fn split_opening_point<'a>(&self, point: &'a [F]) -> Result<(&'a [F], &'a [F]), VerifierError> {
+    /// Splits the opening point `[r_address(log_k) || r_cycle(log_t)]` and
+    /// evaluates the `EqCycle` public `eq(τ_low, r_cycle)`.
+    fn address_and_eq_cycle<'a>(&self, point: &'a [F]) -> Result<(&'a [F], F), VerifierError> {
         if point.len() < self.ram_log_k {
             return Err(public_input_failed(format!(
                 "RAM read-write opening point is too short: expected at least {}, got {}",
@@ -88,7 +89,26 @@ impl<F: JoltField> RamReadWriteChecking<F> {
                 point.len()
             )));
         }
-        Ok(point.split_at(self.ram_log_k))
+        let (r_address, r_cycle) = point.split_at(self.ram_log_k);
+        let eq_cycle = try_eq_mle(&self.product_tau_low, r_cycle).map_err(public_input_failed)?;
+        Ok((r_address, eq_cycle))
+    }
+
+    /// The public weight `id` at the opening point, from its address half and
+    /// the cycle equality there: `EqCycle` itself, or that equality times the
+    /// mask's multilinear extension at `r_address`. Evaluates at most one mask.
+    fn public_value(
+        &self,
+        id: RamReadWritePublic,
+        r_address: &[F],
+        eq_cycle: F,
+    ) -> Result<F, VerifierError> {
+        let intervals = match id {
+            RamReadWritePublic::EqCycle => return Ok(eq_cycle),
+            RamReadWritePublic::CodeEqCycle => &self.masks.write_protected,
+            RamReadWritePublic::UnmappedEqCycle => &self.masks.unmapped,
+        };
+        Ok(eq_cycle * mask_mle(intervals, r_address)?)
     }
 
     pub fn write_protected_word_intervals(&self) -> &[(usize, usize)] {
@@ -136,7 +156,8 @@ impl<F: JoltField> ConcreteSumcheck<F> for RamReadWriteChecking<F> {
         })
     }
 
-    /// Evaluates the cycle equality once and each mask once. The generic
+    /// Evaluates the cycle equality once, and each mask once because each
+    /// masked weight occurs once in the output expression. The generic
     /// evaluator calls [`derive_output_term`](Self::derive_output_term) per
     /// leaf, and `EqCycle` weights three of the five claims, so it would
     /// evaluate the cycle equality five times.
@@ -147,10 +168,7 @@ impl<F: JoltField> ConcreteSumcheck<F> for RamReadWriteChecking<F> {
         output_points: &RamReadWriteOutputClaims<Vec<F>>,
         challenges: &RamReadWriteChallenges<F>,
     ) -> Result<F, VerifierError> {
-        let (r_address, r_cycle) = self.split_opening_point(output_points.val())?;
-        let eq_cycle = try_eq_mle(&self.product_tau_low, r_cycle).map_err(public_input_failed)?;
-        let code_eq_cycle = eq_cycle * mask_mle(&self.masks.write_protected, r_address)?;
-        let unmapped_eq_cycle = eq_cycle * mask_mle(&self.masks.unmapped, r_address)?;
+        let (r_address, eq_cycle) = self.address_and_eq_cycle(output_points.val())?;
         self.symbolic().output_expression::<F>().try_evaluate(
             |id| {
                 output_values
@@ -166,11 +184,7 @@ impl<F: JoltField> ConcreteSumcheck<F> for RamReadWriteChecking<F> {
                 let JoltDerivedId::RamReadWrite(public_id) = id else {
                     return Err(VerifierError::MissingStageClaimDerived { id: (*id).into() });
                 };
-                Ok(match public_id {
-                    RamReadWritePublic::EqCycle => eq_cycle,
-                    RamReadWritePublic::CodeEqCycle => code_eq_cycle,
-                    RamReadWritePublic::UnmappedEqCycle => unmapped_eq_cycle,
-                })
+                self.public_value(*public_id, r_address, eq_cycle)
             },
         )
     }
@@ -185,14 +199,8 @@ impl<F: JoltField> ConcreteSumcheck<F> for RamReadWriteChecking<F> {
         let JoltDerivedId::RamReadWrite(public_id) = id else {
             return Err(VerifierError::MissingStageClaimDerived { id: (*id).into() });
         };
-        let (r_address, r_cycle) = self.split_opening_point(output_points.val())?;
-        let eq_cycle = try_eq_mle(&self.product_tau_low, r_cycle).map_err(public_input_failed)?;
-        let intervals = match public_id {
-            RamReadWritePublic::EqCycle => return Ok(eq_cycle),
-            RamReadWritePublic::CodeEqCycle => &self.masks.write_protected,
-            RamReadWritePublic::UnmappedEqCycle => &self.masks.unmapped,
-        };
-        Ok(eq_cycle * mask_mle(intervals, r_address)?)
+        let (r_address, eq_cycle) = self.address_and_eq_cycle(output_points.val())?;
+        self.public_value(*public_id, r_address, eq_cycle)
     }
 }
 
