@@ -22,7 +22,7 @@ use jolt_tracer_x86::harness::{
     Outcome, SCRATCH_START, TEST_ADDR,
 };
 
-use jolt_tracer_x86::X86TracerBackend;
+use jolt_tracer_x86::{RunOutput, X86TracerBackend};
 
 const REGS: usize = common::constants::REGISTER_COUNT as usize;
 
@@ -276,7 +276,9 @@ fn loads_reject_the_padding_between_io_end_and_ram() {
                 TEST_ADDR,
             );
             let inputs = TraceInputs::new(Vec::new(), Vec::new(), Vec::new(), config);
-            let result = X86TracerBackend::new().fast_run(&program, inputs);
+            let result = X86TracerBackend::new()
+                .run_machine(&program, inputs)
+                .and_then(RunOutput::require_halt);
             if accepted {
                 let _ = result.expect("load of the final I/O word");
             } else {
@@ -423,13 +425,60 @@ fn last_heap_word_preserves_backing_bytes_across_checkpoints() {
     for offset in [1168, 1176] {
         let outside = partial_word_program(&config, offset, 0);
         let inputs = TraceInputs::new(Vec::new(), Vec::new(), Vec::new(), config);
-        assert!(X86TracerBackend::new().fast_run(&outside, inputs).is_err());
+        assert!(X86TracerBackend::new()
+            .run_machine(&outside, inputs)
+            .and_then(RunOutput::require_halt)
+            .is_err());
     }
 }
 
-/// A Jolt run must end at a halt: chunked `execute` rejects a PC stall.
 #[test]
-fn chunked_execute_rejects_a_stall() {
+fn run_machine_rejects_programs_without_elf_bytes() {
+    let program = single_row_program(terminal_row(TEST_ADDR));
+    let inputs = TraceInputs::new(Vec::new(), Vec::new(), Vec::new(), memory_config());
+    assert!(matches!(
+        X86TracerBackend::new().run_machine(&program, inputs),
+        Err(TraceError::MissingElfBytes)
+    ));
+}
+
+#[test]
+fn run_machine_accepts_stalls_until_halt_is_required() {
+    for kind in [Kind::JoltSuccess, Kind::JoltPanic, Kind::BEQ] {
+        let terminal = if kind == Kind::BEQ {
+            let mut branch = row(kind, Some(0), None, 0);
+            branch.operands.rs2 = Some(0);
+            branch
+        } else {
+            let mut halt = terminal_row(TEST_ADDR);
+            halt.instruction_kind = kind;
+            halt
+        };
+        let program = JoltProgram::from_parts(
+            minimal_elf(TEST_ADDR),
+            vec![terminal],
+            Vec::new(),
+            RAM_START_ADDRESS + 1024,
+            TEST_ADDR,
+        );
+        let inputs = TraceInputs::new(Vec::new(), Vec::new(), Vec::new(), memory_config());
+        let output = X86TracerBackend::new()
+            .run_machine(&program, inputs)
+            .expect("machine run");
+        assert_eq!(output.trace_len, 1);
+        if kind == Kind::BEQ {
+            assert!(matches!(
+                output.require_halt(),
+                Err(TraceError::EndedWithoutHalt { pc: TEST_ADDR })
+            ));
+        } else {
+            assert_eq!(output.require_halt().expect("halted run").trace_len, 1);
+        }
+    }
+}
+
+#[test]
+fn tracing_rejects_a_stall() {
     let mut stall = row(Kind::BEQ, Some(0), None, 0);
     stall.operands.rs2 = Some(0);
     let program = JoltProgram::from_parts(
@@ -440,8 +489,13 @@ fn chunked_execute_rejects_a_stall() {
         TEST_ADDR,
     );
     let inputs = TraceInputs::new(Vec::new(), Vec::new(), Vec::new(), memory_config());
+    let mut backend = X86TracerBackend::new();
     assert!(matches!(
-        X86TracerBackend::new().execute(&program, inputs, 1),
+        backend.trace(&program, inputs.clone()),
+        Err(TraceError::EndedWithoutHalt { pc: TEST_ADDR })
+    ));
+    assert!(matches!(
+        backend.execute(&program, inputs, 1),
         Err(TraceError::EndedWithoutHalt { pc: TEST_ADDR })
     ));
 }
