@@ -10,6 +10,7 @@ use jolt_akita::{
 };
 use jolt_field::Ring;
 use jolt_inlines_blake2::Blake2b;
+use jolt_inlines_keccak256 as _;
 #[cfg(feature = "ntt-inline")]
 use jolt_inlines_ntt as _;
 use jolt_poly::{CompressedPoly, UnivariatePoly};

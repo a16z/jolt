@@ -137,11 +137,18 @@ field-inline instructions (`field_inline.rs`).
 
 ### Hash and NTT inlines
 
-- **Blake2b inline** (`jolt-inlines-blake2`, with a `digest` adapter). The Jolt
-  transcript, descriptor digests, layout digests, and the preprocessing digest
-  hash through it, with the same bytes as the `blake2` crate. Akita's
-  transcript is spongefish's own `Hash` sponge over that adapter.
-- **Keccak inline** for Akita's SHAKE challenge sampler (`keccak-inline`).
+- **Blake2b inline** (`jolt-inlines-blake2`, with a `digest` adapter). The
+  example's record-section digests hash through it, and so does the Blake2b
+  transcript sponge (`jolt_transcript::Blake2b512`) under `blake2-inline`, with
+  the same bytes as the `blake2` crate.
+- **Keccak-f inline** (`jolt-inlines-keccak256`). Under `jolt-transcript`'s
+  `keccak-inline`, on `riscv64` only, every digest a statement or a key binds
+  (`DigestHasher`: the program preprocessing digest, the relation digest, the
+  lattice layout digests) is SHA3-256, or Keccak-256 under `keccak256-digests`,
+  through it. Hosts, and guests without the feature, compute the same bytes
+  with the `sha3` crate. `keccak-inline` selects nothing else: the Keccak
+  transcript sponge, which Akita's transcript runs on, is spongefish's and
+  compiles the permutation.
 - **64-point i32 NTT and six-product pointwise dot** (`jolt-inlines-ntt`).
   These expand into existing proved integer instructions, with no advice and no
   new constraints. Akita's `ntt-inline` feature dispatches the 64-dimension CRT
