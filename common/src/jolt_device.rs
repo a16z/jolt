@@ -22,12 +22,43 @@ use crate::constants::{
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MemoryLayoutError {
     ZeroAddress,
-    AddressBelowLowest { address: u64, lowest_address: u64 },
+    AddressBelowLowest {
+        address: u64,
+        lowest_address: u64,
+    },
     MissingProgramSize,
-    SizeOverflow { region: &'static str },
-    InvalidTrustedAdviceSize { size: u64 },
-    InvalidUntrustedAdviceSize { size: u64 },
-    IoRegionTooLarge { padded_bytes: u64 },
+    SizeOverflow {
+        region: &'static str,
+    },
+    InvalidTrustedAdviceSize {
+        size: u64,
+    },
+    InvalidUntrustedAdviceSize {
+        size: u64,
+    },
+    IoRegionTooLarge {
+        padded_bytes: u64,
+    },
+    HeapEndTooHigh {
+        heap_end: u64,
+    },
+    HeapBelowLowest {
+        heap_end: u64,
+        lowest_address: u64,
+    },
+    RamDomainTooLarge,
+    RamAddressSpaceOverflow {
+        lowest_address: u64,
+        max_ram_k: usize,
+    },
+    HeapEndUnaligned {
+        heap_end: u64,
+    },
+    IoTooLong {
+        region: &'static str,
+        len: u64,
+        max: u64,
+    },
 }
 
 impl Display for MemoryLayoutError {
@@ -51,9 +82,29 @@ impl Display for MemoryLayoutError {
                 f,
                 "Untrusted advice size must be a power of two (got {size})"
             ),
+            Self::HeapBelowLowest { heap_end, lowest_address } => write!(
+                f,
+                "memory layout heap end {heap_end} is below lowest mapped address {lowest_address}"
+            ),
+            Self::RamDomainTooLarge => write!(f, "RAM domain size exceeds this platform's addressable usize range"),
+            Self::RamAddressSpaceOverflow { lowest_address, max_ram_k } => write!(
+                f,
+                "maximum padded RAM domain of {max_ram_k} words from {lowest_address} exceeds the 64-bit address space"
+            ),
+            Self::HeapEndTooHigh { heap_end } => write!(
+                f,
+                "heap end {heap_end} leaves fewer than eight bytes before the end of the address space"
+            ),
             Self::IoRegionTooLarge { padded_bytes } => write!(
                 f,
                 "padded I/O region ({padded_bytes} bytes) reaches the zero address or exceeds RAM_START_ADDRESS"
+            ),
+            Self::HeapEndUnaligned { heap_end } => {
+                write!(f, "heap end {heap_end} is not doubleword aligned")
+            }
+            Self::IoTooLong { region, len, max } => write!(
+                f,
+                "{region} too long: got {len} bytes, max is {max} bytes (the configured size rounded up to a multiple of eight)"
             ),
         }
     }
@@ -141,6 +192,45 @@ impl JoltDevice {
             panic: false,
             memory_layout: MemoryLayout::new(memory_config),
         }
+    }
+
+    /// Builds a device holding a run's inputs and advice. Each length is checked
+    /// against the layout's capacity, which is the configured size rounded up to
+    /// a multiple of eight: the verifier's region for that block covers exactly
+    /// the rounded capacity, so the rounded size is the effective maximum.
+    pub fn try_with_io(
+        memory_config: &MemoryConfig,
+        inputs: &[u8],
+        trusted_advice: &[u8],
+        untrusted_advice: &[u8],
+    ) -> Result<Self, MemoryLayoutError> {
+        let memory_layout = MemoryLayout::try_new(memory_config)?;
+        for (region, len, max) in [
+            (
+                "Trusted advice",
+                trusted_advice.len(),
+                memory_layout.max_trusted_advice_size,
+            ),
+            (
+                "Untrusted advice",
+                untrusted_advice.len(),
+                memory_layout.max_untrusted_advice_size,
+            ),
+            ("Input", inputs.len(), memory_layout.max_input_size),
+        ] {
+            let len = u64::try_from(len).unwrap_or(u64::MAX);
+            if len > max {
+                return Err(MemoryLayoutError::IoTooLong { region, len, max });
+            }
+        }
+        Ok(Self {
+            inputs: inputs.to_vec(),
+            trusted_advice: trusted_advice.to_vec(),
+            untrusted_advice: untrusted_advice.to_vec(),
+            outputs: Vec::new(),
+            panic: false,
+            memory_layout,
+        })
     }
 
     pub fn load(&self, address: u64) -> u8 {
@@ -503,12 +593,16 @@ impl MemoryLayout {
             .and_then(|s| s.checked_add(stack_size))
             .ok_or(MemoryLayoutError::SizeOverflow { region: "stack" })?;
 
-        // heap grows *up* (increasing addresses) from the top of the stack
+        // heap grows *up* (increasing addresses) from the top of the stack.
+        // `heap_end` is rounded up to a doubleword (as the linker rounds
+        // `__heap_end`) so that the tracer's `heap_end` bound and the verifier's
+        // unmapped-word mask, which starts at `heap_end`, cut at the same word.
         let heap_end = stack_start
             .checked_add(heap_size)
-            .ok_or(MemoryLayoutError::SizeOverflow { region: "heap" })?;
+            .ok_or(MemoryLayoutError::SizeOverflow { region: "heap" })
+            .and_then(|end| align_up(end, "heap"))?;
 
-        Ok(Self {
+        let layout = Self {
             program_size,
             max_trusted_advice_size,
             trusted_advice_start,
@@ -529,7 +623,52 @@ impl MemoryLayout {
             panic,
             termination,
             io_end,
-        })
+        };
+        let _ = layout.max_ram_k()?;
+        Ok(layout)
+    }
+
+    /// Ensures `heap_end` is doubleword aligned, as [`Self::try_new`] builds it,
+    /// and that an access beginning below it has eight-byte headroom.
+    /// Admission repeats this check for layouts decoded from verifier keys.
+    fn validate_heap_end(&self) -> Result<(), MemoryLayoutError> {
+        if self.heap_end > u64::MAX - 7 {
+            return Err(MemoryLayoutError::HeapEndTooHigh {
+                heap_end: self.heap_end,
+            });
+        }
+        if !self.heap_end.is_multiple_of(8) {
+            return Err(MemoryLayoutError::HeapEndUnaligned {
+                heap_end: self.heap_end,
+            });
+        }
+        Ok(())
+    }
+
+    /// Computes and admits the maximum padded RAM domain for this layout.
+    /// Both construction and verifier-key admission use this sizing law.
+    pub fn max_ram_k(&self) -> Result<usize, MemoryLayoutError> {
+        self.validate_heap_end()?;
+        let lowest_address = self.get_lowest_address();
+        let total_bytes = self.heap_end.checked_sub(lowest_address).ok_or(
+            MemoryLayoutError::HeapBelowLowest {
+                heap_end: self.heap_end,
+                lowest_address,
+            },
+        )?;
+        let total_words =
+            usize::try_from(total_bytes / 8).map_err(|_| MemoryLayoutError::RamDomainTooLarge)?;
+        let max_ram_k = total_words
+            .checked_next_power_of_two()
+            .ok_or(MemoryLayoutError::RamDomainTooLarge)?;
+        // Check the admitted maximum, even when a proof selects a smaller domain.
+        if u128::from(lowest_address) + 8 * max_ram_k as u128 > (1u128 << 64) {
+            return Err(MemoryLayoutError::RamAddressSpaceOverflow {
+                lowest_address,
+                max_ram_k,
+            });
+        }
+        Ok(max_ram_k)
     }
 
     pub fn get_lowest_address(&self) -> u64 {
@@ -590,6 +729,54 @@ mod tests {
             }),
             Err(MemoryLayoutError::IoRegionTooLarge {
                 padded_bytes: 1 << 31
+            })
+        );
+    }
+
+    #[test]
+    fn checked_layout_requires_eight_byte_heap_headroom() {
+        // Rounding `heap_end` up to a doubleword overflows past `u64::MAX - 7`.
+        let config = MemoryConfig {
+            program_size: Some((u64::MAX - 7) - RAM_START_ADDRESS - STACK_CANARY_SIZE),
+            stack_size: 0,
+            heap_size: 0,
+            ..Default::default()
+        };
+        let layout = MemoryLayout {
+            heap_end: u64::MAX - 7,
+            ..MemoryLayout::default()
+        };
+        assert_eq!(layout.validate_heap_end(), Ok(()));
+        assert_eq!(
+            MemoryLayout::try_new(&MemoryConfig {
+                program_size: config.program_size.map(|size| size + 1),
+                ..config
+            }),
+            Err(MemoryLayoutError::SizeOverflow { region: "heap" })
+        );
+    }
+
+    #[test]
+    fn checked_layout_checks_the_maximum_padded_ram_extent() {
+        let mut config = MemoryConfig {
+            program_size: Some(1024),
+            stack_size: 0,
+            heap_size: 0,
+            ..Default::default()
+        };
+        let lowest_address = MemoryLayout::try_new(&config).unwrap().get_lowest_address();
+        config.program_size =
+            Some(lowest_address + (1u64 << 63) - RAM_START_ADDRESS - STACK_CANARY_SIZE);
+        assert_eq!(
+            MemoryLayout::try_new(&config).unwrap().max_ram_k(),
+            Ok(1usize << 60)
+        );
+        config.program_size = config.program_size.map(|size| size + 1);
+        assert_eq!(
+            MemoryLayout::try_new(&config),
+            Err(MemoryLayoutError::RamAddressSpaceOverflow {
+                lowest_address,
+                max_ram_k: 1usize << 61,
             })
         );
     }
@@ -777,6 +964,64 @@ mod tests {
             layout.get_total_memory_size(),
             layout.heap_end - RAM_START_ADDRESS
         );
+    }
+
+    #[test]
+    fn layout_rounds_an_unaligned_heap_end_up_to_a_doubleword() {
+        let layout = MemoryLayout::new(&MemoryConfig {
+            program_size: Some(1153),
+            stack_size: 0,
+            heap_size: 0,
+            ..Default::default()
+        });
+        assert_eq!(layout.stack_end, RAM_START_ADDRESS + 1153);
+        assert_eq!(
+            layout.heap_end,
+            RAM_START_ADDRESS + 1153 + STACK_CANARY_SIZE + 7
+        );
+        assert_eq!(layout.heap_end % 8, 0);
+
+        let mut unaligned = layout.clone();
+        unaligned.heap_end -= 1;
+        assert_eq!(
+            unaligned.max_ram_k(),
+            Err(MemoryLayoutError::HeapEndUnaligned {
+                heap_end: layout.heap_end - 1
+            })
+        );
+    }
+
+    #[test]
+    fn io_lengths_are_checked_against_rounded_capacities() {
+        let config = MemoryConfig {
+            program_size: Some(1024),
+            max_untrusted_advice_size: 12,
+            max_trusted_advice_size: 12,
+            max_input_size: 12,
+            ..Default::default()
+        };
+        let device = JoltDevice::try_with_io(&config, &[1; 16], &[2; 16], &[3; 16]).unwrap();
+        assert_eq!(device.memory_layout.max_untrusted_advice_size, 16);
+        assert_eq!(device.untrusted_advice, [3; 16]);
+        assert_eq!(
+            device.load(device.memory_layout.untrusted_advice_start + 15),
+            3
+        );
+
+        for (inputs, trusted, untrusted, region) in [
+            (&[0u8; 17][..], &[][..], &[][..], "Input"),
+            (&[], &[0; 17], &[], "Trusted advice"),
+            (&[], &[], &[0; 17], "Untrusted advice"),
+        ] {
+            assert_eq!(
+                JoltDevice::try_with_io(&config, inputs, trusted, untrusted),
+                Err(MemoryLayoutError::IoTooLong {
+                    region,
+                    len: 17,
+                    max: 16
+                })
+            );
+        }
     }
 
     #[test]
