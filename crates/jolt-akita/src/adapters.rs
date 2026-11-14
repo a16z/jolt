@@ -6,7 +6,7 @@ use std::{
     io::{Error as IoError, ErrorKind},
 };
 
-#[cfg(feature = "profiling")]
+#[cfg(feature = "parallel")]
 use std::{cell::Cell, num::NonZeroUsize};
 
 use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
