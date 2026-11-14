@@ -10,10 +10,12 @@ use jolt_verifier::stages::stage4::registers_read_write_checking::{
 use jolt_witness::JoltWitnessOracle;
 
 use super::test_support::{
-    assert_kernel_parity, assert_nontrivial, challenge_sequence, structured_fixture, TraceFixture,
+    assert_kernel_parity_with_session, assert_nontrivial, challenge_sequence, structured_fixture,
+    TraceFixture,
 };
-use super::OptimizedRegistersReadWrite;
+use super::{OptimizedRegistersReadWrite, SharedRdIndices, StreamingRegistersReadWrite};
 use crate::optimized::parity::ExceptionalEq;
+use crate::{PrepareKernel, ProofSession};
 
 fn run_parity(fixture: TraceFixture, log_t: usize, seed: u64) {
     run_parity_with_phases(
@@ -76,6 +78,12 @@ fn run_parity_case(
         if exceptional.is_none() {
             assert_nontrivial(input_claim);
         }
+        // The default kernel parks the `rd` indices its stage-5 kernel reads;
+        // the streaming family's stage 5 reads rows, so its slot parks none.
+        let slots: [(&dyn PrepareKernel<Fr, _>, bool); 2] = [
+            (&OptimizedRegistersReadWrite, true),
+            (&StreamingRegistersReadWrite, false),
+        ];
         for &(phase1, phase2) in phase_splits {
             let relation = RegistersReadWriteChecking::<Fr>::new(ReadWriteDimensions::new(
                 log_t,
@@ -83,16 +91,21 @@ fn run_parity_case(
                 phase1,
                 phase2,
             ));
-            assert_kernel_parity(
-                &OptimizedRegistersReadWrite,
-                backend,
-                &relation,
-                &claims,
-                &points,
-                &challenges,
-                input_claim,
-                &round_challenges,
-            );
+            for (slot, parks_rd) in slots {
+                let mut session = ProofSession::default();
+                assert_kernel_parity_with_session(
+                    &mut session,
+                    slot,
+                    backend,
+                    &relation,
+                    &claims,
+                    &points,
+                    &challenges,
+                    input_claim,
+                    &round_challenges,
+                );
+                assert_eq!(session.take::<SharedRdIndices>().is_some(), parks_rd);
+            }
         }
     });
 }

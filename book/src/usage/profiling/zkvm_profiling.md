@@ -63,19 +63,27 @@ stage-3 instruction-input streaming kernel, for either Dory or Akita. The
 `spartan` family selects the stage-1 outer and stage-2 product remainders.
 The `ram` family selects the read-write, RAF, value-check, RA claim-reduction
 and RA-virtualization kernels: stages 2–5 share sparse events, and stage 6b
-collects its own address column. The `instruction-rows` family selects the
-stage-6b instruction RA virtualization kernel, which gathers its one-hot
-selectors from the resident trace until each fits 64 MiB dense, and not before
-the eager kernel's fourth bind. The other readers of the packed per-cycle
+collects its own address column. The `registers` family selects the stage-4
+register read-write check and the stage-5 register value evaluation, which
+read register operands and increments from the resident trace: no per-cycle
+`rd` index column passes from stage 4 to stage 5, and a cycle-first stage 4
+keeps no per-cycle columns (an address-first phase split keeps the eager
+stage-4 kernel). The `instruction-rows` family selects the stage-6b
+instruction RA virtualization kernel, which gathers its one-hot selectors
+from the resident trace until each fits 64 MiB dense, and not before the
+eager kernel's fourth bind. The other readers of the packed per-cycle
 instruction rows keep their eager kernels, so stage 5 still collects those
-rows. Combine families with
-`--streaming instruction-input,spartan,ram`. Instruction-input and Spartan
-early rounds recompute from the resident trace until the dense tables fit a fixed 4 GiB
+rows. Combine
+families with `--streaming instruction-input,spartan,ram,registers`.
+Instruction-input, Spartan and register
+early rounds recompute from the resident trace until the dense tables, or for
+the register read-write check one level of sparse entries, fit a fixed 4 GiB
 cap; the full trace remains resident. This is not a process-memory cap, and
 streaming can use more memory than eager kernels on small or padded traces.
 Streaming workload, CSV and trace names append `_streaming_<families>` in
-canonical order (`instruction_input`, `spartan`, `ram`, `instruction_rows`), so
-their run directories and `latest_` links stay separate from eager runs.
+canonical order (`instruction_input`, `spartan`, `ram`, `registers`,
+`instruction_rows`), so their run directories and `latest_` links stay separate
+from eager runs.
 The option belongs to `profile` only: `benchmark` sweeps have no streaming
 selection, and a resumed sweep ignores streaming profile artifacts.
 `summary.json` records the selection in `run.streaming_families`;

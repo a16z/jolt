@@ -8,7 +8,10 @@
 //! without materializing `T/2`; the second bind creates the `T/4` indexed SoA
 //! layout. Coefficients stay as LUT indices until the `u16` domain saturates.
 //!
-//! Supports cycle-first and full address-first binding.
+//! Supports cycle-first and full address-first binding. The streaming
+//! register family ([`StreamingRegistersReadWrite`]) runs the cycle-first
+//! kernel over the witness's rows instead of collected entries
+//! (`CycleSource`).
 
 use crate::optimized::support::eq_round_error;
 use jolt_claims::protocols::jolt::geometry::dimensions::REGISTER_ADDRESS_BITS;
@@ -22,12 +25,12 @@ use jolt_verifier::stages::relations::{
 use jolt_verifier::stages::stage4::registers_read_write_checking::{
     RegistersReadWriteChecking, RegistersReadWriteOutputClaims,
 };
-use jolt_witness::JoltWitnessPlane;
+use jolt_witness::{JoltWitnessPlane, WitnessError};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
 use super::read_write::ReadWriteOrder;
-use super::support::{pin_derived_term, GruenRoundMessage, RoundChallenges};
+use super::support::{pin_derived_term, BundleStore, GruenRoundMessage, RoundChallenges};
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
@@ -37,6 +40,7 @@ mod address_first;
 use address::{OperandEq, RegisterAddressState};
 mod rows;
 pub(crate) mod sparse;
+mod streaming;
 #[cfg(test)]
 #[expect(clippy::unwrap_used, reason = "test support module")]
 pub(crate) mod test_support;
@@ -45,10 +49,11 @@ pub(crate) mod test_support;
 mod tests;
 
 pub(crate) use rows::{RegisterCycleRow, SharedRdIndices};
+pub use streaming::StreamingRegistersReadWrite;
 
 use address_first::AddressFirstKernel;
 use rows::CollectRegisterEntries;
-use sparse::CycleState;
+use sparse::{CycleState, StreamedCycleState};
 
 pub struct OptimizedRegistersReadWrite;
 
@@ -91,32 +96,27 @@ impl<F: JoltField> PrepareKernel<F, RegistersReadWriteChecking<F>> for Optimized
         inputs: ProverInputs<'_, F, RegistersReadWriteChecking<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = RegistersReadWriteChecking<F>>>, KernelError<F>>
     {
-        let dimensions = inputs.relation.register_dimensions();
-        let order = ReadWriteOrder::new::<F>(dimensions)?;
-        let log_t = dimensions.log_t();
-        let log_k = dimensions.log_k();
-        if log_t == 0 {
-            return Err(KernelError::Unsupported {
-                reason: "optimized registers read-write checking requires at least one cycle round",
-            });
-        }
-        let r_cycle: &[F] = &inputs.points.rd_write_value;
-        if r_cycle.len() != log_t {
-            return Err(KernelError::InvariantViolation {
-                reason: "registers read-write input point has the wrong variable count",
-            });
-        }
-        if log_k != REGISTER_ADDRESS_BITS {
-            return Err(KernelError::InvariantViolation {
-                reason: "register read/write dimensions do not match the witness domain",
-            });
-        }
-        if order == ReadWriteOrder::AddressFirst {
+        Self::prepare_kernel(Some(session), witness, inputs)
+    }
+}
+
+impl OptimizedRegistersReadWrite {
+    /// The default kernel for `inputs`. `rd_carry` is the session that
+    /// receives the per-cycle `rd` indices the default stage-5 kernel
+    /// reclaims ([`SharedRdIndices`]); `None` when stage 5 reads the rows
+    /// itself.
+    fn prepare_kernel<F: JoltField>(
+        rd_carry: Option<&mut ProofSession>,
+        witness: &dyn JoltWitnessPlane<F>,
+        inputs: ProverInputs<'_, F, RegistersReadWriteChecking<F>>,
+    ) -> Result<Box<dyn SumcheckKernel<F, Relation = RegistersReadWriteChecking<F>>>, KernelError<F>>
+    {
+        if read_write_order(&inputs)? == ReadWriteOrder::AddressFirst {
             return Ok(Box::new(AddressFirstKernel::prepare(
-                session, witness, &inputs,
+                rd_carry, witness, &inputs,
             )?));
         }
-        let cycles = 1usize << log_t;
+        let cycles = 1usize << inputs.relation.register_dimensions().log_t();
 
         // Sparse entry construction: one trace pass — the typed rows are
         // never materialized whole (80 bytes per cycle saved at the stage's
@@ -128,51 +128,133 @@ impl<F: JoltField> PrepareKernel<F, RegistersReadWriteChecking<F>> for Optimized
             rd_indices,
             rd_inc,
         } = CollectRegisterEntries::collect(witness, cycles)?;
-        let cycle = CycleState::new(entries, inputs.challenges.gamma, rd_inc);
+        let state = CycleState::new(entries, inputs.challenges.gamma, rd_inc);
 
-        // Park the rd hot indices for the stage-5 val-evaluation kernel.
-        session.park(SharedRdIndices::new(rd_indices, cycles));
+        if let Some(session) = rd_carry {
+            session.park(SharedRdIndices::new(rd_indices, cycles));
+        }
 
-        Ok(Box::new(ReadWriteKernel {
-            dimensions,
-            cycle,
-            gruen: GruenSplitEqPolynomial::new(r_cycle, BindingOrder::LowToHigh),
-            address: RegisterAddressState::default(),
-            rs1_indices,
-            rs2_indices,
-            challenges: RoundChallenges::new(log_t + log_k),
-        }))
+        Ok(Box::new(ReadWriteKernel::new(
+            CycleSource::Collected {
+                state,
+                rs1_indices,
+                rs2_indices,
+            },
+            &inputs,
+        )))
     }
+}
+
+/// The binding order `inputs` select, once the checks every register
+/// read/write kernel shares pass.
+fn read_write_order<F: JoltField>(
+    inputs: &ProverInputs<'_, F, RegistersReadWriteChecking<F>>,
+) -> Result<ReadWriteOrder, KernelError<F>> {
+    let dimensions = inputs.relation.register_dimensions();
+    let order = ReadWriteOrder::new::<F>(dimensions)?;
+    if dimensions.log_t() == 0 {
+        return Err(KernelError::Unsupported {
+            reason: "optimized registers read-write checking requires at least one cycle round",
+        });
+    }
+    if inputs.points.rd_write_value.len() != dimensions.log_t() {
+        return Err(KernelError::InvariantViolation {
+            reason: "registers read-write input point has the wrong variable count",
+        });
+    }
+    if dimensions.log_k() != REGISTER_ADDRESS_BITS {
+        return Err(KernelError::InvariantViolation {
+            reason: "register read/write dimensions do not match the witness domain",
+        });
+    }
+    Ok(order)
+}
+
+/// The cycle rounds' state beside what the operand openings read.
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
+enum CycleSource<F: JoltField> {
+    /// The trace's sparse entries, collected with its `rs1` and `rs2` index
+    /// columns.
+    Collected {
+        state: CycleState<F>,
+        rs1_indices: Vec<Option<u8>>,
+        rs2_indices: Vec<Option<u8>>,
+    },
+    /// Passes over the witness's resident rows until a level is filled.
+    Streamed {
+        state: StreamedCycleState<F>,
+        rows: BundleStore<RegisterCycleRow>,
+    },
 }
 
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct ReadWriteKernel<F: JoltField> {
     #[cfg_attr(feature = "allocative", allocative(skip))]
     dimensions: ReadWriteDimensions,
-    cycle: CycleState<F>,
+    cycle: CycleSource<F>,
     gruen: GruenSplitEqPolynomial<F>,
     address: RegisterAddressState<F>,
-    rs1_indices: Vec<Option<u8>>,
-    rs2_indices: Vec<Option<u8>>,
     challenges: RoundChallenges<F>,
 }
 
 impl<F: JoltField> ReadWriteKernel<F> {
+    /// The cycle-first kernel over `cycle`, for inputs that passed
+    /// [`read_write_order`].
+    fn new(
+        cycle: CycleSource<F>,
+        inputs: &ProverInputs<'_, F, RegistersReadWriteChecking<F>>,
+    ) -> Self {
+        let dimensions = inputs.relation.register_dimensions();
+        Self {
+            dimensions,
+            cycle,
+            gruen: GruenSplitEqPolynomial::new(
+                &inputs.points.rd_write_value,
+                BindingOrder::LowToHigh,
+            ),
+            address: RegisterAddressState::default(),
+            challenges: RoundChallenges::new(dimensions.log_t() + dimensions.log_k()),
+        }
+    }
+
     fn cycle_round_message(
-        &self,
+        &mut self,
         round: usize,
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
         let e_in = self.gruen.e_in_current();
         let e_out = self.gruen.e_out_current();
-        let quadratic = self.cycle.quadratic(e_in, e_out);
-        self.gruen
+        let r = self.challenges.as_slice();
+        let quadratic = match &mut self.cycle {
+            CycleSource::Collected { state, .. } => state.quadratic(e_in, e_out),
+            CycleSource::Streamed { state, rows } => state.quadratic(rows, e_in, e_out, r)?,
+        };
+        // A failed streamed `q(1)` pass is held and returned, so its
+        // placeholder zero never reaches a round message.
+        let mut failure = None;
+        let message = self
+            .gruen
             .round()
             .ok_or_else(|| eq_round_error(round))?
-            .checked_cubic(quadratic[0], quadratic[1], previous_claim, round, || {
-                self.cycle
-                    .q_at_one(self.gruen.e_in_current(), self.gruen.e_out_current())
-            })
+            .checked_cubic(
+                quadratic[0],
+                quadratic[1],
+                previous_claim,
+                round,
+                || match &self.cycle {
+                    CycleSource::Collected { state, .. } => state.q_at_one(e_in, e_out),
+                    CycleSource::Streamed { state, rows } => state
+                        .q_at_one(rows, e_in, e_out, r)
+                        .unwrap_or_else(|error| {
+                            failure = Some(error);
+                            F::zero()
+                        }),
+                },
+            );
+        match failure {
+            Some(error) => Err(error),
+            None => message,
+        }
     }
 
     fn bind(&mut self, r: F) -> Result<(), SumcheckError<F>> {
@@ -183,13 +265,17 @@ impl<F: JoltField> ReadWriteKernel<F> {
                 .round_mut()
                 .ok_or_else(|| eq_round_error(round))?
                 .bind(r);
-            layout_transitioned = self.cycle.bind(r);
+            layout_transitioned = match &mut self.cycle {
+                CycleSource::Collected { state, .. } => state.bind(r),
+                CycleSource::Streamed { state, .. } => state.bind(r),
+            };
         } else {
             self.address.bind(r);
         }
         self.challenges.push(r);
 
         if self.challenges.bound() == self.dimensions.log_t() {
+            let k = 1usize << self.dimensions.log_k();
             // Replacing the state frees the entry allocation here rather
             // than at kernel drop.
             (
@@ -197,7 +283,10 @@ impl<F: JoltField> ReadWriteKernel<F> {
                 self.address.wa,
                 self.address.val,
                 self.address.inc_scalar,
-            ) = self.cycle.take_dense(1usize << self.dimensions.log_k());
+            ) = match &mut self.cycle {
+                CycleSource::Collected { state, .. } => state.take_dense(k),
+                CycleSource::Streamed { state, .. } => state.take_dense(k)?,
+            };
             self.address.eq_scalar = self.gruen.current_scalar();
         }
 
@@ -214,9 +303,23 @@ impl<F: JoltField> ReadWriteKernel<F> {
     /// Ports legacy `compute_rs2_ra_claim`: a 2-way split over the joint
     /// `(cycle ‖ address)` index keeps both eq tables at ~√(K·T). Big-endian
     /// joint point `[r_cycle ‖ r_address]`, joint index `(j << addr_bits) | k`.
-    fn one_hot_operand_claims(&self, r_address: &[F], r_cycle: &[F]) -> (F, F) {
-        let rs1_indices = &self.rs1_indices;
-        let rs2_indices = &self.rs2_indices;
+    /// A streamed source reads the operands from its rows instead of index
+    /// columns ([`streaming::operand_claims`]).
+    fn one_hot_operand_claims(
+        &self,
+        r_address: &[F],
+        r_cycle: &[F],
+    ) -> Result<(F, F), WitnessError> {
+        let (rs1_indices, rs2_indices) = match &self.cycle {
+            CycleSource::Collected {
+                rs1_indices,
+                rs2_indices,
+                ..
+            } => (rs1_indices, rs2_indices),
+            CycleSource::Streamed { rows, .. } => {
+                return streaming::operand_claims(rows, r_address, r_cycle);
+            }
+        };
         let eq = OperandEq::new(r_address, r_cycle);
         let cycle_bits_in_lo = eq.cycle_bits_in_lo;
         let cycles_per_block = 1usize << cycle_bits_in_lo;
@@ -252,7 +355,7 @@ impl<F: JoltField> ReadWriteKernel<F> {
             .map(block_contribution)
             .fold([F::zero(); 2], |a, b| [a[0] + b[0], a[1] + b[1]]);
 
-        (claims[0], claims[1])
+        Ok((claims[0], claims[1]))
     }
 }
 
@@ -296,7 +399,11 @@ impl<F: JoltField> SumcheckKernel<F> for ReadWriteKernel<F> {
             .map_err(|_| SumcheckKernelError::InvariantViolation {
                 reason: "invalid register read/write opening point",
             })?;
-        let (rs1_ra, rs2_ra) = self.one_hot_operand_claims(&point.r_address, &point.r_cycle);
+        let (rs1_ra, rs2_ra) = self
+            .one_hot_operand_claims(&point.r_address, &point.r_cycle)
+            .map_err(|_| SumcheckKernelError::InvariantViolation {
+                reason: "register read/write operand walk re-extraction failed after the rounds",
+            })?;
         Ok(RegistersReadWriteOutputClaims {
             registers_val: self.address.val[0],
             rs1_ra,
