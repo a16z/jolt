@@ -202,9 +202,6 @@ fn build_command(args: JoltBuildArgs) -> Result<()> {
         linker_inputs.finish()
     );
 
-    // Strip symbols for smaller ELFs. Preserve them when JOLT_BACKTRACE is set
-    // or --backtrace enable is passed, so the tracer can symbolize panic backtraces.
-    // In auto mode (default), strip for release and preserve for debug/dev profiles.
     let backtrace_via_env = std::env::var("JOLT_BACKTRACE")
         .map(|v| !v.is_empty() && v != "0")
         .unwrap_or(false);
@@ -214,7 +211,7 @@ fn build_command(args: JoltBuildArgs) -> Result<()> {
         BacktraceMode::Dwarf | BacktraceMode::FramePointers
     );
 
-    let preserve_symbols = backtrace_via_env
+    let preserve_debuginfo = backtrace_via_env
         || force_frame_pointers
         || match args.base.backtrace {
             BacktraceMode::Auto => {
@@ -242,7 +239,7 @@ fn build_command(args: JoltBuildArgs) -> Result<()> {
     if args.base.mode == StdMode::Std {
         // Rust 1.95 gates generated target specs behind this flag; zeroos-build sets RUSTC_BOOTSTRAP.
         jolt_rustflags.push("-Zunstable-options");
-        // The ELF decoder requires instruction-only text; LLVM's large model puts pools there.
+        // Medium keeps LLVM constant pools out of .text; the decoder accepts `$d`-marked data there.
         jolt_rustflags.push("-Ccode-model=medium");
     }
 
@@ -277,8 +274,9 @@ fn build_command(args: JoltBuildArgs) -> Result<()> {
     std::env::set_var("CARGO_PROFILE_DEV_TRIM_PATHS", "all");
     std::env::set_var("CARGO_PROFILE_RELEASE_TRIM_PATHS", "all");
 
-    if !preserve_symbols {
-        jolt_rustflags.push("-Cstrip=symbols");
+    if !preserve_debuginfo {
+        // The ELF loader needs $x/$d mapping symbols to classify executable bytes.
+        jolt_rustflags.push("-Cstrip=debuginfo");
     }
 
     // Frame pointers change generated code — only enable for explicit --backtrace modes,
