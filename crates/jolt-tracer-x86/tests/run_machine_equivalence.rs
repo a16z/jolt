@@ -8,13 +8,13 @@ use jolt_inlines_keccak256 as _;
 use jolt_inlines_sha2 as _;
 use jolt_program::preprocess::BytecodePreprocessing;
 use jolt_riscv::JoltInstructionKind;
-use jolt_tracer_x86::X86TracerBackend;
+use jolt_tracer_x86::{RunOutput, X86TracerBackend};
 use tracer::TracerBackend;
 
 mod common;
 use common::setup;
 
-fn assert_fast_run_matches(package: &str, func: &str, input: Vec<u8>, panics: bool) {
+fn assert_machine_run_matches(package: &str, func: &str, input: Vec<u8>, panics: bool) {
     // Pin the reference to serial mode (the tracer env-dispatches to the
     // parallel pipeline).
     std::env::remove_var("TRACER_PARALLEL");
@@ -33,7 +33,8 @@ fn assert_fast_run_matches(package: &str, func: &str, input: Vec<u8>, panics: bo
 
     let mut backend = X86TracerBackend::new();
     let fast = backend
-        .fast_run(&program, inputs)
+        .run_machine(&program, inputs)
+        .and_then(RunOutput::require_halt)
         .expect("x86 fast run failed");
 
     assert_eq!(fast.trace_len, reference_rows.len(), "{package}: row count");
@@ -190,8 +191,8 @@ fn sha2_chain_scale_record_matches_reference() {
 }
 
 #[test]
-fn fibonacci_fast_run_matches_reference() {
-    assert_fast_run_matches(
+fn fibonacci_machine_run_matches_reference() {
+    assert_machine_run_matches(
         "fibonacci-guest",
         "fib",
         postcard::to_stdvec(&100u32).unwrap(),
@@ -200,8 +201,8 @@ fn fibonacci_fast_run_matches_reference() {
 }
 
 #[test]
-fn panic_halt_fast_run_matches_reference() {
-    assert_fast_run_matches(
+fn panic_halt_machine_run_matches_reference() {
+    assert_machine_run_matches(
         "memory-ops-guest",
         "panic_halt",
         postcard::to_stdvec(&true).unwrap(),
@@ -210,23 +211,23 @@ fn panic_halt_fast_run_matches_reference() {
 }
 
 #[test]
-fn sha2_chain_fast_run_matches_reference() {
+fn sha2_chain_machine_run_matches_reference() {
     let mut input = postcard::to_stdvec(&[5u8; 32]).unwrap();
     input.append(&mut postcard::to_stdvec(&8u32).unwrap());
-    assert_fast_run_matches("sha2-chain-guest", "sha2_chain", input, false);
+    assert_machine_run_matches("sha2-chain-guest", "sha2_chain", input, false);
 }
 
 #[test]
-fn sha3_chain_fast_run_matches_reference() {
+fn sha3_chain_machine_run_matches_reference() {
     let mut input = postcard::to_stdvec(&[5u8; 32]).unwrap();
     input.append(&mut postcard::to_stdvec(&4u32).unwrap());
-    assert_fast_run_matches("sha3-chain-guest", "sha3_chain", input, false);
+    assert_machine_run_matches("sha3-chain-guest", "sha3_chain", input, false);
 }
 
 #[test]
-fn muldiv_fast_run_matches_reference() {
+fn muldiv_machine_run_matches_reference() {
     // Exercises the DIV/REM advice groups (VirtualAdvice slots).
-    assert_fast_run_matches(
+    assert_machine_run_matches(
         "muldiv-guest",
         "muldiv",
         vec![0xbd, 0xaa, 0xde, 0x5, 0x11, 0x5c],
@@ -235,8 +236,8 @@ fn muldiv_fast_run_matches_reference() {
 }
 
 #[test]
-fn btreemap_fast_run_matches_reference() {
-    assert_fast_run_matches(
+fn btreemap_machine_run_matches_reference() {
+    assert_machine_run_matches(
         "btreemap-guest",
         "btreemap",
         postcard::to_stdvec(&20u32).unwrap(),

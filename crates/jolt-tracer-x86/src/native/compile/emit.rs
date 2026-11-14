@@ -1117,6 +1117,8 @@ impl DynasmEmitter {
             K::VirtualXorRot24(_) => Self::emit_xor_rot(e, row, 24),
             K::VirtualXorRot16(_) => Self::emit_xor_rot(e, row, 16),
             K::VirtualXorRot63(_) => Self::emit_xor_rot(e, row, 63),
+            K::VirtualXorRot2(_) => Self::emit_xor_rot(e, row, 2),
+            K::VirtualXorRot61(_) => Self::emit_xor_rot(e, row, 61),
             K::VirtualXorRotW16(_) => Self::emit_xor_rotw(e, row, 16),
             K::VirtualXorRotW12(_) => Self::emit_xor_rotw(e, row, 12),
             K::VirtualXorRotW8(_) => Self::emit_xor_rotw(e, row, 8),

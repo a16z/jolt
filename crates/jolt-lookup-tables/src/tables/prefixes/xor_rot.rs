@@ -18,6 +18,8 @@ impl<const ROTATION: usize, F: JoltField> SparseDensePrefix<F> for XorRotPrefix<
             24 => Prefixes::XorRot24,
             32 => Prefixes::XorRot32,
             63 => Prefixes::XorRot63,
+            2 => Prefixes::XorRot2,
+            61 => Prefixes::XorRot61,
             _ => unreachable!(),
         };
 

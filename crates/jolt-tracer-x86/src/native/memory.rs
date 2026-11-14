@@ -1,8 +1,8 @@
-//! Guest RAM plane: one anonymous mmap with logical range `[RAM_START_ADDRESS,
-//! RAM_START_ADDRESS + size)` and backing rounded up to whole doublewords.
-//! Generated code admits aligned starts within the logical range and addresses
-//! them as `mem_base + (guest_addr - RAM_START_ADDRESS)`. Untouched pages cost no
-//! physical memory (`MAP_NORESERVE`).
+//! Guest RAM plane: one anonymous mmap covering `[RAM_START_ADDRESS,
+//! RAM_START_ADDRESS + size)`. `MemoryPlane::new` enforces doubleword-aligned
+//! sizes, so generated code can admit an aligned start below `size` and access
+//! the whole doubleword at `mem_base + (guest_addr - RAM_START_ADDRESS)`.
+//! Untouched pages cost no physical memory (`MAP_NORESERVE`).
 //!
 //! Addresses below `RAM_START_ADDRESS` (the `JoltDevice` I/O region) never
 //! reach this plane; generated code routes them to `extern "C"` helpers.
@@ -13,7 +13,6 @@ use jolt_program::execution::TraceError;
 pub struct MemoryPlane {
     base: *mut u8,
     size: usize,
-    backing_size: usize,
 }
 
 // SAFETY: MemoryPlane exclusively owns its mapping; sending it between
@@ -21,19 +20,20 @@ pub struct MemoryPlane {
 unsafe impl Send for MemoryPlane {}
 
 impl MemoryPlane {
-    /// Map a zeroed plane with logical size `size` and whole-doubleword backing,
-    /// matching `tracer::emulator::memory::MemoryData`.
+    /// Map a zeroed plane of a nonzero, doubleword-aligned size.
     pub fn new(size: usize) -> Result<Self, TraceError> {
-        let backing_size = size.checked_next_multiple_of(8).ok_or(TraceError::Backend(
-            "guest memory plane size overflows doubleword backing",
-        ))?;
+        if size == 0 || !size.is_multiple_of(8) {
+            return Err(TraceError::Backend(
+                "guest memory plane size must be a nonzero multiple of eight",
+            ));
+        }
         // SAFETY: anonymous private mapping with no file backing; length is
         // nonzero and page-rounded by the kernel. The pointer is checked
         // before use.
         let base = unsafe {
             libc::mmap(
                 core::ptr::null_mut(),
-                backing_size,
+                size,
                 libc::PROT_READ | libc::PROT_WRITE,
                 libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | libc::MAP_NORESERVE,
                 -1,
@@ -46,7 +46,6 @@ impl MemoryPlane {
         Ok(Self {
             base: base.cast::<u8>(),
             size,
-            backing_size,
         })
     }
 
@@ -75,13 +74,13 @@ impl MemoryPlane {
 
     /// Copy the whole plane out, for a chunk checkpoint.
     pub fn to_vec(&self) -> Vec<u8> {
-        // SAFETY: new maps backing_size bytes, including the final partial word.
-        unsafe { core::slice::from_raw_parts(self.base, self.backing_size) }.to_vec()
+        // SAFETY: new maps size bytes, all readable.
+        unsafe { core::slice::from_raw_parts(self.base, self.size) }.to_vec()
     }
 
     pub fn restore(&mut self, image: &[u8]) {
-        let len = image.len().min(self.backing_size);
-        // SAFETY: len <= self.backing_size, and image is a distinct allocation.
+        let len = image.len().min(self.size);
+        // SAFETY: len <= self.size, and image is a distinct allocation.
         unsafe { self.base.copy_from_nonoverlapping(image.as_ptr(), len) };
     }
 
@@ -91,8 +90,8 @@ impl MemoryPlane {
     /// `TraceOutput::final_memory`.
     pub fn materialized_nonzero_bytes(&self) -> Vec<(u64, u8)> {
         let mut bytes = Vec::new();
-        // SAFETY: new maps backing_size bytes, including the final partial word.
-        let slice = unsafe { core::slice::from_raw_parts(self.base, self.backing_size) };
+        // SAFETY: new maps size bytes, all readable.
+        let slice = unsafe { core::slice::from_raw_parts(self.base, self.size) };
         for (offset, &byte) in slice.iter().enumerate() {
             if byte != 0 {
                 bytes.push((offset as u64, byte));
@@ -104,7 +103,17 @@ impl MemoryPlane {
 
 impl Drop for MemoryPlane {
     fn drop(&mut self) {
-        // SAFETY: base/backing_size describe the mapping created in `new`.
-        let _ = unsafe { libc::munmap(self.base.cast(), self.backing_size) };
+        // SAFETY: base/size describe the mapping created in `new`.
+        let _ = unsafe { libc::munmap(self.base.cast(), self.size) };
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::MemoryPlane;
+
+    #[test]
+    fn rejects_unaligned_size() {
+        assert!(MemoryPlane::new(9).is_err());
     }
 }

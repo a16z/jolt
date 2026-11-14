@@ -24,7 +24,7 @@ use jolt_tracer_x86::harness::{
     compile_program, memory_config, run_program, single_row_program, terminal_row, ExitReason,
     Outcome, SCRATCH_START, TEST_ADDR,
 };
-use jolt_tracer_x86::X86TracerBackend;
+use jolt_tracer_x86::{RunOutput, X86TracerBackend};
 use tracer::instruction::Instruction;
 
 const REGS: usize = common::constants::REGISTER_COUNT as usize;
@@ -317,7 +317,9 @@ fn loads_reject_the_padding_between_io_end_and_ram() {
                 TEST_ADDR,
             );
             let inputs = TraceInputs::new(Vec::new(), Vec::new(), Vec::new(), config);
-            let result = X86TracerBackend::new().fast_run(&program, inputs);
+            let result = X86TracerBackend::new()
+                .run_machine(&program, inputs)
+                .and_then(RunOutput::require_halt);
             if accepted {
                 let _ = result.expect("load of the final I/O word");
             } else {
@@ -395,7 +397,6 @@ fn device_stores_outside_the_io_region_fault() {
 fn advice_write_follows_guest_load_bounds() {
     let layout = JoltDevice::new(&memory_config()).memory_layout;
     let program = single_row_program(row(Kind::VirtualHostIO(VirtualHostIO(())), None, None, 0));
-    // A rejected range leaves the tape empty and the run continues.
     for (address, tape) in [
         (layout.get_lowest_address() - 1, None),
         (layout.heap_end, None),
@@ -458,7 +459,7 @@ fn layout_region_stores_accept_the_old_value_and_reject_changes() {
     }
 }
 
-fn partial_word_program(config: &MemoryConfig, offset: u64, value: u64) -> JoltProgram {
+fn heap_word_program(config: &MemoryConfig, offset: u64, value: u64) -> JoltProgram {
     let layout = JoltDevice::new(config).memory_layout;
     let mut store = row(Kind::SD, Some(1), None, offset.into());
     store.operands.rs2 = Some(3);
@@ -500,7 +501,7 @@ fn final_partial_canary_word_accepts_only_unchanged_stores() {
     };
     let inputs = TraceInputs::new(Vec::new(), Vec::new(), Vec::new(), config);
     let mut backend = X86TracerBackend::new();
-    let unchanged = partial_word_program(&config, 1152, 0);
+    let unchanged = heap_word_program(&config, 1152, 0);
     let trace = backend
         .trace(&unchanged, inputs.clone())
         .expect("unchanged canary word");
@@ -523,14 +524,14 @@ fn final_partial_canary_word_accepts_only_unchanged_stores() {
         assert_eq!(replay.rows(), std::slice::from_ref(expected));
     }
     for value in [1, 256] {
-        let changed = partial_word_program(&config, 1152, value);
+        let changed = heap_word_program(&config, 1152, value);
         assert!(matches!(
             X86TracerBackend::new().run_machine(&changed, inputs.clone()),
             Err(TraceError::Backend("host helper reported an error"))
         ));
     }
     for offset in [1160, 1168] {
-        let outside = partial_word_program(&config, offset, 0);
+        let outside = heap_word_program(&config, offset, 0);
         assert!(X86TracerBackend::new()
             .run_machine(&outside, inputs.clone())
             .is_err());
@@ -538,7 +539,7 @@ fn final_partial_canary_word_accepts_only_unchanged_stores() {
 }
 
 #[test]
-fn last_heap_word_preserves_backing_bytes_across_checkpoints() {
+fn last_heap_word_survives_checkpoints() {
     let config = MemoryConfig {
         program_size: Some(1025),
         stack_size: 0,
@@ -546,7 +547,7 @@ fn last_heap_word_preserves_backing_bytes_across_checkpoints() {
         ..Default::default()
     };
     let inputs = TraceInputs::new(Vec::new(), Vec::new(), Vec::new(), config);
-    let program = partial_word_program(&config, 1160, 256);
+    let program = heap_word_program(&config, 1160, 256);
     let mut backend = X86TracerBackend::new();
     backend.set_min_checkpoint_spacing_rows(1);
     let trace = backend
@@ -575,9 +576,12 @@ fn last_heap_word_preserves_backing_bytes_across_checkpoints() {
         assert_eq!(replay.rows(), std::slice::from_ref(expected));
     }
     for offset in [1168, 1176] {
-        let outside = partial_word_program(&config, offset, 0);
+        let outside = heap_word_program(&config, offset, 0);
         let inputs = TraceInputs::new(Vec::new(), Vec::new(), Vec::new(), config);
-        assert!(X86TracerBackend::new().fast_run(&outside, inputs).is_err());
+        assert!(X86TracerBackend::new()
+            .run_machine(&outside, inputs)
+            .and_then(RunOutput::require_halt)
+            .is_err());
     }
 }
 
@@ -635,9 +639,53 @@ fn conditional_stores_preserve_code_and_canary_words() {
     }
 }
 
-/// A Jolt run must end at a halt: chunked `execute` rejects a PC stall.
 #[test]
-fn chunked_execute_rejects_a_stall() {
+fn run_machine_rejects_programs_without_elf_bytes() {
+    let program = single_row_program(terminal_row(TEST_ADDR));
+    let inputs = TraceInputs::new(Vec::new(), Vec::new(), Vec::new(), memory_config());
+    assert!(matches!(
+        X86TracerBackend::new().run_machine(&program, inputs),
+        Err(TraceError::MissingElfBytes)
+    ));
+}
+
+#[test]
+fn run_machine_accepts_stalls_until_halt_is_required() {
+    for kind in [Kind::JoltSuccess, Kind::JoltPanic, Kind::BEQ] {
+        let terminal = if kind == Kind::BEQ {
+            let mut branch = row(kind, Some(0), None, 0);
+            branch.operands.rs2 = Some(0);
+            branch
+        } else {
+            let mut halt = terminal_row(TEST_ADDR);
+            halt.instruction_kind = kind;
+            halt
+        };
+        let program = JoltProgram::from_parts(
+            minimal_elf(TEST_ADDR),
+            vec![terminal],
+            Vec::new(),
+            RAM_START_ADDRESS + 1024,
+            TEST_ADDR,
+        );
+        let inputs = TraceInputs::new(Vec::new(), Vec::new(), Vec::new(), memory_config());
+        let output = X86TracerBackend::new()
+            .run_machine(&program, inputs)
+            .expect("machine run");
+        assert_eq!(output.trace_len, 1);
+        if kind == Kind::BEQ {
+            assert!(matches!(
+                output.require_halt(),
+                Err(TraceError::EndedWithoutHalt { pc: TEST_ADDR })
+            ));
+        } else {
+            assert_eq!(output.require_halt().expect("halted run").trace_len, 1);
+        }
+    }
+}
+
+#[test]
+fn tracing_rejects_a_stall() {
     let mut stall = row(Kind::BEQ, Some(0), None, 0);
     stall.operands.rs2 = Some(0);
     let program = JoltProgram::from_parts(
@@ -648,8 +696,13 @@ fn chunked_execute_rejects_a_stall() {
         TEST_ADDR,
     );
     let inputs = TraceInputs::new(Vec::new(), Vec::new(), Vec::new(), memory_config());
+    let mut backend = X86TracerBackend::new();
     assert!(matches!(
-        X86TracerBackend::new().execute(&program, inputs, 1),
+        backend.trace(&program, inputs.clone()),
+        Err(TraceError::EndedWithoutHalt { pc: TEST_ADDR })
+    ));
+    assert!(matches!(
+        backend.execute(&program, inputs, 1),
         Err(TraceError::EndedWithoutHalt { pc: TEST_ADDR })
     ));
 }
