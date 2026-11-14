@@ -861,6 +861,7 @@ mod tests {
         );
         // A configured domain shorter than the trace leaves no resident
         // rows; chunk visits still serve its `2^log_t` cycles.
+        let log_t = 1;
         let mut chunk_only = TraceBackend::new(
             resident.config.clone(),
             JoltVmWitnessInputs::new(
@@ -869,10 +870,10 @@ mod tests {
                 resident.trace.clone(),
             ),
         );
-        chunk_only.config.log_t = LOG_T - 1;
+        chunk_only.config.log_t = log_t;
         let grid = CommitmentGrid {
-            total_vars: LOG_T - 1 + 4,
-            log_t: LOG_T - 1,
+            total_vars: log_t + 4,
+            log_t,
             log_k_chunk: 4,
             order: TracePolynomialOrder::CycleMajor,
         };
