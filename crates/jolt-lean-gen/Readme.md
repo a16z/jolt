@@ -15,7 +15,7 @@ fn is_unsupported(kind: SourceInstructionKind) -> bool {
     matches!(
         kind.name(),
         // System / CSR
-        "ECALL" | "EBREAK" | "MRET" | "CSRRW" | "CSRRS"
+        "ECALL" | "EBREAK" | "MRET" | "CSRRW" | "CSRRS" | "CSRRC" | "CSRRWI" | "CSRRSI" | "CSRRCI"
         // Registered inline dispatch (needs an InlineExpansionProvider)
         | "Inline"
     )
