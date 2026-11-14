@@ -43,7 +43,7 @@ use std::time::{Duration, Instant};
 
 use clap::ValueEnum;
 #[cfg(feature = "akita")]
-use jolt_akita::{AkitaChunkProfile, AkitaField};
+use jolt_akita::{AkitaChunkProfile, AkitaField, AkitaProverPool};
 #[cfg(not(feature = "akita"))]
 use jolt_crypto::{Bn254G1, Pedersen};
 #[cfg(not(feature = "akita"))]
@@ -1227,7 +1227,7 @@ fn prove_workload(
     };
     let prover_pool = args.akita_prover_pool.then(|| {
         let threads = NonZeroUsize::new(rayon::current_num_threads()).expect("nonzero pool size");
-        jolt_akita::AkitaProverPool::new(threads).expect("create explicit prover pool")
+        AkitaProverPool::new(threads).expect("create explicit prover pool")
     });
     let setup_duration = setup_now.elapsed();
     drop(setup_guard);
@@ -1256,8 +1256,8 @@ fn prove_workload(
     );
     // --- The measured window: the full Akita prove (OneHotTrace assembly
     // and native commit, all sumcheck stages, and the native grouped opening).
-    // The `jolt_prover::prove` root span covers exactly
-    // this interval; the Instant is the `--format none` baseline.
+    // This interval also includes backend construction and optional pool dispatch,
+    // which sit outside the `jolt_prover::prove` root span.
     let now = Instant::now();
     let prove = || {
         let backend = match args.backend {

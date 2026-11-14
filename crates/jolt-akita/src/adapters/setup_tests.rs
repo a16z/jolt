@@ -105,3 +105,27 @@ fn setup_domain_rejects_non_power_of_two_sizes() {
         assert!(original.clone().with_setup_domain(invalid).is_err());
     }
 }
+
+#[cfg(all(feature = "parallel", not(target_family = "wasm")))]
+#[test]
+fn prover_pool_reuses_workers_without_changing_backend_routing() {
+    let pool =
+        AkitaProverPool::new(NonZeroUsize::new(2).expect("nonzero workers")).expect("prover pool");
+    pool.install(|| {
+        let _ = rayon::broadcast(|_| {
+            with_prover_backend(|| {
+                assert!(pool.0.current_thread_index().is_some());
+            });
+            with_backend_pool(|| {
+                assert!(pool.0.current_thread_index().is_none());
+            });
+        });
+    });
+    with_prover_backend(|| {
+        assert!(pool.0.current_thread_index().is_none());
+        assert!(backend_pool()
+            .expect("threaded host")
+            .current_thread_index()
+            .is_some());
+    });
+}
