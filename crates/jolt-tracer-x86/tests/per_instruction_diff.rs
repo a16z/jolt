@@ -21,7 +21,8 @@ use jolt_platform::{
 };
 use jolt_riscv::{JoltInstructionKind, JoltInstructionRow, NormalizedOperands};
 use jolt_tracer_x86::harness::{
-    self, run_program, single_row_program, MEM_CAPACITY, SCRATCH_DWORDS, SCRATCH_START, TEST_ADDR,
+    self, run_program, single_row_program, ExitReason, MEM_CAPACITY, SCRATCH_DWORDS, SCRATCH_START,
+    TEST_ADDR,
 };
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -31,6 +32,7 @@ use std::os::fd::FromRawFd;
 use tracer::emulator::cpu::Cpu;
 use tracer::emulator::terminal::DummyTerminal;
 use tracer::instruction::Instruction;
+use tracer::HaltKind;
 
 const N: usize = 1000;
 const REGS: usize = REGISTER_COUNT as usize;
@@ -139,6 +141,8 @@ const SUPPORTED: &[&str] = &[
     "StoreB",
     "StoreH",
     "StoreW",
+    "Success",
+    "Panic",
 ];
 
 fn class_by_marker(marker: &str) -> Class {
@@ -536,7 +540,12 @@ fn native_print_output(ptr: u64, len: u64, event: u32) -> Vec<u8> {
     // SAFETY: as above.
     assert_eq!(unsafe { libc::close(write_end) }, 0);
     let outcome = outcome.unwrap();
-    assert_eq!(outcome.exit, 1, "{:?}", outcome.helper_error);
+    assert_eq!(
+        outcome.exit,
+        ExitReason::HaltedSuccess as u64,
+        "{:?}",
+        outcome.helper_error
+    );
 
     // SAFETY: `read_end` is an open pipe descriptor this function owns and
     // hands to the `File`, which closes it.
@@ -670,6 +679,7 @@ fn advice_load(rng: &mut StdRng) -> Instance {
 struct RefOutcome {
     regs: [u64; REGS],
     pc: u64,
+    halted: Option<HaltKind>,
     scratch: Vec<u64>,
     advice_tape: Vec<u8>,
 }
@@ -711,6 +721,7 @@ fn reference_run(instance: &Instance) -> RefOutcome {
     RefOutcome {
         regs,
         pc: cpu.read_pc(),
+        halted: cpu.halted(),
         scratch,
         advice_tape: cpu.advice_tape.clone().into_bytes(),
     }
@@ -732,9 +743,12 @@ fn run_difftest(name: &str, generate: fn(&mut StdRng) -> Instance) {
         .unwrap_or_else(|e| panic!("{name}[{iteration}]: native run failed: {e:?}"));
 
         assert_eq!(
-            native.exit, 1,
-            "{name}[{iteration}]: expected termination, got exit {} ({:?}) row {:?}",
-            native.exit, native.helper_error, instance.row
+            native.exit,
+            ExitReason::HaltedSuccess as u64,
+            "{name}[{iteration}]: expected the terminal halt, got exit {} ({:?}) row {:?}",
+            native.exit,
+            native.helper_error,
+            instance.row
         );
         assert_eq!(
             native.trace_len, 2,
@@ -884,4 +898,47 @@ difftests! {
     diff_store_b => |r| floor_store(r, kind_by_name("VirtualStoreB"), 1);
     diff_store_h => |r| floor_store(r, kind_by_name("VirtualStoreH"), 2);
     diff_store_w => |r| floor_store(r, kind_by_name("VirtualStoreW"), 4);
+}
+
+/// A halt row writes its link to `rd` and ends the run at its own address,
+/// so neither backend reaches a terminal.
+#[test]
+fn diff_halts() {
+    let mut rng = StdRng::seed_from_u64(0x1717_5EED);
+    for (kind, exit, halt) in [
+        (K::JoltSuccess, ExitReason::HaltedSuccess, HaltKind::Success),
+        (K::JoltPanic, ExitReason::HaltedPanic, HaltKind::Panic),
+    ] {
+        for iteration in 0..N {
+            let mut instance = base_instance(&mut rng, kind);
+            let link_register = rd(&mut rng);
+            instance.row.operands.rd = Some(link_register);
+            instance.row.operands.rs1 = Some(0);
+            let reference = reference_run(&instance);
+            let native = run_program(
+                &single_row_program(instance.row),
+                &instance.pre_regs,
+                &instance.scratch,
+                &instance.advice,
+            )
+            .unwrap_or_else(|e| panic!("{kind:?}[{iteration}]: native run failed: {e:?}"));
+
+            assert_eq!(
+                (native.exit, native.trace_len, native.pc),
+                (exit as u64, 1, TEST_ADDR),
+                "{kind:?}[{iteration}]: native end ({:?})",
+                native.helper_error
+            );
+            assert_eq!(
+                (reference.pc, reference.halted),
+                (TEST_ADDR, Some(halt)),
+                "{kind:?}[{iteration}]: reference end"
+            );
+            assert_eq!(native.regs[link_register as usize], TEST_ADDR + 4);
+            assert_eq!(
+                native.regs, reference.regs,
+                "{kind:?}[{iteration}]: registers diverged"
+            );
+        }
+    }
 }

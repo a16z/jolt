@@ -9,6 +9,7 @@ pub mod assert_valid_div0;
 pub mod assert_valid_unsigned_remainder;
 pub mod extract_byte_unsigned;
 pub mod floor_access;
+pub mod halt;
 pub mod host_io;
 pub mod movsign;
 pub mod muli;
