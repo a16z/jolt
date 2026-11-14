@@ -23,10 +23,10 @@ fn main() {
     let txs_bytes = serialize_transactions(&txs);
     info!("Serialized size: {} bytes", txs_bytes.len());
 
-    let target_dir = "/tmp/jolt-guest-targets";
+    let target_dir = jolt_sdk::host::default_target_dir();
     info!("\nCompiling guest program...");
     let start = Instant::now();
-    let mut program = guest::compile_verify_txs(target_dir);
+    let mut program = guest::compile_verify_txs(&target_dir.to_string_lossy());
     info!("Compile time: {:?}", start.elapsed());
 
     info!("\nPreprocessing...");

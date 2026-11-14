@@ -125,6 +125,10 @@ impl Program {
         self.max_output_size = size;
     }
 
+    /// Builds the guest into its own subdirectory of `target_dir`.
+    ///
+    /// `target_dir` must serve one workspace root only; see
+    /// [`default_target_dir`].
     pub fn build(&mut self, target_dir: &str) {
         let default_features = self.guest_features.clone();
         let default_features = default_features
@@ -510,7 +514,9 @@ impl Program {
         reason = "a successful default-feature build always records its ELF"
     )]
     fn built_elf(&mut self) -> GuestElf {
-        self.build(&default_target_dir().to_string_lossy());
+        if self.elf.is_none() {
+            self.build(&default_target_dir().to_string_lossy());
+        }
         self.elf
             .clone()
             .expect("guest build did not produce an ELF")

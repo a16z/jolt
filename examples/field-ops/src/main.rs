@@ -69,10 +69,10 @@ mod pipeline {
     /// Compile the field-inline guest, build profile-aware modular preprocessing,
     /// and re-trace through the modular tracer backend.
     pub fn compile_and_trace(inputs: &[u8]) -> TracedGuest {
-        let target_dir = "/tmp/jolt-guest-targets";
+        let target_dir = jolt::host::default_target_dir();
         // The guest's field-inline feature flows through `compile_eval_eq_mle`,
         // which switches the program to the field-inline instruction profile.
-        let mut program = guest::compile_eval_eq_mle(target_dir);
+        let mut program = guest::compile_eval_eq_mle(&target_dir.to_string_lossy());
 
         let (_, _, _, io_device) = program.trace(inputs, &[], &[]);
         let jolt_program = Arc::new(

@@ -3597,6 +3597,7 @@ dependencies = [
  "jolt-riscv",
  "postcard",
  "serde",
+ "serde_json",
  "tracer",
  "tracing",
 ]
@@ -4083,6 +4084,7 @@ dependencies = [
  "common",
  "dynasmrt",
  "iai-callgrind",
+ "jolt-host",
  "jolt-inlines-keccak256",
  "jolt-inlines-sha2",
  "jolt-platform",
@@ -7056,6 +7058,7 @@ dependencies = [
  "inventory",
  "itertools 0.15.0",
  "jolt-field",
+ "jolt-host",
  "jolt-inlines-keccak256",
  "jolt-inlines-sha2",
  "jolt-platform",

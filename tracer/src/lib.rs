@@ -749,8 +749,7 @@ pub(crate) mod test_utils {
     pub(crate) fn build_muldiv_guest() -> Vec<u8> {
         let guest = "muldiv-guest";
         let func = "muldiv";
-        let target_dir = std::env::temp_dir()
-            .join("jolt-guest-targets")
+        let target_dir = jolt_host::default_target_dir()
             .join(format!("{guest}-{func}"))
             .to_string_lossy()
             .into_owned();

@@ -9,8 +9,8 @@ use tracing::info;
 pub fn main() {
     tracing_subscriber::fmt::init();
 
-    let target_dir = "/tmp/jolt-guest-targets";
-    let mut program = guest::compile_large_alloc_roundtrip(target_dir);
+    let target_dir = jolt_sdk::host::default_target_dir();
+    let mut program = guest::compile_large_alloc_roundtrip(&target_dir.to_string_lossy());
 
     let (_lazy, trace, _memory, io_device) = program.trace(&[], &[], &[]);
     info!("guest executed {} trace rows", trace.len());

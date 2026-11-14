@@ -11,10 +11,10 @@ macro_rules! step {
 }
 
 pub fn btreemap() {
-    let target_dir = "/tmp/jolt-guest-targets";
+    let target_dir = jolt_sdk::host::default_target_dir();
 
     let mut program = step!("Compiling guest code", {
-        guest::compile_btreemap(target_dir)
+        guest::compile_btreemap(&target_dir.to_string_lossy())
     });
 
     let shared_preprocessing = step!("Preprocessing shared", {

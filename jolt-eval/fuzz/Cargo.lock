@@ -1294,6 +1294,7 @@ dependencies = [
  "jolt-program",
  "jolt-riscv",
  "serde",
+ "serde_json",
  "tracer",
  "tracing",
 ]

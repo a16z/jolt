@@ -5,8 +5,8 @@ pub fn main() {
     tracing_subscriber::fmt::init();
     let committed_bytecode = std::env::args().any(|arg| arg == "--committed-bytecode");
 
-    let target_dir = "/tmp/jolt-guest-targets";
-    let mut program = guest::compile_muldiv(target_dir);
+    let target_dir = jolt_sdk::host::default_target_dir();
+    let mut program = guest::compile_muldiv(&target_dir.to_string_lossy());
 
     let (prover_preprocessing, verifier_preprocessing) = if committed_bytecode {
         let prover_preprocessing = guest::preprocess_committed_muldiv(&mut program).unwrap();

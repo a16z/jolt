@@ -78,6 +78,8 @@ ignored = ["strum"]
 [dev-dependencies]
 rand.workspace = true
 blake3.workspace = true
+# Owns the guest build cache location the tests and example harnesses build into.
+jolt-host.workspace = true
 # Linked by the trace_* example harnesses for inline inventory registration.
 jolt-inlines-keccak256 = { workspace = true, features = ["host"] }
 jolt-inlines-sha2 = { workspace = true, features = ["host"] }
