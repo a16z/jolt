@@ -48,6 +48,12 @@ pr-seconds = 15
 daily-seconds = 300
 weekly-seconds = 900
 
+[package.metadata.jolt-fuzz.targets.verifier_boundary]
+focus = "soundness"
+pr-seconds = 60
+daily-seconds = 300
+weekly-seconds = 900
+
 [features]
 zk = ["jolt-verifier/zk"]
 
@@ -81,6 +87,13 @@ bench = false
 [[bin]]
 name = "validate_inputs_no_panic"
 path = "fuzz_targets/validate_inputs_no_panic.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "verifier_boundary"
+path = "fuzz_targets/verifier_boundary.rs"
 test = false
 doc = false
 bench = false

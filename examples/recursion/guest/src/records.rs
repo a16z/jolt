@@ -244,6 +244,16 @@ mod tests {
     }
 
     #[test]
+    fn overlong_record_length_is_noncanonical() {
+        let overlong_empty_vector = [251, 0, 0];
+        let error = parse_records(&frame(&overlong_empty_vector))
+            .unwrap()
+            .record::<Vec<u8>>()
+            .unwrap_err();
+        assert_eq!(error, RecordError::NonCanonicalEncoding);
+    }
+
+    #[test]
     fn noncanonical_field_and_malformed_devices_reject() {
         let size = if cfg!(feature = "akita") { 16 } else { 32 };
         assert_eq!(verdict::<TestField>(&frame(&vec![0; size])), 1);
