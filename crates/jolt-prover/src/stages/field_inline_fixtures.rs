@@ -406,10 +406,10 @@ pub(crate) fn addi_only_preprocessing() -> JoltProverPreprocessing<DoryScheme, P
     prover_preprocessing(addi_only_program().0)
 }
 
-/// The stage-4+ recipes' checked-inputs carrier for the fixture traces,
-/// mirroring what shape validation derives for a field-inline proof at this scale
-/// (no advice, no precommitted objects, full program).
-pub(crate) fn test_checked_inputs(ram_word_masks: &RamWordMasks) -> CheckedInputs {
+/// The stage recipes' checked-inputs carrier for the fixture traces over
+/// `program`, mirroring what shape validation derives for a field-inline proof
+/// at this scale (no advice, no precommitted objects, full program).
+pub(crate) fn test_checked_inputs(program: &JoltProgramPreprocessing) -> CheckedInputs {
     CheckedInputs {
         public_io: test_public_io(),
         zk: cfg!(feature = "zk"),
@@ -417,7 +417,12 @@ pub(crate) fn test_checked_inputs(ram_word_masks: &RamWordMasks) -> CheckedInput
         ram_K: 1 << RAM_LOG_K,
         entry_address: ENTRY,
         preprocessing_digest: [0u8; 32],
-        ram_word_masks: ram_word_masks.clone(),
+        ram_word_masks: RamWordMasks::new(
+            &program.ram.code_word_intervals,
+            &program.memory_layout,
+            1 << RAM_LOG_K,
+        )
+        .unwrap(),
         untrusted_advice_commitment_present: false,
         trusted_advice_commitment_present: false,
         vc_capacity: cfg!(feature = "zk").then_some(MAX_BLINDFOLD_GENERATORS),
@@ -488,7 +493,6 @@ pub(crate) mod twins {
     use jolt_claims::protocols::jolt::TraceDimensions;
     use jolt_claims::NoChallenges;
     use jolt_field::Ring;
-    use jolt_program::preprocess::ram::RamWordMasks;
     use jolt_program::preprocess::PublicIoMemory;
     use jolt_transcript::{Encoding, Keccak, ProverState};
     use jolt_verifier::config::JOLT_VERIFIER_CONFIG;
@@ -606,10 +610,10 @@ pub(crate) mod twins {
     pub(crate) fn replay_stage2<C: Clone + Encoding>(
         transcript: &mut ProverState<Keccak>,
         config: &ProverConfig,
+        checked: &CheckedInputs,
         public_io: &JoltDevice,
         stage1: &Stage1ProverOutput<Fr, C>,
         stage2: &Stage2ProverOutput<Fr, C>,
-        ram_word_masks: &RamWordMasks,
     ) {
         let log_t = LOG_T;
         let log_k = config.ram_K.ilog2() as usize;
@@ -641,7 +645,7 @@ pub(crate) mod twins {
                 read_write_dimensions,
                 log_k,
                 tau_low.clone(),
-                ram_word_masks.clone(),
+                checked.ram_word_masks.clone(),
             ),
             product_remainder: ProductRemainder::new(
                 product_dimensions,
@@ -983,6 +987,7 @@ pub(crate) mod proving {
             let stage2 = prove_stage2::<Fr, DoryScheme, Pedersen<Bn254G1>, ProverState<Keccak>>(
                 self.backend,
                 self.mode,
+                self.checked,
                 self.config,
                 self.public_io,
                 &stage1.clear_output,

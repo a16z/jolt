@@ -281,7 +281,7 @@ mod field_inline_round_trip {
         let mode = ProofMode::<Pedersen<Bn254G1>>::new(None).unwrap();
         let config = test_prover_config();
         let public_io = test_public_io();
-        let checked = test_checked_inputs(&context.ram_word_masks(config.ram_K).unwrap());
+        let checked = test_checked_inputs(&witness.preprocessing);
 
         let mut prover_state =
             prover_transcript::<Keccak>(&jolt_transcript::protocol_tag(label), b"");
@@ -321,10 +321,10 @@ mod field_inline_round_trip {
         twins::replay_stage2(
             &mut transcript,
             &config,
+            &checked,
             &public_io,
             &stage1,
             &stage2,
-            &context.ram_word_masks(config.ram_K).unwrap(),
         );
         twins::replay_stage3(&mut transcript, &stage1, &stage2, &stage3);
         twins::replay_stage4(
@@ -570,7 +570,7 @@ mod field_inline_zk {
         let mode = ProofMode::<Pedersen<Bn254G1>>::new(Some(&setup)).unwrap();
         let config = test_prover_config();
         let public_io = test_public_io();
-        let checked = test_checked_inputs(&context.ram_word_masks(config.ram_K).unwrap());
+        let checked = test_checked_inputs(&witness.preprocessing);
         let preprocessing = addi_only_preprocessing();
 
         let mut transcript = prover_transcript::<Keccak>(

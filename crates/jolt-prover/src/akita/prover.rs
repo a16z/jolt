@@ -71,6 +71,7 @@ where
     let stage2 = prove_stage2::<F, PCS, VC, T>(
         &mut backend,
         &mode,
+        &checked,
         config,
         public_io,
         &stage1.clear_output,
