@@ -1149,7 +1149,10 @@ mod tests {
     #[test]
     fn matches_reference_at_single_round_phase_boundaries() {
         for (log_t, ram_k) in [(1, 2), (1, 4), (2, 2)] {
-            run_parity(FixtureShape { log_t, ram_k }, vec![RamOp::None]);
+            run_parity(
+                FixtureShape { log_t, ram_k },
+                vec![RamOp::None, RamOp::Write { word: 1, post: 1 }],
+            );
         }
     }
 

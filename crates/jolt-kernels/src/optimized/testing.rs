@@ -2,10 +2,9 @@
 //! harness shared by the optimized RAM kernel tests.
 //!
 //! The fixture replays a small RAM op script into a real [`TraceBackend`]
-//! (state-consistent pre/post values, a tiny synthetic memory layout, and
-//! the guest-style trailing termination write that keeps `RamValFinal`
-//! consistent with the initial state on untouched words — the invariant the
-//! optimized kernels' `val_init` reconstruction relies on).
+//! (state-consistent pre/post values and a tiny synthetic memory layout).
+//! `RamValFinal` agrees with the initial state on untouched words, the
+//! invariant the optimized kernels' `val_init` reconstruction relies on.
 
 #![expect(
     clippy::unwrap_used,
@@ -32,10 +31,6 @@ use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, JoltWitnessPlane, T
 use rand_core::SeedableRng;
 
 use crate::{ProverInputs, SumcheckKernel};
-
-/// Word addresses below this index are reserved for the layout's panic (0)
-/// and termination (1) words; scripts should use words `>= 2`.
-pub(crate) const TERMINATION_WORD: u64 = 1;
 
 const BASE_ADDRESS: u64 = 0x1000;
 
@@ -78,8 +73,8 @@ pub(crate) enum RamOp {
     None,
 }
 
-/// Run `f` against a trace backend replaying `ops` (plus the trailing
-/// termination write), padded to `2^log_t` cycles.
+/// Run `f` against a trace backend replaying `ops`, padded to `2^log_t`
+/// cycles.
 pub(crate) fn with_ram_fixture<R>(
     shape: FixtureShape,
     ops: Vec<RamOp>,
@@ -89,11 +84,10 @@ pub(crate) fn with_ram_fixture<R>(
 }
 
 /// [`with_ram_fixture`] with nonzero initial RAM values: `init_words[i]`
-/// seeds word `2 + i` (the reserved panic/termination words stay zero). The
-/// values ride in as trusted-advice bytes, which the witness backend
-/// populates into BOTH the initial and the final RAM state — so untouched
-/// nonzero words keep `RamValFinal` consistent with `val_init` without a
-/// final-memory image. WARNING: the final-state advice populate also masks
+/// seeds word `2 + i` (words 0 and 1 start at zero). The values ride in as
+/// trusted-advice bytes, which the witness backend populates into BOTH the
+/// initial and the final RAM state — so untouched nonzero words keep
+/// `RamValFinal` consistent with `val_init` without a final-memory image. WARNING: the final-state advice populate also masks
 /// script WRITES to seeded words in `RamValFinal`; only the never-accessed
 /// fallback of the optimized `val_init` reconstruction reads those slots, so
 /// read-write parity is unaffected, but scripts feeding a val-final-anchored
@@ -113,7 +107,7 @@ pub(crate) fn ram_fixture(
     init_words: Vec<u64>,
     ops: Vec<RamOp>,
 ) -> TraceBackend {
-    assert!(ops.len() < 1usize << shape.log_t, "script too long");
+    assert!(ops.len() <= 1usize << shape.log_t, "script too long");
     assert!(
         init_words.is_empty() || 2 + init_words.len() <= shape.ram_k,
         "init words exceed the RAM domain"
@@ -122,8 +116,6 @@ pub(crate) fn ram_fixture(
     let memory_layout = MemoryLayout {
         trusted_advice_start: BASE_ADDRESS,
         untrusted_advice_start: BASE_ADDRESS,
-        panic: BASE_ADDRESS,
-        termination: BASE_ADDRESS + 8 * TERMINATION_WORD,
         ..Default::default()
     };
 
@@ -169,8 +161,7 @@ pub(crate) fn ram_fixture(
     let trusted_advice: Vec<u8> = if init_words.is_empty() {
         Vec::new()
     } else {
-        // Two zero words keep the reserved panic/termination words zero in
-        // the advice populate.
+        // Two zero words place `init_words[0]` at word 2.
         let mut bytes = vec![0u8; 16];
         for (i, &value) in init_words.iter().enumerate() {
             state[2 + i] = value;
@@ -178,15 +169,8 @@ pub(crate) fn ram_fixture(
         }
         bytes
     };
-    let mut script = ops;
-    if shape.ram_k > TERMINATION_WORD as usize {
-        script.push(RamOp::Write {
-            word: TERMINATION_WORD,
-            post: 1,
-        });
-    }
     let mut rd_value = 0;
-    let rows: Vec<TraceRow> = script
+    let rows: Vec<TraceRow> = ops
         .into_iter()
         .map(|op| {
             let (instruction, registers, ram_access) = match op {
@@ -291,25 +275,6 @@ pub(crate) fn ram_fixture(
         TraceOutput::new(TraceData::new(rows), device, None, None),
     );
     TraceBackend::new(config, inputs)
-}
-
-/// A trace without RAM events: trusted advice starts the termination word at
-/// its final value, so no termination write is needed and every cycle is
-/// padding.
-pub(crate) fn silent_ram_fixture(shape: FixtureShape) -> TraceBackend {
-    let base = ram_fixture(shape, Vec::new(), Vec::new());
-    let device = JoltDevice {
-        trusted_advice: [0u64.to_le_bytes(), 1u64.to_le_bytes()].concat(),
-        ..base.trace.device.clone()
-    };
-    TraceBackend::new(
-        base.config.clone(),
-        JoltVmWitnessInputs::new(
-            &base.program,
-            &base.preprocessing,
-            TraceOutput::new(TraceData::new(Vec::new()), device, None, None),
-        ),
-    )
 }
 
 /// Restricts sparse field-inline rows to an integer-constant `prefix`. With

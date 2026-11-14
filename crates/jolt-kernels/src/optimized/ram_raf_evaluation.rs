@@ -120,8 +120,7 @@ mod tests {
     use jolt_witness::TraceBackend;
 
     use super::super::testing::{
-        assert_parity, ram_fixture, random_scalars, silent_ram_fixture, with_ram_fixture,
-        FixtureShape, RamOp,
+        assert_parity, ram_fixture, random_scalars, with_ram_fixture, FixtureShape, RamOp,
     };
     use super::*;
     use crate::reference::views::cycle_fold;
@@ -145,7 +144,7 @@ mod tests {
     #[test]
     fn matches_reference_without_ram_events() {
         let shape = FixtureShape { log_t: 4, ram_k: 8 };
-        run_parity(&silent_ram_fixture(shape), shape);
+        run_parity(&ram_fixture(shape, Vec::new(), Vec::new()), shape);
     }
 
     /// The default and streaming slots against the reference tier at every

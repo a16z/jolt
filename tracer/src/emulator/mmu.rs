@@ -122,8 +122,6 @@ fn address_fault(jolt_device: &JoltDevice, ea: u64, is_write: bool) -> Option<Ad
                 || jolt_device.is_trusted_advice(ea)
                 || jolt_device.is_untrusted_advice(ea)
                 || jolt_device.is_output(ea)
-                || jolt_device.is_panic(ea)
-                || jolt_device.is_termination(ea)
         } else {
             device_readable(jolt_device, ea)
         };
@@ -146,8 +144,6 @@ fn device_readable(jolt_device: &JoltDevice, address: u64) -> bool {
         || jolt_device.is_trusted_advice(address)
         || jolt_device.is_untrusted_advice(address)
         || jolt_device.is_output(address)
-        || jolt_device.is_panic(address)
-        || jolt_device.is_termination(address)
         || address <= RAM_START_ADDRESS - 8
 }
 
@@ -561,6 +557,9 @@ impl Mmu {
     /// Records a load at `effective_address` as a read of its containing
     /// doubleword, the unit the RAM argument tracks.
     fn trace_load(&mut self, effective_address: u64) -> RamRead {
+        // Fault before the traced read: `JoltDevice::load` asserts on the bytes
+        // past `RAM_START_ADDRESS - 8`, which a guard word at `io_end` can hold.
+        self.assert_effective_load_address(effective_address);
         let address = effective_address & !7;
         RamRead {
             address,
@@ -698,7 +697,7 @@ impl Mmu {
                     self.assert_write_protected_store(effective_address, value as u64, 1);
                     if let Some(jolt_device) = self.jolt_device.as_mut() {
                         // The protected-store check kept this input or advice byte;
-                        // `JoltDevice::store` writes only outputs and the flag latch.
+                        // `JoltDevice::store` writes only outputs.
                         if jolt_device.is_input(effective_address)
                             || jolt_device.is_trusted_advice(effective_address)
                             || jolt_device.is_untrusted_advice(effective_address)
@@ -1237,7 +1236,7 @@ mod test_mmu {
             if let Some(device) = mmu.jolt_device.as_ref() {
                 let layout = &device.memory_layout;
                 let lowest = layout.get_lowest_address();
-                addresses.extend([lowest - 1, lowest, layout.input_start, layout.termination]);
+                addresses.extend([lowest - 1, lowest, layout.input_start, layout.output_start]);
                 addresses.extend((layout.io_end - 8)..=(layout.io_end + 8));
                 addresses.extend([layout.heap_end - 1, layout.heap_end]);
             }
@@ -1843,7 +1842,7 @@ mod test_mmu {
         };
         let device = JoltDevice::new(&config);
         let io_end = device.memory_layout.io_end;
-        assert_eq!(io_end, RAM_START_ADDRESS - 24);
+        assert_eq!(io_end, RAM_START_ADDRESS - 8);
         mmu.jolt_device = Some(device);
         assert_eq!(mmu.load_doubleword(io_end - 8).unwrap().0, 0);
         let _ = mmu.load_doubleword(io_end);

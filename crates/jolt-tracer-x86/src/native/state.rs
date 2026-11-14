@@ -97,13 +97,19 @@ impl GuestState {
         layout.stack_end - RAM_START_ADDRESS
     }
 
+    /// Classifies the exit. A halt also sets the device's public panic bit,
+    /// which claims a failure halt (EBREAK); no guest memory backs it.
     #[expect(clippy::print_stderr)]
     pub(crate) fn check_exit(&self, host: &mut HostContext) -> Result<MachineExit, TraceError> {
         match self.exit {
             e if e == ExitReason::HaltedSuccess as u64 => {
+                host.device.panic = false;
                 Ok(MachineExit::Halted(HaltKind::Success))
             }
-            e if e == ExitReason::HaltedPanic as u64 => Ok(MachineExit::Halted(HaltKind::Panic)),
+            e if e == ExitReason::HaltedPanic as u64 => {
+                host.device.panic = true;
+                Ok(MachineExit::Halted(HaltKind::Panic))
+            }
             e if e == ExitReason::Stalled as u64 => Ok(MachineExit::Stalled { pc: self.pc }),
             e if e == ExitReason::FaultOutOfBounds as u64 => {
                 Err(TraceError::Backend("guest RAM access out of bounds"))

@@ -27,7 +27,6 @@ pub struct ChunkCheckpoint {
     /// JoltDevice outputs at the boundary: the guest can read outputs back,
     /// so they are live per-chunk state (inputs/advice regions are static).
     outputs: Vec<u8>,
-    panic: bool,
 }
 
 impl ChunkCheckpoint {
@@ -47,7 +46,6 @@ impl ChunkCheckpoint {
             cpu: cpu.capture_chunk_state(),
             mmu: cpu.mmu.capture_chunk_state(),
             outputs: device.outputs.clone(),
-            panic: device.panic,
         }
     }
 
@@ -65,12 +63,6 @@ impl ChunkCheckpoint {
                         "jolt_device.outputs: {} bytes vs {} bytes (or contents differ)",
                         self.outputs.len(),
                         device.outputs.len()
-                    ));
-                }
-                if self.panic != device.panic {
-                    return Some(format!(
-                        "jolt_device.panic: {} vs {}",
-                        self.panic, device.panic
                     ));
                 }
             }
@@ -142,7 +134,7 @@ pub struct ChunkWorker {
 impl ChunkWorker {
     /// Build a worker from the pass-1 emulator's static parts (JoltDevice
     /// inputs/advice/layout, program text range). Independent of pass-1
-    /// progress; outputs and panic are patched per chunk.
+    /// progress; outputs are patched per chunk.
     pub fn new(emulator: &Emulator) -> Self {
         let src = emulator.get_cpu();
         Self::from_seed(
@@ -173,7 +165,7 @@ impl ChunkWorker {
 
     /// Install a chunk: seed CPU+MMU state, adopt `image` as the working
     /// memory (returns the previous buffer for the pool), patch device
-    /// outputs/panic, and reset the decode cache.
+    /// outputs, and reset the decode cache.
     #[expect(clippy::expect_used)]
     pub fn install_chunk(&mut self, checkpoint: &ChunkCheckpoint, image: Vec<u64>) -> Vec<u64> {
         self.cpu.install_chunk_state(&checkpoint.cpu);
@@ -186,7 +178,6 @@ impl ChunkWorker {
             .as_mut()
             .expect("worker device installed at construction");
         device.outputs.clone_from(&checkpoint.outputs);
-        device.panic = checkpoint.panic;
         self.cpu.mmu.decode_cache = self.decode_template.clone();
         previous
     }

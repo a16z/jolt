@@ -299,21 +299,21 @@ mod tests {
 
     /// SC.W to a non-RAM (I/O) address must be rejected by the
     /// inline-sequence RAM-range constraint. Without this constraint, the
-    /// failure-path store would flip the device's panic flag via the
-    /// byte-level store handler, mutating the proof's public I/O.
+    /// failure-path store would write public outputs via the byte-level store
+    /// handler, mutating the proof's public I/O.
     #[test]
     #[should_panic(expected = "assertion failed")]
     fn test_scw_to_io_rejected() {
         let mut cpu = setup_cpu();
-        let panic_addr = cpu
+        let output_addr = cpu
             .get_mut_mmu()
             .jolt_device
             .as_ref()
             .unwrap()
             .memory_layout
-            .panic;
+            .output_start;
 
-        cpu.x[11] = panic_addr as i64;
+        cpu.x[11] = output_addr as i64;
         cpu.x[12] = 0x12345678;
 
         let decoded = Instruction::decode(encode_scw(13, 11, 12), 0x1000, false).unwrap();

@@ -593,7 +593,7 @@ mod tests {
     }
 
     fn assert_parity(order: TracePolynomialOrder, widen: usize) {
-        for prefix in [0, 1, 2, 6, 7, 8, 14, 15] {
+        for prefix in [1, 2, 3, 7, 8, 9, 15, 16] {
             assert_prefix_parity(order, widen, prefix);
         }
     }

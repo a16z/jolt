@@ -4,8 +4,8 @@
 //! (the same discipline as `jolt_witness::testing::with_sample_backend`), so
 //! the composed R1CS eq rows are satisfied and the stage sumchecks' hard
 //! self-checks hold — including the stage-4 register-file and RAM value
-//! checks (consistent register reads, and the termination store the witness
-//! plane's device-derived final RAM state demands). Two profiles: an
+//! checks (consistent register reads, and no RAM access, so the final RAM
+//! state equals the initial one). Two profiles: an
 //! ADDI-only trace (a field-inline guest executing zero field-inline instructions —
 //! every field-inline column is zero), and a field arithmetic trace (two field loads and
 //! a multiply, the stage-0 fixture's rows) whose decoded field-inline instruction
@@ -37,8 +37,8 @@ use jolt_program::preprocess::ram::RamWordMasks;
 use jolt_program::preprocess::JoltProgramPreprocessing;
 use jolt_riscv::{
     JoltInstructionKind, JoltInstructionProfile, JoltInstructionRow, JoltTraceRow,
-    NormalizedOperands, RamAccess, RamWrite, RegisterRead, RegisterState, RegisterWrite,
-    TraceRowError, RV64IMAC_JOLT_FIELD_INLINE,
+    NormalizedOperands, RamAccess, RegisterRead, RegisterState, RegisterWrite, TraceRowError,
+    RV64IMAC_JOLT_FIELD_INLINE,
 };
 use jolt_verifier::preprocessing::{JoltVerifierPreprocessing, ProgramPreprocessing};
 use jolt_verifier::stages::PrecommittedSchedule;
@@ -50,7 +50,7 @@ use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
 use crate::{JoltProverPreprocessing, ProverConfig};
 
 pub(crate) const ENTRY: u64 = RAM_START_ADDRESS;
-// 3, not 2: the field-inline fixture's six real rows do not fit four cycles.
+// Eight cycles: both fixture traces end at a halt followed by padding.
 pub(crate) const LOG_T: usize = 3;
 // Matches the witness backend's `JoltVmWitnessConfig` ram size (64).
 pub(crate) const RAM_LOG_K: usize = 6;
@@ -177,71 +177,12 @@ fn success_halt_row(offset: usize, rd: u8) -> JoltTraceRow {
     .unwrap()
 }
 
-/// The guest termination convention, hand-crafted: the witness plane's final
-/// RAM state unconditionally carries `termination = 1` (a real guest writes
-/// it before halting), so any trace that must satisfy the stage-4 RAM value
-/// check needs a matching increment. Two rows: `ADDI x6, x0, 1` (a consistent
-/// register write of the stored value), then `SD x6, termination(x0)` (store
-/// flag on, `RamAddress = rs1 + imm = termination`, `RamWriteValue = rs2`).
-fn termination_store_rows(offset: usize) -> [JoltTraceRow; 2] {
-    let one = instruction(JoltInstructionKind::ADDI, offset, Some(6), Some(0), None, 1);
-    let termination = test_memory_layout().termination;
-    let store = instruction(
-        JoltInstructionKind::SD,
-        offset + 1,
-        None,
-        Some(0),
-        Some(6),
-        termination as i128,
-    );
-    [
-        trace_row(
-            one,
-            RegisterState {
-                rs1: Some(RegisterRead {
-                    register: 0,
-                    value: 0,
-                }),
-                rd: Some(RegisterWrite {
-                    register: 6,
-                    pre_value: 0,
-                    post_value: 1,
-                }),
-                ..Default::default()
-            },
-            RamAccess::NoOp,
-        )
-        .unwrap(),
-        trace_row(
-            store,
-            RegisterState {
-                rs1: Some(RegisterRead {
-                    register: 0,
-                    value: 0,
-                }),
-                rs2: Some(RegisterRead {
-                    register: 6,
-                    value: 1,
-                }),
-                ..Default::default()
-            },
-            RamAccess::Write(RamWrite {
-                address: termination,
-                pre_value: 0,
-                post_value: 1,
-            }),
-        )
-        .unwrap(),
-    ]
-}
-
 /// A field-inline guest executing only ordinary instructions (an ADDI with
-/// consistent register semantics, the termination store, then the terminal
-/// halt): the rv64 eq rows are satisfied while every field-inline column is zero.
+/// consistent register semantics, then the terminal halt): the rv64 eq rows
+/// are satisfied while every field-inline column is zero.
 fn addi_only_program() -> (Vec<JoltInstructionRow>, Vec<JoltTraceRow>) {
     let addi = instruction(JoltInstructionKind::ADDI, 0, Some(1), Some(2), None, 3);
-    let [one, store] = termination_store_rows(1);
-    let halt = success_halt_row(3, 5);
+    let halt = success_halt_row(1, 5);
     let rows = vec![
         trace_row(
             addi,
@@ -262,19 +203,9 @@ fn addi_only_program() -> (Vec<JoltInstructionRow>, Vec<JoltTraceRow>) {
             RamAccess::NoOp,
         )
         .unwrap(),
-        one,
-        store,
         halt,
     ];
-    (
-        vec![
-            addi,
-            one.instruction(),
-            store.instruction(),
-            halt.instruction(),
-        ],
-        rows,
-    )
+    (vec![addi, halt.instruction()], rows)
 }
 
 pub(crate) fn addi_only_backend() -> TraceBackend {
@@ -311,16 +242,8 @@ fn field_arithmetic_program() -> (Vec<JoltInstructionRow>, Vec<JoltTraceRow>, Ve
         Some(2),
         0,
     );
-    let [one, store] = termination_store_rows(3);
-    let halt = success_halt_row(5, 5);
-    let rows = vec![
-        field_row(load_a),
-        field_row(load_b),
-        field_row(mul),
-        one,
-        store,
-        halt,
-    ];
+    let halt = success_halt_row(3, 5);
+    let rows = vec![field_row(load_a), field_row(load_b), field_row(mul), halt];
     let field_events = vec![
         FieldEvent {
             cycle: 0,
@@ -366,14 +289,7 @@ fn field_arithmetic_program() -> (Vec<JoltInstructionRow>, Vec<JoltTraceRow>, Ve
         },
     ];
     (
-        vec![
-            load_a,
-            load_b,
-            mul,
-            one.instruction(),
-            store.instruction(),
-            halt.instruction(),
-        ],
+        vec![load_a, load_b, mul, halt.instruction()],
         rows,
         field_events,
     )

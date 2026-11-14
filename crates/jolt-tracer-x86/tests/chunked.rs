@@ -62,6 +62,14 @@ fn assert_chunks_compose_spaced(
             expected.len().div_ceil(chunk_size),
             "chunk_size {chunk_size}: checkpoint count"
         );
+        assert_eq!(
+            summary.device.outputs, eager.device.outputs,
+            "chunk_size {chunk_size}: outputs"
+        );
+        assert_eq!(
+            summary.device.panic, eager.device.panic,
+            "chunk_size {chunk_size}: panic claim"
+        );
         if let Some(rows) = min_spacing {
             // A boundary exists at most spacing + one group past any mark, so
             // every checkpoint must resume from nearby. With a single (initial)
@@ -123,6 +131,18 @@ fn fibonacci_chunks_compose() {
         // Degenerate sizes included: 1 forces boundaries inside multi-row
         // groups, and a size past the trace length is a single chunk.
         &[1, 7, 100, 1 << 18],
+    );
+}
+
+/// A run that ends at EBREAK's `Panic` row: chunked execution reports the
+/// eager run's panic claim.
+#[test]
+fn panic_halt_chunks_compose() {
+    assert_chunks_compose(
+        "memory-ops-guest",
+        "panic_halt",
+        postcard::to_stdvec(&true).expect("postcard"),
+        &[1, 7, 1 << 18],
     );
 }
 

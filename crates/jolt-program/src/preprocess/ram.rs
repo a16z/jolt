@@ -248,8 +248,10 @@ impl RamWordMasks {
 /// at or above `io_end` below RAM, or at or above `heap_end` in RAM (see
 /// `tracer::emulator::mmu::address_fault` and the x86 helpers' guest-load
 /// bounds). Both bounds are doubleword aligned, so each tracer bound falls on a
-/// word boundary of this mask. The panic and termination flag words lie below
-/// `io_end` and are outside the mask.
+/// word boundary of this mask. The layout always reserves the guard word at
+/// `io_end`, the first word past the outputs, so the I/O interval is never
+/// empty: an access to the guard word is rejected by this mask as well as by
+/// the tracers.
 pub fn unmapped_word_intervals(
     memory_layout: &MemoryLayout,
     ram_k: usize,

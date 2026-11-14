@@ -195,15 +195,15 @@ mod tests {
     #[should_panic(expected = "assertion failed")]
     fn test_scd_to_io_rejected() {
         let mut cpu = setup_cpu();
-        let panic_addr = cpu
+        let output_addr = cpu
             .get_mut_mmu()
             .jolt_device
             .as_ref()
             .unwrap()
             .memory_layout
-            .panic;
+            .output_start;
 
-        cpu.x[11] = panic_addr as i64;
+        cpu.x[11] = output_addr as i64;
         cpu.x[12] = 0x1234_5678_9ABC_DEF0u64 as i64;
 
         let decoded = Instruction::decode(encode_scd(13, 11, 12), 0x1000, false).unwrap();

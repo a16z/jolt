@@ -477,7 +477,7 @@ mod tests {
     /// window (multi-delivery sequencing).
     #[test]
     fn optimized_commit_matches_reference() {
-        for prefix in [0, 1, 62, 63, 64, 65, 254, 255] {
+        for prefix in [1, 2, 63, 64, 65, 66, 255, 256] {
             assert_commit_matches_reference(prefix);
         }
     }

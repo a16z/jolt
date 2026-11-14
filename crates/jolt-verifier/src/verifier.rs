@@ -1501,10 +1501,6 @@ mod tests {
             }),
             ("stack_end", |c, _| c.public_io.memory_layout.stack_end += 1),
             ("heap_end", |c, _| c.public_io.memory_layout.heap_end += 1),
-            ("panic address", |c, _| c.public_io.memory_layout.panic += 1),
-            ("termination", |c, _| {
-                c.public_io.memory_layout.termination += 1;
-            }),
             ("io_end", |c, _| c.public_io.memory_layout.io_end += 1),
             // The capacity of the verifier's own vector-commitment setup.
             ("vc_capacity", |c, _| {

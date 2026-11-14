@@ -662,6 +662,7 @@ mod tests {
     use super::*;
     use crate::emulator::elf_analyzer::test_elf::{build_elf64, StrtabOrder};
     use crate::parallel::{run_two_pass, TwoPassConfig};
+    use crate::LazyTracer;
     use common::jolt_device::MemoryConfig;
     use jolt_program::execution::{TraceError, TraceInputs};
     use jolt_riscv::{JoltInstructionKind, JOLT_SUCCESS_WORD};
@@ -714,8 +715,8 @@ mod tests {
         assert!(!output.device.panic);
     }
 
-    /// Every driver ends a run at its halt row and rejects a run that stops
-    /// at a PC stall instead.
+    /// Every driver ends a run at its halt row, claims a panic exactly for a
+    /// failure halt, and rejects a run that stops at a PC stall instead.
     #[test]
     fn jolt_runs_end_at_halts() {
         // addi x1, x0, 1, then jolt.success, ebreak, or c.ebreak and c.nop.
@@ -724,7 +725,8 @@ mod tests {
             (0x0010_0073, JoltInstructionKind::JoltPanic, false),
             (0x0001_9002, JoltInstructionKind::JoltPanic, true),
         ] {
-            let (_, program, inputs) = tiny_program(&[0x0010_0093, halt]);
+            let panics = kind == JoltInstructionKind::JoltPanic;
+            let (elf, program, inputs) = tiny_program(&[0x0010_0093, halt]);
             let mut backend = TracerBackend::new();
             let eager = backend
                 .trace(&program, inputs.clone())
@@ -735,26 +737,43 @@ mod tests {
                 (last.instruction_kind, last.is_compressed),
                 (kind, is_compressed)
             );
-            // No panic byte was written: the device latch, not the halt kind,
-            // sets the public panic bit.
-            assert!(!eager.device.panic);
+            assert_eq!(eager.device.panic, panics);
 
-            let summary = backend
-                .execute(&program, inputs, 1)
-                .expect("chunked execute");
-            assert!(!summary.device.panic);
-            let replayed: Vec<JoltTraceRow> = summary
-                .checkpoints
-                .iter()
-                .flat_map(|checkpoint| {
-                    backend
-                        .replay_chunk(checkpoint)
-                        .expect("replay")
-                        .rows()
-                        .to_vec()
-                })
-                .collect();
-            assert_eq!(replayed, rows);
+            // The halt row starts the second chunk, then ends the first.
+            for chunk_size in [1, 2] {
+                let summary = backend
+                    .execute(&program, inputs.clone(), chunk_size)
+                    .expect("chunked execute");
+                assert_eq!(summary.device.panic, panics);
+                let replayed: Vec<JoltTraceRow> = summary
+                    .checkpoints
+                    .iter()
+                    .flat_map(|checkpoint| {
+                        backend
+                            .replay_chunk(checkpoint)
+                            .expect("replay")
+                            .rows()
+                            .to_vec()
+                    })
+                    .collect();
+                assert_eq!(replayed, rows);
+            }
+
+            let emulator =
+                crate::create_emulator(&elf, None, &[], &[], &[], &inputs.memory_config, None);
+            let config = TwoPassConfig {
+                workers: 2,
+                chunk_rows: 1,
+                capacity_rows: 64,
+            };
+            let (_, _, device) = crate::finish_emulator(run_two_pass(emulator, &config).1)
+                .expect("two-pass run ends at the halt");
+            assert_eq!(device.panic, panics);
+
+            let mut lazy =
+                crate::trace_lazy(&elf, None, &[], &[], &[], &inputs.memory_config, None);
+            assert_eq!(lazy.by_ref().count(), rows.len());
+            assert_eq!(lazy.lazy_tracer.get_jolt_device().panic, panics);
         }
 
         // addi x1, x0, 1, then j . or beq x0, x0, 0: a PC stall, not a halt.

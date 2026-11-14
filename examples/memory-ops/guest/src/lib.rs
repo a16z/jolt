@@ -187,8 +187,8 @@ fn exact_rows(pad: [u8; 2]) -> [u8; 2] {
     pad
 }
 
-/// Panics when `trigger` is set: the SDK's panic path writes the panic byte
-/// and halts at `ebreak`, so the run proves with `panic = true`.
+/// Panics when `trigger` is set: the SDK's panic path halts at `ebreak`, so
+/// the run proves with `panic = true`.
 #[jolt::provable(guest_only, heap_size = 65536, max_trace_length = 65536)]
 fn panic_halt(trigger: bool) -> u8 {
     assert!(!trigger, "panic_halt was asked to panic");
