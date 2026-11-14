@@ -1404,6 +1404,9 @@ mod kernel_tests;
 mod record_limit_tests {
     use super::guest_records::Records;
     use super::*;
+    use jolt_sdk::jolt_verifier::proof::PROOF_ARGUMENT_NEWTYPE;
+    use serde::de::{Deserialize, Deserializer, Error as DeError, Visitor};
+    use std::fmt::{Formatter, Result as FmtResult};
 
     #[test]
     fn honest_field_record_exceeding_default_budget_uses_image_limits() {
@@ -1436,5 +1439,48 @@ mod record_limit_tests {
         huge_length.extend_from_slice(&u64::MAX.to_le_bytes());
         let mut budget = limits.allocation;
         assert!(bounded::decode::<Vec<GuestField>>(&huge_length, &mut budget).is_err());
+    }
+
+    /// Stands for the proof argument, which jolt-verifier's tests cover on the
+    /// proof type: it decodes only from a byte string requested under the
+    /// argument's name.
+    #[derive(Debug)]
+    struct Argument(Vec<u8>);
+
+    impl<'de> Deserialize<'de> for Argument {
+        fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+            struct BytesOnly;
+
+            impl Visitor<'_> for BytesOnly {
+                type Value = Argument;
+
+                fn expecting(&self, formatter: &mut Formatter<'_>) -> FmtResult {
+                    formatter.write_str("a byte string")
+                }
+
+                fn visit_bytes<E: DeError>(self, bytes: &[u8]) -> Result<Argument, E> {
+                    Ok(Argument(bytes.to_vec()))
+                }
+            }
+
+            deserializer.deserialize_newtype_struct(PROOF_ARGUMENT_NEWTYPE, BytesOnly)
+        }
+    }
+
+    #[test]
+    fn bounded_decoder_reads_the_proof_argument_as_bytes_at_the_sequence_charge() {
+        let config = bincode::config::standard();
+        let bytes: Vec<u8> = (0..=u8::MAX).chain(0..44).collect();
+        let encoded = bincode::serde::encode_to_vec(&bytes, config).unwrap();
+
+        // Charged as the `Vec<u8>` it stands for: twice its length.
+        let mut budget = 2 * bytes.len();
+        let (argument, consumed) = bounded::decode::<Argument>(&encoded, &mut budget).unwrap();
+        assert_eq!(
+            (argument.0, consumed, budget),
+            (bytes.clone(), encoded.len(), 0)
+        );
+        let mut budget = 2 * bytes.len() - 1;
+        assert!(bounded::decode::<Argument>(&encoded, &mut budget).is_err());
     }
 }

@@ -4,6 +4,7 @@ use core::{
     marker::PhantomData,
     mem::size_of,
 };
+use jolt_sdk::jolt_verifier::proof::PROOF_ARGUMENT_NEWTYPE;
 use serde::de::{
     DeserializeOwned, DeserializeSeed, Deserializer, EnumAccess, Error, MapAccess, SeqAccess,
     VariantAccess, Visitor,
@@ -90,11 +91,36 @@ impl<'de, D: Deserializer<'de>> Deserializer<'de> for Bounded<'_, D> {
         deserialize_f32(); deserialize_f64(); deserialize_char();
         deserialize_str(); deserialize_bytes(); deserialize_option();
         deserialize_unit(); deserialize_unit_struct(name: &'static str);
-        deserialize_newtype_struct(name: &'static str); deserialize_seq();
+        deserialize_seq();
         deserialize_tuple(len: usize); deserialize_tuple_struct(name: &'static str, len: usize);
         deserialize_map(); deserialize_struct(name: &'static str, fields: &'static [&'static str]);
         deserialize_enum(name: &'static str, variants: &'static [&'static str]);
         deserialize_identifier(); deserialize_ignored_any();
+    }
+
+    // The proof argument is a byte sequence that asks for its bytes under this
+    // name. `decode` reads from a slice, so the length the input announces is
+    // checked against the bytes that remain before they are borrowed. That
+    // makes it safe to take the argument as one byte string here instead of
+    // one element at a time. It is charged as the sequence it stands for.
+    fn deserialize_newtype_struct<V: Visitor<'de>>(
+        self,
+        name: &'static str,
+        visitor: V,
+    ) -> Result<V::Value, Self::Error> {
+        if name == PROOF_ARGUMENT_NEWTYPE {
+            return self.inner.deserialize_bytes(ArgumentBytes {
+                inner: visitor,
+                budget: self.budget,
+            });
+        }
+        self.inner.deserialize_newtype_struct(
+            name,
+            Bounded {
+                inner: visitor,
+                budget: self.budget,
+            },
+        )
     }
 
     fn deserialize_byte_buf<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
@@ -107,6 +133,24 @@ impl<'de, D: Deserializer<'de>> Deserializer<'de> for Bounded<'_, D> {
 
     fn is_human_readable(&self) -> bool {
         self.inner.is_human_readable()
+    }
+}
+
+struct ArgumentBytes<'a, V> {
+    inner: V,
+    budget: &'a mut usize,
+}
+
+impl<'de, V: Visitor<'de>> Visitor<'de> for ArgumentBytes<'_, V> {
+    type Value = V::Value;
+
+    fn expecting(&self, formatter: &mut Formatter<'_>) -> FmtResult {
+        self.inner.expecting(formatter)
+    }
+
+    fn visit_bytes<E: Error>(self, value: &[u8]) -> Result<Self::Value, E> {
+        collection::<E, u8>(self.budget, value.len())?;
+        self.inner.visit_bytes(value)
     }
 }
 
