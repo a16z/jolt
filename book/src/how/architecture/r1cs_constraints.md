@@ -77,7 +77,7 @@ $\textsf{NextIsNoop}$ is 1 when the next row is padding and at the last cycle $T
 The excluded cases need a field characteristic other than 2 and 3: a success halt under $\Pi = 1$ would need $\textsf{NextIsNoop} = -1$, and an `EBREAK` halt under $\Pi = 0$ would need $\textsf{NextIsNoop} = 3$.
 Both proof fields qualify.
 Under either value of $\Pi$, the lane also rejects every flag combination that no instruction carries.
-This form keeps every coefficient of the full-trace matrix in $\{\pm 1, -2\}$.
+This form keeps lane 3's coefficients in the full-trace matrix in $\{\pm 1, -2\}$.
 
 Only a halt can precede padding.
 A padding row has address 0, and the shifted columns are 0 at the last cycle, so a real row followed by padding, or at $T-1$, has $\textsf{NextUnexpandedPC} = 0$.

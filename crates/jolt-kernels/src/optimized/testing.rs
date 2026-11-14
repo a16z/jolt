@@ -87,11 +87,12 @@ pub(crate) fn with_ram_fixture<R>(
 /// seeds word `2 + i` (words 0 and 1 start at zero). The values ride in as
 /// trusted-advice bytes, which the witness backend populates into BOTH the
 /// initial and the final RAM state — so untouched nonzero words keep
-/// `RamValFinal` consistent with `val_init` without a final-memory image. WARNING: the final-state advice populate also masks
-/// script WRITES to seeded words in `RamValFinal`; only the never-accessed
-/// fallback of the optimized `val_init` reconstruction reads those slots, so
-/// read-write parity is unaffected, but scripts feeding a val-final-anchored
-/// kernel must not write seeded words.
+/// `RamValFinal` consistent with `val_init` without a final-memory image.
+/// WARNING: the final-state advice populate also masks script WRITES to
+/// seeded words in `RamValFinal`; only the never-accessed fallback of the
+/// optimized `val_init` reconstruction reads those slots, so read-write parity
+/// is unaffected, but scripts feeding a val-final-anchored kernel must not
+/// write seeded words.
 pub(crate) fn with_ram_fixture_init<R>(
     shape: FixtureShape,
     init_words: Vec<u64>,

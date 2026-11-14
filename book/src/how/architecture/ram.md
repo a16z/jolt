@@ -92,9 +92,10 @@ only if every count is zero, that is, no cycle selects an unmapped word,
 except with probability $\log T/|\mathbb{F}|$. Layout construction rounds
 `heap_end` up to a doubleword, matching the linker's aligned `__heap_end`, and
 admission rejects an unaligned `heap_end`, so a guest that uses the whole heap
-never touches a word in $N$. `io_end` is the end of the outputs; the layout
-always reserves an unmapped guard word there, so $N$ starts at that word and an
-access to it fails the $\gamma^4$ identity.
+never touches a word in $N$. `io_end` is the end of the outputs; layout
+construction reserves an unmapped guard word there (admission does not recheck
+this for a layout decoded from a verifier key), so $N$ starts at that word and
+an access to it fails the $\gamma^4$ identity.
 
 Preprocessing rounds each real source instruction's two- or four-byte extent
 outward to doublewords, merges adjacent intervals and excludes synthetic
@@ -227,11 +228,11 @@ This arrangement minimizes verifier computation. If we placed untrusted advice f
 ## Output Check
 
 Jolt ensures correctness of guest program outputs via the **output check** sumcheck.
-Guest I/O occupies a designated [memory region](#address-remapping) below `0x80000000`: advice, inputs and outputs, followed by unmapped padding that always includes at least one guard word.
+Guest I/O occupies a designated [memory region](#address-remapping) below `0x80000000`: advice, inputs and outputs, then unmapped padding that starts with the guard word layout construction reserves.
 At execution completion, the outputs have been written into this region.
 The panic bit is not memory: the statement carries it, and the [end rule](./r1cs_constraints.md#ending-a-run) binds it to the halt that ends the run.
 
-Verifying that the claimed outputs are correct amounts to checking that the following polynomials agree at the indices corresponding to the program I/O memory region:
+Verifying that the claimed outputs are correct amounts to checking that the following polynomials agree on [`input_start`, `0x80000000`): the inputs, the outputs and the unmapped padding after them (advice lies below `input_start` and enters through $\widetilde{\textsf{Val}}_\text{init}$):
 
 ![final memory](../../imgs/final_memory_state.png)
 
@@ -242,7 +243,7 @@ $$
 0 = \sum_{k \in \{0, 1\}^{\log K}} \widetilde{\textsf{eq}}(r_\text{address}, k) \cdot \widetilde{\textsf{io-range}}(k) \cdot \left( \widetilde{\textsf{Val}}_\text{final}(k) - \widetilde{\textsf{Val}}_\text{io}(k) \right)
 $$
 
-where $\widetilde{\textsf{io-range}}$ is a "range mask" polynomial, equal to 1 at all the indices corresponding to the program I/O region and 0 elsewhere.
+where $\widetilde{\textsf{io-range}}$ is a "range mask" polynomial, equal to 1 on [`input_start`, `0x80000000`) and 0 elsewhere.
 The MLE for a range mask polynomial that isolates the range $[\text{start}, \text{end})$ can be written as follows:
 
 $$

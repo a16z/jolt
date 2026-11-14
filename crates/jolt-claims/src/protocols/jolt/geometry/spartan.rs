@@ -196,8 +196,8 @@ pub(crate) struct JumpLaneTerm {
 /// has a real successor (so it is not the last cycle), or a halt is followed by
 /// padding (or is the last cycle) and its `HaltPanic` equals `Π`, or the row
 /// carries none of the three flags; excluding every other assignment needs a
-/// field characteristic other than 2 and 3. This `−2` form keeps every
-/// full-trace coefficient in `{±1, −2}`, which the z3 and zklean coefficient
+/// field characteristic other than 2 and 3. This `−2` form keeps lane 3's
+/// full-trace coefficients in `{±1, −2}`, which the z3 and zklean coefficient
 /// tables accept.
 pub(crate) const PRODUCT_JUMP_LANE_OUTPUT: [JumpLaneTerm; 3] = [
     JumpLaneTerm {

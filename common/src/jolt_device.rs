@@ -391,9 +391,10 @@ pub struct MemoryLayout {
     pub stack_end: u64,
     pub heap_size: u64,
     pub heap_end: u64,
-    /// Exclusive end of the I/O region, equal to `output_end`. The doubleword
-    /// at `io_end` is an unmapped guard word: the padded region always
-    /// reserves it, so `io_end <= RAM_START_ADDRESS - 8`.
+    /// Exclusive end of the I/O region. `try_new` sets it to `output_end` and
+    /// pads the region so that the doubleword at `io_end` is an unmapped guard
+    /// word (`io_end <= RAM_START_ADDRESS - 8`); verifier-key admission does
+    /// not recheck this.
     pub io_end: u64,
 }
 

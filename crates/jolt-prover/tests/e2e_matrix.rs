@@ -50,8 +50,10 @@ mod matrix {
     use crate::support::GuestCase;
 
     /// Checks that `verify` rejects the proof under the opposite panic claim.
-    /// The claim is part of the statement, and product lane 3 ties it to the
-    /// halt the run ended at.
+    /// The claim is part of the statement, so the flip diverges the transcript
+    /// before stage 1: this pins statement binding, not lane 3, which
+    /// `engine_twins.rs` `halting::lane_three_binds_the_claimed_panic_bit`
+    /// isolates in the base build.
     fn assert_rejects_the_opposite_panic_claim<E>(
         public_io: &JoltDevice,
         verify: impl FnOnce(&JoltDevice) -> Result<(), E>,

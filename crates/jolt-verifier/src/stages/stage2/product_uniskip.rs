@@ -125,9 +125,11 @@ impl<F: JoltField> ConcreteSumcheck<F> for ProductUniskip<F> {
         };
         match public_id {
             // The uni-skip first-round Lagrange weights, evaluated at `tau_high`; the
-            // input claim reweights the three Spartan-outer openings by
-            // `UniskipLagrangeWeight(0..2)` exactly as the formula's
-            // `product_uniskip_weight(i)`.
+            // input claim reweights its three lane values (`product`, `should_branch`,
+            // and lane 3's fold of `jump`, `halt` and `halt_panic` with `ClaimedPanic`)
+            // by `UniskipLagrangeWeight(0..=2)` exactly as the formula's
+            // `product_uniskip_weight(i)`; field-inline builds add their lanes at the
+            // following indices.
             SpartanProductVirtualizationPublic::UniskipLagrangeWeight(index) => {
                 let weights =
                     centered_lagrange_evals(SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE, self.tau_high)
@@ -138,13 +140,13 @@ impl<F: JoltField> ConcreteSumcheck<F> for ProductUniskip<F> {
                     ))
                 })
             }
+            SpartanProductVirtualizationPublic::ClaimedPanic => {
+                Ok(F::from_bool(self.claimed_panic))
+            }
             // `LagrangeWeight`/`TauKernel` belong to the product *remainder* relation,
             // not the uni-skip: `product_uniskip` reweights via `product_uniskip_weight`
             // -> `UniskipLagrangeWeight` only. Reject rather than silently aliasing them,
             // so a misrouted public surfaces.
-            SpartanProductVirtualizationPublic::ClaimedPanic => {
-                Ok(F::from_bool(self.claimed_panic))
-            }
             SpartanProductVirtualizationPublic::LagrangeWeight(_)
             | SpartanProductVirtualizationPublic::TauKernel => {
                 Err(VerifierError::MissingStageClaimDerived { id: (*id).into() })

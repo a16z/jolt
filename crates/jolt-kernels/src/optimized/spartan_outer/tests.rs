@@ -50,8 +50,11 @@ fn variable_field_value<F: JoltField>(row: &SpartanOuterRow, index: usize) -> F 
 /// Structured pseudo-random rows: full-range `u64`s, mixed-sign `i128`s,
 /// two-limb `u128`/`S128` values (both wide B-row paths), diverse flags.
 /// Rows `4k + 1` carry a success halt's flags and rows `4k + 2` a panic halt's,
-/// so every case covers both halt kinds. No satisfying-witness structure —
-/// parity must hold pointwise on any witness.
+/// so every case that keeps rows 1 and 2 covers both halt kinds. The
+/// `log_t = 1` cases have no row 2 and cover only the success halt; the
+/// prefix-0 and prefix-1 constant tails overwrite both rows with the last row,
+/// whose flags are random. No satisfying-witness structure — parity must hold
+/// pointwise on any witness.
 fn synthetic_rows(log_t: usize, seed: u64) -> Vec<SpartanOuterRow> {
     let mut state = seed | 1;
     let mut next = move || {
