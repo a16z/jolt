@@ -4,7 +4,9 @@
 //! entries and increments fit the cap, at the latest the last cycle round,
 //! fills exactly those field-coefficient entries and increments in the pass
 //! that yields its message, and the default kernel's direct phase
-//! ([`CycleState`]) binds them from there.
+//! ([`CycleState`]) binds them from there. Passes and increments cover the
+//! rows that can hold a register operand ([`StreamedRows`]), as the default
+//! kernel's collect does.
 
 use jolt_field::JoltField;
 use jolt_sumcheck::SumcheckError;
@@ -14,8 +16,7 @@ use super::{
     lut_len, lut_saturated, CoeffLut, CyclePhase, CycleState, READ_SEED_VALUES, WRITE_SEED_VALUES,
 };
 use crate::optimized::prefix_product::PrefixColumn;
-use crate::optimized::registers_read_write::rows::RegisterCycleRow;
-use crate::optimized::support::BundleStore;
+use crate::optimized::registers_read_write::rows::StreamedRows;
 
 mod pass;
 
@@ -58,16 +59,16 @@ struct Frontier<F: JoltField> {
 }
 
 impl<F: JoltField> Frontier<F> {
-    /// The last pass's counts when round `depth`'s level of `rows` rows is
-    /// the one to fill: from level 1 on, the first that fits the cap
-    /// ([`level_fits`]), or the last cycle round's two rows, which hold at
-    /// most `2K` entries.
-    fn admitted(&self, depth: usize, rows: usize) -> Option<&[usize]> {
+    /// The last pass's counts when round `depth`'s level of `rows` rows,
+    /// `increments` of them with a prefix cycle, is the one to fill: from
+    /// level 1 on, the first that fits the cap ([`level_fits`]), or the last
+    /// cycle round's two rows, which hold at most `2K` entries.
+    fn admitted(&self, depth: usize, rows: usize, increments: usize) -> Option<&[usize]> {
         let counts = self.counts.as_deref()?;
         let entries = counts
             .iter()
             .try_fold(0usize, |sum, &count| sum.checked_add(count));
-        let fits = entries.is_some_and(|entries| level_fits::<F>(entries, rows, self.cap));
+        let fits = entries.is_some_and(|entries| level_fits::<F>(entries, increments, self.cap));
         (depth >= 1 && (rows == 2 || fits)).then_some(counts)
     }
 }
@@ -109,7 +110,7 @@ impl<F: JoltField> StreamedCycleState<F> {
     /// any other streamed round counts the next level.
     pub(in crate::optimized::registers_read_write) fn quadratic(
         &mut self,
-        rows: &BundleStore<RegisterCycleRow>,
+        rows: &StreamedRows,
         e_in: &[F],
         e_out: &[F],
         r: &[F],
@@ -118,7 +119,12 @@ impl<F: JoltField> StreamedCycleState<F> {
             Phase::Filled(cycle) => return Ok(cycle.quadratic(e_in, e_out)),
             Phase::Streamed(frontier) => frontier,
         };
-        let Some(counts) = frontier.admitted(r.len(), 2 * e_out.len() * e_in.len()) else {
+        let admitted = frontier.admitted(
+            r.len(),
+            2 * e_out.len() * e_in.len(),
+            rows.prefix_len.div_ceil(1 << r.len()),
+        );
+        let Some(counts) = admitted else {
             let (quadratic, counts) =
                 pass::count(rows, e_in, e_out, r, &frontier.luts).map_err(pass_failed)?;
             frontier.counts = Some(counts);
@@ -126,8 +132,8 @@ impl<F: JoltField> StreamedCycleState<F> {
         };
         let (quadratic, entries, inc) =
             pass::fill(rows, e_in, e_out, r, &frontier.luts, counts).map_err(pass_failed)?;
-        // `tail` is never read: the increments span the whole power-of-two
-        // domain that is left.
+        // The increments end with the prefix; no later row writes a register,
+        // so their tail is zero.
         self.0 = Phase::Filled(CycleState(CyclePhase::Direct {
             entries,
             inc: PrefixColumn {
@@ -140,7 +146,7 @@ impl<F: JoltField> StreamedCycleState<F> {
 
     pub(in crate::optimized::registers_read_write) fn q_at_one(
         &self,
-        rows: &BundleStore<RegisterCycleRow>,
+        rows: &StreamedRows,
         e_in: &[F],
         e_out: &[F],
         r: &[F],
@@ -229,9 +235,10 @@ mod tests {
 
     use super::*;
 
-    /// A level is admitted exactly at the cap, never at level 0 or before a
-    /// pass counted it, always at the last cycle round's two rows, and not
-    /// when its bytes or its counts' sum pass `usize`.
+    /// A level is admitted exactly at the cap, priced with the increments
+    /// its prefix holds, never at level 0 or before a pass counted it, always
+    /// at the last cycle round's two rows, and not when its bytes or its
+    /// counts' sum pass `usize`.
     #[test]
     fn level_admission_is_exact_at_the_cap_and_past_usize_bytes() {
         let entry = size_of::<SparseEntry<Fr, Fr>>();
@@ -253,13 +260,21 @@ mod tests {
         };
         let cap = 3 * entry + 8 * field;
         let counts = || Some(vec![1, 2]);
-        assert_eq!(frontier(counts(), cap).admitted(1, 8), Some(&[1, 2][..]));
-        assert_eq!(frontier(counts(), cap - 1).admitted(1, 8), None);
-        assert_eq!(frontier(counts(), usize::MAX).admitted(0, 8), None);
-        assert_eq!(frontier(None, usize::MAX).admitted(1, 8), None);
-        assert_eq!(frontier(counts(), 0).admitted(3, 2), Some(&[1, 2][..]));
+        assert_eq!(frontier(counts(), cap).admitted(1, 8, 8), Some(&[1, 2][..]));
+        assert_eq!(frontier(counts(), cap - 1).admitted(1, 8, 8), None);
         assert_eq!(
-            frontier(Some(vec![usize::MAX, 2]), usize::MAX).admitted(1, 8),
+            frontier(counts(), cap - 3 * field).admitted(1, 8, 5),
+            Some(&[1, 2][..])
+        );
+        assert_eq!(
+            frontier(counts(), cap - 3 * field - 1).admitted(1, 8, 5),
+            None
+        );
+        assert_eq!(frontier(counts(), usize::MAX).admitted(0, 8, 8), None);
+        assert_eq!(frontier(None, usize::MAX).admitted(1, 8, 8), None);
+        assert_eq!(frontier(counts(), 0).admitted(3, 2, 2), Some(&[1, 2][..]));
+        assert_eq!(
+            frontier(Some(vec![usize::MAX, 2]), usize::MAX).admitted(1, 8, 8),
             None
         );
     }

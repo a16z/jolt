@@ -16,6 +16,7 @@ use jolt_verifier::stages::stage4::registers_read_write_checking::RegistersReadW
 use jolt_witness::{JoltWitnessPlane, WitnessError};
 
 use super::address::OperandEq;
+use super::rows::StreamedRows;
 use super::sparse::StreamedCycleState;
 use super::{
     read_write_order, CycleSource, OptimizedRegistersReadWrite, ReadWriteKernel, RegisterCycleRow,
@@ -64,30 +65,34 @@ impl<F: JoltField> ReadWriteKernel<F> {
         inputs: &ProverInputs<'_, F, RegistersReadWriteChecking<F>>,
         cap: usize,
     ) -> Result<Self, KernelError<F>> {
-        if inputs.relation.register_dimensions().log_t() > u32::BITS as usize {
-            return Err(KernelError::InvariantViolation {
+        let cycles = u32::try_from(inputs.relation.register_dimensions().log_t())
+            .ok()
+            .filter(|&bits| bits <= u32::BITS)
+            .and_then(|bits| 1usize.checked_shl(bits))
+            .ok_or(KernelError::InvariantViolation {
                 reason: "cycle count exceeds the seed entries' packed u32 row domain",
-            });
-        }
+            })?;
+        let rows = StreamedRows::new(rows, cycles)?;
         let state = StreamedCycleState::new(inputs.challenges.gamma, cap);
         Ok(Self::new(CycleSource::Streamed { state, rows }, inputs))
     }
 }
 
 /// The default kernel's two read-operand claims (`one_hot_operand_claims`,
-/// [`OperandEq`]) from one walk over `rows` in place of its index columns.
-/// Tasks hold whole `e_hi` blocks, so each callback lies in one block.
+/// [`OperandEq`]) from one walk over `rows` in place of its index columns:
+/// the `e_hi` blocks that hold a prefix row. Tasks hold whole blocks, so each
+/// callback lies in one block.
 pub(super) fn operand_claims<F: JoltField>(
-    rows: &BundleStore<RegisterCycleRow>,
+    rows: &StreamedRows,
     r_address: &[F],
     r_cycle: &[F],
 ) -> Result<(F, F), WitnessError> {
     let eq = OperandEq::new(r_address, r_cycle);
     let block = 1usize << eq.cycle_bits_in_lo;
-    let ranges = task_ranges(1 << r_cycle.len(), block);
+    let ranges = task_ranges(rows.prefix_end(block, 1 << r_cycle.len()), block);
     let claims = try_par_sum_vecs(ranges.len(), 2, |task| -> Result<_, WitnessError> {
         let mut claims = vec![F::zero(); 2];
-        rows.visit(
+        rows.store.visit(
             ranges[task].clone(),
             VISIT_ROWS.min(block),
             |start, rows| {
