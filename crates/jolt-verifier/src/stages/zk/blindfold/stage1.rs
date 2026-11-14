@@ -178,9 +178,9 @@ mod tests {
             jolt_claims::protocols::composed::r1cs::spartan_outer_opening_columns().len();
         assert_eq!(ids.len(), expected_len);
         #[cfg(not(feature = "field-inline"))]
-        assert_eq!(ids.len(), 37);
+        assert_eq!(ids.len(), 36);
         #[cfg(feature = "field-inline")]
-        assert_eq!(ids.len(), 52);
+        assert_eq!(ids.len(), 51);
 
         let ordinary: Vec<ComposedOpeningId> = dimensions
             .variables()

@@ -230,7 +230,8 @@ pub const PREAMBLE_TARGETS: &[TamperTarget] = &[
         VerifierPhase::Stage2,
         MutationStrategy::FlipBool,
         TamperCoverage::Active,
-        "panic materializes as public memory for the RAM output check; real fixture bool flip",
+        "the panic claim enters the stage-2 product uni-skip input as `ClaimedPanic`; real \
+         fixture bool flip",
     ),
     checked_both(
         "public_io.memory_layout",
@@ -1526,7 +1527,6 @@ fn expand_manifest_path(target: TamperTarget) -> Vec<&'static str> {
             "claims.stage1.outer.outer_remainder.next_is_virtual",
             "claims.stage1.outer.outer_remainder.next_is_first_in_sequence",
             "claims.stage1.outer.outer_remainder.lookup_output",
-            "claims.stage1.outer.outer_remainder.should_jump",
             "claims.stage1.outer.outer_remainder.add_operands",
             "claims.stage1.outer.outer_remainder.subtract_operands",
             "claims.stage1.outer.outer_remainder.multiply_operands",

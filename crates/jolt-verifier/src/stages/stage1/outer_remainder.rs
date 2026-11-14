@@ -260,7 +260,6 @@ impl<F: JoltField> ConcreteSumcheck<F> for OuterRemainder<F> {
             next_is_virtual: opening_point.clone(),
             next_is_first_in_sequence: opening_point.clone(),
             lookup_output: opening_point.clone(),
-            should_jump: opening_point.clone(),
             add_operands: opening_point.clone(),
             subtract_operands: opening_point.clone(),
             multiply_operands: opening_point.clone(),
@@ -412,7 +411,6 @@ mod tests {
             next_is_virtual: next(),
             next_is_first_in_sequence: next(),
             lookup_output: next(),
-            should_jump: next(),
             add_operands: next(),
             subtract_operands: next(),
             multiply_operands: next(),
@@ -516,7 +514,7 @@ mod tests {
         let log_t = 3usize;
         let dimensions = SpartanOuterDimensions::rv64(log_t);
         let variable_count = dimensions.variables().len();
-        assert_eq!(variable_count, 37);
+        assert_eq!(variable_count, 36);
 
         let tau_len = log_t + 2;
         let remainder_len = 1 + log_t;

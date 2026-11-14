@@ -65,7 +65,7 @@ use super::support::{
     pin_derived_term_if_derived, try_par_sum_vecs, BundleAccess, BundleStore, GruenRoundMessage,
     PrefixCycleWeights, RoundChallenges,
 };
-use crate::uniskip::UniskipKernel;
+use crate::uniskip::{ProductUniskipUpstream, UniskipKernel};
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
@@ -393,7 +393,7 @@ impl OptimizedProductUniskip {
     }
 }
 
-impl<F: JoltField> UniskipKernel<F, ProductRemainder<F>, SumcheckInputClaims<F, ProductUniskip<F>>>
+impl<F: JoltField> UniskipKernel<F, ProductRemainder<F>, ProductUniskipUpstream<F>>
     for OptimizedProductUniskip
 {
     #[tracing::instrument(skip_all, name = "SpartanProductUniskip::prepare")]
@@ -431,7 +431,7 @@ impl<F: JoltField> UniskipKernel<F, ProductRemainder<F>, SumcheckInputClaims<F, 
         &self,
         session: &mut ProofSession,
         late_tau: &[F],
-        inputs: &SumcheckInputClaims<F, ProductUniskip<F>>,
+        upstream: &ProductUniskipUpstream<F>,
     ) -> Result<UnivariatePoly<F>, KernelError<F>> {
         let &[tau_high] = late_tau else {
             return Err(KernelError::InvariantViolation {
@@ -453,12 +453,12 @@ impl<F: JoltField> UniskipKernel<F, ProductRemainder<F>, SumcheckInputClaims<F, 
             t1_values[position] = *value;
         }
         // At a base node, the relation's Lagrange input claim selects the
-        // corresponding stage-1 Spartan-outer product opening; the shared
-        // relation keeps the composed lane order, including field-inline.
-        // Those openings sit at `product_tau_low`'s point by construction in
-        // stage 2, so the uni-skip round sum no longer cross-checks them
-        // against the witness: the stage driver's final-claim self-check and
-        // the verifier do.
+        // corresponding lane's value from the stage-1 Spartan-outer openings;
+        // lane 3's value also reads the claimed panic bit. The shared relation
+        // keeps the composed lane order, including field-inline. Those openings
+        // sit at `product_tau_low`'s point by construction in stage 2, so the
+        // uni-skip round sum no longer cross-checks them against the witness:
+        // the stage driver's final-claim self-check and the verifier do.
         for (lane, value) in t1_values
             .iter_mut()
             .skip(BASE_START)
@@ -466,8 +466,12 @@ impl<F: JoltField> UniskipKernel<F, ProductRemainder<F>, SumcheckInputClaims<F, 
             .enumerate()
         {
             let node = F::from_i64(DOMAIN_START + lane as i64);
-            let relation = ProductUniskip::new(SpartanProductDimensions::new(carry.log_t), node);
-            *value = relation.input_claim(inputs, &NoChallenges::default())?;
+            let relation = ProductUniskip::new(
+                SpartanProductDimensions::new(carry.log_t),
+                node,
+                upstream.claimed_panic,
+            );
+            *value = relation.input_claim(&upstream.openings, &NoChallenges::default())?;
         }
         let t1_coefficients = interpolate_to_coeffs(EXTENDED_START, &t1_values);
         Ok(UnivariatePoly::new(poly_mul(
@@ -904,7 +908,8 @@ impl<F: JoltField> SumcheckKernel<F> for ProductRemainderKernel<F> {
                 SpartanProductVirtualizationPublic::LagrangeWeight(index) => {
                     self.lagrange_weights[index]
                 }
-                SpartanProductVirtualizationPublic::UniskipLagrangeWeight(_) => continue,
+                SpartanProductVirtualizationPublic::UniskipLagrangeWeight(_)
+                | SpartanProductVirtualizationPublic::ClaimedPanic => continue,
             };
             pin_derived_term_if_derived(
                 relation,
@@ -1119,11 +1124,16 @@ mod tests {
         scale * total
     }
 
+    /// Upstream lane inputs whose lane values are the brute-force lane sums at
+    /// `tau_low`, with lane 3's value spread over nonzero `halt` and
+    /// `halt_panic` openings, so that it is
+    /// `jump − (1 − 2Π)·halt − 2·halt_panic` only under the claimed `Π`.
     fn uniskip_input_claims(
         rows: &[SpartanProductRow],
         #[cfg(feature = "field-inline")] field_rows: &[(usize, FieldInlineSpartanRow<Fr>)],
         tau_low: &[Fr],
-    ) -> SumcheckInputClaims<Fr, ProductUniskip<Fr>> {
+        claimed_panic: bool,
+    ) -> ProductUniskipUpstream<Fr> {
         let at = |lane| {
             let node = Fr::from_i64(DOMAIN_START + lane);
             true_input_claim(
@@ -1135,10 +1145,14 @@ mod tests {
                 node,
             )
         };
+        let (halt, halt_panic) = (Fr::from_u64(19), Fr::from_u64(23));
+        let (one, two) = (Fr::from_u64(1), Fr::from_u64(2));
         let inputs = ProductUniskipInputClaims {
             product: at(0),
             should_branch: at(1),
-            should_jump: at(2),
+            jump: at(2) + (one - two * Fr::from_bool(claimed_panic)) * halt + two * halt_panic,
+            halt,
+            halt_panic,
         };
         #[cfg(feature = "field-inline")]
         let inputs = ComposedClaims {
@@ -1148,7 +1162,10 @@ mod tests {
                 inv_product: at(SPARTAN_PRODUCT_BASE_LANES as i64 + 1),
             },
         };
-        inputs
+        ProductUniskipUpstream {
+            openings: inputs,
+            claimed_panic,
+        }
     }
 
     struct ParityInputs {
@@ -1244,20 +1261,10 @@ mod tests {
             #[cfg(feature = "field-inline")]
             &field_rows,
         );
-        let uniskip_inputs = uniskip_input_claims(
-            &rows,
-            #[cfg(feature = "field-inline")]
-            &field_rows,
-            &tau_low,
-        );
 
         let mut reference_session = ProofSession::default();
         reference_session
             .park(SpartanProductKernel::<Fr>::prepare(log_t, &tau_low, &backend).unwrap());
-        let reference_uniskip = ReferenceBackend
-            .first_round_poly(&mut reference_session, &[tau_high], &uniskip_inputs)
-            .unwrap();
-
         let mut optimized_session = ProofSession::default();
         OptimizedProductUniskip::prepare_from_rows(
             &mut optimized_session,
@@ -1268,13 +1275,25 @@ mod tests {
             field_rows.clone(),
         )
         .unwrap();
-        let optimized_uniskip = OptimizedProductUniskip
-            .first_round_poly(&mut optimized_session, &[tau_high], &uniskip_inputs)
-            .unwrap();
-        assert_eq!(
-            optimized_uniskip, reference_uniskip,
-            "product uni-skip first-round polynomial, log_t = {log_t}"
-        );
+        for claimed_panic in [false, true] {
+            let upstream = uniskip_input_claims(
+                &rows,
+                #[cfg(feature = "field-inline")]
+                &field_rows,
+                &tau_low,
+                claimed_panic,
+            );
+            let reference_uniskip = ReferenceBackend
+                .first_round_poly(&mut reference_session, &[tau_high], &upstream)
+                .unwrap();
+            let optimized_uniskip = OptimizedProductUniskip
+                .first_round_poly(&mut optimized_session, &[tau_high], &upstream)
+                .unwrap();
+            assert_eq!(
+                optimized_uniskip, reference_uniskip,
+                "product uni-skip first-round polynomial, log_t = {log_t}, Π = {claimed_panic}"
+            );
+        }
 
         let input_claim = true_input_claim(
             &rows,
@@ -1431,6 +1450,65 @@ mod tests {
         });
     }
 
+    /// The optimized front takes lane 3's base value from the upstream
+    /// openings through the claimed panic bit: under the claimed bit it matches
+    /// the reference front's brute-force lane sums, under the opposite bit it
+    /// does not.
+    #[test]
+    fn uniskip_front_reads_the_claimed_panic_bit() {
+        let (log_t, seed) = (4, 97);
+        let rows = synthetic_rows(log_t, seed);
+        #[cfg(feature = "field-inline")]
+        let field_rows = synthetic_field_rows(log_t, seed ^ 0xF1E1D);
+        let tau_low: Vec<Fr> = (0..log_t)
+            .map(|i| Fr::from_u64(29 + 7 * i as u64))
+            .collect();
+        let tau_high = Fr::from_u64(6101);
+        let backend = fixed_backend_from_rows(
+            log_t,
+            &rows,
+            #[cfg(feature = "field-inline")]
+            &field_rows,
+        );
+        let mut reference_session = ProofSession::default();
+        reference_session
+            .park(SpartanProductKernel::<Fr>::prepare(log_t, &tau_low, &backend).unwrap());
+        let mut optimized_session = ProofSession::default();
+        OptimizedProductUniskip::prepare_from_rows(
+            &mut optimized_session,
+            log_t,
+            &tau_low,
+            rows.clone(),
+            #[cfg(feature = "field-inline")]
+            field_rows.clone(),
+        )
+        .unwrap();
+        for claimed_panic in [false, true] {
+            let upstream = uniskip_input_claims(
+                &rows,
+                #[cfg(feature = "field-inline")]
+                &field_rows,
+                &tau_low,
+                claimed_panic,
+            );
+            let reference = ReferenceBackend
+                .first_round_poly(&mut reference_session, &[tau_high], &upstream)
+                .unwrap();
+            let optimized = OptimizedProductUniskip
+                .first_round_poly(&mut optimized_session, &[tau_high], &upstream)
+                .unwrap();
+            assert_eq!(optimized, reference, "Π = {claimed_panic}");
+            let flipped = ProductUniskipUpstream {
+                openings: upstream.openings.clone(),
+                claimed_panic: !claimed_panic,
+            };
+            let misread = OptimizedProductUniskip
+                .first_round_poly(&mut optimized_session, &[tau_high], &flipped)
+                .unwrap();
+            assert_ne!(misread, reference, "Π = {claimed_panic}");
+        }
+    }
+
     fn heavy(value: Fr) -> bool {
         let mut bytes_le = [0u8; 32];
         value.to_bytes_le(&mut bytes_le);
@@ -1518,13 +1596,14 @@ mod tests {
                 #[cfg(feature = "field-inline")]
                 &field_rows,
                 &tau_low,
+                false,
             );
 
             let mut reference_session = ProofSession::default();
             <ReferenceBackend as UniskipKernel<
                 Fr,
                 ProductRemainder<Fr>,
-                SumcheckInputClaims<Fr, ProductUniskip<Fr>>,
+                ProductUniskipUpstream<Fr>,
             >>::prepare(
                 &ReferenceBackend,
                 &mut reference_session,
@@ -1541,7 +1620,7 @@ mod tests {
             <OptimizedProductUniskip as UniskipKernel<
                 Fr,
                 ProductRemainder<Fr>,
-                SumcheckInputClaims<Fr, ProductUniskip<Fr>>,
+                ProductUniskipUpstream<Fr>,
             >>::prepare(
                 &OptimizedProductUniskip,
                 &mut optimized_session,

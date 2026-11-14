@@ -183,11 +183,13 @@ impl<F: JoltField> ConcreteSumcheck<F> for ProductRemainder<F> {
                         "product remainder Lagrange weight index {index} out of range for domain size {SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE}"
                     )))
             }
-            // `UniskipLagrangeWeight` belongs to the product uni-skip relation, not the
-            // remainder: `product_remainder` reweights via `product_weight` ->
-            // `LagrangeWeight` only (plus `TauKernel`). Reject rather than silently
-            // aliasing it onto the Lagrange-weight path, so a misrouted public surfaces.
-            SpartanProductVirtualizationPublic::UniskipLagrangeWeight(_) => {
+            // `UniskipLagrangeWeight` and `ClaimedPanic` belong to the product uni-skip
+            // relation, not the remainder: `product_remainder` reweights via
+            // `product_weight` -> `LagrangeWeight` only (plus `TauKernel`) and reads no
+            // panic bit. Reject rather than silently aliasing them, so a misrouted public
+            // surfaces.
+            SpartanProductVirtualizationPublic::UniskipLagrangeWeight(_)
+            | SpartanProductVirtualizationPublic::ClaimedPanic => {
                 Err(VerifierError::MissingStageClaimDerived { id: (*id).into() })
             }
             SpartanProductVirtualizationPublic::TauKernel => {

@@ -150,14 +150,20 @@ fn field_row(instruction: JoltInstructionRow) -> JoltTraceRow {
     trace_row(instruction, RegisterState::default(), RamAccess::NoOp).unwrap()
 }
 
-/// A terminal JAL row: the only hand-craftable last real instruction — its
-/// `Jump` flag turns off the otherwise-unconditional PC-update row 16, and
-/// `ShouldJump` stays 0 because the successor is a no-op or absent — with the
-/// link write (`rd = address + 4`) row 13 demands.
-fn halt_jal_row(offset: usize, rd: u8) -> JoltTraceRow {
-    let jal = instruction(JoltInstructionKind::JAL, offset, Some(rd), None, None, 0);
+/// The terminal halt: `jolt.success`'s row carries `Jump` and `Halt` and targets
+/// 0, so a no-op or the `T−1` boundary follows it; it writes the link
+/// (`rd = address + 4`) row 13 demands.
+fn success_halt_row(offset: usize, rd: u8) -> JoltTraceRow {
+    let halt = instruction(
+        JoltInstructionKind::JoltSuccess,
+        offset,
+        Some(rd),
+        None,
+        None,
+        0,
+    );
     trace_row(
-        jal,
+        halt,
         RegisterState {
             rd: Some(RegisterWrite {
                 register: rd,
@@ -231,11 +237,11 @@ fn termination_store_rows(offset: usize) -> [JoltTraceRow; 2] {
 
 /// A field-inline guest executing only ordinary instructions (an ADDI with
 /// consistent register semantics, the termination store, then the terminal
-/// JAL): the rv64 eq rows are satisfied while every field-inline column is zero.
+/// halt): the rv64 eq rows are satisfied while every field-inline column is zero.
 fn addi_only_program() -> (Vec<JoltInstructionRow>, Vec<JoltTraceRow>) {
     let addi = instruction(JoltInstructionKind::ADDI, 0, Some(1), Some(2), None, 3);
     let [one, store] = termination_store_rows(1);
-    let jal = halt_jal_row(3, 5);
+    let halt = success_halt_row(3, 5);
     let rows = vec![
         trace_row(
             addi,
@@ -258,14 +264,14 @@ fn addi_only_program() -> (Vec<JoltInstructionRow>, Vec<JoltTraceRow>) {
         .unwrap(),
         one,
         store,
-        jal,
+        halt,
     ];
     (
         vec![
             addi,
             one.instruction(),
             store.instruction(),
-            jal.instruction(),
+            halt.instruction(),
         ],
         rows,
     )
@@ -306,14 +312,14 @@ fn field_arithmetic_program() -> (Vec<JoltInstructionRow>, Vec<JoltTraceRow>, Ve
         0,
     );
     let [one, store] = termination_store_rows(3);
-    let jal = halt_jal_row(5, 5);
+    let halt = success_halt_row(5, 5);
     let rows = vec![
         field_row(load_a),
         field_row(load_b),
         field_row(mul),
         one,
         store,
-        jal,
+        halt,
     ];
     let field_events = vec![
         FieldEvent {
@@ -366,7 +372,7 @@ fn field_arithmetic_program() -> (Vec<JoltInstructionRow>, Vec<JoltTraceRow>, Ve
             mul,
             one.instruction(),
             store.instruction(),
-            jal.instruction(),
+            halt.instruction(),
         ],
         rows,
         field_events,
@@ -624,7 +630,7 @@ pub(crate) mod twins {
         let tau_low = product_tau_low(&stage1.clear_output.remainder_point(), log_t).unwrap();
 
         let tau_high: Fr = draw_spartan_product_tau_high(transcript).unwrap();
-        let uniskip_relation = ProductUniskip::new(product_dimensions, tau_high);
+        let uniskip_relation = ProductUniskip::new(product_dimensions, tau_high, public_io.panic);
         let uniskip_inputs = product_uniskip_input_values_from_stage1(&stage1.clear_output);
         let uniskip_input_claim = uniskip_relation
             .input_claim(&uniskip_inputs, &NoChallenges::default())

@@ -43,15 +43,15 @@ fn variable_field_value<F: JoltField>(row: &SpartanOuterRow, index: usize) -> F 
         17 => row.next_is_virtual.to_field(),
         18 => row.next_is_first_in_sequence.to_field(),
         19 => row.lookup_output.to_field(),
-        20 => row.should_jump.to_field(),
         _ => F::from_bool(row.circuit_flags[CIRCUIT_FLAGS[index - FLAG_INPUT_BASE]]),
     }
 }
 
 /// Structured pseudo-random rows: full-range `u64`s, mixed-sign `i128`s,
 /// two-limb `u128`/`S128` values (both wide B-row paths), diverse flags.
-/// No satisfying-witness structure — parity must hold pointwise on any
-/// witness.
+/// Rows `4k + 1` carry a success halt's flags and rows `4k + 2` a panic halt's,
+/// so every case covers both halt kinds. No satisfying-witness structure —
+/// parity must hold pointwise on any witness.
 fn synthetic_rows(log_t: usize, seed: u64) -> Vec<SpartanOuterRow> {
     let mut state = seed | 1;
     let mut next = move || {
@@ -61,7 +61,7 @@ fn synthetic_rows(log_t: usize, seed: u64) -> Vec<SpartanOuterRow> {
         state
     };
     (0..1usize << log_t)
-        .map(|_| {
+        .map(|t| {
             let mut bit = {
                 let value = next();
                 let mut position = 0;
@@ -98,10 +98,21 @@ fn synthetic_rows(log_t: usize, seed: u64) -> Vec<SpartanOuterRow> {
                 next_is_virtual: NextIsVirtual(bit()),
                 next_is_first_in_sequence: NextIsFirstInSequence(bit()),
                 lookup_output: LookupOutput(next()),
-                should_jump: ShouldJump(bit()),
                 circuit_flags: CIRCUIT_FLAGS.into_iter().fold(
                     CircuitFlagSet::default(),
-                    |flags, flag| if bit() { flags.set(flag) } else { flags },
+                    |flags, flag| {
+                        let set = match (flag, t % 4) {
+                            (CircuitFlags::Jump | CircuitFlags::Halt, 1 | 2)
+                            | (CircuitFlags::HaltPanic, 2) => true,
+                            (CircuitFlags::HaltPanic, 1) => false,
+                            _ => bit(),
+                        };
+                        if set {
+                            flags.set(flag)
+                        } else {
+                            flags
+                        }
+                    },
                 ),
             }
         })

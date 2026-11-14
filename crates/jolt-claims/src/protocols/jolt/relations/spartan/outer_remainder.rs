@@ -75,8 +75,6 @@ pub struct OuterRemainderOutputClaims<C> {
     pub next_is_first_in_sequence: C,
     #[opening(LookupOutput)]
     pub lookup_output: C,
-    #[opening(ShouldJump)]
-    pub should_jump: C,
     #[opening(OpFlags(CircuitFlags::AddOperands))]
     pub add_operands: C,
     #[opening(OpFlags(CircuitFlags::SubtractOperands))]

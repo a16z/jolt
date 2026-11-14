@@ -11,15 +11,20 @@ use crate::{
     util::indent,
 };
 
+/// The RV64 constraints under each claimed panic bit; they differ only in
+/// the jump lane's output (row 21's `C`), which the extracted Lean definition
+/// selects with its `claimed_panic` parameter.
 pub struct ZkLeanR1CSConstraints<J> {
-    matrices: ConstraintMatrices<Fr>,
+    success: ConstraintMatrices<Fr>,
+    panic: ConstraintMatrices<Fr>,
     phantom: std::marker::PhantomData<J>,
 }
 
 impl<J: JoltParameterSet> ZkLeanR1CSConstraints<J> {
     pub fn extract() -> Self {
         Self {
-            matrices: rv64::rv64_trace_constraints(),
+            success: rv64::rv64_trace_constraints(false),
+            panic: rv64::rv64_trace_constraints(true),
             phantom: std::marker::PhantomData,
         }
     }
@@ -71,16 +76,22 @@ impl<J: JoltParameterSet> ZkLeanR1CSConstraints<J> {
         indent_level = top_level_indent;
         writeln!(
             f,
-            "{}def uniform_jolt_constraints [ZKField f] (jolt_inputs : JoltR1CSInputs f) : ZKBuilder f PUnit := do",
+            "{}def uniform_jolt_constraints [ZKField f] (claimed_panic : Bool) (jolt_inputs : JoltR1CSInputs f) : ZKBuilder f PUnit := do",
             indent(indent_level)
         )?;
         indent_level += 1;
-        for (index, ((a, b), c)) in self
-            .matrices
-            .a
-            .iter()
-            .zip(&self.matrices.b)
-            .zip(&self.matrices.c)
+        let rows = |matrices: &ConstraintMatrices<Fr>| {
+            matrices
+                .a
+                .iter()
+                .zip(&matrices.b)
+                .zip(&matrices.c)
+                .map(|((a, b), c)| [a.clone(), b.clone(), c.clone()])
+                .collect::<Vec<_>>()
+        };
+        for (index, (success, panic)) in rows(&self.success)
+            .into_iter()
+            .zip(rows(&self.panic))
             .enumerate()
         {
             writeln!(
@@ -91,24 +102,19 @@ impl<J: JoltParameterSet> ZkLeanR1CSConstraints<J> {
             )?;
             writeln!(f, "{}ZKBuilder.constrainR1CS", indent(indent_level))?;
             indent_level += 1;
-            writeln!(
-                f,
-                "{}{}",
-                indent(indent_level),
-                pretty_print_lc("jolt_inputs", a)
-            )?;
-            writeln!(
-                f,
-                "{}{}",
-                indent(indent_level),
-                pretty_print_lc("jolt_inputs", b)
-            )?;
-            writeln!(
-                f,
-                "{}{}",
-                indent(indent_level),
-                pretty_print_lc("jolt_inputs", c)
-            )?;
+            for (success, panic) in success.iter().zip(&panic) {
+                let success = pretty_print_lc("jolt_inputs", success);
+                let panic = pretty_print_lc("jolt_inputs", panic);
+                if success == panic {
+                    writeln!(f, "{}{success}", indent(indent_level))?;
+                } else {
+                    writeln!(
+                        f,
+                        "{}(if claimed_panic then {panic} else {success})",
+                        indent(indent_level)
+                    )?;
+                }
+            }
             indent_level -= 1;
         }
 
@@ -168,5 +174,30 @@ fn pretty_print_lc(inputs_struct: &str, row: &SparseRow<Fr>) -> String {
         [] => "0".to_string(),
         [term] => term.clone(),
         _ => format!("({})", terms.join(" + ")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::constants::RV64IParameterSet;
+
+    /// The extracted constraints carry both halt flags, no `ShouldJump`, and
+    /// branch on the claimed panic bit only in the jump lane.
+    #[test]
+    fn extracted_constraints_branch_only_the_jump_lane() {
+        let mut output = Vec::new();
+        ZkLeanR1CSConstraints::<RV64IParameterSet>::extract()
+            .zklean_pretty_print(&mut output, 0)
+            .unwrap();
+        let output = String::from_utf8(output).unwrap();
+        assert!(output.contains("OpFlags_Halt : ZKExpr f"));
+        assert!(output.contains("OpFlags_HaltPanic : ZKExpr f"));
+        assert!(!output.contains("ShouldJump"));
+        assert_eq!(output.matches("if claimed_panic then").count(), 1);
+        assert_eq!(
+            output.matches("ZKBuilder.constrainR1CS").count(),
+            RV64_CONSTRAINT_NAMES.len()
+        );
     }
 }

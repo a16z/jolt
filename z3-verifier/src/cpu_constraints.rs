@@ -102,7 +102,6 @@ struct JoltState<T = Int> {
     flags: [T; NUM_CIRCUIT_FLAGS],
     instruction_flags: [T; NUM_INSTRUCTION_FLAGS],
     next_is_noop: T,
-    should_jump: T,
     should_branch: T,
     next_is_virtual: T,
     next_is_first_in_sequence: T,
@@ -143,7 +142,6 @@ impl JoltState {
                 Int::new_const(format!("{prefix}_instr_flag_{i}"))
             }),
             next_is_noop: Int::new_const(format!("{prefix}_next_is_noop")),
-            should_jump: Int::new_const(format!("{prefix}_should_jump")),
             should_branch: Int::new_const(format!("{prefix}_should_branch")),
             next_is_virtual: Int::new_const(format!("{prefix}_next_is_virtual")),
             next_is_first_in_sequence: Int::new_const(format!(
@@ -175,7 +173,6 @@ impl JoltState {
             &self.next_is_virtual,
             &self.next_is_first_in_sequence,
             &self.lookup_output,
-            &self.should_jump,
         ];
         array::from_fn(|index| {
             if index < scalars.len() {
@@ -203,7 +200,9 @@ impl JoltState {
     }
 
     fn add_r1cs_constraints(&self, solver: &mut Solver) {
-        let matrices = rv64::rv64_trace_constraints::<Fr>();
+        // Every listed instruction pins `Halt = 0`, the only column the claimed
+        // panic bit scales, so either claim gives the same constraints.
+        let matrices = rv64::rv64_trace_constraints::<Fr>(false);
         let vars = self.r1cs_vars();
         for ((a, b), c) in matrices.a.iter().zip(&matrices.b).zip(&matrices.c) {
             let a = Self::sparse_row_to_int(a, &vars);
@@ -237,8 +236,7 @@ impl JoltState {
         let mut or_terms = vec![
             // we are currently missing constraints on next_pc
             //(&self.next_pc).ne(&other.next_pc),
-            self.next_is_noop.eq(Int::from(0))
-                & self.next_unexpanded_pc.ne(&other.next_unexpanded_pc),
+            self.next_unexpanded_pc.ne(&other.next_unexpanded_pc),
             self.left_lookup.ne(&other.left_lookup),
             self.right_lookup.ne(&other.right_lookup),
             self.ram_addr.ne(&other.ram_addr),
@@ -366,7 +364,6 @@ impl JoltState {
             flags,
             instruction_flags,
             next_is_noop: eval(&self.next_is_noop)?,
-            should_jump: eval(&self.should_jump)?,
             should_branch: eval(&self.should_branch)?,
             next_is_virtual: eval(&self.next_is_virtual)?,
             next_is_first_in_sequence: eval(&self.next_is_first_in_sequence)?,

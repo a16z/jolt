@@ -43,20 +43,18 @@ use jolt_poly::lagrange::{
     centered_lagrange_evals, centered_lagrange_kernel, interpolate_to_coeffs, poly_mul,
 };
 use jolt_poly::{BindingOrder, Polynomial, UnivariatePoly};
-use jolt_verifier::stages::relations::SumcheckInputClaims;
 use jolt_verifier::stages::stage2::product_remainder::ProductRemainder;
-use jolt_verifier::stages::stage2::product_uniskip::ProductUniskip;
 use jolt_witness::JoltWitnessOracle;
 #[cfg(feature = "field-inline")]
 use jolt_witness::WitnessError;
 
 use super::views::{dense_view, eq_table};
-use crate::uniskip::UniskipKernel;
+use crate::uniskip::{ProductUniskipUpstream, UniskipKernel};
 use crate::NaiveSumcheckProver;
 use crate::ProverInputs;
 use crate::{KernelError, PrepareKernel, ProofSession, ReferenceBackend, SumcheckKernel};
 use jolt_witness::JoltWitnessPlane;
-impl<F: JoltField> UniskipKernel<F, ProductRemainder<F>, SumcheckInputClaims<F, ProductUniskip<F>>>
+impl<F: JoltField> UniskipKernel<F, ProductRemainder<F>, ProductUniskipUpstream<F>>
     for ReferenceBackend
 {
     /// Runs on `tau_low` only — `τ_high` is drawn after this call and reaches
@@ -81,7 +79,7 @@ impl<F: JoltField> UniskipKernel<F, ProductRemainder<F>, SumcheckInputClaims<F, 
         &self,
         session: &mut ProofSession,
         late_tau: &[F],
-        _inputs: &SumcheckInputClaims<F, ProductUniskip<F>>,
+        _upstream: &ProductUniskipUpstream<F>,
     ) -> Result<UnivariatePoly<F>, KernelError<F>> {
         let &[tau_high] = late_tau else {
             return Err(KernelError::InvariantViolation {

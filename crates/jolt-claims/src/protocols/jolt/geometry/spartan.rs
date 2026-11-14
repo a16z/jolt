@@ -1,7 +1,7 @@
 use jolt_field::Ring;
 use jolt_riscv::{CircuitFlags, InstructionFlags, NUM_CIRCUIT_FLAGS};
 
-use crate::derived;
+use crate::{derived, opening};
 
 use super::super::{
     JoltDerivedId, JoltExpr, JoltOpeningId, JoltRelationId, JoltVirtualPolynomial,
@@ -12,7 +12,7 @@ pub(crate) const OUTER_REMAINDER_DEGREE: usize = 3;
 pub(crate) const PRODUCT_REMAINDER_DEGREE: usize = 3;
 pub(crate) const SHIFT_DEGREE: usize = 2;
 
-pub const SPARTAN_OUTER_R1CS_INPUTS: [JoltVirtualPolynomial; 21 + NUM_CIRCUIT_FLAGS] = [
+pub const SPARTAN_OUTER_R1CS_INPUTS: [JoltVirtualPolynomial; 20 + NUM_CIRCUIT_FLAGS] = [
     JoltVirtualPolynomial::LeftInstructionInput,
     JoltVirtualPolynomial::RightInstructionInput,
     JoltVirtualPolynomial::Product,
@@ -33,7 +33,6 @@ pub const SPARTAN_OUTER_R1CS_INPUTS: [JoltVirtualPolynomial; 21 + NUM_CIRCUIT_FL
     JoltVirtualPolynomial::NextIsVirtual,
     JoltVirtualPolynomial::NextIsFirstInSequence,
     JoltVirtualPolynomial::LookupOutput,
-    JoltVirtualPolynomial::ShouldJump,
     JoltVirtualPolynomial::OpFlags(CircuitFlags::AddOperands),
     JoltVirtualPolynomial::OpFlags(CircuitFlags::SubtractOperands),
     JoltVirtualPolynomial::OpFlags(CircuitFlags::MultiplyOperands),
@@ -173,6 +172,67 @@ where
     ))
 }
 
+fn product_claimed_panic<F>() -> JoltExpr<F>
+where
+    F: Ring,
+{
+    derived(JoltDerivedId::from(
+        SpartanProductVirtualizationPublic::ClaimedPanic,
+    ))
+}
+
+/// One term of product lane 3's output: `(constant + per_panic·Π)·OpFlags(flag)`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct JumpLaneTerm {
+    pub(crate) flag: CircuitFlags,
+    pub(crate) constant: i8,
+    pub(crate) per_panic: i8,
+}
+
+/// The single owner of product lane 3, whose factors are `Jump` and
+/// `1 − NextIsNoop`: every cycle satisfies
+/// `Jump·(1 − NextIsNoop) = Jump − (1 − 2Π)·Halt − 2·HaltPanic`, with `Π` the
+/// claimed panic bit. For boolean flags this holds only when an ordinary jump
+/// has a real successor (so it is not the last cycle), or a halt is followed by
+/// padding (or is the last cycle) and its `HaltPanic` equals `Π`, or the row
+/// carries none of the three flags; excluding every other assignment needs a
+/// field characteristic other than 2 and 3. This `−2` form keeps every
+/// full-trace coefficient in `{±1, −2}`, which the z3 and zklean coefficient
+/// tables accept.
+pub(crate) const PRODUCT_JUMP_LANE_OUTPUT: [JumpLaneTerm; 3] = [
+    JumpLaneTerm {
+        flag: CircuitFlags::Jump,
+        constant: 1,
+        per_panic: 0,
+    },
+    JumpLaneTerm {
+        flag: CircuitFlags::Halt,
+        constant: -1,
+        per_panic: 2,
+    },
+    JumpLaneTerm {
+        flag: CircuitFlags::HaltPanic,
+        constant: -2,
+        per_panic: 0,
+    },
+];
+
+/// [`PRODUCT_JUMP_LANE_OUTPUT`] over the Spartan-outer flag openings, with `Π`
+/// the `ClaimedPanic` derived public.
+pub(crate) fn product_jump_lane_output<F>() -> JoltExpr<F>
+where
+    F: Ring,
+{
+    PRODUCT_JUMP_LANE_OUTPUT
+        .into_iter()
+        .fold(JoltExpr::zero(), |output, term| {
+            let flag = opening(outer_opening(JoltVirtualPolynomial::OpFlags(term.flag)));
+            output
+                + i128::from(term.constant) * flag.clone()
+                + i128::from(term.per_panic) * (product_claimed_panic() * flag)
+        })
+}
+
 pub fn product_uniskip_opening() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::UnivariateSkip,
@@ -186,10 +246,6 @@ pub fn product_outer_opening() -> JoltOpeningId {
 
 pub fn product_should_branch_outer_opening() -> JoltOpeningId {
     outer_opening(JoltVirtualPolynomial::ShouldBranch)
-}
-
-pub fn product_should_jump_outer_opening() -> JoltOpeningId {
-    outer_opening(JoltVirtualPolynomial::ShouldJump)
 }
 
 pub fn left_instruction_input_product() -> JoltOpeningId {

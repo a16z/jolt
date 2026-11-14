@@ -20,6 +20,8 @@
 
 use jolt_riscv::{CircuitFlags, NUM_CIRCUIT_FLAGS};
 
+use crate::protocols::jolt::geometry::spartan::PRODUCT_JUMP_LANE_OUTPUT;
+
 /// Constant-1 wire.
 pub const V_CONST: usize = 0;
 
@@ -43,29 +45,32 @@ pub const V_NEXT_PC: usize = 17;
 pub const V_NEXT_IS_VIRTUAL: usize = 18;
 pub const V_NEXT_IS_FIRST_IN_SEQUENCE: usize = 19;
 pub const V_LOOKUP_OUTPUT: usize = 20;
-pub const V_SHOULD_JUMP: usize = 21;
 
-pub const V_FLAG_ADD_OPERANDS: usize = 22;
-pub const V_FLAG_SUBTRACT_OPERANDS: usize = 23;
-pub const V_FLAG_MULTIPLY_OPERANDS: usize = 24;
-pub const V_FLAG_LOAD: usize = 25;
-pub const V_FLAG_STORE: usize = 26;
-pub const V_FLAG_JUMP: usize = 27;
-pub const V_FLAG_WRITE_LOOKUP_OUTPUT_TO_RD: usize = 28;
-pub const V_FLAG_VIRTUAL_INSTRUCTION: usize = 29;
-pub const V_FLAG_ASSERT: usize = 30;
-pub const V_FLAG_DO_NOT_UPDATE_UNEXPANDED_PC: usize = 31;
-pub const V_FLAG_ADVICE: usize = 32;
-pub const V_FLAG_IS_COMPRESSED: usize = 33;
-pub const V_FLAG_IS_FIRST_IN_SEQUENCE: usize = 34;
-pub const V_FLAG_IS_LAST_IN_SEQUENCE: usize = 35;
+pub const V_FLAG_ADD_OPERANDS: usize = 21;
+pub const V_FLAG_SUBTRACT_OPERANDS: usize = flag_column(CircuitFlags::SubtractOperands);
+pub const V_FLAG_MULTIPLY_OPERANDS: usize = flag_column(CircuitFlags::MultiplyOperands);
+pub const V_FLAG_LOAD: usize = flag_column(CircuitFlags::Load);
+pub const V_FLAG_STORE: usize = flag_column(CircuitFlags::Store);
+pub const V_FLAG_JUMP: usize = flag_column(CircuitFlags::Jump);
+pub const V_FLAG_WRITE_LOOKUP_OUTPUT_TO_RD: usize =
+    flag_column(CircuitFlags::WriteLookupOutputToRD);
+pub const V_FLAG_VIRTUAL_INSTRUCTION: usize = flag_column(CircuitFlags::VirtualInstruction);
+pub const V_FLAG_ASSERT: usize = flag_column(CircuitFlags::Assert);
+pub const V_FLAG_DO_NOT_UPDATE_UNEXPANDED_PC: usize =
+    flag_column(CircuitFlags::DoNotUpdateUnexpandedPC);
+pub const V_FLAG_ADVICE: usize = flag_column(CircuitFlags::Advice);
+pub const V_FLAG_IS_COMPRESSED: usize = flag_column(CircuitFlags::IsCompressed);
+pub const V_FLAG_IS_FIRST_IN_SEQUENCE: usize = flag_column(CircuitFlags::IsFirstInSequence);
+pub const V_FLAG_IS_LAST_IN_SEQUENCE: usize = flag_column(CircuitFlags::IsLastInSequence);
 pub const V_FLAG_HALT: usize = flag_column(CircuitFlags::Halt);
 pub const V_FLAG_HALT_PANIC: usize = flag_column(CircuitFlags::HaltPanic);
+
+const _: () = assert!(V_FLAG_ADD_OPERANDS == V_LOOKUP_OUTPUT + 1);
 
 pub const V_BRANCH: usize = 1 + NUM_R1CS_INPUTS;
 pub const V_NEXT_IS_NOOP: usize = V_BRANCH + 1;
 
-pub const NUM_R1CS_INPUTS: usize = 21 + NUM_CIRCUIT_FLAGS;
+pub const NUM_R1CS_INPUTS: usize = 20 + NUM_CIRCUIT_FLAGS;
 pub const NUM_PRODUCT_FACTORS: usize = 2;
 pub const NUM_VARS_PER_CYCLE: usize = 1 + NUM_R1CS_INPUTS + NUM_PRODUCT_FACTORS;
 pub const NUM_EQ_CONSTRAINTS: usize = 19;
@@ -99,7 +104,6 @@ pub const RV64_VARIABLE_NAMES: [&str; NUM_VARS_PER_CYCLE] = {
     names[V_NEXT_IS_VIRTUAL] = "NextIsVirtual";
     names[V_NEXT_IS_FIRST_IN_SEQUENCE] = "NextIsFirstInSequence";
     names[V_LOOKUP_OUTPUT] = "LookupOutput";
-    names[V_SHOULD_JUMP] = "ShouldJump";
     names[V_FLAG_ADD_OPERANDS] = "OpFlags_AddOperands";
     names[V_FLAG_SUBTRACT_OPERANDS] = "OpFlags_SubtractOperands";
     names[V_FLAG_MULTIPLY_OPERANDS] = "OpFlags_MultiplyOperands";
@@ -155,14 +159,14 @@ pub const RV64_CONSTRAINT_NAMES: [&str; NUM_CONSTRAINTS_PER_CYCLE] = [
     "AssertLookupOne",
     "RdWriteEqLookupIfWriteLookupToRd",
     "RdWriteEqPCPlusConstIfWritePCtoRD",
-    "NextUnexpPCEqLookupIfShouldJump",
+    "NextUnexpPCEqLookupIfJump",
     "NextUnexpPCEqPCPlusImmIfShouldBranch",
     "NextUnexpPCUpdateOtherwise",
     "NextPCEqPCPlusOneIfInline",
     "MustStartSequenceFromBeginning",
     "Product",
     "ShouldBranch",
-    "ShouldJump",
+    "JumpHasSuccessorUnlessHalt",
 ];
 
 pub const fn const_column() -> usize {
@@ -347,7 +351,9 @@ fn rv64_eq_constraint_rows<F: Field>() -> ConstraintRows<F> {
     ]));
     c_rows.push(empty());
 
-    a_rows.push(row::<F>(&[(V_SHOULD_JUMP, 1)]));
+    // A halt's target is its lookup output 0 only because halts have no lookup
+    // table; attaching one to a halt kind would need the guard `Jump − Halt`.
+    a_rows.push(row::<F>(&[(V_FLAG_JUMP, 1)]));
     b_rows.push(row::<F>(&[
         (V_NEXT_UNEXPANDED_PC, 1),
         (V_LOOKUP_OUTPUT, -1),
@@ -386,7 +392,7 @@ fn rv64_eq_constraint_rows<F: Field>() -> ConstraintRows<F> {
     // looks lax — at a non-`JALR` terminal step the guard zeros out and
     // `NextPC` isn't pinned to `PC + 1` here — but `NextPC` is still
     // uniquely determined by the rest of the system: #14
-    // (`NextUnexpPCEqLookupIfShouldJump`) / #16
+    // (`NextUnexpPCEqLookupIfJump`) / #16
     // (`NextUnexpPCUpdateOtherwise`) constrain `NextUnexpandedPC`, #18
     // (`MustStartSequenceFromBeginning`) forces the next row to be
     // non-virtual or the first step of a new sequence, and the
@@ -418,6 +424,7 @@ fn append_product_constraints<F: Field>(
     a_rows: &mut Vec<SparseRow<F>>,
     b_rows: &mut Vec<SparseRow<F>>,
     c_rows: &mut Vec<SparseRow<F>>,
+    claimed_panic: bool,
 ) {
     a_rows.push(row::<F>(&[(V_LEFT_INSTRUCTION_INPUT, 1)]));
     b_rows.push(row::<F>(&[(V_RIGHT_INSTRUCTION_INPUT, 1)]));
@@ -429,13 +436,22 @@ fn append_product_constraints<F: Field>(
 
     a_rows.push(row::<F>(&[(V_FLAG_JUMP, 1)]));
     b_rows.push(row::<F>(&[(V_CONST, 1), (V_NEXT_IS_NOOP, -1)]));
-    c_rows.push(row::<F>(&[(V_SHOULD_JUMP, 1)]));
+    let jump_lane_output: Vec<(usize, i128)> = PRODUCT_JUMP_LANE_OUTPUT
+        .iter()
+        .map(|term| {
+            (
+                flag_column(term.flag),
+                i128::from(term.constant) + i128::from(term.per_panic) * i128::from(claimed_panic),
+            )
+        })
+        .collect();
+    c_rows.push(row::<F>(&jump_lane_output));
 }
 
 /// Build only the Jolt RV64 equality-conditional constraints.
 ///
 /// Returns the 19 rows with form `guard · (left - right) = 0`, over the
-/// standard 38-variable per-cycle witness layout. Product constraints are
+/// [`NUM_VARS_PER_CYCLE`] per-cycle witness variables. Product constraints are
 /// intentionally excluded for consumers that handle multiplication checks in
 /// a separate protocol step.
 pub fn rv64_spartan_outer_constraints<F: Field>() -> ConstraintMatrices<F> {
@@ -451,18 +467,23 @@ pub fn rv64_spartan_outer_constraints<F: Field>() -> ConstraintMatrices<F> {
 
 /// Build the full Jolt RV64 R1CS constraint matrices.
 ///
-/// Returns 22 constraints over 38 variables per cycle:
+/// Returns 22 constraints over [`NUM_VARS_PER_CYCLE`] variables per cycle:
 /// - 19 equality-conditional: `guard · (left − right) = 0` → A=guard, B=left−right, C=0
 /// - 3 product: `left · right = output` → A=left, B=right, C=output
 ///
+/// Row 21's output is product lane 3's (`PRODUCT_JUMP_LANE_OUTPUT`), which
+/// depends on the statement's claimed panic bit. The proof system checks these
+/// rows through the Spartan outer and product relations, never through this
+/// full-trace matrix.
+///
 /// Variable layout matches the constants in this module: the constant, all R1CS
 /// inputs, then the two product factors.
-pub fn rv64_trace_constraints<F: Field>() -> ConstraintMatrices<F> {
+pub fn rv64_trace_constraints<F: Field>(claimed_panic: bool) -> ConstraintMatrices<F> {
     let (mut a_rows, mut b_rows, mut c_rows) = rv64_eq_constraint_rows();
     a_rows.reserve(NUM_PRODUCT_CONSTRAINTS);
     b_rows.reserve(NUM_PRODUCT_CONSTRAINTS);
     c_rows.reserve(NUM_PRODUCT_CONSTRAINTS);
-    append_product_constraints(&mut a_rows, &mut b_rows, &mut c_rows);
+    append_product_constraints(&mut a_rows, &mut b_rows, &mut c_rows, claimed_panic);
 
     ConstraintMatrices::new(
         NUM_CONSTRAINTS_PER_CYCLE,
@@ -499,12 +520,14 @@ mod tests {
 
     #[test]
     fn noop_satisfies_constraints() {
-        let matrices = rv64_trace_constraints::<Fr>();
-        assert_eq!(matrices.num_constraints, NUM_CONSTRAINTS_PER_CYCLE);
-        assert_eq!(matrices.num_vars, NUM_VARS_PER_CYCLE);
-        matrices
-            .check_witness(&noop_witness())
-            .expect("noop should satisfy all constraints");
+        for claimed_panic in [false, true] {
+            let matrices = rv64_trace_constraints::<Fr>(claimed_panic);
+            assert_eq!(matrices.num_constraints, NUM_CONSTRAINTS_PER_CYCLE);
+            assert_eq!(matrices.num_vars, NUM_VARS_PER_CYCLE);
+            matrices
+                .check_witness(&noop_witness())
+                .expect("noop should satisfy all constraints");
+        }
     }
 
     #[test]
@@ -591,17 +614,17 @@ mod execution_witness_tests {
     const RIGHT_LOOKUP_EQ_RIGHT_INPUT_OTHERWISE: usize = 10;
     const RD_WRITE_EQ_LOOKUP_IF_WRITE_LOOKUP_TO_RD: usize = 12;
     const RD_WRITE_EQ_PC_PLUS_CONST_IF_JUMP: usize = 13;
-    const NEXT_UNEXP_PC_EQ_LOOKUP_IF_SHOULD_JUMP: usize = 14;
+    const NEXT_UNEXP_PC_EQ_LOOKUP_IF_JUMP: usize = 14;
     const NEXT_UNEXP_PC_EQ_PC_PLUS_IMM_IF_SHOULD_BRANCH: usize = 15;
     const NEXT_UNEXP_PC_UPDATE_OTHERWISE: usize = 16;
     const NEXT_PC_EQ_PC_PLUS_ONE_IF_INLINE: usize = 17;
     const MUST_START_SEQUENCE_FROM_BEGINNING: usize = 18;
     const PRODUCT_EQ_LEFT_TIMES_RIGHT: usize = 19;
     const SHOULD_BRANCH_EQ_LOOKUP_TIMES_BRANCH: usize = 20;
-    const SHOULD_JUMP_EQ_JUMP_TIMES_NOT_NEXT_NOOP: usize = 21;
+    const JUMP_LANE: usize = 21;
 
-    fn check(witness: &[Fr]) -> Result<(), usize> {
-        rv64_trace_constraints::<Fr>().check_witness(witness)
+    fn check(witness: &[Fr], claimed_panic: bool) -> Result<(), usize> {
+        rv64_trace_constraints::<Fr>(claimed_panic).check_witness(witness)
     }
 
     fn with_cell(witness: &[Fr], cell: usize, value: Fr) -> Vec<Fr> {
@@ -822,7 +845,7 @@ mod execution_witness_tests {
     /// Circuit flags [AddOperands, Jump] (i/jal.rs); the left instruction
     /// input is the unexpanded PC and the right is the immediate, so the
     /// RangeCheck lookup computes the jump target PC + imm. The next row is
-    /// a real instruction, so ShouldJump = Jump·(1 − NextIsNoop) = 1.
+    /// a real instruction.
     fn jal_witness() -> Vec<Fr> {
         const UNEXPANDED_PC: u64 = 0x8000_0100;
         const IMM: u64 = 0x100;
@@ -841,7 +864,6 @@ mod execution_witness_tests {
         w[V_RD_WRITE_VALUE] = Fr::from_u64(LINK);
         w[V_RIGHT_LOOKUP_OPERAND] = Fr::from_u64(TARGET);
         w[V_LOOKUP_OUTPUT] = Fr::from_u64(TARGET);
-        w[V_SHOULD_JUMP] = Fr::from_u64(1);
         w[V_FLAG_ADD_OPERANDS] = Fr::from_u64(1);
         w[V_FLAG_JUMP] = Fr::from_u64(1);
         w
@@ -911,19 +933,22 @@ mod execution_witness_tests {
 
     #[test]
     fn add_with_carry_execution_witness_satisfies_constraints() {
-        assert_eq!(check(&add_witness()), Ok(()));
+        assert_eq!(check(&add_witness(), false), Ok(()));
     }
 
     #[test]
     fn add_rejects_wrong_rd_write_value() {
         let w = with_cell(&add_witness(), V_RD_WRITE_VALUE, Fr::from_u64(4));
-        assert_eq!(check(&w), Err(RD_WRITE_EQ_LOOKUP_IF_WRITE_LOOKUP_TO_RD));
+        assert_eq!(
+            check(&w, false),
+            Err(RD_WRITE_EQ_LOOKUP_IF_WRITE_LOOKUP_TO_RD)
+        );
     }
 
     #[test]
     fn add_rejects_wrapped_right_lookup_operand() {
         let w = with_cell(&add_witness(), V_RIGHT_LOOKUP_OPERAND, Fr::from_u64(3));
-        assert_eq!(check(&w), Err(RIGHT_LOOKUP_ADD));
+        assert_eq!(check(&w, false), Err(RIGHT_LOOKUP_ADD));
     }
 
     #[test]
@@ -932,7 +957,7 @@ mod execution_witness_tests {
         let mut w = add_witness();
         w[V_FLAG_IS_COMPRESSED] = Fr::from_u64(1);
         w[V_NEXT_UNEXPANDED_PC] = Fr::from_u64(0x8000_0010 + 2);
-        assert_eq!(check(&w), Ok(()));
+        assert_eq!(check(&w, false), Ok(()));
     }
 
     #[test]
@@ -940,23 +965,23 @@ mod execution_witness_tests {
         let mut w = add_witness();
         w[V_FLAG_IS_COMPRESSED] = Fr::from_u64(1);
         // +4 is only correct for uncompressed instructions.
-        assert_eq!(check(&w), Err(NEXT_UNEXP_PC_UPDATE_OTHERWISE));
+        assert_eq!(check(&w, false), Err(NEXT_UNEXP_PC_UPDATE_OTHERWISE));
     }
 
     #[test]
     fn sltu_write_back_execution_witness_satisfies_constraints() {
-        assert_eq!(check(&sltu_witness()), Ok(()));
+        assert_eq!(check(&sltu_witness(), false), Ok(()));
     }
 
     #[test]
     fn sltu_rejects_left_lookup_operand_mismatch() {
         let w = with_cell(&sltu_witness(), V_LEFT_LOOKUP_OPERAND, Fr::from_u64(8));
-        assert_eq!(check(&w), Err(LEFT_LOOKUP_EQ_LEFT_INPUT_OTHERWISE));
+        assert_eq!(check(&w, false), Err(LEFT_LOOKUP_EQ_LEFT_INPUT_OTHERWISE));
     }
 
     #[test]
     fn ld_execution_witness_satisfies_constraints() {
-        assert_eq!(check(&ld_witness()), Ok(()));
+        assert_eq!(check(&ld_witness(), false), Ok(()));
     }
 
     #[test]
@@ -966,20 +991,20 @@ mod execution_witness_tests {
             V_RD_WRITE_VALUE,
             Fr::from_u64(0xDEAD_BEEF_CAFE_F00D + 1),
         );
-        assert_eq!(check(&w), Err(RAM_READ_EQ_RD_WRITE_IF_LOAD));
+        assert_eq!(check(&w, false), Err(RAM_READ_EQ_RD_WRITE_IF_LOAD));
     }
 
     #[test]
     fn ld_rejects_ram_write_differing_from_read() {
         let w = with_cell(&ld_witness(), V_RAM_WRITE_VALUE, Fr::from_u64(0));
-        assert_eq!(check(&w), Err(RAM_READ_EQ_RAM_WRITE_IF_LOAD));
+        assert_eq!(check(&w, false), Err(RAM_READ_EQ_RAM_WRITE_IF_LOAD));
     }
 
     #[test]
     fn ld_rejects_wrong_ram_address() {
         let w = with_cell(&ld_witness(), V_RAM_ADDRESS, Fr::from_u64(0x8000_1000));
         assert_eq!(
-            check(&w),
+            check(&w, false),
             Err(RAM_ADDR_EQ_RS1_PLUS_IMM_MINUS_LOOKUP_IF_LOAD_STORE)
         );
     }
@@ -987,12 +1012,12 @@ mod execution_witness_tests {
     #[test]
     fn ld_rejects_right_lookup_not_carried_from_rd_write_input() {
         let w = with_cell(&ld_witness(), V_RIGHT_LOOKUP_OPERAND, Fr::from_u64(0));
-        assert_eq!(check(&w), Err(RIGHT_LOOKUP_EQ_RIGHT_INPUT_OTHERWISE));
+        assert_eq!(check(&w, false), Err(RIGHT_LOOKUP_EQ_RIGHT_INPUT_OTHERWISE));
     }
 
     #[test]
     fn sd_negative_offset_execution_witness_satisfies_constraints() {
-        assert_eq!(check(&sd_witness()), Ok(()));
+        assert_eq!(check(&sd_witness(), false), Ok(()));
     }
 
     #[test]
@@ -1002,28 +1027,28 @@ mod execution_witness_tests {
             V_RAM_WRITE_VALUE,
             Fr::from_u64(0x0F0F_0F0F_0F0F_0F0F),
         );
-        assert_eq!(check(&w), Err(RS2_EQ_RAM_WRITE_IF_STORE));
+        assert_eq!(check(&w, false), Err(RS2_EQ_RAM_WRITE_IF_STORE));
     }
 
     #[test]
     fn sd_rejects_sign_error_in_address() {
         let w = with_cell(&sd_witness(), V_RAM_ADDRESS, Fr::from_u64(0x8000_2008));
         assert_eq!(
-            check(&w),
+            check(&w, false),
             Err(RAM_ADDR_EQ_RS1_PLUS_IMM_MINUS_LOOKUP_IF_LOAD_STORE)
         );
     }
 
     #[test]
     fn load_h_execution_witness_satisfies_constraints() {
-        assert_eq!(check(&load_h_witness()), Ok(()));
+        assert_eq!(check(&load_h_witness(), false), Ok(()));
     }
 
     #[test]
     fn load_h_rejects_unfloored_ram_address() {
         let w = with_cell(&load_h_witness(), V_RAM_ADDRESS, Fr::from_u64(0x8000_100A));
         assert_eq!(
-            check(&w),
+            check(&w, false),
             Err(RAM_ADDR_EQ_RS1_PLUS_IMM_MINUS_LOOKUP_IF_LOAD_STORE)
         );
     }
@@ -1032,14 +1057,14 @@ mod execution_witness_tests {
     fn load_h_rejects_dropped_offset() {
         let w = with_cell(&load_h_witness(), V_LOOKUP_OUTPUT, Fr::from_u64(0));
         assert_eq!(
-            check(&w),
+            check(&w, false),
             Err(RAM_ADDR_EQ_RS1_PLUS_IMM_MINUS_LOOKUP_IF_LOAD_STORE)
         );
     }
 
     #[test]
     fn beq_taken_execution_witness_satisfies_constraints() {
-        assert_eq!(check(&beq_taken_witness()), Ok(()));
+        assert_eq!(check(&beq_taken_witness(), false), Ok(()));
     }
 
     #[test]
@@ -1050,7 +1075,7 @@ mod execution_witness_tests {
             Fr::from_u64(0x8000_0044),
         );
         assert_eq!(
-            check(&w),
+            check(&w, false),
             Err(NEXT_UNEXP_PC_EQ_PC_PLUS_IMM_IF_SHOULD_BRANCH)
         );
     }
@@ -1060,12 +1085,12 @@ mod execution_witness_tests {
         // Zeroing ShouldBranch shifts the PC obligation to the fall-through
         // constraint, which the branch-target next PC then violates.
         let w = with_cell(&beq_taken_witness(), V_SHOULD_BRANCH, Fr::from_u64(0));
-        assert_eq!(check(&w), Err(NEXT_UNEXP_PC_UPDATE_OTHERWISE));
+        assert_eq!(check(&w, false), Err(NEXT_UNEXP_PC_UPDATE_OTHERWISE));
     }
 
     #[test]
     fn beq_not_taken_execution_witness_satisfies_constraints() {
-        assert_eq!(check(&beq_not_taken_witness()), Ok(()));
+        assert_eq!(check(&beq_not_taken_witness(), false), Ok(()));
     }
 
     #[test]
@@ -1075,18 +1100,18 @@ mod execution_witness_tests {
         let mut w = beq_not_taken_witness();
         w[V_SHOULD_BRANCH] = Fr::from_u64(1);
         w[V_NEXT_UNEXPANDED_PC] = Fr::from_u64(0x8000_0030);
-        assert_eq!(check(&w), Err(SHOULD_BRANCH_EQ_LOOKUP_TIMES_BRANCH));
+        assert_eq!(check(&w, false), Err(SHOULD_BRANCH_EQ_LOOKUP_TIMES_BRANCH));
     }
 
     #[test]
     fn jal_execution_witness_satisfies_constraints() {
-        assert_eq!(check(&jal_witness()), Ok(()));
+        assert_eq!(check(&jal_witness(), false), Ok(()));
     }
 
     #[test]
     fn jal_rejects_wrong_link_value() {
         let w = with_cell(&jal_witness(), V_RD_WRITE_VALUE, Fr::from_u64(0x8000_0100));
-        assert_eq!(check(&w), Err(RD_WRITE_EQ_PC_PLUS_CONST_IF_JUMP));
+        assert_eq!(check(&w, false), Err(RD_WRITE_EQ_PC_PLUS_CONST_IF_JUMP));
     }
 
     #[test]
@@ -1096,18 +1121,21 @@ mod execution_witness_tests {
             V_NEXT_UNEXPANDED_PC,
             Fr::from_u64(0x8000_0104),
         );
-        assert_eq!(check(&w), Err(NEXT_UNEXP_PC_EQ_LOOKUP_IF_SHOULD_JUMP));
+        assert_eq!(check(&w, false), Err(NEXT_UNEXP_PC_EQ_LOOKUP_IF_JUMP));
     }
 
+    /// A jump into padding (`NextIsNoop = 1`) is no end: only a halt may precede padding.
     #[test]
-    fn jal_rejects_denied_should_jump() {
-        let w = with_cell(&jal_witness(), V_SHOULD_JUMP, Fr::from_u64(0));
-        assert_eq!(check(&w), Err(SHOULD_JUMP_EQ_JUMP_TIMES_NOT_NEXT_NOOP));
+    fn jal_rejects_a_padding_successor() {
+        let w = with_cell(&jal_witness(), V_NEXT_IS_NOOP, Fr::from_u64(1));
+        for claimed_panic in [false, true] {
+            assert_eq!(check(&w, claimed_panic), Err(JUMP_LANE));
+        }
     }
 
     #[test]
     fn mul_high_bit_execution_witness_satisfies_constraints() {
-        assert_eq!(check(&mul_witness()), Ok(()));
+        assert_eq!(check(&mul_witness(), false), Ok(()));
     }
 
     #[test]
@@ -1119,7 +1147,7 @@ mod execution_witness_tests {
             V_RIGHT_LOOKUP_OPERAND,
             Fr::from_u64(0x8000_0000_0000_0003),
         );
-        assert_eq!(check(&w), Err(RIGHT_LOOKUP_EQ_PRODUCT_IF_MUL));
+        assert_eq!(check(&w, false), Err(RIGHT_LOOKUP_EQ_PRODUCT_IF_MUL));
     }
 
     #[test]
@@ -1129,18 +1157,18 @@ mod execution_witness_tests {
         let mut w = mul_witness();
         w[V_PRODUCT] = Fr::from_u64(0x8000_0000_0000_0003);
         w[V_RIGHT_LOOKUP_OPERAND] = Fr::from_u64(0x8000_0000_0000_0003);
-        assert_eq!(check(&w), Err(PRODUCT_EQ_LEFT_TIMES_RIGHT));
+        assert_eq!(check(&w, false), Err(PRODUCT_EQ_LEFT_TIMES_RIGHT));
     }
 
     #[test]
     fn virtual_inline_step_execution_witness_satisfies_constraints() {
-        assert_eq!(check(&virtual_inline_step_witness()), Ok(()));
+        assert_eq!(check(&virtual_inline_step_witness(), false), Ok(()));
     }
 
     #[test]
     fn virtual_inline_step_rejects_skipped_expanded_pc() {
         let w = with_cell(&virtual_inline_step_witness(), V_NEXT_PC, Fr::from_u64(22));
-        assert_eq!(check(&w), Err(NEXT_PC_EQ_PC_PLUS_ONE_IF_INLINE));
+        assert_eq!(check(&w, false), Err(NEXT_PC_EQ_PC_PLUS_ONE_IF_INLINE));
     }
 
     #[test]
@@ -1151,13 +1179,12 @@ mod execution_witness_tests {
         let mut w = virtual_inline_step_witness();
         w[V_FLAG_DO_NOT_UPDATE_UNEXPANDED_PC] = Fr::from_u64(0);
         w[V_NEXT_UNEXPANDED_PC] = Fr::from_u64(0x8000_0050 + 4);
-        assert_eq!(check(&w), Err(MUST_START_SEQUENCE_FROM_BEGINNING));
+        assert_eq!(check(&w, false), Err(MUST_START_SEQUENCE_FROM_BEGINNING));
     }
 
     /// Places `witness` on the last row of a trace that fills its padded
     /// domain. EqPlusOne does not wrap around, so every shifted `Next*`
     /// column reads 0 there and `NextIsNoop` reads 1, as if a no-op followed.
-    /// `ShouldJump = Jump·(1 − NextIsNoop)` is then 0.
     fn at_last_row(witness: &[Fr]) -> Vec<Fr> {
         let mut w = witness.to_vec();
         w[V_NEXT_PC] = Fr::zero();
@@ -1165,7 +1192,6 @@ mod execution_witness_tests {
         w[V_NEXT_IS_VIRTUAL] = Fr::zero();
         w[V_NEXT_IS_FIRST_IN_SEQUENCE] = Fr::zero();
         w[V_NEXT_IS_NOOP] = Fr::from_u64(1);
-        w[V_SHOULD_JUMP] = Fr::zero();
         w
     }
 
@@ -1186,20 +1212,41 @@ mod execution_witness_tests {
         w
     }
 
+    /// `j .` can loop but cannot end a trace: its target is its own address, not
+    /// the padding row's 0.
     #[test]
-    fn last_row_accepts_final_jump() {
-        assert_eq!(check(&jal_self_loop_witness()), Ok(()));
-        assert_eq!(check(&at_last_row(&jal_self_loop_witness())), Ok(()));
+    fn last_row_rejects_final_self_jump() {
+        assert_eq!(check(&jal_self_loop_witness(), false), Ok(()));
+        assert_eq!(
+            check(&at_last_row(&jal_self_loop_witness()), false),
+            Err(NEXT_UNEXP_PC_EQ_LOOKUP_IF_JUMP)
+        );
     }
 
+    /// `JALR x1, 0(x6)` with `x6 = 0` at 0x8000_0300: a jump whose target is 0.
+    ///
+    /// Circuit flags [AddOperands, Jump] (i/jalr.rs); the lookup output, the
+    /// target, is `rs1 + imm` with bit 0 cleared.
+    fn jalr_to_zero_witness() -> Vec<Fr> {
+        const UNEXPANDED_PC: u64 = 0x8000_0300;
+
+        let mut w = cycle_witness();
+        w[V_PC] = Fr::from_u64(30);
+        w[V_UNEXPANDED_PC] = Fr::from_u64(UNEXPANDED_PC);
+        w[V_RD_WRITE_VALUE] = Fr::from_u64(UNEXPANDED_PC + 4);
+        w[V_FLAG_ADD_OPERANDS] = Fr::from_u64(1);
+        w[V_FLAG_JUMP] = Fr::from_u64(1);
+        w
+    }
+
+    /// A jump to address 0 meets row 14 before padding, whose next address is 0,
+    /// but is not a halt, so the jump lane rejects it.
     #[test]
-    fn last_row_rejects_final_jump_that_still_claims_to_jump() {
-        let w = with_cell(
-            &at_last_row(&jal_self_loop_witness()),
-            V_SHOULD_JUMP,
-            Fr::from_u64(1),
-        );
-        assert_eq!(check(&w), Err(NEXT_UNEXP_PC_EQ_LOOKUP_IF_SHOULD_JUMP));
+    fn last_row_rejects_a_jump_to_zero() {
+        let w = at_last_row(&jalr_to_zero_witness());
+        for claimed_panic in [false, true] {
+            assert_eq!(check(&w, claimed_panic), Err(JUMP_LANE));
+        }
     }
 
     #[test]
@@ -1207,11 +1254,11 @@ mod execution_witness_tests {
         // A non-jump row must advance UnexpandedPC to a nonzero address,
         // but the shifted NextUnexpandedPC is 0.
         assert_eq!(
-            check(&at_last_row(&add_witness())),
+            check(&at_last_row(&add_witness()), false),
             Err(NEXT_UNEXP_PC_UPDATE_OTHERWISE)
         );
         assert_eq!(
-            check(&at_last_row(&ld_witness())),
+            check(&at_last_row(&ld_witness()), false),
             Err(NEXT_UNEXP_PC_UPDATE_OTHERWISE)
         );
     }
@@ -1219,11 +1266,11 @@ mod execution_witness_tests {
     #[test]
     fn last_row_rejects_branch() {
         assert_eq!(
-            check(&at_last_row(&beq_taken_witness())),
+            check(&at_last_row(&beq_taken_witness()), false),
             Err(NEXT_UNEXP_PC_EQ_PC_PLUS_IMM_IF_SHOULD_BRANCH)
         );
         assert_eq!(
-            check(&at_last_row(&beq_not_taken_witness())),
+            check(&at_last_row(&beq_not_taken_witness()), false),
             Err(NEXT_UNEXP_PC_UPDATE_OTHERWISE)
         );
     }
@@ -1233,13 +1280,13 @@ mod execution_witness_tests {
         let w = at_last_row(&virtual_inline_step_witness());
         // Row 16 is the first to fail: with DoNotUpdateUnexpandedPC it still
         // requires NextUnexpandedPC = UnexpandedPC, which is nonzero.
-        assert_eq!(check(&w), Err(NEXT_UNEXP_PC_UPDATE_OTHERWISE));
+        assert_eq!(check(&w, false), Err(NEXT_UNEXP_PC_UPDATE_OTHERWISE));
 
         // Row 17 rejects the row on its own as well: zeroing every term of
         // row 16 leaves NextPC = 0 ≠ PC + 1.
         let mut w = w;
         w[V_UNEXPANDED_PC] = Fr::zero();
-        assert_eq!(check(&w), Err(NEXT_PC_EQ_PC_PLUS_ONE_IF_INLINE));
+        assert_eq!(check(&w, false), Err(NEXT_PC_EQ_PC_PLUS_ONE_IF_INLINE));
     }
 
     /// A halt row as tracers emit it: `jolt.success` (`vsr = None`) or EBREAK's one-row `Panic`
@@ -1279,15 +1326,77 @@ mod execution_witness_tests {
         w
     }
 
+    const HALTS: [(JoltInstructionKind, Option<u16>, bool); 3] = [
+        (JoltInstructionKind::JoltSuccess, None, false),
+        (JoltInstructionKind::JoltPanic, Some(0), false),
+        (JoltInstructionKind::JoltPanic, Some(0), true),
+    ];
+
+    /// A halt ends the trace under its own claim: `jolt.success` with
+    /// `panic = false`, EBREAK's `Panic` row with `panic = true`.
     #[test]
-    fn last_row_accepts_final_halt() {
-        for (kind, virtual_sequence_remaining, is_compressed) in [
-            (JoltInstructionKind::JoltSuccess, None, false),
-            (JoltInstructionKind::JoltPanic, Some(0), false),
-            (JoltInstructionKind::JoltPanic, Some(0), true),
-        ] {
+    fn last_row_accepts_final_halt_under_its_claim() {
+        for (kind, virtual_sequence_remaining, is_compressed) in HALTS {
             let w = halt_witness(kind, virtual_sequence_remaining, is_compressed);
-            assert_eq!(check(&at_last_row(&w)), Ok(()), "{kind:?}");
+            let claimed_panic = kind == JoltInstructionKind::JoltPanic;
+            assert_eq!(check(&at_last_row(&w), claimed_panic), Ok(()), "{kind:?}");
+        }
+    }
+
+    #[test]
+    fn last_row_rejects_final_halt_under_the_opposite_claim() {
+        for (kind, virtual_sequence_remaining, is_compressed) in HALTS {
+            let w = halt_witness(kind, virtual_sequence_remaining, is_compressed);
+            let claimed_panic = kind != JoltInstructionKind::JoltPanic;
+            assert_eq!(
+                check(&at_last_row(&w), claimed_panic),
+                Err(JUMP_LANE),
+                "{kind:?}"
+            );
+        }
+    }
+
+    /// A halt's target is 0, so a real successor fails row 14.
+    #[test]
+    fn halt_rejects_a_real_successor() {
+        for (kind, virtual_sequence_remaining, is_compressed) in HALTS {
+            let mut w = halt_witness(kind, virtual_sequence_remaining, is_compressed);
+            w[V_NEXT_PC] = Fr::from_u64(13);
+            w[V_NEXT_UNEXPANDED_PC] = Fr::from_u64(0x8000_0204);
+            let claimed_panic = kind == JoltInstructionKind::JoltPanic;
+            assert_eq!(
+                check(&w, claimed_panic),
+                Err(NEXT_UNEXP_PC_EQ_LOOKUP_IF_JUMP),
+                "{kind:?}"
+            );
+        }
+    }
+
+    /// Flag tuples `(Jump, Halt, HaltPanic)` no instruction carries, on rows
+    /// whose equality rows hold: a halt flag without `Jump`, and `HaltPanic`
+    /// without `Halt`. The jump lane rejects each under both claims.
+    #[test]
+    fn jump_lane_rejects_flag_tuples_no_instruction_carries() {
+        let halt_without_jump = with_cell(&add_witness(), V_FLAG_HALT, Fr::from_u64(1));
+        let mut cases = vec![
+            halt_without_jump.clone(),
+            with_cell(&halt_without_jump, V_FLAG_HALT_PANIC, Fr::from_u64(1)),
+            with_cell(&add_witness(), V_FLAG_HALT_PANIC, Fr::from_u64(1)),
+        ];
+        let (kind, virtual_sequence_remaining, is_compressed) = HALTS[1];
+        cases.push(with_cell(
+            &at_last_row(&halt_witness(
+                kind,
+                virtual_sequence_remaining,
+                is_compressed,
+            )),
+            V_FLAG_HALT,
+            Fr::zero(),
+        ));
+        for w in cases {
+            for claimed_panic in [false, true] {
+                assert_eq!(check(&w, claimed_panic), Err(JUMP_LANE));
+            }
         }
     }
 }

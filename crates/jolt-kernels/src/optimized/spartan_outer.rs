@@ -97,10 +97,10 @@ use jolt_verifier::stages::stage1::outer_remainder::OuterRemainder;
 #[cfg(feature = "field-inline")]
 use jolt_witness::field_inline::FieldInlineSpartanRow;
 use jolt_witness::witnesses::{
-    lookup_values, Extract as _, Imm, LeftInstructionInput, LeftLookupOperand, LookupOutput,
+    lookup_values, Imm, LeftInstructionInput, LeftLookupOperand, LookupOutput,
     NextIsFirstInSequence, NextIsVirtual, NextPc, NextUnexpandedPc, Pc, Product, RamAddress,
     RamReadValue, RamWriteValue, RdWriteValue, RightInstructionInput, RightLookupOperand, Rs1Value,
-    Rs2Value, ShouldBranch, ShouldJump, UnexpandedPc, WitnessEnv,
+    Rs2Value, ShouldBranch, UnexpandedPc, WitnessEnv,
 };
 use jolt_witness::{JoltWitnessPlane, WitnessBundle, WitnessError};
 #[cfg(feature = "parallel")]
@@ -192,7 +192,6 @@ struct SpartanOuterRow {
     next_is_virtual: NextIsVirtual,
     next_is_first_in_sequence: NextIsFirstInSequence,
     lookup_output: LookupOutput,
-    should_jump: ShouldJump,
     circuit_flags: CircuitFlagSet,
 }
 
@@ -237,7 +236,7 @@ impl WitnessBundle for SpartanOuterRow {
     fn from_row(
         row: &TraceRow,
         next: Option<&TraceRow>,
-        env: &WitnessEnv<'_>,
+        _env: &WitnessEnv<'_>,
     ) -> Result<Self, WitnessError> {
         let circuit_flags = row.circuit_flags();
         let instruction_flags = row.instruction_flags();
@@ -278,7 +277,6 @@ impl WitnessBundle for SpartanOuterRow {
                 next_flags.is_some_and(|flags| flags[CircuitFlags::IsFirstInSequence]),
             ),
             lookup_output: LookupOutput(lookup_output),
-            should_jump: ShouldJump::extract(row, next, env)?,
             circuit_flags,
         })
     }
@@ -449,7 +447,7 @@ impl SpartanOuterRow {
             add + sub + mul,
             1 - add - sub - mul,
             flag(self.circuit_flags[CircuitFlags::Assert]),
-            flag(self.should_jump.0),
+            jump,
             flag(self.circuit_flags[CircuitFlags::VirtualInstruction])
                 - flag(self.circuit_flags[CircuitFlags::IsLastInSequence]),
             flag(self.next_is_virtual.0) - flag(self.next_is_first_in_sequence.0),
@@ -1436,7 +1434,6 @@ const BOOLEAN_INPUT: [bool; VARIABLE_COUNT] = {
     mask[3] = true; // ShouldBranch
     mask[17] = true; // NextIsVirtual
     mask[18] = true; // NextIsFirstInSequence
-    mask[20] = true; // ShouldJump
     let mut flag = FLAG_INPUT_BASE;
     while flag < VARIABLE_COUNT {
         mask[flag] = true;
@@ -1467,7 +1464,6 @@ impl<F: JoltField> ClaimAccumulator<F> {
         flag(3, row.should_branch.0);
         flag(17, row.next_is_virtual.0);
         flag(18, row.next_is_first_in_sequence.0);
-        flag(20, row.should_jump.0);
         for (offset, circuit_flag) in CIRCUIT_FLAGS.into_iter().enumerate() {
             flag(FLAG_INPUT_BASE + offset, row.circuit_flags[circuit_flag]);
         }

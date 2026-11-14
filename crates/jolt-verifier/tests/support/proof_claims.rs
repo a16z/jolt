@@ -161,7 +161,6 @@ fn claim_mut_from_spartan_outer<F: JoltField>(
         JoltVirtualPolynomial::NextIsVirtual => Some(&mut claims.next_is_virtual),
         JoltVirtualPolynomial::NextIsFirstInSequence => Some(&mut claims.next_is_first_in_sequence),
         JoltVirtualPolynomial::LookupOutput => Some(&mut claims.lookup_output),
-        JoltVirtualPolynomial::ShouldJump => Some(&mut claims.should_jump),
         JoltVirtualPolynomial::OpFlags(flag) => match flag {
             CircuitFlags::AddOperands => Some(&mut claims.add_operands),
             CircuitFlags::SubtractOperands => Some(&mut claims.subtract_operands),
