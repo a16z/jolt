@@ -2,6 +2,50 @@
   "format_version": 1,
   "runs": [
     {
+      "key": "github-5b57402cd4cbe82032c7115435042bbf8f22a32f-43539996682-1",
+      "source": {
+        "type": "github",
+        "repository": "a16z/jolt",
+        "commit": "5b57402cd4cbe82032c7115435042bbf8f22a32f",
+        "run_head_sha": "1736f72d66eec0895fb6e32017452937464fe6b1",
+        "run_id": 43539996682,
+        "run_attempt": 1,
+        "event": "pull_request_target",
+        "workflow": "End-to-end benchmark ingest",
+        "workflow_file": ".github/workflows/e2e-bench-ingest.yml",
+        "url": "https://github.com/a16z/jolt/actions/runs/43539996682/attempts/1",
+        "conclusion": "success",
+        "artifact": {
+          "id": 14090479512,
+          "name": "jolt-e2e-43539996682-1",
+          "digest": "sha256:81a9cde805ea23216f447833025aa632d1d6e1cf487e6744d29092e6bf69da05"
+        },
+        "plan_run_id": 43528576823,
+        "plan_run_attempt": 1,
+        "plan_artifact_id": 14086890094,
+        "plan_sha256": "fcf54f032770ab2146781c194c24e0946e5ced43a903a6ee8277f086b6d94b61",
+        "pr_number": 2327,
+        "base_commit": "91cd12f183fda964e29f68ebf65a36c74460328c",
+        "merge_commit": "1ee72f2e003b23db9b324cc0ca11d0796328d900",
+        "harness_revision": "91cd12f183fda964e29f68ebf65a36c74460328c",
+        "label_event_id": 35420701218,
+        "label_actor": "0xAndoroid",
+        "commit_index": 0
+      },
+      "started_at": "2026-11-13T23:38:12+00:00",
+      "tier": "pr",
+      "kind": "comparison",
+      "status": "complete",
+      "publication_status": "ready",
+      "reason": null,
+      "benchmark_schema": 1,
+      "sha256": "bb3a6537ada1b16320bafb147c52d80b2d38b090436c06adea54e5c30af41e9e",
+      "push_index": null,
+      "push_index_sha256": null,
+      "publisher_revision": "1736f72d66eec0895fb6e32017452937464fe6b1",
+      "raw": "runs/github-5b57402cd4cbe82032c7115435042bbf8f22a32f-43539996682-1.json"
+    },
+    {
       "key": "github-30f675e1be0e36f29ec8670034be0944b78535bb-43537250353-1",
       "source": {
         "type": "github",
