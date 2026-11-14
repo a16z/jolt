@@ -3,6 +3,7 @@
 pub mod analyze;
 #[cfg(feature = "field-inline")]
 pub mod field_inline;
+pub mod memory;
 mod program;
 
 use std::io::Error as IoError;
