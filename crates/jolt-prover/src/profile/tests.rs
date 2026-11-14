@@ -22,6 +22,8 @@ fn streaming_option_selects_the_requested_families() {
                 instruction_input: true,
                 spartan: false,
                 ram: false,
+                registers: false,
+                instruction_rows: false,
             },
         ),
         (
@@ -30,6 +32,8 @@ fn streaming_option_selects_the_requested_families() {
                 instruction_input: false,
                 spartan: true,
                 ram: false,
+                registers: false,
+                instruction_rows: false,
             },
         ),
         (
@@ -38,14 +42,38 @@ fn streaming_option_selects_the_requested_families() {
                 instruction_input: false,
                 spartan: false,
                 ram: true,
+                registers: false,
+                instruction_rows: false,
             },
         ),
         (
-            "instruction-input,spartan,ram",
+            "registers",
+            StreamingFamilies {
+                instruction_input: false,
+                spartan: false,
+                ram: false,
+                registers: true,
+                instruction_rows: false,
+            },
+        ),
+        (
+            "instruction-rows",
+            StreamingFamilies {
+                instruction_input: false,
+                spartan: false,
+                ram: false,
+                registers: false,
+                instruction_rows: true,
+            },
+        ),
+        (
+            "instruction-input,spartan,ram,registers",
             StreamingFamilies {
                 instruction_input: true,
                 spartan: true,
                 ram: true,
+                registers: true,
+                instruction_rows: false,
             },
         ),
     ] {
@@ -211,6 +239,13 @@ fn streaming_profiles_have_distinct_artifact_and_csv_names() {
         (
             Some("ram,spartan,instruction-input"),
             "_streaming_instruction_input_spartan_ram",
+        ),
+        (Some("registers"), "_streaming_registers"),
+        (Some("registers,ram"), "_streaming_ram_registers"),
+        (Some("instruction-rows"), "_streaming_instruction_rows"),
+        (
+            Some("instruction-rows,registers,ram"),
+            "_streaming_ram_registers_instruction_rows",
         ),
     ] {
         let mut options = vec![

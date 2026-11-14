@@ -2,7 +2,7 @@ use core::fmt::Debug;
 
 use jolt_claims::protocols::jolt::JoltOneHotConfig;
 use jolt_claims::{InputClaims, OutputClaims, SumcheckChallenges};
-use jolt_field::{Fr, Ring};
+use jolt_field::{Fr, JoltField, Ring};
 use jolt_program::execution::{JoltProgram, TraceData, TraceOutput};
 use jolt_program::preprocess::{BytecodePreprocessing, JoltProgramPreprocessing, RAMPreprocessing};
 use jolt_riscv::{JoltInstructionKind, JoltInstructionRow, NormalizedOperands, RV64IMAC_JOLT};
@@ -17,14 +17,14 @@ use crate::optimized::testing::trimmed;
 use crate::reference::ReferenceBackend;
 use crate::{PrepareKernel, ProofSession, ProverInputs};
 
-pub(crate) fn challenge_sequence(len: usize, seed: u64) -> Vec<Fr> {
+pub(crate) fn challenge_sequence<F: JoltField>(len: usize, seed: u64) -> Vec<F> {
     let mut state = seed;
     (0..len)
         .map(|_| {
             state = state
                 .wrapping_mul(6_364_136_223_846_793_005)
                 .wrapping_add(1_442_695_040_888_963_407);
-            Fr::from_u64(state | 1)
+            F::from_u64(state | 1)
         })
         .collect()
 }
@@ -49,6 +49,23 @@ impl TraceFixture {
 
     pub(crate) fn noop(&mut self) {
         self.rows.push(TraceRow::default());
+    }
+
+    /// One cycle reading `register` without register-state bookkeeping, so
+    /// the index may lie outside the protocol's register domain.
+    pub(crate) fn unchecked_read(&mut self, register: u8) {
+        let instruction = JoltInstructionRow {
+            instruction_kind: JoltInstructionKind::ADDI,
+            address: 0x8000_0000 + 4 * self.rows.len(),
+            operands: NormalizedOperands {
+                rs1: Some(register),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        self.rows.push(
+            TraceRow::new(instruction, RegisterState::default(), RamAccess::NoOp, 1).unwrap(),
+        );
     }
 
     /// One cycle touching the given operands; the write value is a fresh
