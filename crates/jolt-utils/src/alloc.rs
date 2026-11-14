@@ -5,38 +5,94 @@
 //! the OS instead.
 
 use std::alloc::Layout;
+use std::error::Error;
+use std::fmt::{Display, Formatter, Result as FmtResult};
 
 use num_traits::Zero;
+
+/// Types whose all-zero byte representation is a valid additive identity.
+///
+/// # Safety
+/// All-zero bytes must represent `Self::zero()`, including for every field of
+/// the type. No reference or nonzero niche may require another representation.
+pub unsafe trait ZeroBytesValid: Zero {}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ZeroAllocError {
+    CapacityOverflow,
+    AllocFailed { layout: Layout },
+}
+
+impl Display for ZeroAllocError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+        match self {
+            Self::CapacityOverflow => {
+                f.write_str("zeroed allocation size exceeds isize::MAX bytes")
+            }
+            Self::AllocFailed { layout } => write!(
+                f,
+                "the allocator could not provide {} zeroed bytes aligned to {}",
+                layout.size(),
+                layout.align()
+            ),
+        }
+    }
+}
+
+impl Error for ZeroAllocError {}
+
+/// Allocates zero elements without requiring a serial initialization pass.
+#[inline]
+pub fn try_zeroed_vec<T: ZeroBytesValid>(len: usize) -> Result<Vec<T>, ZeroAllocError> {
+    // SAFETY: ZeroBytesValid guarantees that zero bytes initialize T.
+    unsafe { raw_zeroed(len) }
+}
+
+#[inline]
+pub fn zeroed_vec<T: ZeroBytesValid>(len: usize) -> Vec<T> {
+    infallible_zeroed(try_zeroed_vec(len))
+}
 
 /// Allocates `vec![T::zero(); size]` through `alloc_zeroed`.
 ///
 /// # Safety contract
-///
 /// The caller must ensure that the all-zero byte pattern is a valid `T` equal
 /// to `T::zero()`.
-#[expect(
-    clippy::unwrap_used,
-    reason = "Layout::array only fails on overflow, which callers' size arithmetic already rules out"
-)]
+#[inline]
 pub fn unsafe_allocate_zero_vec<T: Sized + Zero>(size: usize) -> Vec<T> {
-    // `alloc_zeroed` requires a nonzero layout size: use safe construction
-    // for empty vectors and zero-sized `T` instead of violating that contract.
-    if size == 0 || std::mem::size_of::<T>() == 0 {
-        return std::iter::repeat_with(T::zero).take(size).collect();
-    }
+    // SAFETY: this function's caller guarantees that zero bytes initialize T.
+    infallible_zeroed(unsafe { raw_zeroed(size) })
+}
 
-    // SAFETY: `size` and `size_of::<T>()` are nonzero (checked above), so the
-    // layout satisfies `alloc_zeroed`'s nonzero-size requirement. The caller
-    // guarantees the allocation contains `size` initialized `T` values.
-    unsafe {
-        let layout = Layout::array::<T>(size).unwrap();
-        let ptr = std::alloc::alloc_zeroed(layout).cast::<T>();
-        if ptr.is_null() {
-            std::alloc::handle_alloc_error(layout);
-        }
-        #[expect(clippy::same_length_and_capacity)]
-        Vec::from_raw_parts(ptr, size, size)
+#[inline]
+fn infallible_zeroed<T>(result: Result<Vec<T>, ZeroAllocError>) -> Vec<T> {
+    match result {
+        Ok(values) => values,
+        #[expect(
+            clippy::panic,
+            reason = "preserves the infallible allocator's capacity-overflow contract"
+        )]
+        Err(ZeroAllocError::CapacityOverflow) => panic!("zeroed vector capacity overflow"),
+        Err(ZeroAllocError::AllocFailed { layout }) => std::alloc::handle_alloc_error(layout),
     }
+}
+
+/// # Safety
+/// All-zero bytes must be a valid T equal to T::zero().
+#[inline]
+unsafe fn raw_zeroed<T: Zero>(len: usize) -> Result<Vec<T>, ZeroAllocError> {
+    let layout = Layout::array::<T>(len).map_err(|_| ZeroAllocError::CapacityOverflow)?;
+    if layout.size() == 0 {
+        return Ok(std::iter::repeat_with(T::zero).take(len).collect());
+    }
+    // SAFETY: layout has nonzero size; the caller guarantees valid zero values.
+    let ptr = unsafe { std::alloc::alloc_zeroed(layout) }.cast::<T>();
+    if ptr.is_null() {
+        return Err(ZeroAllocError::AllocFailed { layout });
+    }
+    // SAFETY: ptr owns len initialized elements and capacity is exactly len.
+    #[expect(clippy::same_length_and_capacity)]
+    Ok(unsafe { Vec::from_raw_parts(ptr, len, len) })
 }
 
 #[cfg(test)]
@@ -48,7 +104,7 @@ mod tests {
     fn zero_vec_field_elements() {
         let table: Vec<Fr> = unsafe_allocate_zero_vec(1 << 10);
         assert_eq!(table, vec![Fr::from_u64(0); 1 << 10]);
-        assert!(unsafe_allocate_zero_vec::<Fr>(0).is_empty());
+        assert_eq!(unsafe_allocate_zero_vec::<Fr>(0), [] as [Fr; 0]);
     }
 
     #[test]

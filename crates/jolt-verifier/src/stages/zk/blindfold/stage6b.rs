@@ -362,7 +362,7 @@ mod tests {
             None,
             None,
         );
-        assert!(aliases.is_empty());
+        assert_eq!(aliases, []);
         assert_eq!(output_ids.len(), clear_values.len());
 
         for (id, expected) in output_ids.iter().zip(clear_values) {

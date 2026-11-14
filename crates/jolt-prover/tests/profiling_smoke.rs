@@ -36,6 +36,7 @@ fn profile_run_emits_conformant_artifacts() {
         scale: Some(13),
         format: OutputFormat::Chrome,
         backend: BackendKind::Reference,
+        streaming: None,
         guest_elf: None,
         input_file: None,
         result_json: None,
@@ -43,6 +44,7 @@ fn profile_run_emits_conformant_artifacts() {
         akita_chunk_profile: AkitaChunkProfile::new(1, 0),
         #[cfg(feature = "akita")]
         akita_prover_idle_spin_us: None,
+        akita_prover_pool_default_wait: false,
         memory_budget: None,
     })
     .unwrap();

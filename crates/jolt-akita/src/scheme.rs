@@ -1169,7 +1169,7 @@ mod tests {
                 .resolve_selection(selection)
                 .expect("transported grouped setup must carry its schedule row")
         });
-        assert!(!resolved.profiles().precommitteds.is_empty());
+        assert_ne!(resolved.profiles().precommitteds, []);
         assert!(resolved
             .schedule()
             .recursive_folds

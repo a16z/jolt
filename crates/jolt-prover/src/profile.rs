@@ -43,20 +43,20 @@ use std::time::{Duration, Instant};
 
 use clap::ValueEnum;
 #[cfg(feature = "akita")]
-use jolt_akita::AkitaChunkProfile;
+use jolt_akita::{AkitaChunkProfile, AkitaField};
 #[cfg(not(feature = "akita"))]
 use jolt_crypto::{Bn254G1, Pedersen};
 #[cfg(not(feature = "akita"))]
 use jolt_dory::DoryScheme;
 #[cfg(not(feature = "akita"))]
 use jolt_field::Fr;
-// Keep the inline libraries linked so their host-side registrations reach the tracer.
-#[cfg(all(feature = "field-inline", feature = "akita"))]
-use jolt_akita::AkitaField;
+use jolt_field::JoltField;
 use jolt_host::{GuestElf, JoltProgramSource, Program};
+// Keep the inline libraries linked so their host-side registrations reach the tracer.
 use jolt_inlines_keccak256 as _;
 use jolt_inlines_secp256k1 as _;
 use jolt_inlines_sha2 as _;
+use jolt_kernels::optimized::StreamingFamilies;
 use jolt_profiling::summary::{finalize_trace, ProfileSummary, SummaryContext};
 use jolt_profiling::{
     format_memory_size, report_stage_boundaries, setup_tracing_with_trace_path, PeakMemory,
@@ -66,10 +66,10 @@ use jolt_program::execution::{JoltProgram, TraceOutput};
 use jolt_program::preprocess::JoltProgramPreprocessing;
 #[cfg(feature = "field-inline")]
 use jolt_riscv::RV64IMAC_JOLT_FIELD_INLINE;
-#[cfg(all(feature = "field-inline", not(feature = "akita")))]
-type FieldInlineField = Fr;
-#[cfg(all(feature = "field-inline", feature = "akita"))]
-type FieldInlineField = AkitaField;
+#[cfg(not(feature = "akita"))]
+type ProofField = Fr;
+#[cfg(feature = "akita")]
+type ProofField = AkitaField;
 #[cfg(not(feature = "akita"))]
 use jolt_transcript::{Keccak, ProverState, VerifierState};
 use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
@@ -81,6 +81,7 @@ use crate::JoltBackend;
 use crate::JoltSharedPreprocessing;
 use crate::MemoryBudget;
 use crate::ProverConfig;
+use crate::ProverError;
 
 // Empirically measured RV64IMAC cycles per operation. These values keep
 // current benchmark scales comparable with prior results.
@@ -221,7 +222,7 @@ impl Workload {
 #[cfg(feature = "field-inline")]
 fn eqpoly_inputs() -> Vec<u8> {
     const EQ_PAIRS: [[u64; 2]; 4] = [[3, 5], [7, 2], [11, 13], [1, 9]];
-    jolt_host::field_inline::eqpoly_inputs::<FieldInlineField>(EQ_PAIRS)
+    jolt_host::field_inline::eqpoly_inputs::<ProofField>(EQ_PAIRS)
         .expect("field-ops input encoding")
 }
 
@@ -318,6 +319,13 @@ pub struct ProfileArgs {
     #[clap(long, value_enum, default_value = "reference")]
     pub backend: BackendKind,
 
+    /// Comma-separated streaming kernel families: instruction-input, spartan.
+    /// Requires --backend optimized. Recomputes early rounds from resident trace rows;
+    /// the fixed table cap is not a process-memory limit. Cannot be combined
+    /// with --memory-budget: its reservations price only eager kernels.
+    #[clap(long, value_parser = parse_streaming_families, conflicts_with = "memory_budget")]
+    pub streaming: Option<StreamingFamilies>,
+
     /// Prebuilt guest ELF; bypasses guest compilation in this process.
     #[clap(long)]
     pub guest_elf: Option<PathBuf>,
@@ -342,18 +350,22 @@ pub struct ProfileArgs {
     #[clap(long)]
     pub akita_prover_idle_spin_us: Option<u64>,
 
+    /// Use the dedicated prover pool with Rayon's default waiting policy.
+    #[cfg(feature = "akita")]
+    #[clap(long, conflicts_with = "akita_prover_idle_spin_us")]
+    pub akita_prover_pool_default_wait: bool,
+
     /// Explicit memory budget in bytes: an integer with an optional binary
     /// suffix (KiB, MiB, GiB or TiB; e.g. 32GiB). Requires `--backend
     /// optimized`. The profile reserves against it in turn and returns an
-    /// error at the first reservation that does not fit: the optimized
-    /// prover's known eager reservation, which covers the trace buffers and
-    /// named eager tables only, after tracing and before proving; then, under
-    /// Akita, the rest of the trace output, the program and program
-    /// preprocessing buffers, and the one-hot setup's flat public matrix,
-    /// before PCS setup allocates it. Under Akita every budget fails for
-    /// multi-chunk or field-inline setups, which the matrix check does not
-    /// price. Passing does not mean the whole proof fits, and the budget does
-    /// not cap process memory.
+    /// error at the first reservation that does not fit. After tracing and
+    /// before PCS setup, it reserves the input, the trace output, the program
+    /// and program preprocessing buffers, the public-I/O clone's request,
+    /// and the optimized prover's named eager tables. Under Akita it also
+    /// reserves the one-hot setup's flat public matrix before allocating it.
+    /// Under Akita every budget fails for multi-chunk or field-inline setups,
+    /// which the matrix check does not price. Passing does not mean the whole
+    /// proof fits, and the budget does not cap process memory.
     #[clap(long, value_parser = parse_memory_budget)]
     pub memory_budget: Option<MemoryBudget>,
 }
@@ -374,7 +386,43 @@ fn parse_memory_budget(value: &str) -> StdResult<MemoryBudget, String> {
         })
 }
 
+fn parse_streaming_families(value: &str) -> StdResult<StreamingFamilies, String> {
+    let mut families = StreamingFamilies::default();
+    for family in value.split(',') {
+        match family {
+            "instruction-input" => families.instruction_input = true,
+            "spartan" => families.spartan = true,
+            _ => {
+                return Err(format!(
+                    "unknown streaming family {family:?}; expected instruction-input or spartan"
+                ))
+            }
+        }
+    }
+    Ok(families)
+}
+
 impl ProfileArgs {
+    fn streaming_families(&self) -> Vec<String> {
+        let mut names = Vec::new();
+        if self.streaming.unwrap_or_default().instruction_input {
+            names.push("instruction-input".to_string());
+        }
+        if self.streaming.unwrap_or_default().spartan {
+            names.push("spartan".to_string());
+        }
+        names
+    }
+
+    fn streaming_suffix(&self) -> String {
+        let names = self.streaming_families();
+        if names.is_empty() {
+            String::new()
+        } else {
+            format!("_streaming_{}", names.join("_").replace('-', "_"))
+        }
+    }
+
     #[cfg(feature = "akita")]
     fn akita_profile_suffix(&self) -> String {
         let geometry = match self.akita_chunk_profile {
@@ -386,6 +434,7 @@ impl ProfileArgs {
         };
         match self.akita_prover_idle_spin_us {
             Some(micros) => format!("{geometry}_spin{micros}us"),
+            None if self.akita_prover_pool_default_wait => format!("{geometry}_pooldefault"),
             None => geometry,
         }
     }
@@ -394,21 +443,21 @@ impl ProfileArgs {
         let name = self.name.as_str().to_string();
         #[cfg(feature = "akita")]
         let name = format!("{name}{}", self.akita_profile_suffix());
-        name
+        format!("{name}{}", self.streaming_suffix())
     }
 
     fn benchmark_name(&self) -> String {
         let name = format!("{}{PROTOCOL_SUFFIX}", self.name.as_str());
         #[cfg(feature = "akita")]
         let name = format!("{name}{}", self.akita_profile_suffix());
-        name
+        format!("{name}{}", self.streaming_suffix())
     }
 
     fn trace_name(&self, scale: u32) -> String {
         let name = trace_name(self.name, scale, self.backend);
         #[cfg(feature = "akita")]
         let name = format!("{name}{}", self.akita_profile_suffix());
-        name
+        format!("{name}{}", self.streaming_suffix())
     }
 }
 
@@ -506,6 +555,8 @@ type ProfileResult<T> = StdResult<T, Box<dyn Error + Send + Sync>>;
 /// ([`ProverError::MemoryBudgetExceeded`](crate::ProverError::MemoryBudgetExceeded)),
 /// and, under Akita, a PCS setup failure, such as a budgeted setup shape the
 /// matrix limit does not price.
+/// Streaming selections require the optimized backend and cannot be combined
+/// with a memory budget, whose reservations price only eager kernels.
 ///
 /// # Panics
 ///
@@ -515,6 +566,14 @@ type ProfileResult<T> = StdResult<T, Box<dyn Error + Send + Sync>>;
 /// subscriber-installing format (the global tracing subscriber can only be
 /// set once).
 pub fn run(args: &ProfileArgs) -> ProfileResult<ProfileArtifacts> {
+    if args.streaming.is_some() {
+        if args.memory_budget.is_some() {
+            return Err("--streaming cannot be combined with --memory-budget: streaming kernels are not priced".into());
+        }
+        if args.backend != BackendKind::Optimized {
+            return Err("--streaming requires --backend optimized".into());
+        }
+    }
     assert!(
         args.memory_budget.is_none() || args.backend == BackendKind::Optimized,
         "--memory-budget checks the optimized prover's reservation; pass --backend optimized"
@@ -572,6 +631,7 @@ pub fn run(args: &ProfileArgs) -> ProfileResult<ProfileArtifacts> {
         workload: args.workload_name(),
         scale_log2: scale,
         backend: args.backend.as_str().to_string(),
+        streaming_families: args.streaming_families(),
     };
     let (summary_file, summary) =
         finalize_trace(&trace_path, &ctx, peak).expect("finalize chrome trace");
@@ -789,6 +849,29 @@ fn migrate_legacy_timings_csv(path: &Path) -> Result<()> {
     fs::write(path, migrated)
 }
 
+fn reserve_profile_owners<F: JoltField>(
+    mut budget: MemoryBudget,
+    trace: &TraceOutput,
+    program: &JoltProgram,
+    preprocessing: &JoltProgramPreprocessing,
+) -> StdResult<MemoryBudget, ProverError<F>> {
+    // The eager check owns the trace reservation. The public-I/O clone that
+    // follows PCS setup requests the device buffers' lengths, not capacities.
+    let device = &trace.device;
+    for bytes in [
+        trace.heap_bytes() - trace.trace.heap_bytes(),
+        program.heap_bytes(),
+        preprocessing.heap_bytes(),
+        device.inputs.len(),
+        device.trusted_advice.len(),
+        device.untrusted_advice.len(),
+        device.outputs.len(),
+    ] {
+        budget = budget.reserve::<F>(bytes)?;
+    }
+    Ok(budget)
+}
+
 fn run_workload(args: &ProfileArgs, scale: u32, run_dir: &Path) -> ProfileResult<()> {
     let workload = args.name;
     let backend = args.backend;
@@ -843,12 +926,17 @@ fn run_workload(args: &ProfileArgs, scale: u32, run_dir: &Path) -> ProfileResult
     .expect("program preprocessing");
 
     assert!(!trace_output.device.panic, "benchmark guest panicked");
+    let memory_budget = args
+        .memory_budget
+        .map(|budget| budget.reserve::<ProofField>(input.capacity()))
+        .transpose()?;
     let run = prove_workload(
         &jolt_program,
         program_preprocessing,
         trace_output,
         args,
         e2e_start,
+        memory_budget,
     )?;
     let (duration, proof_size) = (run.duration, run.proof_size);
 
@@ -857,6 +945,7 @@ fn run_workload(args: &ProfileArgs, scale: u32, run_dir: &Path) -> ProfileResult
             "workload": bench_name,
             "pcs": if cfg!(feature = "akita") { "akita" } else { "dory" },
             "backend": backend_label,
+            "streaming_families": args.streaming_families(),
             "scale_log2": scale,
             "e2e_s": run.e2e_duration.as_secs_f64(),
             "prove_s": duration.as_secs_f64(),
@@ -969,6 +1058,7 @@ fn prove_workload(
     trace_output: TraceOutput,
     args: &ProfileArgs,
     e2e_start: Instant,
+    memory_budget: Option<MemoryBudget>,
 ) -> ProfileResult<ProvenRun> {
     let memory_layout = program_preprocessing.memory_layout.clone();
     let max_trace_length = program_preprocessing.max_padded_trace_length;
@@ -981,7 +1071,13 @@ fn prove_workload(
         max_trace_length,
     )
     .expect("derive config");
-    if let Some(budget) = args.memory_budget {
+    if let Some(budget) = memory_budget {
+        let budget = reserve_profile_owners::<Fr>(
+            budget,
+            &trace_output,
+            jolt_program,
+            &program_preprocessing,
+        )?;
         let _ = budget.check_known_eager::<Fr>(&config, &trace_output.trace)?;
     }
     let shared_preprocessing =
@@ -1008,7 +1104,8 @@ fn prove_workload(
 
     let backend = match args.backend {
         BackendKind::Reference => JoltBackend::<Fr, DoryScheme>::reference(),
-        BackendKind::Optimized => JoltBackend::<Fr, DoryScheme>::optimized(),
+        BackendKind::Optimized => JoltBackend::<Fr, DoryScheme>::optimized()
+            .with_streaming(args.streaming.unwrap_or_default()),
     };
 
     // --- The measured window: the full modular prove (witness
@@ -1075,13 +1172,21 @@ fn prove_workload(
     trace_output: TraceOutput,
     args: &ProfileArgs,
     e2e_start: Instant,
+    memory_budget: Option<MemoryBudget>,
 ) -> ProfileResult<ProvenRun> {
     use crate::akita::preprocessing::AkitaVc;
     use crate::JoltProverPreprocessing;
-    use jolt_akita::{AkitaField, AkitaScheduleArtifacts, AkitaScheme};
+    use jolt_akita::{AkitaScheduleArtifacts, AkitaScheme};
     use jolt_openings::{CommitmentScheme, OpeningsError};
     use jolt_transcript::{Keccak, ProverState, VerifierState};
     use jolt_verifier::{JoltVerifierPreprocessing, ProgramPreprocessing};
+
+    let backend = match args.backend {
+        BackendKind::Reference => JoltBackend::reference(),
+        BackendKind::Optimized => {
+            JoltBackend::optimized().with_streaming(args.streaming.unwrap_or_default())
+        }
+    };
 
     let memory_layout = program_preprocessing.memory_layout.clone();
     let max_trace_length = program_preprocessing.max_padded_trace_length;
@@ -1095,9 +1200,16 @@ fn prove_workload(
     )
     .expect("derive config");
     config.akita_chunk_profile = args.akita_chunk_profile;
-    let budget = args
-        .memory_budget
-        .map(|budget| budget.check_known_eager::<AkitaField>(&config, &trace_output.trace))
+    let budget = memory_budget
+        .map(|budget| {
+            reserve_profile_owners::<AkitaField>(
+                budget,
+                &trace_output,
+                jolt_program,
+                &program_preprocessing,
+            )?
+            .check_known_eager::<AkitaField>(&config, &trace_output.trace)
+        })
         .transpose()?;
     let schedule_artifacts =
         AkitaScheduleArtifacts::shared_from_default_directory(AkitaChunkProfile::new(8, 2));
@@ -1111,18 +1223,6 @@ fn prove_workload(
     )
     .expect("Akita setup parameters");
     let shared = JoltSharedPreprocessing::new(program_preprocessing).expect("shared preprocessing");
-    // The eager check reserved the trace buffers; the setup matrix stays live
-    // beside them, the rest of the trace output, the program and its
-    // preprocessing. Counts those named buffers only.
-    let budget = budget
-        .map(|budget| {
-            budget.reserve::<AkitaField>(
-                trace_output.heap_bytes() - trace_output.trace.heap_bytes()
-                    + jolt_program.heap_bytes()
-                    + shared.program.heap_bytes(),
-            )
-        })
-        .transpose()?;
     let setup_span = tracing::info_span!("profile_pcs_setup", protocol = "akita");
     let setup_guard = setup_span.enter();
     let setup_now = Instant::now();
@@ -1140,12 +1240,18 @@ fn prove_workload(
         }
         None => AkitaScheme::setup(params)?,
     };
-    let prover_pool = args.akita_prover_idle_spin_us.map(|micros| {
-        use jolt_akita::AkitaProverPool;
-        let threads = NonZeroUsize::new(rayon::current_num_threads()).expect("nonzero pool size");
-        AkitaProverPool::new(threads, Some(Duration::from_micros(micros)))
+    let prover_pool = (args.akita_prover_idle_spin_us.is_some()
+        || args.akita_prover_pool_default_wait)
+        .then(|| {
+            use jolt_akita::AkitaProverPool;
+            let threads =
+                NonZeroUsize::new(rayon::current_num_threads()).expect("nonzero pool size");
+            AkitaProverPool::new(
+                threads,
+                args.akita_prover_idle_spin_us.map(Duration::from_micros),
+            )
             .expect("create explicit prover pool")
-    });
+        });
     let pcs_setup = match &prover_pool {
         Some(pool) => pcs_setup.with_prover_pool(pool.clone()),
         None => pcs_setup,

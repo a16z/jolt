@@ -28,6 +28,7 @@ dynasmrt = "5.1"
 iai-callgrind = { workspace = true, optional = true }
 jolt-platform = { workspace = true, features = ["std"] }
 libc = "0.2"
+tracing = { workspace = true }
 
 [dev-dependencies]
 jolt-inlines-keccak256 = { workspace = true, features = ["host"] }

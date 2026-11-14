@@ -12,7 +12,7 @@ use std::{
 use std::cell::Cell;
 
 use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
-use akita_params::{OpeningScheduleSelection, ScheduleRowDigest};
+use akita_params::{OpeningScheduleSelection, ScheduleRowDigest, SetupMode};
 use akita_pcs::{
     new_prover_setup, AkitaCommitmentScheme, AkitaDeserialize, AkitaError,
     AkitaProverSetup as BackendProverSetup, AkitaSerialize, AkitaVerifier, CommitmentHandle,
@@ -892,6 +892,7 @@ impl AkitaVerifierSetup {
                         scheme.schedules().clone(),
                         prepared.selection(),
                         Some(prepared.terminal_cache()?),
+                        SetupMode::Check,
                     )
                     .map_err(invalid_setup)
                 })?;
