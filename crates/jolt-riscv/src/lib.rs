@@ -213,11 +213,6 @@ macro_rules! for_each_instruction_kind {
                 VirtualStoreB => StoreB => "jolt.virtual.storeb",
                 VirtualStoreH => StoreH => "jolt.virtual.storeh",
                 VirtualStoreW => StoreW => "jolt.virtual.storew",
-                VirtualXORROT3 => VirtualXorRot3 => "jolt.virtual.xorrot3",
-                VirtualXORROT8 => VirtualXorRot8 => "jolt.virtual.xorrot8",
-                VirtualXORROT9 => VirtualXorRot9 => "jolt.virtual.xorrot9",
-                VirtualXORROT19 => VirtualXorRot19 => "jolt.virtual.xorrot19",
-                VirtualXORROT20 => VirtualXorRot20 => "jolt.virtual.xorrot20",
                 #[cfg(feature = "field-inline")]
                 FIELD_ADD => FieldAdd => "field.add",
                 #[cfg(feature = "field-inline")]
@@ -246,6 +241,11 @@ macro_rules! for_each_instruction_kind {
                 CSRRCI => Csrrci => "rv64.csrrci",
                 VirtualXORROT2 => VirtualXorRot2 => "jolt.virtual.xorrot2",
                 VirtualXORROT61 => VirtualXorRot61 => "jolt.virtual.xorrot61",
+                VirtualXORROT3 => VirtualXorRot3 => "jolt.virtual.xorrot3",
+                VirtualXORROT8 => VirtualXorRot8 => "jolt.virtual.xorrot8",
+                VirtualXORROT9 => VirtualXorRot9 => "jolt.virtual.xorrot9",
+                VirtualXORROT19 => VirtualXorRot19 => "jolt.virtual.xorrot19",
+                VirtualXORROT20 => VirtualXorRot20 => "jolt.virtual.xorrot20",
             ]
         }
     };
