@@ -662,8 +662,8 @@ pub struct RamReadWriteBytes {
     /// From the read-write kernel's preparation until a member of the batch
     /// first binds.
     pub prepared: usize,
-    /// Through the read-write kernel's first bind and RAF's first bind after
-    /// it.
+    /// Through the read-write kernel's and RAF's first binds, including their
+    /// possible overlap under parallel member scheduling.
     pub first_bind: usize,
 }
 
@@ -688,10 +688,12 @@ impl RamReadWriteBytes {
     /// the bind's collect (`AddressMajorMatrix::first_bind_bytes`, the old
     /// entries included) and its bound entries
     /// (`AddressMajorMatrix::bound_bytes`) beside one half-length copy of a
-    /// `K`-entry table: `val_init`'s, or one of RAF's. RAF binds its tables
-    /// one at a time after the read-write kernel under the optimized backend's
-    /// sequential member scheduler. The cycle-table handoff of a two-address
-    /// first bind fits in these bytes.
+    /// `K`-entry table. With `parallel`, an additional half-length copy covers
+    /// RAF binding alongside the read-write kernel's collect or `val_init`
+    /// copy. This conservatively reserves overlap even when the scheduler's
+    /// round-size cutoff makes that first bind sequential. Without `parallel`,
+    /// RAF binds after read-write, so one half-copy suffices. The cycle-table
+    /// handoff of a two-address first bind fits in these bytes.
     ///
     /// Not counted: later binds, and the preparation transients other than
     /// the stored tables: the access columns' collection (the eager check
@@ -738,6 +740,11 @@ impl RamReadWriteBytes {
                 let bind = AddressMajorMatrix::<F>::first_bind_bytes(prefix_cycles)?.max(
                     AddressMajorMatrix::<F>::bound_bytes(prefix_cycles)?.checked_add(half_copy)?,
                 );
+                let bind = if cfg!(feature = "parallel") {
+                    bind.checked_add(half_copy)?
+                } else {
+                    bind
+                };
                 Some(Self {
                     prepared: eq
                         .checked_add(ram_access_columns_bytes(prefix_cycles, 1)?)?
@@ -1112,18 +1119,21 @@ mod tests {
         }
     }
 
-    /// Address-first, the first bind holds one half-length copy of a
-    /// `K`-entry table at a time beside its bound entries. Over 2^13 cycles,
-    /// 2^20 addresses and 4096 proof rows, with 136-byte entries, that 16 MiB
-    /// copy outweighs the bind's collect, and the term is 118,284,976 bytes:
-    /// above the 105,571,064 bytes with the collect leading instead, below the
-    /// 135,062,192 bytes with two copies at once.
+    /// The parallel allowance reserves both RW and RAF half-copies, even
+    /// though this large shape's first bind falls above the concurrency cutoff.
     #[test]
-    fn address_first_first_bind_holds_one_half_copy() {
+    fn address_first_first_bind_reserves_possible_member_overlap() {
         let bytes = RamReadWriteBytes::new::<Fr>(ReadWriteDimensions::new(13, 20, 0, 20), 4096)
             .unwrap()
             .unwrap()
             .first_bind;
-        assert_eq!(bytes, 118_284_976);
+        assert_eq!(
+            bytes,
+            if cfg!(feature = "parallel") {
+                135_062_192
+            } else {
+                118_284_976
+            }
+        );
     }
 }
