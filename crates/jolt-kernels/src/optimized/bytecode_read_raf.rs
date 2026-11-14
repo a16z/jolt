@@ -1303,8 +1303,7 @@ impl<F: JoltField> CycleKernel<F> {
         acc: &mut [F],
         ra_pairs: &mut [(F, F)],
     ) {
-        ra.lo_hi_all(y, ra_pairs);
-        Self::accumulate_coefficient(self.coefficient(y), acc, ra_pairs);
+        Self::accumulate_coefficient(ra, y, self.coefficient(y), acc, ra_pairs);
     }
 
     /// `[C(0), C(1) - C(0), 2 * quadratic_coefficient(C)]`; each coordinate
@@ -1328,13 +1327,34 @@ impl<F: JoltField> CycleKernel<F> {
         }
     }
 
-    /// Adds the samples of `coefficient`'s polynomial times the factors whose
-    /// `(lo, hi)` values `ra_pairs` holds.
+    /// [`Self::accumulate_samples`] on group `y`'s factors of `ra`.
     #[inline]
-    fn accumulate_coefficient(coefficient: [F; 3], acc: &mut [F], ra_pairs: &mut [(F, F)]) {
+    fn accumulate_coefficient(
+        ra: &LazyFoldedRa<F, BytecodePcChunks>,
+        y: usize,
+        coefficient: [F; 3],
+        acc: &mut [F],
+        ra_pairs: &mut [(F, F)],
+    ) {
+        Self::accumulate_samples(coefficient, acc, ra_pairs, |pairs| ra.lo_hi_all(y, pairs));
+    }
+
+    /// Adds the samples of `coefficient`'s polynomial times the RA factors,
+    /// whose `(lo, hi)` values `gather` writes into `ra_pairs`. Generic over
+    /// the gather so that the default kernel's loops and the streamed rounds
+    /// each compile their own copy: one shared copy costs the default loops a
+    /// second call per group.
+    #[inline]
+    fn accumulate_samples(
+        coefficient: [F; 3],
+        acc: &mut [F],
+        ra_pairs: &mut [(F, F)],
+        gather: impl FnOnce(&mut [(F, F)]),
+    ) {
         let [coefficient_at_zero, coefficient_delta, _second_difference] = coefficient;
         #[cfg(feature = "akita")]
         let (mut coefficient_delta, second_difference) = (coefficient_delta, _second_difference);
+        gather(ra_pairs);
         for (lo, hi) in ra_pairs.iter_mut() {
             *hi -= *lo;
         }
@@ -1397,14 +1417,12 @@ impl<F: JoltField> CycleKernel<F> {
                         }
                         continue;
                     }
-                    ra.lo_hi_all(*old, &mut pairs);
-                    Self::accumulate_coefficient(*sum, &mut acc, &mut pairs);
+                    Self::accumulate_coefficient(ra, *old, *sum, &mut acc, &mut pairs);
                 }
                 *entry = Some((y, coefficients));
             }
             for (y, coefficients) in cache.drain() {
-                ra.lo_hi_all(y, &mut pairs);
-                Self::accumulate_coefficient(coefficients, &mut acc, &mut pairs);
+                Self::accumulate_coefficient(ra, y, coefficients, &mut acc, &mut pairs);
             }
             acc
         };

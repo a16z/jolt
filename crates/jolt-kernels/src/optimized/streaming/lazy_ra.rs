@@ -197,7 +197,7 @@ impl<F: JoltField, S: RowIndexSource> StreamedFoldedRa<F, S> {
         Ok(family)
     }
 
-    fn num_polys(&self) -> usize {
+    pub(crate) fn num_polys(&self) -> usize {
         self.tables.len() / self.factors
     }
 

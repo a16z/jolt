@@ -110,10 +110,11 @@ pub(super) fn rows_unavailable<F: JoltField>(_: WitnessError) -> SumcheckError<F
 }
 
 /// Streamed-RA index source: column `i` is committed chunk `i` of the
-/// cycle's bytecode index, hot on every cycle. Like the default kernel's
-/// source, it relies on the address phase, which runs first and refuses a
-/// bytecode index outside the bytecode table, for every chunk to index
-/// inside its table.
+/// cycle's bytecode index, hot on every cycle. Any index gives chunks inside
+/// their tables: a selector keeps `chunk_bits` bits and every chunk table has
+/// `2^chunk_bits` entries. The chunks spell the index only if it lies inside
+/// the bytecode table, which this source, like the default kernel's, leaves
+/// to the address phase: that phase runs first and refuses any other index.
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(super) struct BytecodePcDigits {
     #[cfg_attr(feature = "allocative", allocative(visit = crate::backend::visit_heap_free_elements))]
@@ -174,11 +175,18 @@ impl<F: JoltField> CycleKernel<F> {
         ra: &StreamedFoldedRa<F, BytecodePcDigits>,
     ) -> Result<Vec<F>, WitnessError> {
         ra.fold_pairs(
-            || (vec![F::zero(); self.degree], Vec::new()),
+            || {
+                (
+                    vec![F::zero(); self.degree],
+                    vec![(F::zero(), F::zero()); ra.num_polys()],
+                )
+            },
             |(acc, ra_pairs), y, lo, hi| {
-                ra_pairs.clear();
-                ra_pairs.extend(lo.iter().copied().zip(hi.iter().copied()));
-                Self::accumulate_coefficient(self.coefficient(y), acc, ra_pairs);
+                Self::accumulate_samples(self.coefficient(y), acc, ra_pairs, |pairs| {
+                    for ((pair, lo), hi) in pairs.iter_mut().zip(lo).zip(hi) {
+                        *pair = (*lo, *hi);
+                    }
+                });
             },
             |(left, ra_pairs), (right, _)| (merge_evals(left, right), ra_pairs),
         )
