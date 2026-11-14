@@ -34,6 +34,20 @@ cycles. Measured on `btreemap`, the trace shrinks ~17% (~21% with the optional f
 
 ## Background and requirements
 
+### Layout and ELF admission
+
+Layout construction and full and committed preprocessing admission, including
+verifier-key deserialization, check `heap_end <= 2^64 - 8` and
+`lowest_address + 8 * max_ram_K <= 2^64` with checked or wider arithmetic.
+`max_ram_K` is the maximum admitted padded RAM domain, even when a proof chooses a
+smaller domain. The ELF decoder rejects every odd decoded instruction address
+with the bytecode admission error. These checks run at admission and add no
+per-cycle proof work.
+
+ELF admission rejects any writable section, including `.bss`, that shares a
+word with a decoded source instruction. Read-only data may share a code word,
+and writable words containing only text padding remain admissible.
+
 ### Why now
 
 - **Ethproofs / zkEVM standards v0**: the EF settled on RV64IM+Zicclsm as the prescribed zkVM
