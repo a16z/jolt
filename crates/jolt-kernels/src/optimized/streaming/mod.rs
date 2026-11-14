@@ -8,8 +8,8 @@ mod pass;
 
 pub(crate) use pass::{
     bind_groups_in_place, dense_crossover, exact_task_fill, gruen_pair_pass, key_runs,
-    product_endpoint_terms, task_ranges, FillMismatch, PairHalves, TaskSlots, DENSE_TABLE_CAP,
-    VISIT_ROWS,
+    product_endpoint_terms, split_at_tasks, task_ranges, FillMismatch, GruenSums, PairHalves,
+    TaskSlots, DENSE_TABLE_CAP, VISIT_ROWS,
 };
 
 use jolt_field::JoltField;
@@ -21,6 +21,8 @@ use super::ram_ra_virtualization::StreamingRamRaVirtualization;
 use super::ram_raf_evaluation::StreamingRamRafEvaluation;
 use super::ram_read_write::StreamingRamReadWrite;
 use super::ram_val_check::StreamingRamValCheck;
+use super::registers_read_write::StreamingRegistersReadWrite;
+use super::registers_val_evaluation::StreamingRegistersValEvaluation;
 use super::spartan_outer::StreamingOuterRemainder;
 use super::spartan_product::StreamingProductRemainder;
 use crate::JoltBackend;
@@ -41,6 +43,11 @@ pub struct StreamingFamilies {
     /// RAM event log replaces the default kernels' address column, held from
     /// stage 2 through stage 5, and stage 6b collects its own column.
     pub ram: bool,
+    /// The register read-write check (stage 4) and value evaluation
+    /// (stage 5): both read the rows, so no `rd` index column carries from
+    /// stage 4 to stage 5, and under cycle-first binding stage 4 keeps no
+    /// per-cycle columns. An address-first stage 4 keeps the default kernel.
+    pub registers: bool,
 }
 
 impl<F, PCS> JoltBackend<F, PCS>
@@ -56,6 +63,7 @@ where
             spartan,
             instruction_input,
             ram,
+            registers,
         } = families;
         if spartan {
             self.spartan_outer_remainder = Box::new(StreamingOuterRemainder);
@@ -70,6 +78,10 @@ where
             self.ram_val_check = Box::new(StreamingRamValCheck);
             self.ram_ra_claim_reduction = Box::new(StreamingRamRaClaimReduction);
             self.ram_ra_virtualization = Box::new(StreamingRamRaVirtualization);
+        }
+        if registers {
+            self.registers_read_write = Box::new(StreamingRegistersReadWrite);
+            self.registers_val_evaluation = Box::new(StreamingRegistersValEvaluation);
         }
         self
     }

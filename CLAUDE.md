@@ -87,13 +87,13 @@ cargo nextest run -p [package_name] [test_name] --cargo-quiet
 
 # Guest x mode acceptance matrix (crates/jolt-prover/tests/e2e_matrix.rs): one
 # table per instruction profile, proven in clear, ZK, and Akita modes in CI.
-# Ordinary profile: fourteen guest cases. Akita builds of both profiles also prove
+# Ordinary profile: fifteen guest cases. Akita builds of both profiles also prove
 # fibonacci_ring_512, which asserts a ring-dimension-512 trace commitment.
 cargo nextest run -p jolt-prover --features prover-fixtures -E 'binary(e2e_matrix)' --cargo-quiet
 cargo nextest run -p jolt-prover --features prover-fixtures,zk -E 'binary(e2e_matrix)' --cargo-quiet
 cargo nextest run -p jolt-prover --features akita,prover-fixtures -E 'binary(e2e_matrix)' --cargo-quiet
 
-# Field-inline profile: field_ops, field_limbs, and muldiv.
+# Field-inline profile: field_ops, field_limbs, muldiv, exact_domain, and panic_halt.
 cargo nextest run -p jolt-prover --features prover-fixtures,field-inline -E 'binary(e2e_matrix)' --cargo-quiet
 cargo nextest run -p jolt-prover --features prover-fixtures,field-inline,zk -E 'binary(e2e_matrix)' --cargo-quiet
 cargo nextest run -p jolt-prover --features prover-fixtures,field-inline,akita -E 'binary(e2e_matrix)' --cargo-quiet

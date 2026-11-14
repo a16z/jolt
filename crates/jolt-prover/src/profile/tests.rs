@@ -22,6 +22,7 @@ fn streaming_option_selects_the_requested_families() {
                 instruction_input: true,
                 spartan: false,
                 ram: false,
+                registers: false,
             },
         ),
         (
@@ -30,6 +31,7 @@ fn streaming_option_selects_the_requested_families() {
                 instruction_input: false,
                 spartan: true,
                 ram: false,
+                registers: false,
             },
         ),
         (
@@ -38,14 +40,25 @@ fn streaming_option_selects_the_requested_families() {
                 instruction_input: false,
                 spartan: false,
                 ram: true,
+                registers: false,
             },
         ),
         (
-            "instruction-input,spartan,ram",
+            "registers",
+            StreamingFamilies {
+                instruction_input: false,
+                spartan: false,
+                ram: false,
+                registers: true,
+            },
+        ),
+        (
+            "instruction-input,spartan,ram,registers",
             StreamingFamilies {
                 instruction_input: true,
                 spartan: true,
                 ram: true,
+                registers: true,
             },
         ),
     ] {
@@ -212,6 +225,8 @@ fn streaming_profiles_have_distinct_artifact_and_csv_names() {
             Some("ram,spartan,instruction-input"),
             "_streaming_instruction_input_spartan_ram",
         ),
+        (Some("registers"), "_streaming_registers"),
+        (Some("registers,ram"), "_streaming_ram_registers"),
     ] {
         let mut options = vec![
             "jolt-prover",

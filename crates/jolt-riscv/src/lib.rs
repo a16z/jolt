@@ -34,6 +34,11 @@ pub mod trace;
 pub mod trace_row;
 mod uncompress;
 
+/// `jolt.success` (`.insn i 0x5B, 3, x0, x0, 0`): custom-2 opcode, funct3 3, with `rd`, `rs1`
+/// and the immediate zero. It is the only accepted funct3-3 custom-2 word: both decoders reject
+/// every other one, keeping those fields reserved.
+pub const JOLT_SUCCESS_WORD: u32 = 0x0000_305b;
+
 /// Calls `$callback! { instructions: [..] }` with every source instruction
 /// kind, as `KIND => Marker => "canonical.name"` entries.
 ///
@@ -239,6 +244,10 @@ macro_rules! for_each_instruction_kind {
                 CSRRWI => Csrrwi => "rv64.csrrwi",
                 CSRRSI => Csrrsi => "rv64.csrrsi",
                 CSRRCI => Csrrci => "rv64.csrrci",
+                VirtualXORROT2 => VirtualXorRot2 => "jolt.virtual.xorrot2",
+                VirtualXORROT61 => VirtualXorRot61 => "jolt.virtual.xorrot61",
+                JoltSuccess => Success => "jolt.success",
+                JoltPanic => Panic => "jolt.panic",
             ]
         }
     };
@@ -371,6 +380,10 @@ macro_rules! for_each_jolt_instruction_kind {
                 VirtualStoreB => StoreB => (0x00a5, "jolt.virtual.storeb"),
                 VirtualStoreH => StoreH => (0x00a6, "jolt.virtual.storeh"),
                 VirtualStoreW => StoreW => (0x00a7, "jolt.virtual.storew"),
+                VirtualXORROT2 => VirtualXorRot2 => (0x00a8, "jolt.virtual.xorrot2"),
+                VirtualXORROT61 => VirtualXorRot61 => (0x00a9, "jolt.virtual.xorrot61"),
+                JoltSuccess => Success => (0x00aa, "jolt.success"),
+                JoltPanic => Panic => (0x00ab, "jolt.panic"),
                 #[cfg(feature = "field-inline")]
                 FIELD_ADD => FieldAdd => (0x0100, "field.add"),
                 #[cfg(feature = "field-inline")]

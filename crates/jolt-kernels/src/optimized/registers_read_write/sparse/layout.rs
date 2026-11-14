@@ -185,6 +185,25 @@ impl Cell for SeedEntry {
 }
 
 impl SeedEntry {
+    /// This cell as a field-coefficient entry: `val` materialized and both
+    /// coefficients read from the level-0 tables.
+    #[inline]
+    pub(super) fn to_field<F: JoltField>(
+        self,
+        ra_lut: &CoeffLut<F>,
+        wa_lut: &CoeffLut<F>,
+    ) -> SparseEntry<F, F> {
+        SparseEntry {
+            val: F::from_u64(self.prev_val),
+            prev_val: self.prev_val,
+            next_val: self.next_val,
+            row: self.row as usize,
+            ra: self.ra().value(ra_lut),
+            wa: self.wa().value(wa_lut),
+            col: self.col,
+        }
+    }
+
     /// Bind adjacent rows into the indexed layout (materializing `val`); a
     /// missing side has zero `ra`/`wa`.
     #[inline]
@@ -356,6 +375,22 @@ impl<F: JoltField, C: OneHotCoeff<F>> SparseEntry<F, C> {
                 }
             }
             (None, None) => unreachable!("merge visits only represented cells"),
+        }
+    }
+}
+
+impl<F: JoltField> SparseEntry<F, LutIndex> {
+    /// This entry with both coefficients read from its level's tables.
+    #[inline]
+    pub(super) fn to_field(self, ra_lut: &CoeffLut<F>, wa_lut: &CoeffLut<F>) -> SparseEntry<F, F> {
+        SparseEntry {
+            val: self.val,
+            prev_val: self.prev_val,
+            next_val: self.next_val,
+            row: self.row,
+            ra: self.ra.value(ra_lut),
+            wa: self.wa.value(wa_lut),
+            col: self.col,
         }
     }
 }
