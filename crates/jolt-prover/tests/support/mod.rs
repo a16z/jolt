@@ -28,6 +28,8 @@ pub struct GuestCase {
     pub func: Option<&'static str>,
     pub std: bool,
     pub stack_size: Option<u64>,
+    /// Must match the guest's `max_untrusted_advice_size` attribute.
+    pub max_untrusted_advice_size: Option<u64>,
     pub inputs: Vec<u8>,
     pub untrusted_advice: Vec<u8>,
     pub trusted_advice: Vec<u8>,
@@ -50,6 +52,7 @@ impl GuestCase {
             func: None,
             std: false,
             stack_size: None,
+            max_untrusted_advice_size: None,
             inputs: Vec::new(),
             untrusted_advice: Vec::new(),
             trusted_advice: Vec::new(),
@@ -108,6 +111,9 @@ pub fn prepare(case: &GuestCase) -> PreparedGuest {
     source.set_std(case.std);
     if let Some(bytes) = case.stack_size {
         source.set_stack_size(bytes);
+    }
+    if let Some(bytes) = case.max_untrusted_advice_size {
+        source.set_max_untrusted_advice_size(bytes);
     }
     let (_, sizing_trace, _, device) =
         source.trace(&case.inputs, &case.untrusted_advice, &case.trusted_advice);
