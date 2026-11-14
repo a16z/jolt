@@ -109,8 +109,10 @@ pub struct OptimizedInstructionRaVirtualizationKernel<F: JoltField> {
     /// Address-folded committed RA selectors, one per committed chunk:
     /// `folded[i][j] = eq(r_chunk_i, chunk_i(k_j))` — with each virtual
     /// batch's first table pre-scaled by `γ^v` so the round loop needs no
-    /// batching multiplies — served lazily off the shared rows for the
-    /// first four binds instead of `N × T` dense.
+    /// batching multiplies — served lazily instead of `N × T` dense: off the
+    /// shared rows for the first four binds ([`Selectors::Lazy`]), or
+    /// gathered from the witness's resident rows until the streaming
+    /// family's materializing bind ([`Selectors::Streamed`]).
     folded_ra: Selectors<F>,
     gruen: GruenSplitEqPolynomial<F>,
 }
