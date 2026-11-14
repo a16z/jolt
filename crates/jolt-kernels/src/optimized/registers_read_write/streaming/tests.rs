@@ -8,7 +8,7 @@ use jolt_verifier::stages::relations::ConcreteSumcheck;
 use jolt_verifier::stages::stage4::registers_read_write_checking::{
     RegistersReadWriteChallenges, RegistersReadWriteInputClaims,
 };
-use jolt_witness::{JoltWitnessOracle, TraceBackend};
+use jolt_witness::{JoltWitnessOracle, RowSource, TraceBackend};
 
 use super::*;
 use crate::optimized::parity::{probe_input_claim, ExceptionalEq};
@@ -61,10 +61,16 @@ fn structural_counts<F: JoltField>(resident: &TraceBackend, log_t: usize) -> Vec
         .collect()
 }
 
+/// The witness's own count of the trace rows before its padded suffix.
+fn trace_len(resident: &TraceBackend) -> usize {
+    resident.random_access().unwrap().physical_cycles()
+}
+
 /// The cap that first admits round `depth`'s level: its structural entries
-/// and increments at their actual sizes, which every earlier level exceeds.
-fn cap_at_depth<F: JoltField>(structure: &[usize], depth: usize) -> usize {
-    StreamedCycleState::<F>::level_bytes(structure[depth], (1 << structure.len()) >> depth)
+/// and the increments of its rows with a trace cycle at their actual sizes,
+/// which every earlier level exceeds.
+fn cap_at_depth<F: JoltField>(resident: &TraceBackend, structure: &[usize], depth: usize) -> usize {
+    StreamedCycleState::<F>::level_bytes(structure[depth], trace_len(resident).div_ceil(1 << depth))
 }
 
 /// Inputs over `log_t` cycle variables bound cycle-first, at the cycle point
@@ -111,7 +117,7 @@ fn trace_rows<F: JoltField>(
 /// A streamed source's cycle state and rows.
 fn streamed<F: JoltField>(
     kernel: &mut ReadWriteKernel<F>,
-) -> Option<(&StreamedCycleState<F>, &mut BundleStore<RegisterCycleRow>)> {
+) -> Option<(&StreamedCycleState<F>, &mut StreamedRows)> {
     match &mut kernel.cycle {
         CycleSource::Streamed { state, rows } => Some((state, rows)),
         CycleSource::Collected { .. } => None,
@@ -124,8 +130,8 @@ fn streamed<F: JoltField>(
 /// is pseudo-random or `exceptional`, and the round challenges start with
 /// `leading`. Each streamed round counts the next level's entries by
 /// definition; the filled level holds its entries by definition in exactly
-/// their capacity, with one increment per row, until the final cycle bind
-/// releases it. Returns the filling round.
+/// their capacity, with one increment per row that has a trace cycle, until
+/// the final cycle bind releases it. Returns the filling round.
 fn assert_rows_parity<F: JoltField>(
     resident: &TraceBackend,
     log_t: usize,
@@ -141,6 +147,7 @@ fn assert_rows_parity<F: JoltField>(
         |case| case.point(log_t, round_challenges[0]),
     );
     let structure = structural_counts::<F>(resident, log_t);
+    let trace_len = trace_len(resident);
     with_inputs(log_t, r_cycle, |inputs| {
         let reference_inputs = ProverInputs {
             relation: inputs.relation,
@@ -183,7 +190,7 @@ fn assert_rows_parity<F: JoltField>(
                             (
                                 structure[round],
                                 structure[fill_round],
-                                (1 << log_t) >> round
+                                trace_len.div_ceil(1 << round)
                             ),
                             "round {round}, cap {cap}"
                         );
@@ -223,17 +230,27 @@ fn assert_rows_parity<F: JoltField>(
     })
 }
 
-/// Every round and the operand walk read the witness's resident rows across
-/// several tasks, with a padded proof suffix inside the domain: the
+/// Every round and the operand walk read the witness's resident rows: the
 /// production cap fills round 1, and a cap no earlier level meets fills the
-/// last cycle round, whose one pair spans two 4096-row visit callbacks.
+/// last cycle round. Traces of one and two rows, with a one-row padded suffix
+/// and filling their domain; at 2^13 cycles, across several tasks, the last
+/// round's one pair spans two 4096-row visit callbacks, the padded suffix
+/// starting with the second, one row into it and three rows before its end.
 #[test]
 fn streamed_passes_over_trace_rows_match_reference() {
-    x0_fixture((1 << 13) - 3).with_plane(13, |resident| {
-        let parity = |cap| assert_rows_parity::<Fr>(resident, 13, 83, &[], None, cap);
-        assert_eq!(parity(DENSE_TABLE_CAP), 1);
-        assert_eq!(parity(0), 12);
-    });
+    fn case(fixture: TraceFixture, log_t: usize) {
+        fixture.with_plane(log_t, |resident| {
+            let parity = |cap| assert_rows_parity::<Fr>(resident, log_t, 83, &[], None, cap);
+            assert_eq!(parity(DENSE_TABLE_CAP), 1);
+            assert_eq!(parity(0), log_t - 1);
+        });
+    }
+    for (log_t, cycles) in [(2, 1), (2, 2), (2, 4), (8, 1), (8, 2), (8, 255), (8, 256)] {
+        case(structured_fixture(cycles), log_t);
+    }
+    for cycles in [1 << 12, (1 << 12) + 1, (1 << 13) - 3] {
+        case(x0_fixture(cycles), 13);
+    }
 }
 
 /// Caps that fill the frontier at each LUT level (1 to 3), at the first field
@@ -246,12 +263,12 @@ fn streamed_frontier_matches_reference_at_every_crossover() {
         let parity = |cap| assert_rows_parity::<F>(resident, 8, 97, &[], None, cap);
         for depth in [1, 2, 3, 4, 6, 7] {
             assert_eq!(
-                parity(cap_at_depth::<F>(&structure, depth)),
+                parity(cap_at_depth::<F>(resident, &structure, depth)),
                 depth,
                 "depth {depth}"
             );
         }
-        assert_eq!(parity(cap_at_depth::<F>(&structure, 2) - 1), 3);
+        assert_eq!(parity(cap_at_depth::<F>(resident, &structure, 2) - 1), 3);
         assert_eq!(parity(0), 7);
     }
     x0_fixture(253).with_plane(8, |resident| {
@@ -280,7 +297,7 @@ fn zero_one_challenges_and_degenerate_points_keep_structural_entries() {
                         89,
                         &leading,
                         exceptional,
-                        cap_at_depth::<F>(&structure, depth),
+                        cap_at_depth::<F>(resident, &structure, depth),
                     );
                     assert_eq!(filled, depth);
                 }
@@ -328,13 +345,15 @@ fn row_failures_and_count_divergence_are_typed_and_publish_no_entries() {
                 assert_eq!(streamed(&mut kernel).unwrap().0.filled(), None);
             });
             for (counted, filled) in [(resident, fewer), (fewer, resident)] {
-                let structure = structural_counts::<Fr>(counted, 3);
-                for depth in [1, 2] {
-                    let mut kernel = new_kernel(counted, cap_at_depth::<Fr>(&structure, depth));
+                // The production cap fills round 1; no cap fills the last
+                // round, 2, whatever rows it then reads.
+                for (depth, cap) in [(1, DENSE_TABLE_CAP), (2, 0)] {
+                    let mut kernel = new_kernel(counted, cap);
                     for round in 0..depth {
                         let _ = prove(&mut kernel, round).unwrap();
                     }
-                    *streamed(&mut kernel).unwrap().1 = trace_rows::<Fr>(filled, 3);
+                    *streamed(&mut kernel).unwrap().1 =
+                        StreamedRows::new(trace_rows::<Fr>(filled, 3), 1 << 3).unwrap();
                     assert_eq!(
                         failure(prove(&mut kernel, depth)),
                         Some(DIVERGED),

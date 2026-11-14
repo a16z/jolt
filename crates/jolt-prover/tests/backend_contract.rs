@@ -254,15 +254,19 @@ mod tests {
     /// parity tests in `jolt-kernels` cover later crossovers. The RAM kernels
     /// have no crossover: stages 2–5 read the event log and stage 6b its own
     /// address column at every trace size. The register value evaluation
-    /// reads the rows in rounds 0 and 1 and fills its two tables in round 1.
-    /// The derived config binds the register read-write check cycle-first,
-    /// so its streaming kernel runs: round 0's pass counts level 1's entries,
-    /// round 1's pass fills them, and the operand openings come from one more
-    /// row walk. The address-first route, which keeps the default kernel, is
-    /// the one `e2e_matrix`'s all-families case takes. Stage 6b's instruction
-    /// RA virtualization gathers its selectors from the rows in rounds 0–3 and
-    /// holds them dense from the fourth bind, the earliest at any budget; the
-    /// parity tests cover later ones.
+    /// reads the trace's rows in rounds 0 and 1 and fills its two tables in
+    /// round 1; the trace does not fill its domain, so those passes stop at
+    /// the pair that holds its last row, and later rounds read the padded
+    /// suffix as the tables' tail value. The derived config binds the
+    /// register read-write check cycle-first, so its streaming kernel runs:
+    /// round 0's pass counts level 1's entries, round 1's pass fills them,
+    /// and the operand openings come from one more row walk, each ending
+    /// with the group of rows that holds the trace's last. The address-first
+    /// route, which keeps the default kernel, is the one `e2e_matrix`'s
+    /// all-families case takes. Stage 6b's instruction RA virtualization
+    /// gathers its selectors from the rows in rounds 0–3 and holds them dense
+    /// from the fourth bind, the earliest at any budget; the parity tests
+    /// cover later ones.
     #[test]
     fn streaming_kernels_reproduce_the_default_proof() {
         let Fixture {

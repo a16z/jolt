@@ -1,6 +1,7 @@
 //! The frontier's passes over the witness's rows: each regenerates its
-//! round's level instead of reading stored entries. The cycle domain splits
-//! into [`task_ranges`] of whole Gruen groups, each visited once, serially; a
+//! round's level instead of reading stored entries. The Gruen groups that
+//! hold a prefix row ([`StreamedRows`]) split into [`task_ranges`], each
+//! visited once, serially; a
 //! task merges its consecutive rows' cells ([`RegisterCycleRow::entries`])
 //! level by level into the round's pairs, and every completed pair reaches the
 //! task's [`GruenSums`]. A counting pass also counts each Gruen group's
@@ -24,11 +25,10 @@ use super::super::layout::{
 use super::super::ops::accumulate_pair_group;
 use super::super::{CoeffLut, CycleState, LutIndex};
 use super::LUT_LEVELS;
-use crate::optimized::registers_read_write::rows::{raw_rd_inc, RegisterCycleRow};
+use crate::optimized::registers_read_write::rows::{raw_rd_inc, RegisterCycleRow, StreamedRows};
 use crate::optimized::streaming::{
     split_at_tasks, task_ranges, FillMismatch, GruenSums, PairHalves, TaskSlots, VISIT_ROWS,
 };
-use crate::optimized::support::BundleStore;
 
 /// Why a streamed round's pass failed.
 #[derive(Debug)]
@@ -218,12 +218,14 @@ impl<F: JoltField> RowMerge<F> {
     }
 }
 
-/// Round `r.len()`'s Gruen sums `Σ_z E(z) · terms(state, pair z)` over its
-/// level's pairs, `state` being its task's entry of `task_states(ranges)`.
-/// Every pair reaches its task's sums, an empty one too, so each Gruen group
-/// closes. Returns the sums and every task's final state, in range order.
+/// Round `r.len()`'s Gruen sums `Σ_z E(z) · terms(state, pair z)` over the
+/// pairs of its level's Gruen groups that hold a prefix row, whose other
+/// pairs add nothing; `state` is its task's entry of `task_states(ranges)`.
+/// Every pair of a visited group reaches its task's sums, an empty one too,
+/// so each group closes. Returns the sums and every task's final state, in
+/// range order.
 fn stream_pairs<F: JoltField, S: Send, const N: usize>(
-    rows: &BundleStore<RegisterCycleRow>,
+    rows: &StreamedRows,
     e_in: &[F],
     e_out: &[F],
     r: &[F],
@@ -233,13 +235,14 @@ fn stream_pairs<F: JoltField, S: Send, const N: usize>(
 ) -> Result<([F; N], Vec<S>), PassError> {
     let depth = r.len();
     let group = e_in.len() << (depth + 1);
-    let ranges = task_ranges(e_out.len() * group, group);
+    let ranges = task_ranges(rows.prefix_end(group, e_out.len() * group), group);
     let reversed: Vec<F> = r.iter().rev().copied().collect();
     let weights = EqPolynomial::<F>::evals(&reversed, None);
     let task = |(range, mut state): (&Range<usize>, S)| -> Result<([F; N], S), WitnessError> {
         let mut merge = RowMerge::new(depth);
         let mut sums = GruenSums::new(e_out, e_in);
-        rows.visit(range.clone(), VISIT_ROWS.min(group), |start, bundles| {
+        let chunk = VISIT_ROWS.min(group);
+        rows.store.visit(range.clone(), chunk, |start, bundles| {
             for (t, row) in (start..).zip(bundles) {
                 if let Some(pair) = merge.push(t, row, &weights, r, luts) {
                     sums.add(pair.z, terms(&mut state, &pair));
@@ -296,7 +299,7 @@ fn column_union<F: JoltField>(pair: &Pair<'_, F>) -> usize {
 /// Round `r.len()`'s `[q(0), leading coefficient]` and each Gruen group's
 /// entries at the next round's level.
 pub(super) fn count<F: JoltField>(
-    rows: &BundleStore<RegisterCycleRow>,
+    rows: &StreamedRows,
     e_in: &[F],
     e_out: &[F],
     r: &[F],
@@ -331,11 +334,12 @@ pub(super) fn count<F: JoltField>(
 type Filled<F> = ([F; 2], Vec<SparseEntry<F, F>>, Vec<F>);
 
 /// Round `r.len()`'s `[q(0), leading coefficient]`, filling its level's
-/// entries and increments: the last pass's Gruen group `g` owns `counts[g]`
-/// consecutive entry slots, each task writes only its own groups' slots, and
-/// the entries are published only once every task filled its slots exactly.
+/// entries and the increments of its rows that hold a prefix cycle: the last
+/// pass's Gruen group `g` owns `counts[g]` consecutive entry slots, each task
+/// writes only its own groups' slots, and the entries are published only once
+/// every task filled its slots exactly.
 pub(super) fn fill<F: JoltField>(
-    rows: &BundleStore<RegisterCycleRow>,
+    rows: &StreamedRows,
     e_in: &[F],
     e_out: &[F],
     r: &[F],
@@ -348,7 +352,8 @@ pub(super) fn fill<F: JoltField>(
     let width = cycles / counts.len();
     let len: usize = counts.iter().sum();
     let mut entries: Vec<SparseEntry<F, F>> = Vec::with_capacity(len);
-    let mut inc: Vec<F> = unsafe_allocate_zero_vec(cycles >> depth);
+    let increments = rows.prefix_len.div_ceil(1 << depth);
+    let mut inc: Vec<F> = unsafe_allocate_zero_vec(increments);
     let (quadratic, states) = stream_pairs(
         rows,
         e_in,
@@ -356,20 +361,25 @@ pub(super) fn fill<F: JoltField>(
         r,
         luts,
         |tasks| {
-            // Task ranges cover the domain in order from 0, so whole-group
-            // ends keep every task boundary on a group boundary.
+            // Task ranges cover their cycles in order from 0, so whole-group
+            // ends keep every task boundary on a group boundary. The groups
+            // after the last task must own no slot.
+            let first_slot = |cycle: usize| counts[..cycle / width].iter().sum::<usize>();
+            let visited = tasks.last().map_or(0, |task| task.end);
             if width * counts.len() != cycles
                 || !tasks.iter().all(|task| task.end.is_multiple_of(width))
+                || first_slot(visited) != len
             {
                 return Err(PassError::Diverged);
             }
-            let first_slot = |cycle: usize| counts[..cycle / width].iter().sum::<usize>();
             let slots = split_at_tasks(
                 [&mut entries.spare_capacity_mut()[..len]],
                 tasks,
                 first_slot,
             );
-            let halves = split_at_tasks([&mut inc[..]], tasks, |cycle| cycle >> depth);
+            let halves = split_at_tasks([&mut inc[..]], tasks, |cycle| {
+                (cycle >> depth).min(increments)
+            });
             Ok(slots
                 .into_iter()
                 .zip(halves)
@@ -384,7 +394,9 @@ pub(super) fn fill<F: JoltField>(
                 slots.push(*entry);
             }
             let at = 2 * pair.z - *first;
-            halves[at..at + 2].copy_from_slice(&pair.inc);
+            for (slot, half) in halves.iter_mut().skip(at).zip(pair.inc) {
+                *slot = half;
+            }
             quadratic_terms(pair, &unused)
         },
     )?;
@@ -392,8 +404,9 @@ pub(super) fn fill<F: JoltField>(
         slots.finish().map_err(|FillMismatch| PassError::Diverged)?;
     }
     // SAFETY: the tasks' slots tile the first `len` spare slots of `entries`
-    // (`split_at_tasks` by the counts, the tasks covering the cycle domain),
-    // and each task's slots finished with every slot written.
+    // (`split_at_tasks` by the counts, the visited groups owning all `len`
+    // slots, checked above), and each task's slots finished with every slot
+    // written.
     unsafe {
         entries.set_len(len);
     }
@@ -403,7 +416,7 @@ pub(super) fn fill<F: JoltField>(
 /// Round `r.len()`'s `q(1)` for a Gruen round whose linear factor vanishes
 /// at 1: each odd row's summand `ra·val + wa·(val + inc)`.
 pub(super) fn at_one<F: JoltField>(
-    rows: &BundleStore<RegisterCycleRow>,
+    rows: &StreamedRows,
     e_in: &[F],
     e_out: &[F],
     r: &[F],
