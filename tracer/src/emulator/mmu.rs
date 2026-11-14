@@ -104,8 +104,7 @@ impl AddressFault {
 fn address_fault(jolt_device: &JoltDevice, ea: u64, is_write: bool) -> Option<AddressFault> {
     let layout = &jolt_device.memory_layout;
     if ea < DRAM_BASE {
-        // The padding from `io_end` up to DRAM is unmapped: the RAM read-write
-        // relation's unmapped-word mask starts at `io_end`.
+        // Nothing is mapped between `io_end` and DRAM, so any access there faults.
         if ea >= layout.io_end {
             return Some(AddressFault::IoOverflow);
         }

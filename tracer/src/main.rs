@@ -54,6 +54,11 @@ fn main() {
         ..Default::default()
     };
     emulator.get_mut_cpu().get_mut_mmu().jolt_device = Some(JoltDevice::new(&memory_config));
+    // As in `run_test`, an ELF without `tohost` is a Jolt guest: guard its
+    // code words as tracing for a proof does.
+    if emulator.tohost_addr == 0 {
+        emulator.protect_code_words(&elf_content);
+    }
 
     let endcode = emulator.run_test(args.trace.unwrap_or(false), args.disassemble);
 

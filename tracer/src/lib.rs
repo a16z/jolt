@@ -15,12 +15,7 @@ use common::{self, jolt_device::MemoryConfig};
 use emulator::{cpu, default_terminal::DefaultTerminal};
 use instruction::{Cycle, Instruction};
 use jolt_program::execution::TraceError;
-use jolt_program::preprocess::ram::code_word_intervals;
 use jolt_riscv::RV64IMAC_JOLT;
-#[cfg(not(feature = "field-inline"))]
-use jolt_riscv::RV64IMAC_JOLT_ALL_INLINES;
-#[cfg(feature = "field-inline")]
-use jolt_riscv::RV64IMAC_JOLT_FIELD_INLINE;
 use parallel::TwoPassConfig;
 
 pub mod emulator;
@@ -407,10 +402,6 @@ fn setup_emulator(
 ///
 /// Public seam for drivers that need to tick the emulator themselves
 /// (mode-equivalence gates, two-pass parallel tracing).
-#[expect(
-    clippy::expect_used,
-    reason = "create_emulator has no error path: as on over-long I/O, it panics on a program image jolt-program rejects"
-)]
 pub fn create_emulator(
     elf_contents: &[u8],
     elf_path: Option<&PathBuf>,
@@ -429,27 +420,12 @@ pub fn create_emulator(
     let jolt_device =
         JoltDevice::try_with_io(memory_config, inputs, trusted_advice, untrusted_advice)
             .unwrap_or_else(|error| panic!("{error}"));
-    let lowest_address = jolt_device.memory_layout.get_lowest_address();
     emulator.get_mut_cpu().get_mut_mmu().jolt_device = Some(jolt_device);
     if let Some(elf_path) = elf_path {
         emulator.set_elf_path(elf_path);
     }
     emulator.setup_program(elf_contents);
-    #[cfg(not(feature = "field-inline"))]
-    let profile = RV64IMAC_JOLT_ALL_INLINES;
-    #[cfg(feature = "field-inline")]
-    let profile = RV64IMAC_JOLT_FIELD_INLINE;
-    let image = jolt_program::image::decode_elf(elf_contents, profile)
-        .expect("program ELF decoding failed");
-    emulator.get_mut_cpu().get_mut_mmu().code_word_intervals = code_word_intervals(
-        image.instructions.iter().map(|instruction| {
-            let row = instruction.row();
-            (row.address as u64, row.is_compressed)
-        }),
-        lowest_address,
-    )
-    .expect("decoded code-word intervals are valid")
-    .into();
+    emulator.protect_code_words(elf_contents);
     emulator
 }
 

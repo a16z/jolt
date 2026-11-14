@@ -278,7 +278,7 @@ pub extern "sysv64" fn slow_store_doubleword(
         return fail(
             state,
             host,
-            format!("I/O underflow: Attempted to write to {address:#X}"),
+            format!("Illegal device store: Unknown memory mapping: {address:#X}"),
         );
     }
     if address + 8 > host.device.memory_layout.io_end {
