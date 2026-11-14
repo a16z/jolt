@@ -57,8 +57,9 @@ pub struct StreamingFamilies {
     /// share from stage 5 on as a packed row cache: the instruction read-RAF
     /// check (stage 5), the booleanity address phase (stage 6a) and stage
     /// 6b's booleanity cycle phase and instruction RA virtualization read the
-    /// witness's resident rows in their own passes. The bytecode read-RAF
-    /// kernels keep their default kernels, so the cache is no longer
+    /// witness's resident rows in their own passes, which stop at the rows'
+    /// constant suffix as the default kernels' tables do. The bytecode
+    /// read-RAF kernels keep their default kernels, so the cache is no longer
     /// collected in stage 5 but by stage 6a's bytecode read-RAF address
     /// phase, and lives until the stage-6b bytecode read-RAF cycle kernel
     /// releases it. Stage 7's Hamming-weight claim reduction has no streaming

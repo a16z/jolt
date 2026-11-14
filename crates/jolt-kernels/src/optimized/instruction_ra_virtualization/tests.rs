@@ -268,6 +268,7 @@ fn assert_streaming_parity(
     seed: u64,
     gamma: Fr,
     exceptional: Option<ExceptionalEq>,
+    prefix: Option<usize>,
     bytes: usize,
 ) {
     assert_parity_with(
@@ -278,7 +279,7 @@ fn assert_streaming_parity(
         seed,
         gamma,
         exceptional,
-        None,
+        prefix,
         |inputs, rows| {
             let rows = rows
                 .iter()
@@ -574,17 +575,39 @@ fn streaming_parity_at_every_materialization() {
     let entry = size_of::<Fr>();
     let gamma = fr(0xFEED_5EED);
     for depth in 4..=7 {
-        assert_streaming_parity(7, 2, 2, 4, 61, gamma, None, entry << (7 - depth));
+        assert_streaming_parity(7, 2, 2, 4, 61, gamma, None, None, entry << (7 - depth));
     }
-    assert_streaming_parity(4, 8, 4, 4, 42, gamma, None, MATERIALIZE_BYTES);
-    assert_streaming_parity(6, 4, 8, 4, 43, gamma, None, entry);
-    assert_streaming_parity(3, 3, 1, 2, 1337, gamma, None, entry);
-    assert_streaming_parity(1, 2, 2, 2, 9, gamma, None, entry);
-    assert_streaming_parity(6, 2, 2, 4, 7, fr(0), None, entry);
-    assert_streaming_parity(3, 3, 1, 2, 1337, fr(0), None, entry);
+    assert_streaming_parity(4, 8, 4, 4, 42, gamma, None, None, MATERIALIZE_BYTES);
+    assert_streaming_parity(6, 4, 8, 4, 43, gamma, None, None, entry);
+    assert_streaming_parity(3, 3, 1, 2, 1337, gamma, None, None, entry);
+    assert_streaming_parity(1, 2, 2, 2, 9, gamma, None, None, entry);
+    assert_streaming_parity(6, 2, 2, 4, 7, fr(0), None, None, entry);
+    assert_streaming_parity(3, 3, 1, 2, 1337, fr(0), None, None, entry);
     for factors in [1, 2, 4] {
         for case in ExceptionalEq::ALL {
-            assert_streaming_parity(6, 2, factors, 2, 277, fr(31), Some(case), 2 * entry);
+            assert_streaming_parity(6, 2, factors, 2, 277, fr(31), Some(case), None, 2 * entry);
+        }
+    }
+}
+
+/// The streaming family over rows that end in a constant suffix, against the
+/// reference at every materializing bind of 2^6 cycles: no row before the
+/// suffix, one and two, a suffix that starts inside a pair and a split-eq
+/// group or on their boundaries, and a suffix of the last row alone; with
+/// one factor and with two, and at exceptional eq points, where `q(0)` takes
+/// its own pass.
+#[test]
+fn streaming_constant_suffix_matches_reference() {
+    let entry = size_of::<Fr>();
+    for prefix in [0, 1, 2, 15, 16, 17, 33, 63].map(Some) {
+        for depth in 4..=6 {
+            for factors in [1, 2] {
+                let bytes = entry << (6 - depth);
+                assert_streaming_parity(6, 2, factors, 2, 277, fr(31), None, prefix, bytes);
+            }
+        }
+        for case in ExceptionalEq::ALL {
+            assert_streaming_parity(6, 2, 2, 2, 277, fr(31), Some(case), prefix, 2 * entry);
         }
     }
 }
@@ -683,14 +706,26 @@ fn trace_case<F: JoltField>(backend: &TraceBackend, log_t: usize, bytes: Option<
     );
 }
 
-/// Every round and the output claims over a witness's resident rows, whose
-/// domain ends in a padded suffix of three eighths of its cycles, at every
-/// materializing bind and at the production budget through the slot,
-/// against the reference, in both fields.
+/// Every round and the output claims over a witness's resident rows, at
+/// every materializing bind and at the production budget through the slot,
+/// against the reference, in both fields. The traces fill their domain, end
+/// one cycle short of it, hold one cycle or two, and end inside a pair and a
+/// split-eq group or on a pair boundary.
 #[test]
 fn streaming_trace_rows_match_reference() {
-    for log_t in [1, 3, 6] {
-        structured_fixture(((5 << log_t) / 8).max(1)).with_plane(log_t, |backend| {
+    for (log_t, cycles) in [
+        (1, 1),
+        (1, 2),
+        (3, 5),
+        (3, 8),
+        (6, 1),
+        (6, 2),
+        (6, 37),
+        (6, 40),
+        (6, 63),
+        (6, 64),
+    ] {
+        structured_fixture(cycles).with_plane(log_t, |backend| {
             for depth in (4..=log_t).map(Some).chain([None]) {
                 trace_case::<Fr>(
                     backend,

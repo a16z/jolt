@@ -2,8 +2,9 @@
 //! gathered from the witness's resident rows ([`StreamedFoldedRa`]) instead of
 //! from the packed row cache the default kernels share. Until the family's
 //! materializing bind, every round evaluates the default kernel's summand on
-//! each pair row of the padded cycle domain; from that bind on, the default
-//! kernel's rounds run over the family's dense state.
+//! each pair row that holds a cycle before the rows' constant suffix, and
+//! once for the suffix; from that bind on, the default kernel's rounds run
+//! over the family's dense state.
 
 use jolt_field::{Accumulator, JoltField};
 use jolt_poly::UnivariatePoly;
@@ -74,7 +75,7 @@ impl<F: JoltField> OptimizedInstructionRaVirtualizationKernel<F> {
                 rows,
                 relation.dimensions().log_t(),
                 materialize_bytes,
-            );
+            )?;
             // A one-cycle domain has no bind to materialize at.
             Ok(match selectors.single_cycle()? {
                 Some(dense) => Selectors::Lazy(dense),
@@ -84,9 +85,8 @@ impl<F: JoltField> OptimizedInstructionRaVirtualizationKernel<F> {
     }
 
     /// A round before the selectors materialize: the default round's `q`
-    /// samples, summed over every pair row from passes over the rows. A
-    /// failed `q(0)` pass is held and returned, so its placeholder zero never
-    /// reaches a round message.
+    /// samples, from the family's pair sums. A failed `q(0)` pass is held and
+    /// returned, so its placeholder zero never reaches a round message.
     pub(super) fn streamed_message(
         &self,
         selectors: &StreamedFoldedRa<F, LookupIndexDigits>,

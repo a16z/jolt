@@ -84,6 +84,9 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
                 ))
             }
             ScanRows::Resident { lookup_indices, .. } => {
+                // The streamed rounds read the combined value by pair row, so
+                // the family's suffix starts no earlier than the claim
+                // column's.
                 let ra = StreamedFoldedRa::factored(
                     column_tables,
                     factors,
@@ -91,7 +94,8 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
                     LookupIndexDigits::new(columns, chunk_bits),
                     lookup_indices,
                     self.dimensions.log_t(),
-                );
+                    self.claim_columns.prefix_len(),
+                )?;
                 // A one-cycle domain has no bind to materialize at.
                 match ra.single_cycle()? {
                     Some(dense) => CycleRa::Lazy(dense),

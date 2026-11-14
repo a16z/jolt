@@ -25,6 +25,7 @@ use jolt_witness::{RowSource, TraceBackend};
 use rayon::ThreadPoolBuilder;
 
 use crate::optimized::registers_read_write::test_support::structured_fixture;
+use crate::optimized::streaming::VISIT_ROWS;
 use crate::optimized::support::BundleStore;
 use crate::reference::instruction_read_raf::{InstructionReadRafKernel, InstructionReadRafWitness};
 use crate::reference::views::eq_table;
@@ -283,7 +284,7 @@ fn assert_parity_case(
 
 #[test]
 fn constant_suffix_rounds_match_reference() {
-    for prefix in [0, 1, 15, 16, 17, 33, 63] {
+    for prefix in [0, 1, 2, 15, 16, 17, 33, 63] {
         for exceptional in [None].into_iter().chain(ExceptionalEq::ALL.map(Some)) {
             for zero_tail in [true, false] {
                 assert_parity_prefix(6, 8, 123, exceptional, Some((prefix, zero_tail)));
@@ -694,22 +695,30 @@ fn parity_exceptional_eq_in_lazy_and_dense_cycle_tables() {
 /// 8-bit columns materialize at the second bind of 2^11 cycles and at the
 /// third bind of 2^13 (both fused) and of 2^15 (after doubling); at 2^6
 /// cycles, as in every 16-bit case of the reference parity tests, at the
-/// first. Half of the cases end in a padded suffix.
+/// first. Each domain ends in its last row alone and in constant suffixes
+/// that start after one row and two, inside a pair, at five eighths of the
+/// domain and, where it is that long, at a visit callback's end.
 #[test]
 fn streaming_cycle_rounds_match_default_at_every_materializing_bind() {
-    for (log_t, materializing_bind, padded) in
-        [(6, 1, false), (11, 2, true), (13, 3, false), (15, 3, true)]
-    {
+    let cases =
+        [(6, 1), (11, 2), (13, 3), (15, 3)]
+            .into_iter()
+            .flat_map(|(log_t, materializing_bind)| {
+                let cycles = 1usize << log_t;
+                [cycles, 1, 2, 37, 5 * cycles / 8, VISIT_ROWS]
+                    .into_iter()
+                    .filter(move |prefix| *prefix <= cycles)
+                    .map(move |prefix| (log_t, materializing_bind, prefix))
+            });
+    for (log_t, materializing_bind, prefix) in cases {
         let dimensions = InstructionReadRafDimensions::new(
             log_t,
             2 * RISCV_XLEN,
             NonZeroUsize::new(16).unwrap(),
         );
         let mut rows = fixture_rows(log_t, 97 + log_t as u64);
-        if padded {
-            let tail = rows[rows.len() - 1];
-            rows[(5 << log_t) / 8..].fill(tail);
-        }
+        let tail = rows[rows.len() - 1];
+        rows[prefix..].fill(tail);
         let r_reduction: Vec<Fr> = (0..log_t).map(challenge).collect();
         let gamma = fr(0xACE1_57EF);
         let mut default = OptimizedInstructionReadRafKernel::new(
@@ -729,7 +738,7 @@ fn streaming_cycle_rounds_match_default_at_every_materializing_bind() {
             assert_eq!(
                 expected.coefficients(),
                 actual.coefficients(),
-                "log_t {log_t}, round {round}"
+                "log_t {log_t}, prefix {prefix}, round {round}"
             );
             claim = expected.evaluate(challenge(round));
             if let Some(cycle) = &streaming.cycle {
@@ -737,7 +746,7 @@ fn streaming_cycle_rounds_match_default_at_every_materializing_bind() {
                 assert_eq!(
                     matches!(cycle.ra, CycleRa::Streamed(_)),
                     cycle_binds < materializing_bind,
-                    "log_t {log_t}, cycle bind {cycle_binds}"
+                    "log_t {log_t}, prefix {prefix}, cycle bind {cycle_binds}"
                 );
             }
         }
@@ -754,6 +763,25 @@ fn streaming_cycle_rounds_match_default_at_every_materializing_bind() {
         assert_eq!(expected.instruction_ra, actual.instruction_ra);
         assert_eq!(expected.instruction_raf_flag, actual.instruction_raf_flag);
     }
+}
+
+/// Rows whose lookup index turns constant at cycle 20 and whose table index
+/// and RAF flag at cycle 41: the streamed cycle round reads the combined
+/// value by pair row, so the virtual RA family's suffix has to start where
+/// the claim column's does, not where the lookup indices' does.
+#[test]
+fn streamed_suffix_starts_where_the_claim_column_turns_constant() {
+    let log_t = 6;
+    let dimensions =
+        InstructionReadRafDimensions::new(log_t, 2 * RISCV_XLEN, NonZeroUsize::new(8).unwrap());
+    let mut rows = fixture_rows(log_t, 4242);
+    let tail = rows[rows.len() - 1];
+    for row in &mut rows[20..41] {
+        row.lookup_index = tail.lookup_index;
+    }
+    rows[41..].fill(tail);
+    let point: Vec<Fr> = (0..log_t).map(challenge).collect();
+    assert_parity_rows(dimensions, &point, rows);
 }
 
 /// On one pool thread a scan task of 2^14 rows holds two blocks and a
@@ -839,8 +867,9 @@ impl<F: JoltField> TraceCase<F> {
 }
 
 /// Every round and the output claims through the streaming slot over a
-/// witness's resident rows, whose domain ends in a padded suffix of three
-/// eighths of its cycles, against the reference, in both fields. A one-cycle
+/// witness's resident rows, against the reference, in both fields. The traces
+/// fill their domain, end one cycle short of it, hold one cycle or two, and
+/// end inside a pair and a split-eq group or on a pair boundary. A one-cycle
 /// domain has no cycle round: the handoff gathers the RA claims at once.
 /// The slot parks no row cache in the session.
 #[test]
@@ -869,8 +898,18 @@ fn streaming_slot_matches_reference_over_a_trace_witness() {
         assert_eq!(expected.instruction_ra, actual.instruction_ra);
         assert_eq!(expected.instruction_raf_flag, actual.instruction_raf_flag);
     }
-    for log_t in [0, 3, 6] {
-        structured_fixture(((5 << log_t) / 8).max(1)).with_plane(log_t, |backend| {
+    for (log_t, cycles) in [
+        (0, 1),
+        (3, 5),
+        (3, 8),
+        (6, 1),
+        (6, 2),
+        (6, 37),
+        (6, 40),
+        (6, 63),
+        (6, 64),
+    ] {
+        structured_fixture(cycles).with_plane(log_t, |backend| {
             check::<Fr>(backend, log_t);
             #[cfg(feature = "akita")]
             check::<Prime128Offset6A23801F>(backend, log_t);

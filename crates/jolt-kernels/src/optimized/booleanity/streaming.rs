@@ -3,9 +3,9 @@
 //! The address phase accumulates its reference-cycle masses from the rows.
 //! The cycle phase gathers the checked polynomials' address-folded rows from
 //! them ([`StreamedFoldedRa`]): until the family's materializing bind, every
-//! round evaluates the default kernel's summand on each pair row of the
-//! padded cycle domain; from that bind on, the default kernel's rounds run
-//! over the family's dense state.
+//! round evaluates the default kernel's summand on each pair row that holds a
+//! cycle before the rows' constant suffix, and once for the suffix; from that
+//! bind on, the default kernel's rounds run over the family's dense state.
 
 use jolt_field::{Accumulator, JoltField};
 use jolt_poly::UnivariatePoly;
@@ -149,7 +149,7 @@ impl<F: JoltField> OptimizedBooleanityCycleKernel<F> {
                 rows,
                 log_t,
                 materialize_bytes,
-            );
+            )?;
             // A one-cycle domain has no bind to materialize at.
             Ok(match selectors.single_cycle()? {
                 Some(dense) => CycleTables::Lazy(dense),
@@ -159,9 +159,9 @@ impl<F: JoltField> OptimizedBooleanityCycleKernel<F> {
     }
 
     /// A round before the rows materialize: the default round's constant and
-    /// leading coefficients of `q`, summed over every pair row from one pass
-    /// over the rows. A failed `q(1)` pass is held and returned, so its
-    /// placeholder zero never reaches a round message.
+    /// leading coefficients of `q`, from the family's pair sums. A failed
+    /// `q(1)` pass is held and returned, so its placeholder zero never reaches
+    /// a round message.
     pub(super) fn streamed_round(
         &self,
         selectors: &StreamedFoldedRa<F, ResidentChunks>,
