@@ -437,6 +437,7 @@ mod tests {
     use super::*;
     use crate::optimized::instruction_read_raf::LookupIndexChunks;
     use crate::optimized::lazy_ra::ChunkIndexSource;
+    use crate::optimized::registers_read_write::test_support::structured_fixture;
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq, WitnessBundle)]
     struct TestRow {
@@ -804,6 +805,35 @@ mod tests {
         let wide = usize::BITS as usize - 1;
         assert_eq!(materialize_depth::<Fr>(wide, entry << 20), wide - 20);
         assert_eq!(materialize_depth::<Fr>(wide, usize::MAX), 5);
+    }
+
+    /// Over a witness's resident rows the family stops at the trace's
+    /// padding: 37 cycles in a domain of 64 leave `ceil(37 / 16)` dense rows
+    /// at the fourth bind, and a trace that fills the domain leaves all four.
+    #[test]
+    fn dense_state_over_resident_rows_stops_at_the_padding() {
+        let (rounds, depth) = (6, 4);
+        for cycles in [37, 64] {
+            structured_fixture(cycles).with_plane(rounds, |witness| {
+                let rows = BundleStore::resident::<Fr>(witness, rounds, "test rows").unwrap();
+                let mut family = StreamedFoldedRa::new(
+                    test_tables::<Fr>(),
+                    TestSource,
+                    rows,
+                    rounds,
+                    usize::MAX,
+                )
+                .unwrap();
+                let dense = (0..depth)
+                    .find_map(|bind| {
+                        family
+                            .bind::<LookupIndexChunks>(Fr::from_u64(31 + bind as u64))
+                            .unwrap()
+                    })
+                    .unwrap();
+                assert_eq!(dense.prefix_len(), cycles.div_ceil(1 << depth));
+            });
+        }
     }
 
     /// A one-cycle domain has no bind: its dense state is every polynomial's
