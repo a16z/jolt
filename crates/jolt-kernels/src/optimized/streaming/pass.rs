@@ -38,12 +38,12 @@ fn task_count(units: usize) -> usize {
     }
 }
 
-/// The task partition of one pass over the cycle domain `0..cycles`: units of
+/// The task partition of one pass over the cycles `0..cycles`: units of
 /// `group` cycles and [`task_count`] tasks, task `i` holding units
 /// `⌊i·n/tasks⌋..⌊(i+1)·n/tasks⌋` of the
-/// `n = cycles / group`. Both sizes are powers of two, with `group ≤ cycles`,
-/// so every task covers whole `group`-cycle kernel groups. Per-task state
-/// allocated before the pass is held `tasks` times at once.
+/// `n = cycles / group`. `cycles` is a multiple of `group`, so every task
+/// covers whole `group`-cycle kernel groups; no cycles give one empty task.
+/// Per-task state allocated before the pass is held `tasks` times at once.
 pub(crate) fn task_ranges(cycles: usize, group: usize) -> Vec<Range<usize>> {
     let unit = group;
     let units = cycles / unit;
@@ -92,7 +92,15 @@ pub(crate) struct TaskSlots<'a, T> {
     overflow: bool,
 }
 
-impl<T> TaskSlots<'_, T> {
+impl<'a, T> TaskSlots<'a, T> {
+    /// A task's counted slots, written in order.
+    pub(crate) fn new(slots: &'a mut [MaybeUninit<T>]) -> Self {
+        Self {
+            slots: slots.iter_mut(),
+            overflow: false,
+        }
+    }
+
     /// Writes the task's next item; an item past its counted slots is dropped
     /// and fails the fill.
     pub(crate) fn push(&mut self, item: T) {
@@ -102,6 +110,15 @@ impl<T> TaskSlots<'_, T> {
             }
             None => self.overflow = true,
         }
+    }
+
+    /// Whether the task wrote exactly its counted slots, every one of them
+    /// initialized.
+    pub(crate) fn finish(mut self) -> Result<(), FillMismatch> {
+        if self.overflow || self.slots.next().is_some() {
+            return Err(FillMismatch);
+        }
+        Ok(())
     }
 }
 
@@ -138,15 +155,9 @@ where
         })
         .collect();
     let write = |(task, slots): (&I, &mut [MaybeUninit<T>])| -> Result<(), E> {
-        let mut slots = TaskSlots {
-            slots: slots.iter_mut(),
-            overflow: false,
-        };
+        let mut slots = TaskSlots::new(slots);
         fill(task, &mut slots)?;
-        if slots.overflow || slots.slots.next().is_some() {
-            return Err(mismatch(FillMismatch));
-        }
-        Ok(())
+        slots.finish().map_err(&mismatch)
     };
     #[cfg(feature = "parallel")]
     tasks.par_iter().zip(task_slots).try_for_each(write)?;
@@ -469,14 +480,17 @@ mod tests {
         check();
     }
 
-    /// Tasks tile the domain in order, each a positive whole number of
-    /// aligned groups.
+    /// Tasks tile the cycles in order, each a positive whole number of
+    /// aligned groups; no cycles give one empty task.
     #[test]
     fn tasks_tile_the_domain_in_whole_aligned_units() {
+        assert!(matches!(task_ranges(0, 1 << 4).as_slice(), [task] if task.is_empty()));
         for (cycles, group) in [
             (1usize << 12, 1usize << 4),
             (1 << 12, 1 << 2),
             (1 << 12, 1 << 12),
+            (364, 4),
+            (3 << 12, 1 << 12),
             (1 << 20, 1),
             (1, 1),
             (1 << (usize::BITS - 1), 1),

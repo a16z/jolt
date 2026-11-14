@@ -1,29 +1,42 @@
-use crate::optimized::parity::ExceptionalEq;
+use crate::optimized::parity::{probe_input_claim, run_lockstep, ExceptionalEq};
 use std::num::NonZeroUsize;
 use std::sync::Arc;
 
 use jolt_claims::protocols::jolt::geometry::instruction::{
     InstructionReadRafDimensions, CANONICAL_INSTRUCTION_ADDRESS,
 };
-use jolt_claims::protocols::jolt::relations::instruction::InstructionReadRafInputClaims;
+use jolt_claims::protocols::jolt::relations::instruction::{
+    InstructionReadRafChallenges, InstructionReadRafInputClaims,
+};
 #[cfg(feature = "akita")]
 use jolt_field::Prime128Offset6A23801F;
 use jolt_field::{Fr, JoltField, Ring};
 use jolt_lookup_tables::{LookupBits, LookupTableKind, XLEN as RISCV_XLEN};
 use jolt_sumcheck::ProveRounds;
+use jolt_verifier::stages::stage5::InstructionReadRaf;
 use jolt_witness::testing::with_sample_backend;
 #[cfg(feature = "akita")]
 use jolt_witness::witnesses::FusedInc;
 use jolt_witness::witnesses::{InstructionRafFlag, LookupIndex, TableIndex};
-use jolt_witness::RowSource;
+#[cfg(not(feature = "akita"))]
+use jolt_witness::{JoltVmWitnessInputs, WitnessError};
+use jolt_witness::{RowSource, TraceBackend};
+#[cfg(feature = "parallel")]
+use rayon::ThreadPoolBuilder;
 
+use crate::optimized::registers_read_write::test_support::structured_fixture;
+use crate::optimized::streaming::VISIT_ROWS;
+use crate::optimized::support::BundleStore;
 use crate::reference::instruction_read_raf::{InstructionReadRafKernel, InstructionReadRafWitness};
 use crate::reference::views::eq_table;
-use crate::{ProofSession, SumcheckKernel};
+use crate::{
+    KernelError, PrepareKernel, ProofSession, ProverInputs, ReferenceBackend, SumcheckKernel,
+};
 
 use super::{
-    InstructionCycleRow, LookupIndexChunks, OptimizedInstructionReadRafKernel, RepeatCache,
-    ScanBlock, SCAN_BLOCK,
+    CycleRa, InstructionCycleRow, LookupIndexChunks, LookupIndexRow,
+    OptimizedInstructionReadRafKernel, RepeatCache, ScanBlock, SharedInstructionRows,
+    StreamingInstructionReadRaf, SCAN_BLOCK,
 };
 
 fn pack(rows: &[InstructionReadRafWitness]) -> Vec<InstructionCycleRow> {
@@ -271,7 +284,7 @@ fn assert_parity_case(
 
 #[test]
 fn constant_suffix_rounds_match_reference() {
-    for prefix in [0, 1, 15, 16, 17, 33, 63] {
+    for prefix in [0, 1, 2, 15, 16, 17, 33, 63] {
         for exceptional in [None].into_iter().chain(ExceptionalEq::ALL.map(Some)) {
             for zero_tail in [true, false] {
                 assert_parity_prefix(6, 8, 123, exceptional, Some((prefix, zero_tail)));
@@ -341,6 +354,31 @@ fn assert_parity_rows<F: JoltField>(
     assert_parity_rows_with_challenges(dimensions, r_reduction, rows, challenge);
 }
 
+/// The streaming kernel over `rows`, retained as the two typed views its
+/// slot takes of a witness's resident rows.
+fn streamed<F: JoltField>(
+    dimensions: InstructionReadRafDimensions,
+    r_reduction: &[F],
+    rows: &[InstructionReadRafWitness],
+    gamma: F,
+) -> Result<OptimizedInstructionReadRafKernel<F>, KernelError<F>> {
+    let lookup_indices = rows
+        .iter()
+        .map(|row| LookupIndexRow {
+            lookup_index: row.lookup_index,
+        })
+        .collect();
+    OptimizedInstructionReadRafKernel::streamed(
+        dimensions,
+        r_reduction,
+        BundleStore::Retained(rows.to_vec()),
+        BundleStore::Retained(lookup_indices),
+        gamma,
+    )
+}
+
+/// Drives the default and the streaming kernel beside the reference: every
+/// round polynomial and the output claims of both equal the reference's.
 fn assert_parity_rows_with_challenges<F: JoltField>(
     dimensions: InstructionReadRafDimensions,
     r_reduction: &[F],
@@ -351,32 +389,40 @@ fn assert_parity_rows_with_challenges<F: JoltField>(
 
     let mut reference =
         InstructionReadRafKernel::new(dimensions, r_reduction, rows.clone(), gamma).unwrap();
-    let mut optimized = OptimizedInstructionReadRafKernel::new(
-        dimensions,
-        r_reduction,
-        Arc::new(pack(&rows).into()),
-        gamma,
-    )
-    .unwrap();
+    let mut kernels = [
+        (
+            "default",
+            OptimizedInstructionReadRafKernel::new(
+                dimensions,
+                r_reduction,
+                Arc::new(pack(&rows).into()),
+                gamma,
+            )
+            .unwrap(),
+        ),
+        (
+            "streaming",
+            streamed(dimensions, r_reduction, &rows, gamma).unwrap(),
+        ),
+    ];
 
     let rounds = reference.num_rounds();
-    assert_eq!(rounds, optimized.num_rounds());
     let mut claim = input_claim(&rows, r_reduction, gamma);
     for round in 0..rounds {
         let bind = round.checked_sub(1).map(&round_challenge);
         let reference_poly = reference.prove_round(bind, round, claim).unwrap();
-        let optimized_poly = optimized.prove_round(bind, round, claim).unwrap();
-        assert_eq!(
-            reference_poly.coefficients(),
-            optimized_poly.coefficients(),
-            "round {round} polynomial mismatch"
-        );
+        for (slot, kernel) in &mut kernels {
+            assert_eq!(rounds, kernel.num_rounds());
+            let poly = kernel.prove_round(bind, round, claim).unwrap();
+            assert_eq!(
+                reference_poly.coefficients(),
+                poly.coefficients(),
+                "{slot} round {round} polynomial mismatch"
+            );
+        }
         claim = reference_poly.evaluate(round_challenge(round));
     }
     reference
-        .finish_rounds(round_challenge(rounds - 1))
-        .unwrap();
-    optimized
         .finish_rounds(round_challenge(rounds - 1))
         .unwrap();
 
@@ -386,19 +432,22 @@ fn assert_parity_rows_with_challenges<F: JoltField>(
         right_lookup_operand: F::from_u64(0),
     };
     let reference_outputs = reference.output_claims(&inputs).unwrap();
-    let optimized_outputs = optimized.output_claims(&inputs).unwrap();
-    assert_eq!(
-        reference_outputs.lookup_table_flags,
-        optimized_outputs.lookup_table_flags
-    );
-    assert_eq!(
-        reference_outputs.instruction_ra,
-        optimized_outputs.instruction_ra
-    );
-    assert_eq!(
-        reference_outputs.instruction_raf_flag,
-        optimized_outputs.instruction_raf_flag
-    );
+    for (slot, mut kernel) in kernels {
+        kernel.finish_rounds(round_challenge(rounds - 1)).unwrap();
+        let outputs = kernel.output_claims(&inputs).unwrap();
+        assert_eq!(
+            reference_outputs.lookup_table_flags, outputs.lookup_table_flags,
+            "{slot}"
+        );
+        assert_eq!(
+            reference_outputs.instruction_ra, outputs.instruction_ra,
+            "{slot}"
+        );
+        assert_eq!(
+            reference_outputs.instruction_raf_flag, outputs.instruction_raf_flag,
+            "{slot}"
+        );
+    }
 }
 
 fn check_repeated_lookup_rows<F: JoltField>(log_t: usize, prefix: usize, constant: Option<F>) {
@@ -419,34 +468,40 @@ fn check_repeated_lookup_rows<F: JoltField>(log_t: usize, prefix: usize, constan
     assert_parity_rows(dimensions, &point, rows);
 }
 
+/// Range-check rows whose keys widen from block to block: 32 bits, 64 bits,
+/// 72 bits, then the full address.
+fn range_check_rows(log_t: usize, repeated: bool) -> Vec<InstructionReadRafWitness> {
+    let table = LookupTableKind::<RISCV_XLEN>::RangeCheck(Default::default()).index();
+    (0..1 << log_t)
+        .map(|i| {
+            let value = if repeated { i % 32 } else { i } as u128 + 1;
+            let low = value.wrapping_mul(0x9e37_79b9_7f4a_7c15) & u128::from(u64::MAX);
+            let index = match i / SCAN_BLOCK {
+                0 => low & u128::from(u32::MAX),
+                1 => low,
+                2 => (0xffu128 << 64) | low,
+                _ => (1u128 << 127) | low,
+            };
+            InstructionReadRafWitness {
+                lookup_index: LookupIndex(index),
+                table_index: TableIndex(if i % 7 == 0 { None } else { Some(table) }),
+                raf_flag: InstructionRafFlag(i % 3 != 0),
+            }
+        })
+        .collect()
+}
+
 #[test]
 fn range_prefix_caches_match_reference_through_boundaries() {
     fn check<F: JoltField>() {
         let log_t = 12;
         let dimensions =
             InstructionReadRafDimensions::new(log_t, 2 * RISCV_XLEN, NonZeroUsize::new(8).unwrap());
-        let table = LookupTableKind::<RISCV_XLEN>::RangeCheck(Default::default()).index();
         let point: Vec<F> = (0..log_t).map(challenge).collect();
         for (repeated, zero_prefix_factor) in
             [(false, false), (true, false), (false, true), (true, true)]
         {
-            let rows: Vec<_> = (0..1 << log_t)
-                .map(|i| {
-                    let value = if repeated { i % 32 } else { i } as u128 + 1;
-                    let low = value.wrapping_mul(0x9e37_79b9_7f4a_7c15) & u128::from(u64::MAX);
-                    let index = match i / SCAN_BLOCK {
-                        0 => low & u128::from(u32::MAX),
-                        1 => low,
-                        2 => (0xffu128 << 64) | low,
-                        _ => (1u128 << 127) | low,
-                    };
-                    InstructionReadRafWitness {
-                        lookup_index: LookupIndex(index),
-                        table_index: TableIndex(if i % 7 == 0 { None } else { Some(table) }),
-                        raf_flag: InstructionRafFlag(i % 3 != 0),
-                    }
-                })
-                .collect();
+            let rows = range_check_rows(log_t, repeated);
             assert_eq!(ScanBlock::should_coalesce(&pack(&rows)), repeated);
             assert_parity_rows_with_challenges(dimensions, &point, rows, |round| {
                 if zero_prefix_factor && round == 0 {
@@ -519,7 +574,7 @@ fn coalescing_preserves_weight_for_colliding_keys_and_classes() {
                         .iter()
                         .zip(&original)
                         .filter(|(row, _)| {
-                            ScanBlock::class(row) == class && row.lookup_index() == key
+                            ScanBlock::class(*row) == class && row.lookup_index() == key
                         })
                         .map(|(_, weight)| *weight)
                         .sum();
@@ -633,4 +688,275 @@ fn parity_exceptional_eq_in_lazy_and_dense_cycle_tables() {
             assert_parity_case(6, virtuals, 257, Some(case));
         }
     }
+}
+
+/// The streaming kernel against the default kernel on domains where the
+/// virtual RA polynomials stay streamed past the first cycle bind. Sixteen
+/// 8-bit columns materialize at the second bind of 2^11 cycles and at the
+/// third bind of 2^13 (both fused) and of 2^15 (after doubling); at 2^6
+/// cycles, as in every 16-bit case of the reference parity tests, at the
+/// first. Each domain ends in its last row alone and in constant suffixes
+/// that start after one row and two, inside a pair, at five eighths of the
+/// domain and, where it is that long, at a visit callback's end.
+#[test]
+fn streaming_cycle_rounds_match_default_at_every_materializing_bind() {
+    let cases =
+        [(6, 1), (11, 2), (13, 3), (15, 3)]
+            .into_iter()
+            .flat_map(|(log_t, materializing_bind)| {
+                let cycles = 1usize << log_t;
+                [cycles, 1, 2, 37, 5 * cycles / 8, VISIT_ROWS]
+                    .into_iter()
+                    .filter(move |prefix| *prefix <= cycles)
+                    .map(move |prefix| (log_t, materializing_bind, prefix))
+            });
+    for (log_t, materializing_bind, prefix) in cases {
+        let dimensions = InstructionReadRafDimensions::new(
+            log_t,
+            2 * RISCV_XLEN,
+            NonZeroUsize::new(16).unwrap(),
+        );
+        let mut rows = fixture_rows(log_t, 97 + log_t as u64);
+        let tail = rows[rows.len() - 1];
+        rows[prefix..].fill(tail);
+        let r_reduction: Vec<Fr> = (0..log_t).map(challenge).collect();
+        let gamma = fr(0xACE1_57EF);
+        let mut default = OptimizedInstructionReadRafKernel::new(
+            dimensions,
+            &r_reduction,
+            Arc::new(pack(&rows).into()),
+            gamma,
+        )
+        .unwrap();
+        let mut streaming = streamed(dimensions, &r_reduction, &rows, gamma).unwrap();
+        let rounds = default.num_rounds();
+        let mut claim = input_claim(&rows, &r_reduction, gamma);
+        for round in 0..rounds {
+            let bind = round.checked_sub(1).map(challenge);
+            let expected = default.prove_round(bind, round, claim).unwrap();
+            let actual = streaming.prove_round(bind, round, claim).unwrap();
+            assert_eq!(
+                expected.coefficients(),
+                actual.coefficients(),
+                "log_t {log_t}, prefix {prefix}, round {round}"
+            );
+            claim = expected.evaluate(challenge(round));
+            if let Some(cycle) = &streaming.cycle {
+                let cycle_binds = round - dimensions.instruction_address_bits();
+                assert_eq!(
+                    matches!(cycle.ra, CycleRa::Streamed(_)),
+                    cycle_binds < materializing_bind,
+                    "log_t {log_t}, prefix {prefix}, cycle bind {cycle_binds}"
+                );
+            }
+        }
+        default.finish_rounds(challenge(rounds - 1)).unwrap();
+        streaming.finish_rounds(challenge(rounds - 1)).unwrap();
+        let inputs = InstructionReadRafInputClaims {
+            lookup_output: fr(0),
+            left_lookup_operand: fr(0),
+            right_lookup_operand: fr(0),
+        };
+        let expected = default.output_claims(&inputs).unwrap();
+        let actual = streaming.output_claims(&inputs).unwrap();
+        assert_eq!(expected.lookup_table_flags, actual.lookup_table_flags);
+        assert_eq!(expected.instruction_ra, actual.instruction_ra);
+        assert_eq!(expected.instruction_raf_flag, actual.instruction_raf_flag);
+    }
+}
+
+/// Rows whose lookup index turns constant at cycle 20 and whose table index
+/// and RAF flag at cycle 41: the streamed cycle round reads the combined
+/// value by pair row, so the virtual RA family's suffix has to start where
+/// the claim column's does, not where the lookup indices' does.
+#[test]
+fn streamed_suffix_starts_where_the_claim_column_turns_constant() {
+    let log_t = 6;
+    let dimensions =
+        InstructionReadRafDimensions::new(log_t, 2 * RISCV_XLEN, NonZeroUsize::new(8).unwrap());
+    let mut rows = fixture_rows(log_t, 4242);
+    let tail = rows[rows.len() - 1];
+    for row in &mut rows[20..41] {
+        row.lookup_index = tail.lookup_index;
+    }
+    rows[41..].fill(tail);
+    let point: Vec<Fr> = (0..log_t).map(challenge).collect();
+    assert_parity_rows(dimensions, &point, rows);
+}
+
+/// On one pool thread a scan task of 2^14 rows holds two blocks and a
+/// claim-byte task four visit callbacks, so the resident passes place each
+/// block's weights and range cache, and each callback's claim bytes, by its
+/// offset in the task. The first three blocks hold range-check keys of
+/// different widths, whose caches differ.
+#[test]
+fn resident_tasks_of_several_blocks_match_reference() {
+    let check = || {
+        let log_t = 14;
+        let dimensions =
+            InstructionReadRafDimensions::new(log_t, 2 * RISCV_XLEN, NonZeroUsize::new(8).unwrap());
+        let point: Vec<Fr> = (0..log_t).map(challenge).collect();
+        assert_parity_rows(dimensions, &point, range_check_rows(log_t, false));
+    };
+    #[cfg(feature = "parallel")]
+    ThreadPoolBuilder::new()
+        .num_threads(1)
+        .build()
+        .unwrap()
+        .install(check);
+    #[cfg(not(feature = "parallel"))]
+    check();
+}
+
+/// The streaming constructor refuses a row whose table index names no lookup
+/// table in its first pass, before a claim byte packs it or a scan buckets
+/// it.
+#[test]
+fn streaming_kernel_refuses_an_unknown_lookup_table() {
+    let dimensions =
+        InstructionReadRafDimensions::new(2, 2 * RISCV_XLEN, NonZeroUsize::new(8).unwrap());
+    let mut rows = fixture_rows(2, 5);
+    rows[1].table_index = TableIndex(Some(usize::from(u8::MAX)));
+    assert!(matches!(
+        streamed(dimensions, &[fr(3), fr(5)], &rows, fr(7)),
+        Err(KernelError::InvariantViolation { .. })
+    ));
+}
+
+/// The relation and prover inputs of a `2^log_t`-cycle stage with eight
+/// 16-bit virtual RA polynomials.
+struct TraceCase<F: JoltField> {
+    relation: InstructionReadRaf<F>,
+    claims: InstructionReadRafInputClaims<F>,
+    points: InstructionReadRafInputClaims<Vec<F>>,
+    challenges: InstructionReadRafChallenges<F>,
+}
+
+impl<F: JoltField> TraceCase<F> {
+    fn new(log_t: usize) -> Self {
+        let dimensions =
+            InstructionReadRafDimensions::new(log_t, 2 * RISCV_XLEN, NonZeroUsize::new(8).unwrap());
+        Self {
+            relation: InstructionReadRaf::new(dimensions),
+            claims: InstructionReadRafInputClaims {
+                lookup_output: F::zero(),
+                left_lookup_operand: F::zero(),
+                right_lookup_operand: F::zero(),
+            },
+            points: InstructionReadRafInputClaims {
+                lookup_output: (0..log_t)
+                    .map(|i| F::from_u64(7000 + 29 * i as u64))
+                    .collect(),
+                left_lookup_operand: Vec::new(),
+                right_lookup_operand: Vec::new(),
+            },
+            challenges: InstructionReadRafChallenges {
+                gamma: F::from_u64(0xFEED_5EED),
+            },
+        }
+    }
+
+    fn inputs(&self) -> ProverInputs<'_, F, InstructionReadRaf<F>> {
+        ProverInputs {
+            relation: &self.relation,
+            claims: &self.claims,
+            points: &self.points,
+            challenges: &self.challenges,
+        }
+    }
+}
+
+/// Every round and the output claims through the streaming slot over a
+/// witness's resident rows, against the reference, in both fields. The traces
+/// fill their domain, end one cycle short of it, hold one cycle or two, and
+/// end inside a pair and a split-eq group or on a pair boundary. A one-cycle
+/// domain has no cycle round: the handoff gathers the RA claims at once.
+/// The slot parks no row cache in the session.
+#[test]
+fn streaming_slot_matches_reference_over_a_trace_witness() {
+    fn check<F: JoltField>(backend: &TraceBackend, log_t: usize) {
+        let case = TraceCase::<F>::new(log_t);
+        let mut reference = ReferenceBackend
+            .prepare(&mut ProofSession::default(), backend, case.inputs())
+            .unwrap();
+        let mut session = ProofSession::default();
+        let mut streaming = StreamingInstructionReadRaf
+            .prepare(&mut session, backend, case.inputs())
+            .unwrap();
+        assert!(session.state::<SharedInstructionRows>().is_none());
+        let input_claim = probe_input_claim(reference.as_mut());
+        let challenges: Vec<F> = (0..reference.num_rounds()).map(challenge).collect();
+        run_lockstep(
+            reference.as_mut(),
+            streaming.as_mut(),
+            input_claim,
+            &challenges,
+        );
+        let expected = reference.output_claims(&case.claims).unwrap();
+        let actual = streaming.output_claims(&case.claims).unwrap();
+        assert_eq!(expected.lookup_table_flags, actual.lookup_table_flags);
+        assert_eq!(expected.instruction_ra, actual.instruction_ra);
+        assert_eq!(expected.instruction_raf_flag, actual.instruction_raf_flag);
+    }
+    for (log_t, cycles) in [
+        (0, 1),
+        (3, 5),
+        (3, 8),
+        (6, 1),
+        (6, 2),
+        (6, 37),
+        (6, 40),
+        (6, 63),
+        (6, 64),
+    ] {
+        structured_fixture(cycles).with_plane(log_t, |backend| {
+            check::<Fr>(backend, log_t);
+            #[cfg(feature = "akita")]
+            check::<Prime128Offset6A23801F>(backend, log_t);
+        });
+    }
+}
+
+/// `with_streaming` puts this kernel in the backend's slot. Streamed and
+/// default proofs are byte-equal, so only the kernel's behavior shows which
+/// one is installed: it refuses a witness without resident rows, which the
+/// default kernel collects. Dory stands in for the commitment scheme; the
+/// akita build's `optimized` takes another.
+#[cfg(not(feature = "akita"))]
+#[test]
+fn with_streaming_installs_the_instruction_read_raf_kernel() {
+    use jolt_dory::DoryScheme;
+
+    use crate::optimized::streaming::StreamingFamilies;
+    use crate::JoltBackend;
+
+    let log_t = 1;
+    let case = TraceCase::<Fr>::new(log_t);
+    structured_fixture(7).with_plane(3, |resident| {
+        // A configured domain shorter than the trace leaves no resident
+        // rows; chunk visits still serve its `2^log_t` cycles.
+        let mut chunk_only = TraceBackend::new(
+            resident.config.clone(),
+            JoltVmWitnessInputs::new(
+                &resident.program,
+                &resident.preprocessing,
+                resident.trace.clone(),
+            ),
+        );
+        chunk_only.config.log_t = log_t;
+        let prepare = |backend: JoltBackend<Fr, DoryScheme>| {
+            backend
+                .instruction_read_raf
+                .prepare(&mut ProofSession::default(), &chunk_only, case.inputs())
+                .map(|_| ())
+        };
+        prepare(JoltBackend::optimized()).unwrap();
+        assert!(matches!(
+            prepare(JoltBackend::optimized().with_streaming(StreamingFamilies {
+                instruction_rows: true,
+                ..StreamingFamilies::default()
+            })),
+            Err(KernelError::Witness(WitnessError::UnavailableView { .. }))
+        ));
+    });
 }
