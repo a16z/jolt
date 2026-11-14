@@ -253,11 +253,17 @@ mod tests {
     /// fill their tables in the passes that yield round 0's endpoints; the
     /// parity tests in `jolt-kernels` cover later crossovers. The RAM kernels
     /// have no crossover: stages 2–5 read the event log and stage 6b its own
-    /// address column at every trace size. The booleanity address phase
-    /// (stage 6a) accumulates its masses from the rows. Stage 6b's booleanity
-    /// cycle phase and instruction RA virtualization read the rows in rounds
-    /// 0–3 and hold their tables dense from the fourth bind, the earliest at
-    /// any budget; the parity tests cover later ones.
+    /// address column at every trace size. The register value evaluation
+    /// reads the rows in rounds 0 and 1 and fills its two tables in round 1.
+    /// The derived config binds the register read-write check cycle-first,
+    /// so its streaming kernel runs: round 0's pass counts level 1's entries,
+    /// round 1's pass fills them, and the operand openings come from one more
+    /// row walk. The address-first route, which keeps the default kernel, is
+    /// the one `e2e_matrix`'s all-families case takes. The booleanity address
+    /// phase (stage 6a) accumulates its masses from the rows. Stage 6b's
+    /// booleanity cycle phase and instruction RA virtualization read the rows
+    /// in rounds 0–3 and hold their tables dense from the fourth bind, the
+    /// earliest at any budget; the parity tests cover later ones.
     #[test]
     fn streaming_kernels_reproduce_the_default_proof() {
         let Fixture {
@@ -280,6 +286,7 @@ mod tests {
             spartan: true,
             instruction_input: true,
             ram: true,
+            registers: true,
             instruction_rows: true,
         }));
         jolt_verifier::verify::<Fr, DoryScheme, Pedersen<Bn254G1>, VerifierState<'_, Keccak>>(

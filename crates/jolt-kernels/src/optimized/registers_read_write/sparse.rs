@@ -167,6 +167,7 @@ impl<F: JoltField> OneHotCoeff<F> for LutIndex {
 
 pub(crate) mod layout;
 pub(crate) mod ops;
+mod stream;
 
 use layout::{
     load_indexed, merge_bind, split_pair_group, Cell, IndexedMeta, MatrixEntry, SparseEntry,
@@ -177,6 +178,7 @@ use ops::{
     bind_sparse_entries_in_place, block_count, sparse_quadratic, sparse_quadratic_fused,
     sparse_quadratic_soa, FUSED_SCRATCH_LEN, IN_PLACE_SCRATCH_LEN,
 };
+pub(super) use stream::StreamedCycleState;
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 enum CyclePhase<F: JoltField> {
     Seed {
@@ -219,9 +221,7 @@ fn raw_bound_inc<F: JoltField>(raw: &[i128], r1: F, y: usize) -> F {
 
 impl<F: JoltField> CycleState<F> {
     pub(super) fn new(entries: Vec<SeedEntry>, gamma: F, mut rd_inc: Vec<i128>) -> Self {
-        let gamma_sq = gamma * gamma;
-        let read: [F; READ_SEED_VALUES] = [F::zero(), gamma, gamma_sq, gamma + gamma_sq];
-        let write: [F; WRITE_SEED_VALUES] = [F::zero(), F::one()];
+        let [ra_lut, wa_lut] = Self::seed_luts(gamma);
         let prefix = rd_inc
             .iter()
             .rposition(|&inc| inc != 0)
@@ -230,10 +230,18 @@ impl<F: JoltField> CycleState<F> {
         rd_inc.shrink_to_fit();
         Self(CyclePhase::Seed {
             entries,
-            ra_lut: CoeffLut::new(read.to_vec()),
-            wa_lut: CoeffLut::new(write.to_vec()),
+            ra_lut,
+            wa_lut,
             rd_inc,
         })
+    }
+
+    /// The level-0 `[ra, wa]` coefficient tables, one value per seed code.
+    fn seed_luts(gamma: F) -> [CoeffLut<F>; 2] {
+        let gamma_sq = gamma * gamma;
+        let read: [F; READ_SEED_VALUES] = [F::zero(), gamma, gamma_sq, gamma + gamma_sq];
+        let write: [F; WRITE_SEED_VALUES] = [F::zero(), F::one()];
+        [CoeffLut::new(read.to_vec()), CoeffLut::new(write.to_vec())]
     }
 
     /// Peak bytes of the cycle-first state over the `cycles` cycles before
