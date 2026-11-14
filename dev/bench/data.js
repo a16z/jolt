@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794616666559,
+  "lastUpdate": 1794618306987,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -249634,6 +249634,270 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 888292,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "qvd@andrew.cmu.edu",
+            "name": "Quang Dao",
+            "username": "quangvdao"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "15fe3d0c40d3c7fe1142f72946d72d279a6b5fca",
+          "message": "feat(jolt-sumcheck): single-instance driver with transport/claim-algebra seam (#2405)\n\n* feat(jolt-transcript): private-message seam for witness-dependent absorbs\n\nAdd `PrivateChannel::append_private`, which absorbs a message of\nwitness-dependent field values. The one implementation, for every\n`Transcript`, absorbs exactly what `append_values` absorbs, so clear\nproofs are unchanged; a masked channel will absorb `value + pad`.\n\nRoute the clear sumcheck absorbs through it: batch input claims (one\nmessage per claim), compressed and full round coefficients (the count\nword stays public), uni-skip output claims, and stage output claims\n(generated `append_output_claims`, `OutputAppend`, stage 4 and stage 6b).\nOutput claims that were appended one value at a time are now one message\nof the same whole-word bytes. The FS census learns the method name.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* feat(jolt-transcript): claim domain for verifier checks written once\n\nAdd `ClaimDomain<F>`: public constants, sums, public scalings, products\ninto a new auxiliary slot, and the check `x · y = target`, so a verifier\ncheck is written once as a generic function and every verifier that runs\nit evaluates the same formula. Its first consumers are Akita's fold stage\nchecks, which use exactly this surface.\n\n`ClearDomain` is the clear verifier's domain: values are field elements and\na failed check is `ClaimMismatch`. The trait docs state the contract a\nmasked domain must meet (slots allocated from formula structure only, in\nthe same order across domains; `x` a single slot); `ClearDomain` only\ncompares values and does not enforce that rule. No masked domain exists\nyet.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* feat(jolt-sumcheck): single-instance sumcheck driver with eq-factored rounds\n\nAdd `prove_single`/`verify_single` for one unbatched instance with a\npublic degree bound. The verifier returns the round challenges and the\noutput claim before any oracle check, so the caller can absorb late\nclaims first. Rounds are compressed (`s` without its linear coefficient)\nor eq-factored (`s = eq(τ_i, X)·q(X)`, `q` sent without its constant\ncoefficient, running claims normalized to `q(r_i)`); `EqFactoredRound` is\nthe matching `SumcheckDomain`, and `OmittedConstantPoly` recovers `q0`\nfrom the round check.\n\nEvery round sends exactly `degree` coefficients, so its length is fixed\nby the public instance and absorbs with no count word. On the transcript:\nthe input claim as a derived claim, then per round the coefficients as\none private message, the round's proof of work at the instance's degree,\nand the challenge. The proof is a `SingleSumcheckProof` holding the wire\ncoefficients and nonces.\n\n`ProveRounds` gains a kernel error parameter defaulting to\n`SumcheckError`, so `prove_single` can drive a kernel that reports its\nown failures; the batched engine is unchanged.\n\n`PrivateChannel` gains `bind_derived`, which binds a claim the verifier\ncan already derive from earlier absorbs: a clear transcript absorbs it as\na public value, a masked channel binds nothing. The single driver binds\nits input claim this way, so the caller must supply a derived claim.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* feat(jolt-sumcheck): single-instance driver with transport/claim-algebra seam\n\n* fix(jolt-sumcheck): one shape authority for the single-instance verifier\n\n* fix(jolt-sumcheck): move the clear prover channel into single/prover.rs\n\nThe Fiat-Shamir inventory walker skips files named prover.rs. Keeping the\nprover channel there leaves the verifier inventory with only the verifier's\nsites, which moved from verify_single into ClearVerifierRounds unchanged\n(two absorb sites, one challenge site). Re-blessed with JOLT_FS_BLESS=1.\n\n* docs(jolt-transcript): state what the private-message seam can carry\n\nPrivateChannel is infallible and returns nothing, so a masked channel cannot\nimplement it: say it marks witness-dependent absorbs in clear mode and that\nmasking needs a fallible seam that returns pad slots. Limit the merged-absorb\nbyte claim to sponges without framing (Keccak, Blake2b); Poseidon frames each\nabsorb with its length. Point at the absorb inventory instead of a partial list\nof the remaining plain witness absorbs.\n\n* feat(jolt-transcript): land ClaimDomain's final shape\n\nMove define_auxiliary, products_into and check_zero, and product_into as a\nprovided method, from #2342 into this PR, so implementations written against\nClaimDomain do not break when the masked domains land. Run the claim-domain\ntests in a plain cargo test: they now take their field from a jolt-field\ndev-dependency instead of this crate's solinas feature.\n\n* docs(jolt-transcript): bind_derived describes the clear transcript only\n\nA masked transport cannot implement PrivateChannel, so the trait no longer\npromises how a masked channel binds a derived claim. The masked transports\nbind it through the sumcheck round channels.\n\n* feat(jolt-sumcheck): round channels take the wire width and the proof-of-work degree\n\nverify_round now takes a RoundSpec { width, degree }. A single instance's\nwire carries exactly its degree bound, but a masked batch round in the full\nformat carries degree + 1 values and still prices its proof of work at the\ndegree, so the masked rounds can read through this seam instead of a second\nreader trait. The clear channel rejects a degree other than the one its\nnonces were checked for, before touching the transcript.\n\n* chore: run CI against main after the retarget\n\n* refactor(jolt-sumcheck): narrow the single-instance seam to its callers\n\nReview fixes for the round-channel seam:\n\n- Check full rounds with BooleanHypercube / EqFactoredRound::check_round_sum\n  instead of an open-coded copy, restoring the typed RoundCheckFailed error.\n- Drop ProveSingleRounds, ProverRound and FullRounds: EqFactored had no\n  producer and FullRounds' sequencing guards were unreachable from the\n  driver. prove_single_with takes a ProveRounds kernel and reuses its\n  coefficient buffer as the wire.\n- Replace map_sumcheck_error with an Error: From<SumcheckError<E>> bound on\n  both channel traits; every implementation was identity or .into().\n- send_round takes &[E]; ClearProverRounds::new no longer reserves\n  capacity from an unchecked shape.\n- Remove the now-unproduced SumcheckError::InvalidInput.\n- Fix the stale OmittedConstantPoly::evaluate_from_claim doc (the type stays:\n  akita-serialization implements its serialization).\n- Tests: pin verifier allocations exactly (18 allocs / 896 B) apart from the\n  frozen transcript digest; make the excess-coefficient case satisfy the\n  round sum so a short excess scan fails; keep typed errors in the test\n  channel; drop wrapper/channel parity and adapter-guard tests.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* refactor(jolt-sumcheck): drop redundant seam guards; tighten driver tests\n\nFrom a second correctness/simplification review:\n\n- Make ClearVerifierRounds crate-private: verify_single builds it from the\n  instance's own shape, so validate_shape, ChannelShapeMismatch,\n  RoundDegreeMismatch and its per-round width recheck were tautological.\n  Wire widths stay checked in ClearVerifierRounds::new before absorption and\n  in the visit_single_rounds visitor for every channel. Document the\n  visitor's ordering/claim-binding contract for external channels.\n- Fold SumcheckShapeError into SumcheckError (three of its four variants\n  mirrored existing ones) and drop the unused u32::MAX round cap.\n- One owner for the round's wire format (SingleInstance::wire_format);\n  next_claim no longer indexes under an indexing_slicing expectation.\n- DegreeBoundExceeded reports the polynomial's actual degree again.\n- Tests: assert the sent wires (padded and empty kernel polynomials), a\n  kernel round-count mismatch binds/sends nothing, and the verifier's\n  allocations exceed the transcript's own by exactly the challenge vector.\n\nTranscript bytes are unchanged (frozen digests and FS inventory pass).\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n---------\n\nCo-authored-by: Markos Georghiades <mgeorghiades@a16z.com>\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-13T16:49:51-07:00",
+          "tree_id": "b420c77285e68c31f1762ea81133e99780abce21",
+          "url": "https://github.com/a16z/jolt/commit/15fe3d0c40d3c7fe1142f72946d72d279a6b5fca"
+        },
+        "date": 1794618298717,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 4.7697,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 888688,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.5173,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 464140,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 463596,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 463388,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.8466,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 463496,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-mem",
+            "value": 886476,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 1.8874,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 463452,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 5.5432,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 463456,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 4.8831,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 131360,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.9913,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 889440,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.6556,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 463188,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.4796,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 463588,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 25.995,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 463840,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 5.5329,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 463628,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 36.9714,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 703056,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 18.1884,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 606000,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 73.6986,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 630836,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.8506,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 463684,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 2.1458,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 463296,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 19.6752,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 887928,
             "unit": "KB",
             "extra": ""
           }
