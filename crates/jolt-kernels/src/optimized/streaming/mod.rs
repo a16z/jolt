@@ -22,6 +22,8 @@ use super::bytecode_read_raf::{StreamingBytecodeReadRafAddress, StreamingBytecod
 use super::instruction_input::StreamingInstructionInput;
 use super::instruction_ra_virtualization::StreamingInstructionRaVirtualization;
 use super::instruction_read_raf::StreamingInstructionReadRaf;
+#[cfg(not(feature = "akita"))]
+use super::opening::StreamingJointOpening;
 use super::ram_ra_claim_reduction::StreamingRamRaClaimReduction;
 use super::ram_ra_virtualization::StreamingRamRaVirtualization;
 use super::ram_raf_evaluation::StreamingRamRafEvaluation;
@@ -64,6 +66,9 @@ pub struct StreamingFamilies {
     /// Stage 7's Hamming-weight claim reduction has no streaming kernel: its
     /// default kernel reads the resident rows whenever no cache is live, as
     /// under this selection.
+    /// Outside `akita` builds, stage 8's joint opening reads the rows too:
+    /// its trace views take each cycle's committed values from them, where
+    /// the default opening's share packed columns collected from them.
     pub instruction_rows: bool,
 }
 
@@ -108,6 +113,10 @@ where
             self.instruction_ra_virtualization = Box::new(StreamingInstructionRaVirtualization);
             self.booleanity_cycle = Box::new(StreamingBooleanityCycle);
             self.bytecode_read_raf_cycle = Box::new(StreamingBytecodeReadRafCycle);
+            #[cfg(not(feature = "akita"))]
+            {
+                self.joint_opening = Box::new(StreamingJointOpening);
+            }
         }
         self
     }

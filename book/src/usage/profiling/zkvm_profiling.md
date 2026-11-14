@@ -81,7 +81,11 @@ stage-6b bytecode read-RAF cycle phase gathers its RA factors from it until
 the bind at which the eager kernel's turn dense. These passes and the tables
 they fill stop at the trace's constant padding suffix, as the eager kernels'
 tables do. With the family selected, no kernel collects the packed per-cycle
-instruction rows that the eager kernels share from stage 5 on. Combine
+instruction rows that the eager kernels share from stage 5 on. Under Dory the
+family also selects a stage-8 joint opening whose trace views read the
+resident trace in each of their passes, where the eager opening's share
+packed per-cycle columns (64 bytes per cycle before the padding suffix)
+through the PCS opening. Combine
 families with `--streaming instruction-input,spartan,ram,registers`.
 Instruction-input, Spartan and register
 early rounds recompute from the resident trace until the dense tables, or for
