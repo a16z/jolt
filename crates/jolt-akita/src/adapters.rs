@@ -199,7 +199,7 @@ pub fn host_parallel_verifier_threads() -> usize {
 /// worker, and the fold kernels carry large frames), which overflows rayon's
 /// default 2 MiB worker stacks nondeterministically — observed as SIGABRT in
 /// the Akita prover at trace-scale shapes. Setup and verification use this
-/// pool. Prover calls can instead reuse an installed [`AkitaProverPool`],
+/// pool. Prover calls can instead reuse an installed `AkitaProverPool`,
 /// whose workers have the same stack size.
 ///
 /// Without `parallel` (a single-core zkVM guest) `f` runs inline. Where the
