@@ -22,11 +22,11 @@ use std::{
 use crate::adapters::{
     akita_error, akita_ordered_evaluations, commit_failed, dense_polynomials, invalid_batch,
     invalid_setup, one_hot_polynomial, owned_one_hot_polynomial, serialize_akita,
-    validate_one_hot_k, with_backend_pool, AkitaBackend, AkitaBackendCommitment,
-    AkitaBackendDensePoly, AkitaBackendExtField, AkitaBackendFlavor, AkitaBackendHint,
-    AkitaBackendOneHotPoly, AkitaBatchProof, AkitaCommitment, AkitaField, AkitaHintSource,
-    AkitaLayoutDigest, AkitaProverHint, AkitaProverSetup, AkitaSetupFlavor, AkitaSetupParams,
-    AkitaVerifierSetup, FullWidthBackendSetup, AKITA_SOURCE_RING_DIMENSION,
+    validate_one_hot_k, with_backend_pool, with_prover_backend, AkitaBackend,
+    AkitaBackendCommitment, AkitaBackendDensePoly, AkitaBackendExtField, AkitaBackendFlavor,
+    AkitaBackendHint, AkitaBackendOneHotPoly, AkitaBatchProof, AkitaCommitment, AkitaField,
+    AkitaHintSource, AkitaLayoutDigest, AkitaProverHint, AkitaProverSetup, AkitaSetupFlavor,
+    AkitaSetupParams, AkitaVerifierSetup, FullWidthBackendSetup, AKITA_SOURCE_RING_DIMENSION,
 };
 use crate::configs::AkitaChunkProfile;
 use crate::deferred::SetupMode;
@@ -246,7 +246,7 @@ impl AkitaScheme {
         Self::validate_commit_shape(setup, num_vars, poly_count)?;
         let one_hot_k = setup.one_hot_k();
         let (_, backend) = setup.one_hot_backend()?;
-        let (backend_commitment, backend_hint) = with_backend_pool(|| {
+        let (backend_commitment, backend_hint) = with_prover_backend(|| {
             let source = backend.import_source(source)?;
             let context = profiles.as_ref().map_or_else(
                 GroupContext::scheduler_without_precommitted_groups,
@@ -272,7 +272,7 @@ impl AkitaScheme {
         polynomials: Vec<AkitaBackendOneHotPoly>,
     ) -> Result<(AkitaBackendCommitment, AkitaBackendHint), OpeningsError> {
         let (_, backend) = setup.one_hot_backend()?;
-        with_backend_pool(|| {
+        with_prover_backend(|| {
             let source = backend.import_source(polynomials)?;
             commit_one_hot_source(
                 setup,
@@ -387,7 +387,7 @@ impl AkitaScheme {
         Cfg: CommitmentConfig<Field = AkitaField, ExtField = AkitaBackendExtField>,
     {
         let poly_count = dense.len();
-        let (backend_commitment, backend_hint) = with_backend_pool(|| {
+        let (backend_commitment, backend_hint) = with_prover_backend(|| {
             let source = backend.import_source(dense)?;
             backend.commit(
                 schedules,
