@@ -60,6 +60,9 @@ use crate::optimized::support::eq_round_error;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use streaming::{rows_unavailable, ResidentChunks};
+pub use streaming::{StreamingBooleanityAddress, StreamingBooleanityCycle};
+
 use jolt_claims::protocols::jolt::geometry::booleanity::BooleanityDimensions;
 use jolt_claims::protocols::jolt::geometry::ra::{JoltRaPolynomial, JoltRaPolynomialLayout};
 use jolt_claims::protocols::jolt::JoltRelationId;
@@ -83,14 +86,39 @@ use super::constant_suffix::ConstantSuffix;
 use super::instruction_read_raf::InstructionCycleRow;
 use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa};
 use super::one_hot_histograms::{pushforwards, FamilySelectors};
+use super::streaming::StreamedFoldedRa;
 use super::support::{gamma_powers, pin_derived_term_if_derived, GruenRoundMessage, RoundProgress};
 use crate::reference::views::eq_table;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
 
-/// One checked polynomial's chunk selector over the packed per-cycle rows
-/// (canonical layout order: instruction, bytecode, ram).
+/// One cycle's values that the checked polynomials' chunks are selected from.
+trait SelectedValues {
+    fn lookup_index(&self) -> u128;
+    fn bytecode_pc(&self) -> usize;
+    fn remapped_ram_address(&self) -> Option<u64>;
+}
+
+impl SelectedValues for InstructionCycleRow {
+    #[inline]
+    fn lookup_index(&self) -> u128 {
+        InstructionCycleRow::lookup_index(self)
+    }
+
+    #[inline]
+    fn bytecode_pc(&self) -> usize {
+        InstructionCycleRow::bytecode_pc(self)
+    }
+
+    #[inline]
+    fn remapped_ram_address(&self) -> Option<u64> {
+        InstructionCycleRow::remapped_ram_address(self)
+    }
+}
+
+/// One checked polynomial's chunk selector over a cycle's values (canonical
+/// layout order: instruction, bytecode, ram).
 enum ColumnSelector {
     Instruction(RaChunkSelector),
     Bytecode(RaChunkSelector),
@@ -103,7 +131,7 @@ impl ColumnSelector {
     /// gathered indices and the reference tier's dense grids describe the
     /// same one-hot polynomials.
     #[inline]
-    fn index(&self, row: &InstructionCycleRow) -> Option<usize> {
+    fn index(&self, row: &impl SelectedValues) -> Option<usize> {
         match self {
             Self::Instruction(selector) => Some(selector.chunk_u128(row.lookup_index())),
             Self::Bytecode(selector) => Some(selector.chunk_usize(row.bytecode_pc())),
@@ -164,20 +192,20 @@ impl BooleanityColumns {
     }
 }
 
-/// Canonical-layout masses `G_i[k] = Σ_{j : hot_i(j) = k} eq(point, j)`.
-/// Instruction and bytecode digit-zero masses follow from total weight one;
-/// RAM may be cold, so every RAM bucket is accumulated directly.
+/// Canonical-layout masses `G_i[k] = Σ_{j : hot_i(j) = k} eq(point, j)` from
+/// `pushforward`'s, which omit digit zero. Instruction and bytecode
+/// digit-zero masses follow from total weight one; RAM may be cold, so every
+/// RAM bucket is accumulated directly.
 fn cycle_pushforward<F: JoltField>(
-    rows: &ConstantSuffix<InstructionCycleRow>,
     layout: JoltRaPolynomialLayout,
     k_chunk: usize,
-    point: &[F],
+    pushforward: impl FnOnce(&FamilySelectors) -> Result<Vec<Vec<F>>, KernelError<F>>,
 ) -> Result<Vec<Vec<F>>, KernelError<F>> {
     let families = FamilySelectors::new::<F>(
         (layout.instruction(), layout.bytecode(), layout.ram()),
         k_chunk.trailing_zeros() as usize,
     )?;
-    let mut masses = pushforwards(rows, point, &families, k_chunk, true)?;
+    let mut masses = pushforward(&families)?;
     for mass in &mut masses[..layout.instruction() + layout.bytecode()] {
         mass[0] = F::one() - mass[1..].iter().copied().sum::<F>();
     }
@@ -194,40 +222,16 @@ impl<F: JoltField> PrepareKernel<F, BooleanityAddressPhase<F>> for OptimizedBool
         inputs: ProverInputs<'_, F, BooleanityAddressPhase<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = BooleanityAddressPhase<F>>>, KernelError<F>>
     {
-        let relation = inputs.relation;
-        let dimensions = relation.dimensions();
-        let BooleanityAddressPhaseChallenges {
-            reference_address,
-            gamma,
-        } = inputs.challenges;
-        let reference_cycle = relation.reference_cycle();
-        if reference_address.len() != dimensions.log_k_chunk
-            || reference_cycle.len() != dimensions.log_t
-        {
-            return Err(KernelError::InvariantViolation {
-                reason: "booleanity reference point lengths disagree with the dimensions",
-            });
-        }
-
-        drop(BooleanityColumns::new(witness, dimensions)?);
-        let rows = InstructionCycleRow::shared_for_next_consumer(
-            session,
+        let log_t = inputs.relation.dimensions().log_t;
+        Ok(Box::new(OptimizedBooleanityAddressKernel::prepare(
             witness,
-            1usize << dimensions.log_t,
-        )?;
-        let masses = cycle_pushforward(
-            &rows,
-            dimensions.layout,
-            1usize << dimensions.log_k_chunk,
-            &reference_cycle,
-        )?;
-
-        Ok(Box::new(OptimizedBooleanityAddressKernel::new(
-            relation.rounds(),
-            *gamma,
-            reference_address,
-            masses,
-        )))
+            &inputs,
+            |families, point, k_chunk| {
+                let rows =
+                    InstructionCycleRow::shared_for_next_consumer(session, witness, 1 << log_t)?;
+                Ok(pushforwards(&rows, point, families, k_chunk, true)?)
+            },
+        )?))
     }
 }
 
@@ -249,6 +253,41 @@ struct OptimizedBooleanityAddressKernel<F: JoltField> {
 }
 
 impl<F: JoltField> OptimizedBooleanityAddressKernel<F> {
+    /// The kernel over the masses `pushforward(selectors, point, k_chunk)`
+    /// accumulates at the reference cycle `point`, omitting digit zero.
+    fn prepare(
+        witness: &dyn JoltWitnessPlane<F>,
+        inputs: &ProverInputs<'_, F, BooleanityAddressPhase<F>>,
+        pushforward: impl FnOnce(&FamilySelectors, &[F], usize) -> Result<Vec<Vec<F>>, KernelError<F>>,
+    ) -> Result<Self, KernelError<F>> {
+        let relation = inputs.relation;
+        let dimensions = relation.dimensions();
+        let BooleanityAddressPhaseChallenges {
+            reference_address,
+            gamma,
+        } = inputs.challenges;
+        let reference_cycle = relation.reference_cycle();
+        if reference_address.len() != dimensions.log_k_chunk
+            || reference_cycle.len() != dimensions.log_t
+        {
+            return Err(KernelError::InvariantViolation {
+                reason: "booleanity reference point lengths disagree with the dimensions",
+            });
+        }
+
+        drop(BooleanityColumns::new(witness, dimensions)?);
+        let k_chunk = 1usize << dimensions.log_k_chunk;
+        let masses = cycle_pushforward(dimensions.layout, k_chunk, |families| {
+            pushforward(families, &reference_cycle, k_chunk)
+        })?;
+        Ok(Self::new(
+            relation.rounds(),
+            *gamma,
+            reference_address,
+            masses,
+        ))
+    }
+
     fn new(rounds: usize, gamma: F, reference_address: &[F], masses: Vec<Vec<F>>) -> Self {
         let linear: Vec<Polynomial<F>> = masses.into_iter().map(Polynomial::new).collect();
         let squared: Vec<Vec<F>> = linear.iter().map(|table| table.evals().to_vec()).collect();
@@ -380,6 +419,37 @@ impl<F: JoltField> PrepareKernel<F, Booleanity<F>> for OptimizedBooleanityCycle 
         witness: &dyn JoltWitnessPlane<F>,
         inputs: ProverInputs<'_, F, Booleanity<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = Booleanity<F>>>, KernelError<F>> {
+        let dimensions = inputs.relation.dimensions();
+        Ok(Box::new(OptimizedBooleanityCycleKernel::prepare(
+            witness,
+            &inputs,
+            |selectors, tables| {
+                let rows =
+                    InstructionCycleRow::shared(session, witness, 1usize << dimensions.log_t)?;
+                Ok(CycleTables::Lazy(LazyFoldedRa::new(
+                    tables,
+                    BooleanityChunks {
+                        prefix_len: rows.prefix_len(),
+                        rows,
+                        selectors,
+                        instruction_chunks: dimensions.layout.instruction(),
+                        chunk_bits: dimensions.log_k_chunk,
+                    },
+                )))
+            },
+        )?))
+    }
+}
+
+impl<F: JoltField> OptimizedBooleanityCycleKernel<F> {
+    /// The kernel over the state `tables(selectors, scale_tables)` builds
+    /// from the checked polynomials' selectors and scale tables, in layout
+    /// order.
+    fn prepare(
+        witness: &dyn JoltWitnessPlane<F>,
+        inputs: &ProverInputs<'_, F, Booleanity<F>>,
+        tables: impl FnOnce(Vec<ColumnSelector>, Vec<Vec<F>>) -> Result<CycleTables<F>, KernelError<F>>,
+    ) -> Result<Self, KernelError<F>> {
         let relation = inputs.relation;
         let dimensions = relation.dimensions();
         let r_address = relation.r_address();
@@ -391,7 +461,6 @@ impl<F: JoltField> PrepareKernel<F, Booleanity<F>> for OptimizedBooleanityCycle 
             });
         }
         let columns = BooleanityColumns::new(witness, dimensions)?;
-        let rows = InstructionCycleRow::shared(session, witness, 1usize << dimensions.log_t)?;
 
         // The fixed address eq factor of the `EqAddressCycle` public; rides
         // in the split-eq scaling so round messages and the bound scalar
@@ -410,7 +479,7 @@ impl<F: JoltField> PrepareKernel<F, Booleanity<F>> for OptimizedBooleanityCycle 
         let gamma_powers = gamma_powers(inputs.challenges.gamma, count);
         // Zero gamma disables all but the first summand, but every RA opening is
         // still required. Keep disabled columns unscaled rather than losing them.
-        let tables: Vec<Vec<F>> = gamma_powers
+        let scale_tables: Vec<Vec<F>> = gamma_powers
             .iter()
             .map(|rho| {
                 if rho.is_zero() {
@@ -421,27 +490,18 @@ impl<F: JoltField> PrepareKernel<F, Booleanity<F>> for OptimizedBooleanityCycle 
             })
             .collect();
 
-        Ok(Box::new(OptimizedBooleanityCycleKernel {
+        Ok(Self {
             progress: RoundProgress::new(relation.rounds()),
             eq: GruenSplitEqPolynomial::new_with_scaling(
                 reference_cycle,
                 BindingOrder::LowToHigh,
                 Some(address_scalar),
             ),
-            tables: LazyFoldedRa::new(
-                tables,
-                BooleanityChunks {
-                    prefix_len: rows.prefix_len(),
-                    rows,
-                    selectors: columns.selectors,
-                    instruction_chunks: dimensions.layout.instruction(),
-                    chunk_bits: dimensions.log_k_chunk,
-                },
-            ),
+            tables: tables(columns.selectors, scale_tables)?,
             gamma_powers,
             opening_unscale,
             openings: columns.openings,
-        }))
+        })
     }
 }
 
@@ -456,6 +516,15 @@ struct BooleanityChunks {
 }
 
 mod bulk;
+mod streaming;
+
+/// The checked polynomials' address-folded rows: the default family, or the
+/// streaming family until the bind that gathers it dense.
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
+enum CycleTables<F: JoltField> {
+    Lazy(LazyFoldedRa<F, BooleanityChunks>),
+    Streamed(StreamedFoldedRa<F, ResidentChunks>),
+}
 
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct OptimizedBooleanityCycleKernel<F: JoltField> {
@@ -464,7 +533,7 @@ struct OptimizedBooleanityCycleKernel<F: JoltField> {
     /// `eq(r_address, reference_address)` — together the reference's
     /// `EqAddressCycle` derived table.
     eq: GruenSplitEqPolynomial<F>,
-    tables: LazyFoldedRa<F, BooleanityChunks>,
+    tables: CycleTables<F>,
     gamma_powers: Vec<F>,
     opening_unscale: Vec<F>,
     #[cfg_attr(feature = "allocative", allocative(visit = crate::backend::visit_heap_free_elements))]
@@ -478,7 +547,15 @@ impl<F: JoltField> OptimizedBooleanityCycleKernel<F> {
             .round_mut()
             .ok_or_else(|| eq_round_error(round))?
             .bind(challenge);
-        self.tables.bind(challenge);
+        match &mut self.tables {
+            CycleTables::Lazy(tables) => tables.bind(challenge),
+            CycleTables::Streamed(selectors) => {
+                selectors.bind(challenge);
+                if let Some(dense) = selectors.materialized().map_err(rows_unavailable)? {
+                    self.tables = CycleTables::Lazy(dense);
+                }
+            }
+        }
         self.progress.advance();
         Ok(())
     }
@@ -676,9 +753,14 @@ impl<F: JoltField> ProveRounds<F> for OptimizedBooleanityCycleKernel<F> {
         if let Some(challenge) = bind {
             self.bind(challenge)?;
         }
-        let prefix_pairs = self.tables.prefix_len().div_ceil(2);
-        let tail = self
-            .tables
+        let lazy = match &self.tables {
+            CycleTables::Lazy(lazy) => lazy,
+            CycleTables::Streamed(selectors) => {
+                return self.streamed_round(selectors, round, previous_claim);
+            }
+        };
+        let prefix_pairs = lazy.prefix_len().div_ceil(2);
+        let tail = lazy
             .tail_values()
             .iter()
             .zip(&self.gamma_powers)
@@ -692,7 +774,7 @@ impl<F: JoltField> ProveRounds<F> for OptimizedBooleanityCycleKernel<F> {
             factors: 1,
             source,
             ..
-        } = &self.tables
+        } = lazy
         {
             if !tables.is_empty() {
                 let addresses = tables[0].len() / width;
@@ -735,7 +817,7 @@ impl<F: JoltField> ProveRounds<F> for OptimizedBooleanityCycleKernel<F> {
                 }
             }
         }
-        let tables = &self.tables;
+        let tables = lazy;
         let gamma_powers = &self.gamma_powers;
         let num_polys = gamma_powers.len();
         let active_polys = gamma_powers.iter().take_while(|rho| !rho.is_zero()).count();
@@ -838,6 +920,11 @@ impl<F: JoltField> SumcheckKernel<F> for OptimizedBooleanityCycleKernel<F> {
         _inputs: &SumcheckInputClaims<F, Self::Relation>,
     ) -> Result<SumcheckOutputClaims<F, Self::Relation>, SumcheckKernelError<F>> {
         self.progress.require_complete()?;
+        let CycleTables::Lazy(tables) = &self.tables else {
+            return Err(SumcheckKernelError::InvariantViolation {
+                reason: "streamed booleanity rows outlived their last bind",
+            });
+        };
         // Disabled columns were retained unscaled; the unit factor preserves
         // their opening values when gamma is zero.
         let values: BTreeMap<JoltOpeningId, F> = self
@@ -845,7 +932,7 @@ impl<F: JoltField> SumcheckKernel<F> for OptimizedBooleanityCycleKernel<F> {
             .iter()
             .copied()
             .enumerate()
-            .map(|(i, id)| (id, self.tables.value(i, 0) * self.opening_unscale[i]))
+            .map(|(i, id)| (id, tables.value(i, 0) * self.opening_unscale[i]))
             .collect();
         SumcheckOutputClaims::<F, Self::Relation>::from_opening_values(|id| values.get(id).copied())
             .map_err(SumcheckKernelError::from)

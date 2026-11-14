@@ -102,18 +102,12 @@ pub(crate) fn no_op_row() -> TraceRow {
     .unwrap()
 }
 
-pub(crate) fn with_booleanity_backend<R>(
-    log_t: usize,
-    log_k_chunk: u8,
-    f: impl FnOnce(&TraceBackend, BooleanityDimensions) -> R,
-) -> R {
-    let alu = TraceRow::new(
+/// An ALU row whose lookup index follows its first operand `value`.
+pub(crate) fn alu_row(value: u64) -> TraceRow {
+    TraceRow::new(
         ALU,
         RegisterState {
-            rs1: Some(RegisterRead {
-                register: 2,
-                value: 5,
-            }),
+            rs1: Some(RegisterRead { register: 2, value }),
             rd: Some(RegisterWrite {
                 register: 1,
                 pre_value: 8,
@@ -124,12 +118,19 @@ pub(crate) fn with_booleanity_backend<R>(
         RamAccess::NoOp,
         3,
     )
-    .unwrap();
+    .unwrap()
+}
+
+pub(crate) fn with_booleanity_backend<R>(
+    log_t: usize,
+    log_k_chunk: u8,
+    f: impl FnOnce(&TraceBackend, BooleanityDimensions) -> R,
+) -> R {
     let mut rows = vec![
         load_row(0x8000_1000),
         store_row(0x8000_1008),
         no_op_row(),
-        alu,
+        alu_row(5),
     ];
     rows.truncate(1 << log_t);
     with_trace_backend(log_t, log_k_chunk, rows, f)

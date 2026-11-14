@@ -253,10 +253,11 @@ mod tests {
     /// fill their tables in the passes that yield round 0's endpoints; the
     /// parity tests in `jolt-kernels` cover later crossovers. The RAM kernels
     /// have no crossover: stages 2–5 read the event log and stage 6b its own
-    /// address column at every trace size. Stage 6b's instruction RA
-    /// virtualization gathers its selectors from the rows in rounds 0–3 and
-    /// holds them dense from the fourth bind, the earliest at any budget; the
-    /// parity tests cover later ones.
+    /// address column at every trace size. The booleanity address phase
+    /// (stage 6a) accumulates its masses from the rows. Stage 6b's booleanity
+    /// cycle phase and instruction RA virtualization read the rows in rounds
+    /// 0–3 and hold their tables dense from the fourth bind, the earliest at
+    /// any budget; the parity tests cover later ones.
     #[test]
     fn streaming_kernels_reproduce_the_default_proof() {
         let Fixture {

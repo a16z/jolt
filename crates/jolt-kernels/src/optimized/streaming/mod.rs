@@ -17,6 +17,7 @@ pub(crate) use pass::{
 use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
 
+use super::booleanity::{StreamingBooleanityAddress, StreamingBooleanityCycle};
 use super::instruction_input::StreamingInstructionInput;
 use super::instruction_ra_virtualization::StreamingInstructionRaVirtualization;
 use super::ram_ra_claim_reduction::StreamingRamRaClaimReduction;
@@ -45,12 +46,13 @@ pub struct StreamingFamilies {
     /// stage 2 through stage 5, and stage 6b collects its own column.
     pub ram: bool,
     /// Readers of the per-cycle instruction rows, which the default kernels
-    /// share from stage 5 on as a packed row cache: stage 6b's instruction RA
-    /// virtualization reads the witness's resident rows in its own passes.
-    /// The cache's other readers keep their default kernels, so stage 5 still
-    /// collects it. Stage 7's Hamming-weight claim reduction has no streaming
-    /// kernel: its default kernel reads the resident rows whenever no cache
-    /// is live.
+    /// share from stage 5 on as a packed row cache: the booleanity address
+    /// phase (stage 6a) and stage 6b's booleanity cycle phase and instruction
+    /// RA virtualization read the witness's resident rows in their own
+    /// passes. The cache's other readers keep their default kernels, so stage
+    /// 5 still collects it. Stage 7's Hamming-weight claim reduction has no
+    /// streaming kernel: its default kernel reads the resident rows whenever
+    /// no cache is live.
     pub instruction_rows: bool,
 }
 
@@ -84,7 +86,9 @@ where
             self.ram_ra_virtualization = Box::new(StreamingRamRaVirtualization);
         }
         if instruction_rows {
+            self.booleanity_address = Box::new(StreamingBooleanityAddress);
             self.instruction_ra_virtualization = Box::new(StreamingInstructionRaVirtualization);
+            self.booleanity_cycle = Box::new(StreamingBooleanityCycle);
         }
         self
     }

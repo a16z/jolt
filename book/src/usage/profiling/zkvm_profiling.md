@@ -64,11 +64,12 @@ stage-3 instruction-input streaming kernel, for either Dory or Akita. The
 The `ram` family selects the read-write, RAF, value-check, RA claim-reduction
 and RA-virtualization kernels: stages 2–5 share sparse events, and stage 6b
 collects its own address column. The `instruction-rows` family selects the
-stage-6b instruction RA virtualization kernel, which gathers its one-hot
-selectors from the resident trace until each fits 64 MiB dense, and not before
-the eager kernel's fourth bind. The other readers of the packed per-cycle
-instruction rows keep their eager kernels, so stage 5 still collects those
-rows. Combine families with
+booleanity kernels of stages 6a and 6b and the stage-6b instruction RA
+virtualization kernel. The stage-6a address phase accumulates its tables from
+the resident trace; the stage-6b kernels gather their one-hot selectors from
+it until each fits 64 MiB dense, and not before the eager kernels' fourth
+bind. The other readers of the packed per-cycle instruction rows keep their
+eager kernels, so stage 5 still collects those rows. Combine families with
 `--streaming instruction-input,spartan,ram`. Instruction-input and Spartan
 early rounds recompute from the resident trace until the dense tables fit a fixed 4 GiB
 cap; the full trace remains resident. This is not a process-memory cap, and
