@@ -1,5 +1,6 @@
 #[cfg(feature = "field-inline")]
 use jolt_claims::protocols::field_inline::FIELD_REGISTERS_LOG_K;
+use jolt_claims::protocols::jolt::geometry::booleanity::BooleanityDimensions;
 use jolt_claims::protocols::jolt::geometry::bytecode::{
     BytecodeReadRafDimensions, LATTICE_FUSED_INC_STAGES,
 };
@@ -15,10 +16,12 @@ use jolt_verifier::stages::stage6b::bytecode_read_raf::{
     BytecodeReadRafCycleInputs, BytecodeReadRafCyclePhaseCommittedChallenges,
     BytecodeReadRafInputClaims, BytecodeReadRafTableFoldInputs,
 };
-use jolt_witness::ProgramSource;
+use jolt_witness::{ProgramSource, TraceBackend};
 
 use super::*;
-use crate::optimized::booleanity::testing::with_booleanity_backend;
+use crate::optimized::booleanity::testing::{
+    mixed_rows, with_booleanity_backend, with_trace_backend,
+};
 use crate::optimized::parity::{probe_input_claim, run_lockstep, synthetic_point};
 use crate::ReferenceBackend;
 
@@ -125,8 +128,26 @@ fn address_parity_on(
     );
 }
 
-fn cycle_parity(log_t: usize, log_k_chunk: u8) {
+type CycleSlot = dyn PrepareKernel<Fr, BytecodeReadRafCycle<Fr>>;
+
+fn cycle_parity(log_t: usize, log_k_chunk: u8, kernel: &CycleSlot) {
     with_booleanity_backend(log_t, log_k_chunk, |backend, base_dimensions| {
+        cycle_parity_on(backend, base_dimensions, kernel);
+    });
+}
+
+/// The cycle-phase relation the parity cases prove over a backend, with its
+/// inputs.
+struct CycleCase {
+    relation: BytecodeReadRafCycle<Fr>,
+    challenges: BytecodeReadRafCyclePhaseCommittedChallenges<Fr>,
+    claims: BytecodeReadRafInputClaims<Fr>,
+    points: BytecodeReadRafInputClaims<Vec<Fr>>,
+}
+
+impl CycleCase {
+    fn new(backend: &TraceBackend, base_dimensions: BooleanityDimensions) -> Self {
+        let log_t = base_dimensions.log_t;
         let program = backend.program_preprocessing();
         let bytecode_len = program.bytecode.bytecode.len();
         let dimensions = BytecodeReadRafDimensions::new(
@@ -154,7 +175,7 @@ fn cycle_parity(log_t: usize, log_k_chunk: u8) {
             r_address: synthetic_point(dimensions.log_k(), 19),
             stage_cycle_points,
             entry_bytecode_index: 0,
-            committed_chunk_bits: usize::from(log_k_chunk),
+            committed_chunk_bits: base_dimensions.log_k_chunk,
             table_fold: Some(BytecodeReadRafTableFoldInputs {
                 bytecode: &program.bytecode.bytecode,
                 register_read_write_point: &synthetic_point(REGISTER_ADDRESS_BITS, 23),
@@ -178,50 +199,51 @@ fn cycle_parity(log_t: usize, log_k_chunk: u8) {
             },
         })
         .unwrap();
-        let challenges = BytecodeReadRafCyclePhaseCommittedChallenges {
-            gamma: Fr::from_u64(31),
-        };
-        let claims = BytecodeReadRafInputClaims::<Fr>::default();
-        let input_points = BytecodeReadRafInputClaims::<Vec<Fr>>::default();
+        Self {
+            relation,
+            challenges: BytecodeReadRafCyclePhaseCommittedChallenges {
+                gamma: Fr::from_u64(31),
+            },
+            claims: BytecodeReadRafInputClaims::<Fr>::default(),
+            points: BytecodeReadRafInputClaims::<Vec<Fr>>::default(),
+        }
+    }
 
-        let mut session = ProofSession::default();
-        let mut reference = ReferenceBackend
-            .prepare(
-                &mut session,
-                backend,
-                ProverInputs {
-                    relation: &relation,
-                    claims: &claims,
-                    points: &input_points,
-                    challenges: &challenges,
-                },
-            )
-            .unwrap();
-        let mut optimized = OptimizedBytecodeReadRafCycle
-            .prepare(
-                &mut session,
-                backend,
-                ProverInputs {
-                    relation: &relation,
-                    claims: &claims,
-                    points: &input_points,
-                    challenges: &challenges,
-                },
-            )
-            .unwrap();
+    fn inputs(&self) -> ProverInputs<'_, Fr, BytecodeReadRafCycle<Fr>> {
+        ProverInputs {
+            relation: &self.relation,
+            claims: &self.claims,
+            points: &self.points,
+            challenges: &self.challenges,
+        }
+    }
+}
 
-        let claim = probe_input_claim(reference.as_mut());
-        run_lockstep(
-            reference.as_mut(),
-            optimized.as_mut(),
-            claim,
-            &synthetic_point(log_t, 211),
-        );
-        assert_eq!(
-            reference.output_claims(&claims).unwrap(),
-            optimized.output_claims(&claims).unwrap()
-        );
-    });
+fn cycle_parity_on(
+    backend: &TraceBackend,
+    base_dimensions: BooleanityDimensions,
+    kernel: &CycleSlot,
+) {
+    let case = CycleCase::new(backend, base_dimensions);
+    let mut session = ProofSession::default();
+    let mut reference = ReferenceBackend
+        .prepare(&mut session, backend, case.inputs())
+        .unwrap();
+    let mut optimized = kernel
+        .prepare(&mut session, backend, case.inputs())
+        .unwrap();
+
+    let claim = probe_input_claim(reference.as_mut());
+    run_lockstep(
+        reference.as_mut(),
+        optimized.as_mut(),
+        claim,
+        &synthetic_point(base_dimensions.log_t, 211),
+    );
+    assert_eq!(
+        reference.output_claims(&case.claims).unwrap(),
+        optimized.output_claims(&case.claims).unwrap()
+    );
 }
 
 #[cfg(feature = "field-inline")]
@@ -261,19 +283,66 @@ fn streaming_address_matches_reference_with_active_field_inline() {
 
 #[test]
 fn bytecode_cycle_matches_reference_k16() {
-    cycle_parity(2, 4);
+    cycle_parity(2, 4, &OptimizedBytecodeReadRafCycle);
 }
 
 #[test]
 fn bytecode_cycle_with_padding_matches_reference_through_materialization() {
     for chunk in [4, 8] {
-        cycle_parity(6, chunk);
+        cycle_parity(6, chunk, &OptimizedBytecodeReadRafCycle);
     }
 }
 
 #[test]
 fn bytecode_cycle_matches_reference_k256() {
-    cycle_parity(3, 8);
+    cycle_parity(3, 8, &OptimizedBytecodeReadRafCycle);
+}
+
+/// 4 of 4 cycles leave no padding suffix and 4 of 64 leave one; both turn
+/// the RA factor dense at the first bind. 1,500 of 2,048, 2,048 of 2,048 and
+/// 6,000 of 8,192 turn it dense at the fourth: without doubling its branch
+/// tables for that bind up to 2,048 cycles, and after doubling them on
+/// 8,192, as on every long trace. Every case holds the fused increment of
+/// the cycles before the suffix from the resident rows; an empty trace is
+/// all suffix, and the kernel still holds cycle 0, for its entry term.
+#[test]
+fn streaming_cycle_matches_reference_over_resident_rows() {
+    for (log_t, chunk) in [(2, 4), (6, 4), (6, 8)] {
+        cycle_parity(log_t, chunk, &StreamingBytecodeReadRafCycle);
+    }
+    for (log_t, rows) in [
+        (11, mixed_rows(1500)),
+        (11, mixed_rows(2048)),
+        (13, mixed_rows(6000)),
+        (2, Vec::new()),
+    ] {
+        with_trace_backend(log_t, 4, rows, |backend, base_dimensions| {
+            cycle_parity_on(backend, base_dimensions, &StreamingBytecodeReadRafCycle);
+        });
+    }
+}
+
+/// Over a padded trace the streaming cycle kernel holds its coefficient
+/// tables and the fused increment for the cycles before the padding only,
+/// and its dense RA rows for the bound indices that hold one.
+#[test]
+fn streaming_cycle_tables_stop_at_the_padding() {
+    with_trace_backend(11, 4, mixed_rows(1500), |backend, base_dimensions| {
+        let case = CycleCase::new(backend, base_dimensions);
+        let mut kernel = CycleKernel::streaming(backend, &case.inputs()).unwrap();
+        assert_eq!(kernel.combined.prefix_len(), 1500);
+        assert_eq!(kernel.fused_combined.prefix_len(), 1500);
+        assert!(
+            matches!(&kernel.fused_inc, LazyFusedInc::Prefix { values, .. } if values.len() == 1500)
+        );
+        for round in 0..4 {
+            kernel.bind(Fr::from_u64(31 + round)).unwrap();
+        }
+        assert_eq!(
+            kernel.ra.lazy().map(LazyFoldedRa::prefix_len),
+            Some(1500usize.div_ceil(16))
+        );
+    });
 }
 
 #[test]
