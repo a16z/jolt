@@ -1315,7 +1315,7 @@ impl<F: JoltField> OuterRemainderKernel<F> {
 
     /// Az/Bz column weights at both stream values over the composed opening-column
     /// selection, from the same `jolt-claims` sources the verifier's coefficient build
-    /// uses (35 rv64 columns without field-inline; the non-contiguous 45 + 5 selection
+    /// uses (36 rv64 columns without field-inline; the non-contiguous 46 + 5 selection
     /// under `field-inline`).
     fn derived_weights(uniskip_challenge: F) -> Result<DerivedWeights<F>, KernelError<F>> {
         let matrices = spartan_outer_constraints::<F>();

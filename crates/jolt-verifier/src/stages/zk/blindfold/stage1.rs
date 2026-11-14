@@ -46,7 +46,7 @@ where
         stage: JoltRelationId::SpartanOuter,
         reason: error.to_string(),
     })?;
-    // Under `field-inline` this coefficient table is the COMPOSED one (50 columns): the same
+    // Under `field-inline` this coefficient table is the COMPOSED one (51 columns): the same
     // source the clear path's factored check consumes, so the appended field-inline weight
     // publics bake automatically.
     for (id, value) in remainder_formula.public_coefficients() {
@@ -203,7 +203,7 @@ mod tests {
     /// The lowered composed output expression evaluates bit-identically to the composed
     /// factored form `JoltSpartanOuterRemainder::expected_output_claim` over the full selected
     /// opening vector — the same equation the clear stage-1 path checks (with field-inline
-    /// enabled: 50 openings; with field-inline disabled: the rv64 35).
+    /// enabled: 51 openings; with field-inline disabled: the rv64 36).
     #[test]
     fn lowered_output_expr_matches_the_composed_factored_form() {
         let log_t = 3usize;

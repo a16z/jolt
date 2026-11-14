@@ -502,7 +502,7 @@ A model of Jolt's expansions that tags `LR`'s load as an AMO access (and so deri
 
 Both `LR` and `SC` assert `RAM_START ≤ addr` before touching the reservation.
 The specification lets each physical region be RsrvNone (non-reservable), RsrvNonEventual or RsrvEventual (`machine.adoc:3051`, `norm:pma_rsrv_levels`), and recommends RsrvEventual for main memory while noting that most I/O regions do not support LR/SC (`machine.adoc:3062`).
-Jolt's memory map puts I/O (inputs, outputs, advice, termination and panic bits) below `RAM_START` and ordinary RAM at or above it, so the assertion is exactly "the address is reservable".
+Jolt's memory map puts I/O (inputs, outputs and advice) below `RAM_START` and ordinary RAM at or above it, so the assertion is exactly "the address is reservable".
 It also keeps the cleared reservation value 0 from matching an `SC` to address 0.
 Below `RAM_START` the specification would raise an access fault; Jolt has no step, which is again only a completeness loss.
 
@@ -542,8 +542,10 @@ With D/Zcd enabled, `C.FLDSP` with `rd = f0` is legal, but both decompressors re
 
 `EBREAK` and `c.ebreak` lower to one `Panic` row, Jolt's failure halt: a table-free jump (lookup output 0) that writes its link to an instruction temporary.
 Every tracer ends the run there.
-`jolt.success` (the custom-2 word `0x0000_305B`) is the success halt and lowers to the matching `Success` row; the SDK's `#[jolt::provable]` epilogue executes it right after storing the termination word.
-Which halt ends the run is not part of the proved claim: the constraints accept any final jump, and the public panic bit comes from the panic and termination words that ValIo binds (`PublicIoMemory::new` in `crates/jolt-program/src/preprocess/public_io.rs`), so a program that stores the termination word and then executes `EBREAK` without writing the panic word proves `panic = false`.
+`jolt.success` (the custom-2 word `0x0000_305B`) is the success halt and lowers to the matching `Success` row; the SDK's `#[jolt::provable]` epilogue writes the outputs, then executes it.
+Which halt ends the run is part of the proved claim.
+A proof claims success (`panic = false`) only for a run whose last real row is the `Success` row, and a panic (`panic = true`) only for one whose last real row is the `Panic` row: rows 15 and 16 reject a non-jump row before padding, and product lane 3 (`PRODUCT_JUMP_LANE_OUTPUT` in `crates/jolt-claims/src/protocols/jolt/geometry/spartan.rs`) rejects an ordinary jump there and forces the halt's `HaltPanic` flag to equal the claimed panic bit.
+No memory word carries the panic bit; `PublicIoMemory::new` (`crates/jolt-program/src/preprocess/public_io.rs`) binds only the inputs and outputs.
 The unprivileged specification says `EBREAK` "is used to return control to a debugging environment" (`src/unpriv/rv32.adoc:901`, `norm:ebreak_debug_env_op`).
 The debug specification makes that precise: with `dcsr.ebreakm = 1`, "`ebreak` instructions in M-mode enter Debug Mode" (`xml/core_registers.xml:158`), and in Debug Mode the hart is halted, so "there is no forward progress in the normal instruction stream" (`Sdext.adoc:22`).
 Entering Debug Mode is not a trap, so `mepc`, `mcause`, `mtval` and `mstatus` stay unchanged.

@@ -1,10 +1,10 @@
 # Panic Detection Example
 
-Demonstrates panic detection in Jolt zkVM guests. When a guest program panics, Jolt captures this through a panic bit mechanism, allowing the host to detect and handle panics while still generating valid proofs.
+Demonstrates panic detection in Jolt zkVM guests. When a guest program panics, its panic handler ends the run with `ebreak`, Jolt's failure halt, and the public panic bit states that the run ended there. The host can detect and handle panics while still generating valid proofs.
 
 ## How It Works
 
-- **no_std guests**: Panic handler in `zeroos-runtime-nostd` calls `__platform_abort()` which sets the panic bit
+- **no_std guests**: Panic handler in `zeroos-runtime-nostd` calls `__platform_abort()`, which executes `ebreak`
 - **std guests**: `std::panic!` → `abort()` → `SIGABRT` signal → ZeroOS signal handler → `__platform_abort()`
 
 The panic location (file:line) is printed to stdout during execution. To see full stack backtraces, set `JOLT_BACKTRACE=1` (see below).
@@ -27,7 +27,7 @@ cargo run --release -p backtrace --no-default-features --features std
 nostd panicked: true
 ```
 
-The `panicked: true` indicates Jolt successfully detected the guest panic through `JoltCommitments::has_panic()`.
+`panicked: true` is the public panic bit (`program_io.panic`): the run ended at `ebreak`, and the proof verifies only under that claim.
 
 ## Backtrace Output Reference
 

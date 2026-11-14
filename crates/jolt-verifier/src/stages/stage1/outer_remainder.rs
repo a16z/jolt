@@ -152,7 +152,7 @@ impl<F: JoltField> OuterRemainder<F> {
         // Sized from the selected R1CS composition (jolt-claims r1cs), not from the rv64-only
         // symbolic dimensions: under `field-inline` the composed coefficient table carries the
         // appended field-inline columns, and the weight vectors must match it. with
-        // field-inline disabled, the two sources agree (35 columns).
+        // field-inline disabled, the two sources agree (36 columns).
         let variable_count =
             jolt_claims::protocols::composed::r1cs::spartan_outer_opening_columns().len();
         debug_assert!(variable_count >= dimensions.variables().len());

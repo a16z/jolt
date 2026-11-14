@@ -92,8 +92,9 @@ only if every count is zero, that is, no cycle selects an unmapped word,
 except with probability $\log T/|\mathbb{F}|$. Layout construction rounds
 `heap_end` up to a doubleword, matching the linker's aligned `__heap_end`, and
 admission rejects an unaligned `heap_end`, so a guest that uses the whole heap
-never touches a word in $N$. The panic and termination words lie below
-`io_end` and are outside $N$.
+never touches a word in $N$. `io_end` is the end of the outputs; the layout
+always reserves an unmapped guard word there, so $N$ starts at that word and an
+access to it fails the $\gamma^4$ identity.
 
 Preprocessing rounds each real source instruction's two- or four-byte extent
 outward to doublewords, merges adjacent intervals and excludes synthetic
@@ -226,14 +227,15 @@ This arrangement minimizes verifier computation. If we placed untrusted advice f
 ## Output Check
 
 Jolt ensures correctness of guest program outputs via the **output check** sumcheck.
-Guest I/O operations, including outputs, inputs, and termination or panic bits, occur within a designated [memory region](#address-remapping).
-At execution completion, outputs and relevant status bits are written into this region.
+Guest I/O occupies a designated [memory region](#address-remapping) below `0x80000000`: advice, inputs and outputs, followed by unmapped padding that always includes at least one guard word.
+At execution completion, the outputs have been written into this region.
+The panic bit is not memory: the statement carries it, and the [end rule](./r1cs_constraints.md#ending-a-run) binds it to the halt that ends the run.
 
-Verifying that the claimed outputs and status bits are correct amounts to checking that the following polynomials agree at the indices corresponding to the program I/O memory region:
+Verifying that the claimed outputs are correct amounts to checking that the following polynomials agree at the indices corresponding to the program I/O memory region:
 
 ![final memory](../../imgs/final_memory_state.png)
 
-Note that `val_io` is only contains information known by the verifier.
+Note that `val_io` only contains information known by the verifier: the inputs and the claimed outputs, with every other word from `input_start` up to `0x80000000` zero.
 To check that these two polynomials are equal, we use the following sumcheck:
 
 $$

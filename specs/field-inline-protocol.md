@@ -348,7 +348,8 @@ With field inline enabled, product virtualization adds a field-product lane:
 existing product lanes:
   Product = LeftInstructionInput * RightInstructionInput
   ShouldBranch = LookupOutput * BranchFlag
-  ShouldJump = JumpFlag * (1 - NextIsNoop)
+  JumpFlag - (1 - 2*ClaimedPanic) * HaltFlag - 2 * HaltPanicFlag
+    = JumpFlag * (1 - NextIsNoop)
 
 field-inline lane:
   FieldProduct = FieldRs1Value * FieldRs2Value
