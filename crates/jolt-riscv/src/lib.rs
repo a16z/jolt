@@ -239,6 +239,8 @@ macro_rules! for_each_instruction_kind {
                 CSRRWI => Csrrwi => "rv64.csrrwi",
                 CSRRSI => Csrrsi => "rv64.csrrsi",
                 CSRRCI => Csrrci => "rv64.csrrci",
+                VirtualXORROT2 => VirtualXorRot2 => "jolt.virtual.xorrot2",
+                VirtualXORROT61 => VirtualXorRot61 => "jolt.virtual.xorrot61",
             ]
         }
     };
@@ -371,6 +373,8 @@ macro_rules! for_each_jolt_instruction_kind {
                 VirtualStoreB => StoreB => (0x00a5, "jolt.virtual.storeb"),
                 VirtualStoreH => StoreH => (0x00a6, "jolt.virtual.storeh"),
                 VirtualStoreW => StoreW => (0x00a7, "jolt.virtual.storew"),
+                VirtualXORROT2 => VirtualXorRot2 => (0x00a8, "jolt.virtual.xorrot2"),
+                VirtualXORROT61 => VirtualXorRot61 => (0x00a9, "jolt.virtual.xorrot61"),
                 #[cfg(feature = "field-inline")]
                 FIELD_ADD => FieldAdd => (0x0100, "field.add"),
                 #[cfg(feature = "field-inline")]

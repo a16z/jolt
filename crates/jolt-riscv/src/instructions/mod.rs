@@ -142,8 +142,10 @@ pub use virt::VirtualSrli;
 pub use virt::VirtualSrliw;
 pub use virt::VirtualSrlw;
 pub use virt::VirtualXorRot16;
+pub use virt::VirtualXorRot2;
 pub use virt::VirtualXorRot24;
 pub use virt::VirtualXorRot32;
+pub use virt::VirtualXorRot61;
 pub use virt::VirtualXorRot63;
 pub use virt::VirtualXorRotL1;
 pub use virt::VirtualXorRotW12;
@@ -447,6 +449,8 @@ pub enum JoltInstruction<T = JoltInstructionRow> {
     VirtualAdvice(VirtualAdvice<T>),
     VirtualAdviceLoad(VirtualAdviceLoad<T>),
     VirtualHostIO(VirtualHostIO<T>),
+    VirtualXorRot2(VirtualXorRot2<T>),
+    VirtualXorRot61(VirtualXorRot61<T>),
     #[cfg(feature = "field-inline")]
     FieldAdd(FieldAdd<T>),
     #[cfg(feature = "field-inline")]
@@ -645,6 +649,8 @@ impl_jolt_instructions_flags! {
     VirtualXorRot24 => VirtualXORROT24,
     VirtualXorRot16 => VirtualXORROT16,
     VirtualXorRot63 => VirtualXORROT63,
+    VirtualXorRot2 => VirtualXORROT2,
+    VirtualXorRot61 => VirtualXORROT61,
     VirtualXorRotW16 => VirtualXORROTW16,
     VirtualXorRotW12 => VirtualXORROTW12,
     VirtualXorRotW8 => VirtualXORROTW8,
