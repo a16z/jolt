@@ -10,10 +10,12 @@
 //! ```
 //!
 //! where branch table `branch` is the base table pre-scaled by that bound-bit
-//! pattern's eq weight ([`LazyFoldedRa`] documents the derivation). The bind
-//! that reaches [`materialize_depth`] gathers every polynomial dense, and the
-//! kernel continues over the default family's dense state. A gather adds the
-//! table entries the default family adds, so every value equals its value.
+//! pattern's eq weight ([`LazyFoldedRa`] documents the derivation, and the
+//! products a polynomial of several columns gathers). The family's
+//! materializing bind ([`Schedule`]) gathers every polynomial dense, and the
+//! kernel continues over the default family's dense state. A gather combines
+//! the table entries the default family combines, so every value equals its
+//! value.
 
 use std::ops::Range;
 
@@ -25,11 +27,11 @@ use jolt_witness::{WitnessBundle, WitnessError};
 use rayon::prelude::*;
 
 use super::{dense_crossover, task_ranges, VISIT_ROWS};
-use crate::optimized::lazy_ra::{double_branches, LazyFoldedRa, DEFAULT_MAX_WIDTH};
+use crate::optimized::lazy_ra::{double_branches, LazyBind, LazyFoldedRa, DEFAULT_MAX_WIDTH};
 use crate::optimized::support::BundleStore;
 
-/// Bytes of each dense polynomial a streaming family materializes
-/// ([`materialize_depth`]).
+/// Bytes of each dense polynomial a [`StreamedFoldedRa::new`] family
+/// materializes ([`materialize_depth`]).
 pub(crate) const MATERIALIZE_BYTES: usize = 1 << 26;
 
 /// The default family's materializing bind, its fourth.
@@ -56,14 +58,25 @@ fn callback_rows(unit: usize) -> usize {
     unit * (VISIT_ROWS / unit).max(1)
 }
 
-/// The hot scale-table index of each point-mass column, one per selector
-/// polynomial, in one cycle's typed witness row.
+/// The hot scale-table index of each point-mass column in one cycle's typed
+/// witness row.
 pub(crate) trait RowIndexSource: Send + Sync {
     type Row: WitnessBundle + Copy + Send + Sync;
 
     /// Calls `visit(column, index)` once for every column that is hot in
     /// `row`, with that column's scale-table index.
     fn for_each_hot(&self, row: &Self::Row, visit: impl FnMut(usize, usize));
+}
+
+/// The bind at which a family materializes.
+#[derive(Clone, Copy)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
+enum Schedule {
+    /// The bind that reaches this depth, after doubling the branch tables.
+    Depth(usize),
+    /// The bind at which the default family of this widest branch set
+    /// materializes, fused where that family fuses ([`LazyBind`]).
+    Default { max_width: usize },
 }
 
 /// Selector polynomials bound `LowToHigh` before they materialize.
@@ -73,13 +86,16 @@ pub(crate) trait RowIndexSource: Send + Sync {
     allocative(bound = "F: JoltField, S: RowIndexSource + allocative::Allocative")
 )]
 pub(crate) struct StreamedFoldedRa<F: JoltField, S: RowIndexSource> {
-    /// Per polynomial, its base table pre-scaled by each bound-bit pattern's
-    /// eq weight, branch-major: `tables[i][branch · K_i + k]` for a
-    /// `K_i`-entry base table.
+    /// Per column, its base table; polynomial `i` is the product of columns
+    /// `i · factors..(i + 1) · factors`. A polynomial's first column holds
+    /// its base table pre-scaled by each bound-bit pattern's eq weight,
+    /// branch-major: `tables[c][branch · K_c + k]` for a `K_c`-entry base
+    /// table.
     tables: Vec<Vec<F>>,
+    factors: usize,
     /// Binds so far: every polynomial has `2^depth` branches.
     depth: usize,
-    materialize_depth: usize,
+    schedule: Schedule,
     /// log2 of the cycle domain `rows` span.
     rounds: usize,
     source: S,
@@ -99,41 +115,98 @@ impl<F: JoltField, S: RowIndexSource> StreamedFoldedRa<F, S> {
     ) -> Self {
         Self {
             tables,
+            factors: 1,
             depth: 0,
-            materialize_depth: materialize_depth::<F>(rounds, materialize_bytes),
+            schedule: Schedule::Depth(materialize_depth::<F>(rounds, materialize_bytes)),
             rounds,
             source,
             rows,
         }
     }
 
-    /// Every polynomial's bound value at the index whose `2^depth` unbound
-    /// cycles are `rows`.
-    #[inline]
-    fn gather(&self, rows: &[S::Row], values: &mut [F]) {
-        values.fill(F::zero());
-        for (branch, row) in rows.iter().enumerate() {
-            self.source.for_each_hot(row, |column, index| {
-                let table = &self.tables[column];
-                values[column] += table[branch * (table.len() >> self.depth) + index];
-            });
+    /// One base table per column, in `source`'s column order, over the
+    /// `2^rounds` cycles of `rows`; each run of `factors` consecutive columns
+    /// is one polynomial. The family materializes at the bind at which
+    /// [`LazyFoldedRa::factored`] over the same tables does, and holds that
+    /// family's branch tables until then.
+    pub(crate) fn factored(
+        tables: Vec<Vec<F>>,
+        factors: usize,
+        max_width: usize,
+        source: S,
+        rows: BundleStore<S::Row>,
+        rounds: usize,
+    ) -> Self {
+        debug_assert!(factors > 0 && tables.len().is_multiple_of(factors));
+        Self {
+            tables,
+            factors,
+            depth: 0,
+            schedule: Schedule::Default { max_width },
+            rounds,
+            source,
+            rows,
         }
     }
 
-    /// `Σ_y E(y) · pair_terms(lo(y), hi(y))` over the current pair rows `y`,
-    /// where `lo(y)` and `hi(y)` hold every polynomial's bound values at
-    /// indices `2y` and `2y + 1`, `pair_terms(scratch, lo, hi, terms)` writes
-    /// the row's `terms` summands, and `E = e_out ⊗ e_in` are `eq`'s current
-    /// tables. The domain splits into [`task_ranges`] of whole pairs; each
-    /// task visits its rows once, serially, and keeps one `scratch()`. Every
-    /// callback holds whole pairs and a pair is weighted on its own, so no
-    /// sum depends on where a callback or a task ends.
+    fn num_polys(&self) -> usize {
+        self.tables.len() / self.factors
+    }
+
+    /// Every polynomial's bound value at the index whose `2^depth` unbound
+    /// cycles are `rows`. `hot` is scratch of one entry per column.
+    #[inline]
+    fn gather(&self, rows: &[S::Row], hot: &mut [Option<usize>], values: &mut [F]) {
+        values.fill(F::zero());
+        if self.factors == 1 {
+            for (branch, row) in rows.iter().enumerate() {
+                self.source.for_each_hot(row, |column, index| {
+                    let table = &self.tables[column];
+                    values[column] += table[branch * (table.len() >> self.depth) + index];
+                });
+            }
+            return;
+        }
+        for (branch, row) in rows.iter().enumerate() {
+            hot.fill(None);
+            self.source
+                .for_each_hot(row, |column, index| hot[column] = Some(index));
+            for ((value, tables), hot) in values
+                .iter_mut()
+                .zip(self.tables.chunks_exact(self.factors))
+                .zip(hot.chunks_exact(self.factors))
+            {
+                // A polynomial is cold on a cycle where any of its columns is.
+                let product = hot[0].and_then(|lead| {
+                    let lead = tables[0][branch * (tables[0].len() >> self.depth) + lead];
+                    tables[1..]
+                        .iter()
+                        .zip(&hot[1..])
+                        .try_fold(lead, |product, (table, index)| {
+                            Some(product * table[(*index)?])
+                        })
+                });
+                if let Some(product) = product {
+                    *value += product;
+                }
+            }
+        }
+    }
+
+    /// `Σ_y E(y) · pair_terms(y, lo(y), hi(y))` over the current pair rows
+    /// `y`, where `lo(y)` and `hi(y)` hold every polynomial's bound values at
+    /// indices `2y` and `2y + 1`, `pair_terms(scratch, y, lo, hi, terms)`
+    /// writes the row's `terms` summands, and `E = e_out ⊗ e_in` are `eq`'s
+    /// current tables. The domain splits into [`task_ranges`] of whole pairs;
+    /// each task visits its rows once, serially, and keeps one `scratch()`.
+    /// Every callback holds whole pairs and a pair is weighted on its own, so
+    /// no sum depends on where a callback or a task ends.
     pub(crate) fn sum_pair_terms<T>(
         &self,
         eq: &GruenSplitEqPolynomial<F>,
         terms: usize,
         scratch: impl Fn() -> T + Sync,
-        pair_terms: impl Fn(&mut T, &[F], &[F], &mut [F]) + Sync,
+        pair_terms: impl Fn(&mut T, usize, &[F], &[F], &mut [F]) + Sync,
     ) -> Result<Vec<F>, WitnessError> {
         let e_out = eq.e_out_current();
         let e_in = eq.e_in_current();
@@ -141,17 +214,18 @@ impl<F: JoltField, S: RowIndexSource> StreamedFoldedRa<F, S> {
         let zero = || vec![F::Accumulator::default(); terms];
         let task = |range: &Range<usize>| -> Result<Vec<F::Accumulator>, WitnessError> {
             let mut scratch = scratch();
-            let mut lo = vec![F::zero(); self.tables.len()];
-            let mut hi = vec![F::zero(); self.tables.len()];
+            let mut hot = vec![None; self.tables.len()];
+            let mut lo = vec![F::zero(); self.num_polys()];
+            let mut hi = vec![F::zero(); self.num_polys()];
             let mut values = vec![F::zero(); terms];
             let mut total = zero();
             self.rows
                 .visit(range.clone(), callback_rows(pair), |start, block| {
                     for (y, rows) in (start / pair..).zip(block.chunks_exact(pair)) {
                         let (low, high) = rows.split_at(pair / 2);
-                        self.gather(low, &mut lo);
-                        self.gather(high, &mut hi);
-                        pair_terms(&mut scratch, &lo, &hi, &mut values);
+                        self.gather(low, &mut hot, &mut lo);
+                        self.gather(high, &mut hot, &mut hi);
+                        pair_terms(&mut scratch, y, &lo, &hi, &mut values);
                         let weight = e_out[y / e_in.len()] * e_in[y % e_in.len()];
                         for (total, value) in total.iter_mut().zip(&values) {
                             total.fmadd(weight, *value);
@@ -180,45 +254,89 @@ impl<F: JoltField, S: RowIndexSource> StreamedFoldedRa<F, S> {
         Ok(total.into_iter().map(Accumulator::reduce).collect())
     }
 
-    /// Binds the next cycle variable: every polynomial's branch set doubles.
-    pub(crate) fn bind(&mut self, challenge: F) {
-        self.tables = double_branches(std::mem::take(&mut self.tables), 1, challenge);
+    /// Binds the next cycle variable, which the domain must still have. Until
+    /// the materializing bind every polynomial's branch set doubles; that
+    /// bind returns the family's dense state, and the family is spent.
+    pub(crate) fn bind<I>(
+        &mut self,
+        challenge: F,
+    ) -> Result<Option<LazyFoldedRa<F, I>>, WitnessError> {
+        let step = match self.schedule {
+            Schedule::Depth(depth) if self.depth + 1 < depth => LazyBind::Double,
+            Schedule::Depth(_) => LazyBind::DoubleThenMaterialize,
+            Schedule::Default { max_width } => LazyBind::new(
+                1 << self.depth,
+                max_width,
+                self.factors,
+                1 << self.rounds,
+                self.tables.iter().map(Vec::len),
+            ),
+        };
+        if step == LazyBind::FusedMaterialize {
+            return self.materialize(Some(challenge)).map(Some);
+        }
+        self.tables = double_branches(std::mem::take(&mut self.tables), self.factors, challenge);
         self.depth += 1;
+        match step {
+            LazyBind::Double => Ok(None),
+            _ => self.materialize(None).map(Some),
+        }
     }
 
-    /// The default family's row-major dense state, every polynomial gathered
-    /// at each of its `2^rounds >> depth` bound indices, once the binds reach
-    /// the materializing depth; `None` before. The rows cover the bound
-    /// domain, so the state's tail, their last row, never stands in for a row
-    /// they lack. The storage is allocated once at its final size and split
-    /// at the task boundaries; each task visits its cycles once, serially.
-    pub(crate) fn materialized<I>(&self) -> Result<Option<LazyFoldedRa<F, I>>, WitnessError> {
-        if self.depth != self.materialize_depth {
+    /// The dense state of a one-cycle domain, which has no bind to
+    /// materialize at; `None` for a longer domain.
+    pub(crate) fn single_cycle<I>(&self) -> Result<Option<LazyFoldedRa<F, I>>, WitnessError> {
+        if self.rounds != 0 {
             return Ok(None);
         }
-        let columns = self.tables.len();
+        self.materialize(None).map(Some)
+    }
+
+    /// The default family's row-major dense state: every polynomial gathered
+    /// at each of its `2^rounds >> depth` bound indices. With `bind`, a
+    /// challenge for the next cycle variable, each dense row is instead the
+    /// pair of gathers `(lo, hi)` of the next depth's index bound once,
+    /// `lo + bind · (hi − lo)`, so the branch tables never double for it. The
+    /// rows cover the bound domain, so the state's tail, their last row,
+    /// never stands in for a row they lack. The storage is allocated once at
+    /// its final size and split at the task boundaries; each task visits its
+    /// cycles once, serially.
+    fn materialize<I>(&self, bind: Option<F>) -> Result<LazyFoldedRa<F, I>, WitnessError> {
+        let polys = self.num_polys();
         let width = 1usize << self.depth;
-        let len = (1usize << self.rounds) >> self.depth;
+        let unit = if bind.is_some() { 2 * width } else { width };
+        let len = (1usize << self.rounds) / unit;
         // A product past `usize` overflows the allocation's capacity check
         // instead of wrapping to a shorter vector.
-        let mut values: Vec<F> = unsafe_allocate_zero_vec(columns.saturating_mul(len));
-        let ranges = task_ranges(1 << self.rounds, width);
+        let mut values: Vec<F> = unsafe_allocate_zero_vec(polys.saturating_mul(len));
+        let ranges = task_ranges(1 << self.rounds, unit);
         let mut rest = values.as_mut_slice();
         let slices: Vec<&mut [F]> = ranges
             .iter()
             .map(|range| {
                 let (head, tail) =
-                    std::mem::take(&mut rest).split_at_mut(columns * (range.len() >> self.depth));
+                    std::mem::take(&mut rest).split_at_mut(polys * (range.len() / unit));
                 rest = tail;
                 head
             })
             .collect();
         let fill = |(range, slice): (&Range<usize>, &mut [F])| {
-            let mut bound_rows = slice.chunks_exact_mut(columns);
+            let mut hot = vec![None; self.tables.len()];
+            let mut high = vec![F::zero(); if bind.is_some() { polys } else { 0 }];
+            let mut bound_rows = slice.chunks_exact_mut(polys);
             self.rows
-                .visit(range.clone(), callback_rows(width), |_, block| {
-                    for (rows, bound_row) in block.chunks_exact(width).zip(&mut bound_rows) {
-                        self.gather(rows, bound_row);
+                .visit(range.clone(), callback_rows(unit), |_, block| {
+                    for (rows, bound_row) in block.chunks_exact(unit).zip(&mut bound_rows) {
+                        let Some(challenge) = bind else {
+                            self.gather(rows, &mut hot, bound_row);
+                            continue;
+                        };
+                        let (lo, hi) = rows.split_at(width);
+                        self.gather(lo, &mut hot, bound_row);
+                        self.gather(hi, &mut hot, &mut high);
+                        for (lo, hi) in bound_row.iter_mut().zip(&high) {
+                            *lo += challenge * (*hi - *lo);
+                        }
                     }
                     Ok(())
                 })
@@ -227,8 +345,8 @@ impl<F: JoltField, S: RowIndexSource> StreamedFoldedRa<F, S> {
         ranges.par_iter().zip(slices).try_for_each(fill)?;
         #[cfg(not(feature = "parallel"))]
         ranges.iter().zip(slices).try_for_each(fill)?;
-        let tail = values[values.len() - columns..].to_vec();
-        Ok(Some(LazyFoldedRa::Rows { values, tail }))
+        let tail = values[values.len() - polys..].to_vec();
+        Ok(LazyFoldedRa::Rows { values, tail })
     }
 }
 
@@ -245,6 +363,7 @@ mod tests {
 
     use super::*;
     use crate::optimized::instruction_read_raf::LookupIndexChunks;
+    use crate::optimized::lazy_ra::ChunkIndexSource;
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq, WitnessBundle)]
     struct TestRow {
@@ -252,9 +371,13 @@ mod tests {
         remapped_ram_address: RemappedRamAddress,
     }
 
-    /// Column 0 is the two low bits of the lookup index, always hot; column 1
-    /// the three low bits of the RAM address, cold on a cycle without one.
+    /// Columns 0 and 3 are bit pairs of the lookup index, always hot; columns
+    /// 1 and 2 are bit triples of the RAM address, cold on a cycle without
+    /// one. In pairs, the first polynomial has a cold second column and the
+    /// second a cold first column.
     struct TestSource;
+
+    const TEST_COLUMNS: usize = 4;
 
     impl RowIndexSource for TestSource {
         type Row = TestRow;
@@ -263,7 +386,32 @@ mod tests {
             visit(0, (row.lookup_index.0 & 3) as usize);
             if let Some(address) = row.remapped_ram_address.0 {
                 visit(1, (address & 7) as usize);
+                visit(2, ((address >> 3) & 7) as usize);
             }
+            visit(3, ((row.lookup_index.0 >> 2) & 3) as usize);
+        }
+    }
+
+    /// [`TestSource`]'s columns by cycle, for the default family.
+    struct IndexedRows(Vec<TestRow>);
+
+    impl ChunkIndexSource for IndexedRows {
+        fn num_columns(&self) -> usize {
+            TEST_COLUMNS
+        }
+
+        fn cycles(&self) -> usize {
+            self.0.len()
+        }
+
+        fn index(&self, i: usize, j: usize) -> Option<usize> {
+            let mut hot = None;
+            TestSource.for_each_hot(&self.0[j], |column, index| {
+                if column == i {
+                    hot = Some(index);
+                }
+            });
+            hot
         }
     }
 
@@ -291,99 +439,115 @@ mod tests {
     }
 
     fn test_tables<F: JoltField>() -> Vec<Vec<F>> {
-        vec![
-            (0..4).map(|k| F::from_u64(11 + 7 * k)).collect(),
-            (0..8).map(|k| F::from_u64(101 + 13 * k)).collect(),
-        ]
+        [(4, 11, 7), (8, 101, 13), (8, 211, 17), (4, 307, 19)]
+            .into_iter()
+            .map(|(len, first, step)| (0..len).map(|k| F::from_u64(first + step * k)).collect())
+            .collect()
     }
 
-    /// Binds a family that materializes at `target` binds beside dense
-    /// multilinear binds of its columns: before each bind the pair sums of
-    /// two summands, one mixing both columns and both halves, equal the
-    /// dense columns' sums, and no state materializes; at `target` the dense
-    /// state holds exactly the bound columns, with their last row as its
-    /// tail.
-    fn check_family<F: JoltField>(rounds: usize, target: usize) {
+    /// Binds `family`, whose polynomials are products of `factors` columns,
+    /// beside dense multilinear binds of those products: before each bind
+    /// the pair sums of two summands, one mixing two polynomials and both
+    /// halves and one reading the pair row's index, equal the dense sums.
+    /// Bind `target`, and none before it, returns the dense state: exactly
+    /// the bound polynomials, with their last row as its tail. Returns
+    /// whether that bind doubled the branch tables.
+    fn check_family<F: JoltField>(
+        rounds: usize,
+        factors: usize,
+        target: usize,
+        family: impl FnOnce(Vec<Vec<F>>, BundleStore<TestRow>) -> StreamedFoldedRa<F, TestSource>,
+    ) -> bool {
         let rows = test_rows(rounds);
         let tables = test_tables::<F>();
-        let mut dense: Vec<Polynomial<F>> = (0..tables.len())
-            .map(|column| {
+        let mut dense: Vec<Polynomial<F>> = tables
+            .chunks_exact(factors)
+            .enumerate()
+            .map(|(poly, tables)| {
                 let values = rows.iter().map(|row| {
-                    let mut value = F::zero();
-                    TestSource.for_each_hot(row, |hot, index| {
-                        if hot == column {
-                            value = tables[column][index];
-                        }
-                    });
-                    value
+                    let mut hot = [None; TEST_COLUMNS];
+                    TestSource.for_each_hot(row, |column, index| hot[column] = Some(index));
+                    tables
+                        .iter()
+                        .zip(&hot[poly * factors..])
+                        .map(|(table, index)| index.map_or_else(F::zero, |index| table[index]))
+                        .product()
                 });
                 Polynomial::new(values.collect())
             })
             .collect();
+        let last = dense.len() - 1;
         let point: Vec<F> = (0..rounds as u64)
             .map(|i| F::from_u64(900 + 53 * i))
             .collect();
         let mut eq = GruenSplitEqPolynomial::new(&point, BindingOrder::LowToHigh);
-        let mut family = StreamedFoldedRa::new(
-            tables,
-            TestSource,
-            BundleStore::Retained(rows),
-            rounds,
-            size_of::<F>() << (rounds - target),
+        let mut family = family(tables, BundleStore::Retained(rows));
+        let case = format!("rounds {rounds}, factors {factors}, target {target}");
+        assert!(
+            family
+                .single_cycle::<LookupIndexChunks>()
+                .unwrap()
+                .is_none(),
+            "{case}"
         );
         for depth in 0..target {
-            assert!(
-                family
-                    .materialized::<LookupIndexChunks>()
-                    .unwrap()
-                    .is_none(),
-                "rounds {rounds}, target {target}: materialized at depth {depth}"
-            );
             let (e_out, e_in) = (eq.e_out_current(), eq.e_in_current());
             let mut expected = vec![F::zero(); 2];
             for y in 0..dense[0].len() / 2 {
                 let weight = e_out[y / e_in.len()] * e_in[y % e_in.len()];
                 let [lo, hi] =
-                    [2 * y, 2 * y + 1].map(|j| [dense[0].evals()[j], dense[1].evals()[j]]);
+                    [2 * y, 2 * y + 1].map(|j| [dense[0].evals()[j], dense[last].evals()[j]]);
                 expected[0] += weight * lo[0] * hi[1];
-                expected[1] += weight * (hi[0] + lo[1]);
+                expected[1] += weight * (hi[0] + lo[1] + F::from_u64(y as u64));
             }
             let sums = family
                 .sum_pair_terms(
                     &eq,
                     2,
                     || (),
-                    |(), lo, hi, terms| {
-                        terms[0] = lo[0] * hi[1];
-                        terms[1] = hi[0] + lo[1];
+                    |(), y, lo, hi, terms| {
+                        terms[0] = lo[0] * hi[last];
+                        terms[1] = hi[0] + lo[last] + F::from_u64(y as u64);
                     },
                 )
                 .unwrap();
-            assert_eq!(
-                sums, expected,
-                "rounds {rounds}, target {target}, depth {depth}"
-            );
+            assert_eq!(sums, expected, "{case}, depth {depth}");
             let challenge = F::from_u64(31 + 17 * depth as u64);
-            family.bind(challenge);
+            let materialized = family.bind::<LookupIndexChunks>(challenge).unwrap();
             eq.round_mut().unwrap().bind(challenge);
-            for column in &mut dense {
-                column.bind_with_order(challenge, BindingOrder::LowToHigh);
+            for poly in &mut dense {
+                poly.bind_with_order(challenge, BindingOrder::LowToHigh);
+            }
+            let Some(materialized) = materialized else {
+                assert!(depth + 1 < target, "{case}: lazy past bind {}", depth + 1);
+                continue;
+            };
+            assert_eq!(depth + 1, target, "{case}");
+            let len = (1 << rounds) >> target;
+            assert_eq!(materialized.prefix_len(), len, "{case}");
+            for (poly, dense) in dense.iter().enumerate() {
+                assert_eq!(dense.len(), len, "{case}");
+                for (j, value) in dense.evals().iter().enumerate() {
+                    assert_eq!(materialized.value(poly, j), *value, "{case}, {poly}, {j}");
+                }
+                assert_eq!(materialized.tail_values()[poly], dense.evals()[len - 1]);
             }
         }
-        let materialized = family.materialized::<LookupIndexChunks>().unwrap().unwrap();
-        let len = (1 << rounds) >> target;
-        assert_eq!(materialized.prefix_len(), len);
-        for (column, dense) in dense.iter().enumerate() {
-            assert_eq!(dense.len(), len);
-            for (j, value) in dense.evals().iter().enumerate() {
-                assert_eq!(
-                    materialized.value(column, j),
-                    *value,
-                    "rounds {rounds}, target {target}, column {column}, index {j}"
-                );
-            }
-            assert_eq!(materialized.tail_values()[column], dense.evals()[len - 1]);
-        }
+        family.depth == target
+    }
+
+    /// A [`StreamedFoldedRa::new`] family that materializes at bind `target`.
+    fn check_budgeted<F: JoltField>(rounds: usize, target: usize) {
+        let doubled = check_family::<F>(rounds, 1, target, |tables, rows| {
+            StreamedFoldedRa::new(
+                tables,
+                TestSource,
+                rows,
+                rounds,
+                size_of::<F>() << (rounds - target),
+            )
+        });
+        assert!(doubled, "rounds {rounds}, target {target}");
     }
 
     /// Every materializing bind of domains up to 2^7 cycles: the last bind of
@@ -392,9 +556,9 @@ mod tests {
     fn pair_sums_and_materialized_rows_match_dense_binds() {
         for (rounds, targets) in [(1, 1..=1), (2, 2..=2), (3, 3..=3), (5, 4..=5), (7, 4..=7)] {
             for target in targets {
-                check_family::<Fr>(rounds, target);
+                check_budgeted::<Fr>(rounds, target);
                 #[cfg(feature = "akita")]
-                check_family::<AkitaField>(rounds, target);
+                check_budgeted::<AkitaField>(rounds, target);
             }
         }
     }
@@ -406,8 +570,8 @@ mod tests {
     #[test]
     fn tasks_of_several_callbacks_match_dense_binds() {
         let check = || {
-            check_family::<Fr>(16, 4);
-            check_family::<Fr>(16, 13);
+            check_budgeted::<Fr>(16, 4);
+            check_budgeted::<Fr>(16, 13);
         };
         #[cfg(feature = "parallel")]
         ThreadPoolBuilder::new()
@@ -417,6 +581,53 @@ mod tests {
             .install(check);
         #[cfg(not(feature = "parallel"))]
         check();
+    }
+
+    /// A [`StreamedFoldedRa::factored`] family materializes at the bind at
+    /// which the default family over the same tables leaves its lazy state,
+    /// with the dense binds' values, for polynomials of one, two and four
+    /// columns. The cases cover a first, a second and a third materializing
+    /// bind, each both fused and after doubling.
+    #[test]
+    fn factored_family_materializes_where_the_default_family_does() {
+        fn check<F: JoltField>(rounds: usize, factors: usize, max_width: usize) -> (usize, bool) {
+            let mut default = LazyFoldedRa::factored(
+                test_tables::<F>(),
+                factors,
+                max_width,
+                IndexedRows(test_rows(rounds)),
+            );
+            let target = (1..=rounds)
+                .find(|bind| {
+                    default.bind(F::from_u64(*bind as u64));
+                    !matches!(default, LazyFoldedRa::Lazy { .. })
+                })
+                .unwrap();
+            let doubled = check_family::<F>(rounds, factors, target, |tables, rows| {
+                StreamedFoldedRa::factored(tables, factors, max_width, TestSource, rows, rounds)
+            });
+            (target, doubled)
+        }
+        for (rounds, factors, max_width, expected) in [
+            (4, 1, 8, (1, false)),
+            (7, 1, 1, (1, true)),
+            (7, 1, 2, (2, true)),
+            (7, 1, 8, (3, false)),
+            (7, 2, 2, (2, true)),
+            (7, 2, 8, (3, false)),
+            (9, 2, 4, (3, true)),
+            (7, 4, 8, (2, false)),
+            (1, 4, 4, (1, false)),
+        ] {
+            let case = format!("rounds {rounds}, factors {factors}, max width {max_width}");
+            assert_eq!(check::<Fr>(rounds, factors, max_width), expected, "{case}");
+            #[cfg(feature = "akita")]
+            assert_eq!(
+                check::<AkitaField>(rounds, factors, max_width),
+                expected,
+                "{case}"
+            );
+        }
     }
 
     /// The materializing bind is exact at the budget's boundary, never
@@ -439,6 +650,41 @@ mod tests {
         assert_eq!(materialize_depth::<Fr>(wide, usize::MAX), 5);
     }
 
+    /// A one-cycle domain has no bind: its dense state is every polynomial's
+    /// value at that cycle.
+    #[test]
+    fn single_cycle_domain_is_dense_at_once() {
+        let tables = test_tables::<Fr>();
+        let row = test_rows(0)[0];
+        let family = StreamedFoldedRa::factored(
+            tables.clone(),
+            2,
+            4,
+            TestSource,
+            BundleStore::Retained(vec![row]),
+            0,
+        );
+        let dense = family.single_cycle::<LookupIndexChunks>().unwrap().unwrap();
+        let rows = IndexedRows(vec![row]);
+        let expected: Vec<Fr> = tables
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .enumerate()
+            .map(|(poly, tables)| {
+                tables
+                    .iter()
+                    .enumerate()
+                    .map(|(factor, table)| {
+                        rows.index(2 * poly + factor, 0)
+                            .map_or(Fr::from_u64(0), |index| table[index])
+                    })
+                    .product()
+            })
+            .collect();
+        assert_eq!(dense.final_values(), expected);
+    }
+
     /// A row store that ends inside the domain fails a pass and the
     /// materializing gather typed instead of reading past it.
     #[test]
@@ -455,14 +701,17 @@ mod tests {
         );
         let eq = GruenSplitEqPolynomial::new(&[Fr::from_u64(5); 4], BindingOrder::LowToHigh);
         assert!(matches!(
-            family.sum_pair_terms(&eq, 1, || (), |(), _, _, _| ()),
+            family.sum_pair_terms(&eq, 1, || (), |(), _, _, _, _| ()),
             Err(WitnessError::InvalidDimensions { .. })
         ));
-        for depth in 0..rounds as u64 {
-            family.bind(Fr::from_u64(3 + depth));
+        for depth in 0..rounds as u64 - 1 {
+            assert!(family
+                .bind::<LookupIndexChunks>(Fr::from_u64(3 + depth))
+                .unwrap()
+                .is_none());
         }
         assert!(matches!(
-            family.materialized::<LookupIndexChunks>(),
+            family.bind::<LookupIndexChunks>(Fr::from_u64(7)),
             Err(WitnessError::InvalidDimensions { .. })
         ));
     }

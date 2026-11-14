@@ -186,7 +186,8 @@ impl LazyBind {
     /// The step for branch tables of `table_lens` entries, in polynomial
     /// order with `factors` tables per polynomial (only each polynomial's
     /// first table doubles), over `cycles` cycles at `width` of at most
-    /// `max_width` branches.
+    /// `max_width` branches. A dense element count past `usize` saturates:
+    /// it exceeds every branch table that fits in memory.
     pub(super) fn new(
         width: usize,
         max_width: usize,
@@ -194,7 +195,7 @@ impl LazyBind {
         cycles: usize,
         table_lens: impl ExactSizeIterator<Item = usize>,
     ) -> Self {
-        let dense_elements = cycles / (2 * width) * (table_lens.len() / factors);
+        let dense_elements = (cycles / (2 * width)).saturating_mul(table_lens.len() / factors);
         let branch_elements = table_lens
             .enumerate()
             .map(|(column, len)| len * if column.is_multiple_of(factors) { 2 } else { 1 })
@@ -984,7 +985,19 @@ mod tests {
     use jolt_field::{Fr, Ring};
     use jolt_poly::EqPolynomial;
 
-    use super::{ChunkIndexSource, LazyFoldedRa};
+    use super::{ChunkIndexSource, LazyBind, LazyFoldedRa};
+
+    /// The fused switch is exact where the doubled branch tables reach the
+    /// dense tables' element count, and a domain whose dense tables exceed
+    /// `usize` elements (2^61 rows of 16 polynomials) keeps doubling instead
+    /// of wrapping into the switch.
+    #[test]
+    fn fused_switch_is_exact_at_the_crossover_and_past_usize_elements() {
+        let step = |cycles, len| LazyBind::new(2, 8, 1, cycles, [len; 16].into_iter());
+        assert_eq!(step(1 << 10, 128), LazyBind::FusedMaterialize);
+        assert_eq!(step(1 << 10, 127), LazyBind::Double);
+        assert_eq!(step(1 << (usize::BITS - 1), 128), LazyBind::Double);
+    }
 
     struct SelectorRows {
         columns: usize,

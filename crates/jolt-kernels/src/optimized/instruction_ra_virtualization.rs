@@ -40,11 +40,11 @@ mod streaming;
 
 use std::sync::Arc;
 
+use streaming::rows_unavailable;
 pub use streaming::StreamingInstructionRaVirtualization;
-use streaming::{rows_unavailable, LookupIndexDigits};
 
 use super::constant_suffix::ConstantSuffix;
-use super::instruction_read_raf::{InstructionCycleRow, LookupIndexChunks};
+use super::instruction_read_raf::{InstructionCycleRow, LookupIndexChunks, LookupIndexDigits};
 use super::lazy_ra::LazyFoldedRa;
 use super::streaming::StreamedFoldedRa;
 use super::support::{
@@ -451,8 +451,7 @@ impl<F: JoltField> OptimizedInstructionRaVirtualizationKernel<F> {
         match &mut self.folded_ra {
             Selectors::Lazy(folded_ra) => folded_ra.bind(challenge),
             Selectors::Streamed(selectors) => {
-                selectors.bind(challenge);
-                if let Some(dense) = selectors.materialized().map_err(rows_unavailable)? {
+                if let Some(dense) = selectors.bind(challenge).map_err(rows_unavailable)? {
                     self.folded_ra = Selectors::Lazy(dense);
                 }
             }

@@ -151,7 +151,7 @@ impl<F: JoltField> OptimizedBooleanityCycleKernel<F> {
                 materialize_bytes,
             );
             // A one-cycle domain has no bind to materialize at.
-            Ok(match selectors.materialized()? {
+            Ok(match selectors.single_cycle()? {
                 Some(dense) => CycleTables::Lazy(dense),
                 None => CycleTables::Streamed(selectors),
             })
@@ -175,7 +175,7 @@ impl<F: JoltField> OptimizedBooleanityCycleKernel<F> {
                 &self.eq,
                 2,
                 || (),
-                |(), lo, hi, terms| {
+                |(), _, lo, hi, terms| {
                     let mut constant = F::Accumulator::default();
                     let mut leading = F::Accumulator::default();
                     for ((h_0, h_1), rho) in lo.iter().zip(hi).zip(gamma_powers).take(active) {
@@ -199,7 +199,7 @@ impl<F: JoltField> OptimizedBooleanityCycleKernel<F> {
                         &self.eq,
                         1,
                         || (),
-                        |(), _, hi, terms| {
+                        |(), _, _, hi, terms| {
                             let mut value = F::Accumulator::default();
                             for (h_1, rho) in hi.iter().zip(gamma_powers).take(active) {
                                 value.fmadd(*h_1, *h_1 - *rho);

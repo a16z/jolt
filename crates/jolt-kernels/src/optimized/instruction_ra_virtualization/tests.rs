@@ -37,11 +37,10 @@ use crate::{
 };
 
 use super::super::instruction_read_raf::{
-    InstructionCycleRow, SharedInstructionRows, SharedInstructionRowsWeak,
+    InstructionCycleRow, LookupIndexRow, SharedInstructionRows, SharedInstructionRowsWeak,
 };
 use super::super::support::MAX_GRID_FACTORS;
 use super::super::testing::{with_ram_fixture, FixtureShape};
-use super::streaming::LookupIndexRow;
 use super::{
     OptimizedInstructionRaVirtualization, OptimizedInstructionRaVirtualizationKernel,
     StreamingInstructionRaVirtualization,
