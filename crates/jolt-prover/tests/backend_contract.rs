@@ -254,9 +254,11 @@ mod tests {
     /// parity tests in `jolt-kernels` cover later crossovers. The RAM kernels
     /// have no crossover: stages 2–5 read the event log and stage 6b its own
     /// address column at every trace size. The register value evaluation
-    /// reads the rows in rounds 0 and 1 and fills its two tables in round 1;
-    /// stage 4 runs the default read-write kernel without parking `rd`
-    /// indices for it.
+    /// reads the trace's rows in rounds 0 and 1 and fills its two tables in
+    /// round 1; the trace does not fill its domain, so those passes stop at
+    /// the pair that holds its last row, and later rounds read the padded
+    /// suffix as the tables' tail value. Stage 4 runs the default read-write
+    /// kernel without parking `rd` indices for it.
     #[test]
     fn streaming_kernels_reproduce_the_default_proof() {
         let Fixture {

@@ -144,27 +144,29 @@ fn synthetic_reference<F: JoltField>(
     .unwrap()
 }
 
-/// Drives `reference` and the streaming kernel over `rows`, its tables capped
-/// at exactly their size after `depth` binds, through every round on
-/// `round_challenges`: equal round polynomials, the dense tables first
-/// present at round `c = clamp(depth, 1, log_t − 1)` with `T / 2^c` entries
-/// each, equal output claims and the LT pin. Returns the input claim.
+/// Drives `reference` and the streaming kernel over `rows`, whose first
+/// `prefix_len` rows precede the constant suffix the kernel skips, through
+/// every round on `round_challenges`, the tables capped at exactly their size
+/// after `depth` binds: equal round polynomials, the dense tables first
+/// present at the crossover round `c` with `⌈prefix_len / 2^c⌉` entries each,
+/// equal output claims and the LT pin. Returns the input claim and `c`.
 fn assert_capped_parity<F: JoltField>(
     reference: &mut Reference<F>,
     rows: BundleStore<RdWriteRow>,
     instance: &Instance<F>,
     round_challenges: &[F],
+    prefix_len: usize,
     depth: usize,
-) -> F {
+) -> (F, usize) {
     let log_t = round_challenges.len();
-    let cap = ((2 * size_of::<F>()) << log_t) >> depth;
+    let cap = 2 * size_of::<F>() * prefix_len.div_ceil(1 << depth);
     let mut streaming = StreamingValEvaluationKernel::new(rows, &instance.inputs(), cap).unwrap();
     let dense_len = |kernel: &StreamingValEvaluationKernel<F>| match &kernel.tables {
         ValueTables::Dense { inc, wa } => {
-            assert_eq!(inc.len(), wa.len());
-            Some(inc.len())
+            assert_eq!(inc.values.len(), wa.values.len());
+            Some(inc.values.len())
         }
-        ValueTables::Streamed => None,
+        ValueTables::Streamed { .. } => None,
     };
 
     let input_claim = probe_input_claim(reference);
@@ -186,11 +188,11 @@ fn assert_capped_parity<F: JoltField>(
     let last = bind.unwrap();
     reference.finish_rounds(last).unwrap();
     streaming.finish_rounds(last).unwrap();
-    let crossover = depth.max(1).min(log_t - 1);
+    let crossover = crossover_round::<F>(log_t, prefix_len, cap);
     assert_eq!(
         filled,
-        Some((crossover, (1 << log_t) >> crossover)),
-        "dense tables, log_t {log_t}, depth {depth}"
+        Some((crossover, prefix_len.div_ceil(1 << crossover))),
+        "dense tables, log_t {log_t}, prefix {prefix_len}, depth {depth}"
     );
     assert_eq!(
         streaming.output_claims(&instance.claims).unwrap(),
@@ -209,27 +211,41 @@ fn assert_capped_parity<F: JoltField>(
             &instance.challenges,
         )
         .unwrap();
-    input_claim
+    (input_claim, crossover)
 }
 
-/// The crossover is exact at the cap's boundary, clamps to rounds
-/// `1..=rounds − 1`, and does not wrap when the tables exceed `usize` bytes
-/// (the widest cycle count `usize` holds).
+/// The crossover is exact at the cap's boundary for a whole domain and for a
+/// prefix (whose tables hold `⌈prefix / 2^round⌉` entries each), clamps to
+/// rounds `1..=rounds − 1`, and does not wrap when the tables exceed `usize`
+/// bytes (the widest cycle count `usize` holds).
 #[test]
 fn crossover_round_is_exact_at_the_cap_and_past_usize_bytes() {
     let cycle_bytes = 2 * size_of::<Fr>();
-    assert_eq!(crossover_round::<Fr>(20, cycle_bytes << 10), 10);
-    assert_eq!(crossover_round::<Fr>(20, (cycle_bytes << 10) - 1), 11);
-    assert_eq!(crossover_round::<Fr>(20, usize::MAX), 1);
-    assert_eq!(crossover_round::<Fr>(20, 0), 19);
-    assert_eq!(crossover_round::<Fr>(1, 0), 0);
+    assert_eq!(crossover_round::<Fr>(20, 1 << 20, cycle_bytes << 10), 10);
+    assert_eq!(
+        crossover_round::<Fr>(20, 1 << 20, (cycle_bytes << 10) - 1),
+        11
+    );
+    assert_eq!(crossover_round::<Fr>(20, 1 << 19, cycle_bytes << 10), 9);
+    assert_eq!(
+        crossover_round::<Fr>(20, (1 << 19) + 1, cycle_bytes << 10),
+        10
+    );
+    assert_eq!(crossover_round::<Fr>(20, 1 << 20, usize::MAX), 1);
+    assert_eq!(crossover_round::<Fr>(20, 1 << 20, 0), 19);
+    assert_eq!(crossover_round::<Fr>(20, 0, 0), 1);
+    assert_eq!(crossover_round::<Fr>(1, 2, 0), 0);
     let wide = usize::BITS as usize - 1;
-    assert_eq!(crossover_round::<Fr>(wide, cycle_bytes << 20), wide - 20);
+    assert_eq!(
+        crossover_round::<Fr>(wide, 1 << wide, cycle_bytes << 20),
+        wide - 20
+    );
 }
 
 /// Full-range synthetic rows at every crossover round a cap selects, from a
 /// cap the unbound tables meet (still deferred to round 1) to one no round
-/// meets (the last round fills).
+/// meets (the last round fills). Their last row writes a register, so the
+/// kernel skips no suffix.
 #[test]
 fn synthetic_parity_at_every_crossover() {
     fn case<F: JoltField>(log_t: usize, seed: u64) {
@@ -240,13 +256,15 @@ fn synthetic_parity_at_every_crossover() {
         );
         let round_challenges = challenge_sequence(log_t, seed ^ 0x5A5A);
         for depth in 0..=log_t {
-            let claim = assert_capped_parity(
+            let (claim, crossover) = assert_capped_parity(
                 &mut synthetic_reference(&rows, &instance),
                 BundleStore::Retained(rows.clone()),
                 &instance,
                 &round_challenges,
+                1 << log_t,
                 depth,
             );
+            assert_eq!(crossover, depth.max(1).min(log_t - 1));
             assert!(
                 claim != F::zero() && claim != F::one(),
                 "degenerate fixture"
@@ -257,6 +275,56 @@ fn synthetic_parity_at_every_crossover() {
         case::<Fr>(log_t, seed);
         #[cfg(feature = "akita")]
         case::<AkitaField>(log_t, seed);
+    }
+}
+
+/// A constant suffix with a nonzero increment. One that writes no register is
+/// skipped and kept as one tail value: the whole domain, after one and two
+/// rows, on a pair boundary, inside a pair and as the last row. One that
+/// writes a register is not skipped. Each at every crossover round.
+#[test]
+fn constant_suffix_is_skipped_only_when_it_writes_no_register() {
+    fn case<F: JoltField>(suffix_start: usize, rd: Option<u8>) {
+        let log_t = 6;
+        let mut rows = synthetic_rows(log_t, 23);
+        rows[suffix_start..].fill(RdWriteRow {
+            rd_inc: RdInc(-7),
+            rd,
+        });
+        let prefix_len = if rd.is_some() {
+            1 << log_t
+        } else {
+            suffix_start
+        };
+        let instance =
+            Instance::<F>::new(log_t, challenge_sequence(REGISTER_ADDRESS_BITS + log_t, 29));
+        let round_challenges = challenge_sequence(log_t, 31);
+        for depth in 0..=log_t {
+            let _ = assert_capped_parity(
+                &mut synthetic_reference(&rows, &instance),
+                BundleStore::Retained(rows.clone()),
+                &instance,
+                &round_challenges,
+                prefix_len,
+                depth,
+            );
+        }
+    }
+    for (suffix_start, rd) in [
+        (0, None),
+        (1, None),
+        (2, None),
+        (5, None),
+        (31, None),
+        (32, None),
+        (33, None),
+        (63, None),
+        (5, Some(9)),
+        (32, Some(127)),
+    ] {
+        case::<Fr>(suffix_start, rd);
+        #[cfg(feature = "akita")]
+        case::<AkitaField>(suffix_start, rd);
     }
 }
 
@@ -294,6 +362,7 @@ fn exceptional_challenges_and_points_match_reference() {
                         BundleStore::Retained(rows.clone()),
                         &instance,
                         round_challenges,
+                        1 << log_t,
                         depth,
                     );
                 }
@@ -305,13 +374,17 @@ fn exceptional_challenges_and_points_match_reference() {
     case::<AkitaField>();
 }
 
-/// The witness's resident rows (task boundaries and a padded proof suffix
-/// inside the domain) against the reference kernel at every crossover round,
-/// in both fields. At 2^13 cycles the last-round crossover's one pair spans
-/// two visit callbacks.
+/// The witness's resident rows against the reference kernel at every
+/// crossover round, in both fields, the tables holding the trace's rows only:
+/// traces that fill their domain, of one and two rows, with a one-row padded
+/// suffix and with a suffix starting on a pair boundary and inside a pair. At
+/// 2^13 cycles the last-round crossover's one pair spans two 4096-row visit
+/// callbacks, the suffix starting with the second, one row into it and three
+/// rows before its end; a pass of 4096-cycle pairs over 4096 rows ends its
+/// one task at the suffix.
 #[test]
 fn trace_rows_match_reference_at_every_crossover() {
-    fn case<F: JoltField>(backend: &TraceBackend, log_t: usize, depth: usize) {
+    fn case<F: JoltField>(backend: &TraceBackend, log_t: usize, cycles: usize, depth: usize) {
         let instance =
             Instance::<F>::new(log_t, challenge_sequence(REGISTER_ADDRESS_BITS + log_t, 97));
         let mut reference = ReferenceBackend
@@ -322,23 +395,38 @@ fn trace_rows_match_reference_at_every_crossover() {
             BundleStore::resident::<F>(backend, log_t, ROWS_LABEL).unwrap(),
             &instance,
             &challenge_sequence(log_t, 101),
+            cycles,
             depth,
         );
     }
-    for (log_t, cycles) in [(1, 1), (3, 5), (6, 61)] {
+    for (log_t, cycles) in [
+        (1, 1),
+        (1, 2),
+        (3, 1),
+        (3, 2),
+        (3, 5),
+        (3, 7),
+        (3, 8),
+        (6, 32),
+        (6, 61),
+        (6, 63),
+        (6, 64),
+    ] {
         structured_fixture(cycles).with_plane(log_t, |backend| {
             for depth in 1..=log_t {
-                case::<Fr>(backend, log_t, depth);
+                case::<Fr>(backend, log_t, cycles, depth);
                 #[cfg(feature = "akita")]
-                case::<AkitaField>(backend, log_t, depth);
+                case::<AkitaField>(backend, log_t, cycles, depth);
             }
         });
     }
-    structured_fixture((1 << 13) - 3).with_plane(13, |backend| {
-        for depth in [1, 12] {
-            case::<Fr>(backend, 13, depth);
-        }
-    });
+    for cycles in [1 << 12, (1 << 12) + 1, (1 << 13) - 3] {
+        structured_fixture(cycles).with_plane(13, |backend| {
+            for depth in [1, 11, 12] {
+                case::<Fr>(backend, 13, cycles, depth);
+            }
+        });
+    }
 }
 
 /// An operand outside the register domain fails the first streamed round
