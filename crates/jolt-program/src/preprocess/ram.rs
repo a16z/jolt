@@ -19,7 +19,9 @@ use super::{public_io::PublicMemorySegment, PreprocessingError};
 pub struct RAMPreprocessing {
     pub min_bytecode_address: u64,
     pub bytecode_words: Vec<u64>,
-    /// Canonical half-open intervals of protected RAM word indices.
+    /// Canonical half-open intervals of the RAM word indices that hold source
+    /// instructions: the source-instruction part of the write-protected mask C
+    /// (see [`write_protected_word_intervals`]).
     pub code_word_intervals: Vec<(usize, usize)>,
 }
 

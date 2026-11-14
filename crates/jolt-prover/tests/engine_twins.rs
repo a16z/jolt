@@ -373,8 +373,9 @@ fn ram_guard_fixture() -> (RamGuardTwinSumchecks<Fr>, RamGuardTwinInputClaims<Fr
     )
 }
 
-/// Two cycles: an unchanged-value code store followed by a data update.
-/// The five factors are EqCycle, ra, val, inc and the public code mask.
+/// Two cycles: an unchanged-value store to a write-protected word followed by
+/// a data update. The five factors are EqCycle, ra, val, inc and the public
+/// write-protected mask.
 struct RamGuardMember {
     rows: Vec<[Fr; 5]>,
     gamma: Fr,
@@ -439,11 +440,11 @@ impl ProveRounds<Fr> for RamGuardMember {
                     .0
                     .iter()
                     .map(|pair| {
-                        let [eq, ra, val, inc, code] =
+                        let [eq, ra, val, inc, write_protected] =
                             std::array::from_fn(|i| pair[0][i] + x * (pair[1][i] - pair[0][i]));
                         eq * ra
                             * ((Fr::one() + gamma) * val
-                                + (gamma + gamma * gamma * code) * inc
+                                + (gamma + gamma * gamma * write_protected) * inc
                                 + gamma * gamma * gamma)
                     })
                     .sum()

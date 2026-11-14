@@ -117,7 +117,7 @@ fuzz_target!(|data: &[u8]| {
     ];
     let derived_ids = [
         JoltDerivedId::from(RamReadWritePublic::EqCycle),
-        JoltDerivedId::from(RamReadWritePublic::CodeEqCycle),
+        JoltDerivedId::from(RamReadWritePublic::WriteProtectedEqCycle),
         JoltDerivedId::from(RamReadWritePublic::UnmappedEqCycle),
         JoltDerivedId::from(RamValCheckPublic::LtCyclePlusGamma),
         JoltDerivedId::from(RamValCheckPublic::InitEval),

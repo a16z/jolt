@@ -1,9 +1,9 @@
 //! The stage 2 `RamReadWriteChecking` sumcheck instance.
 //!
 //! Owns the RAM read-write opening-point derivation and the `EqCycle`,
-//! `CodeEqCycle` and `UnmappedEqCycle` public-value computations, in lockstep
-//! with the BlindFold constraint's `ram::read_write_checking` formula. The
-//! output check evaluates the cycle equality once and each mask once, in
+//! `WriteProtectedEqCycle` and `UnmappedEqCycle` public-value computations, in
+//! lockstep with the BlindFold constraint's `ram::read_write_checking` formula.
+//! The output check evaluates the cycle equality once and each mask once, in
 //! O(log T + s·log K) field operations for `s` mask intervals.
 
 use jolt_claims::protocols::jolt::relations;
@@ -105,7 +105,7 @@ impl<F: JoltField> RamReadWriteChecking<F> {
     ) -> Result<F, VerifierError> {
         let intervals = match id {
             RamReadWritePublic::EqCycle => return Ok(eq_cycle),
-            RamReadWritePublic::CodeEqCycle => &self.masks.write_protected,
+            RamReadWritePublic::WriteProtectedEqCycle => &self.masks.write_protected,
             RamReadWritePublic::UnmappedEqCycle => &self.masks.unmapped,
         };
         Ok(eq_cycle * mask_mle(intervals, r_address)?)
@@ -268,7 +268,7 @@ mod tests {
             .zip(r_cycle)
             .map(|(&t, &r)| t * r + (Fr::one() - t) * (Fr::one() - r))
             .product();
-        let code = mask_by_hypercube_sum(&masks.write_protected, r_address);
+        let write_protected = mask_by_hypercube_sum(&masks.write_protected, r_address);
         let unmapped = mask_by_hypercube_sum(&masks.unmapped, r_address);
 
         let output_points = RamReadWriteOutputClaims {
@@ -294,7 +294,7 @@ mod tests {
                     };
                     Ok(match public_id {
                         RamReadWritePublic::EqCycle => eq_cycle,
-                        RamReadWritePublic::CodeEqCycle => eq_cycle * code,
+                        RamReadWritePublic::WriteProtectedEqCycle => eq_cycle * write_protected,
                         RamReadWritePublic::UnmappedEqCycle => eq_cycle * unmapped,
                     })
                 },

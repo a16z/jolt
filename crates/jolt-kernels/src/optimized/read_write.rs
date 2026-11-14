@@ -44,14 +44,14 @@ impl ReadWriteOrder {
 
 /// Fixed batch coefficients, shared by every sparse-matrix phase.
 ///
-/// The RAM relation batches read, write, code (`C`), count and unmapped
-/// (`N`) claims with powers `1, γ, γ², γ³, γ⁴`. Both address masks enter the
-/// per-entry factor linearly: `C` scales the increment and `N` adds to the
-/// count coefficient.
+/// The RAM relation batches read, write, write-protected (`C`), count and
+/// unmapped (`N`) claims with powers `1, γ, γ², γ³, γ⁴`. Both address masks
+/// enter the per-entry factor linearly: `C` scales the increment and `N` adds
+/// to the count coefficient.
 #[derive(Clone, Copy)]
 pub(super) struct ReadWriteBatch<F> {
     gamma: F,
-    code: F,
+    write_protected: F,
     count: F,
     unmapped: F,
 }
@@ -59,17 +59,17 @@ pub(super) struct ReadWriteBatch<F> {
 #[derive(Clone, Copy)]
 pub(super) struct ReadWriteCoefficients<F> {
     gamma: F,
-    code_increment: F,
+    write_protected_increment: F,
     count: F,
 }
 
 impl<F: JoltField> ReadWriteBatch<F> {
     pub(super) fn new(gamma: F) -> Self {
-        let code = gamma * gamma;
-        let count = code * gamma;
+        let write_protected = gamma * gamma;
+        let count = write_protected * gamma;
         Self {
             gamma,
-            code,
+            write_protected,
             count,
             unmapped: count * gamma,
         }
@@ -78,8 +78,8 @@ impl<F: JoltField> ReadWriteBatch<F> {
     pub(super) fn unbound(&self, masks: AddressMaskBits) -> ReadWriteCoefficients<F> {
         ReadWriteCoefficients {
             gamma: self.gamma,
-            code_increment: if masks.protected {
-                self.code
+            write_protected_increment: if masks.protected {
+                self.write_protected
             } else {
                 F::zero()
             },
@@ -94,7 +94,7 @@ impl<F: JoltField> ReadWriteBatch<F> {
     pub(super) fn bound(&self, masks: AddressMaskValues<F>) -> ReadWriteCoefficients<F> {
         ReadWriteCoefficients {
             gamma: self.gamma,
-            code_increment: self.code * masks.protected,
+            write_protected_increment: self.write_protected * masks.protected,
             // Honest accesses touch no unmapped word, so `N` is zero on every
             // occupied column pair except at an interval's boundary block.
             count: if masks.unmapped.is_zero() {
@@ -116,10 +116,10 @@ impl<F: JoltField> ReadWriteCoefficients<F> {
     pub(super) fn slope(&self, val: F, inc: F) -> F {
         // Unprotected entries need only the original read/write multiplication.
         let read_write = val + self.gamma * (val + inc);
-        if self.code_increment.is_zero() {
+        if self.write_protected_increment.is_zero() {
             read_write
         } else {
-            read_write + self.code_increment * inc
+            read_write + self.write_protected_increment * inc
         }
     }
 }

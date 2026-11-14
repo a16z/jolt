@@ -24,7 +24,7 @@ struct RamGuardSumchecks<F: JoltField> {
 /// A two-cycle witness bypasses all tracer admission. Every produced opening
 /// is its actual MLE.
 fn verify_witness(
-    code: bool,
+    write_protected: bool,
     read: [i64; 2],
     increments: [i64; 2],
     selected: [i64; 2],
@@ -33,7 +33,11 @@ fn verify_witness(
     verify_address_witness(
         RamGuardDomain {
             masks: RamWordMasks {
-                write_protected: if code { vec![(0, 1)] } else { Vec::new() },
+                write_protected: if write_protected {
+                    vec![(0, 1)]
+                } else {
+                    Vec::new()
+                },
                 unmapped: Vec::new(),
             },
             log_k: 0,

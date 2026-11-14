@@ -405,7 +405,7 @@ impl<F: JoltField> SumcheckKernel<F> for RamReadWriteKernel<F> {
         )?;
         pin_derived_term_if_derived(
             relation,
-            JoltDerivedId::from(RamReadWritePublic::CodeEqCycle),
+            JoltDerivedId::from(RamReadWritePublic::WriteProtectedEqCycle),
             input_points,
             output_points,
             challenges,
@@ -637,12 +637,12 @@ mod tests {
         for k in 0..ram_k {
             for j in 0..cycles {
                 let index = (k << tau_low.len()) | j;
-                let code = indicator(&masks.write_protected, k);
+                let write_protected = indicator(&masks.write_protected, k);
                 let unmapped = indicator(&masks.unmapped, k);
                 claim += eq[j]
                     * ra[index]
                     * ((Fr::one() + gamma) * val[index]
-                        + (gamma + gamma * gamma * code) * inc[j]
+                        + (gamma + gamma * gamma * write_protected) * inc[j]
                         + gamma * gamma * gamma * (Fr::one() + gamma * unmapped));
             }
         }
@@ -710,11 +710,11 @@ mod tests {
                     .0
                     .iter()
                     .map(|pair| {
-                        let [eq, ra, val, inc, code, unmapped] =
+                        let [eq, ra, val, inc, write_protected, unmapped] =
                             std::array::from_fn(|i| pair[0][i] + x * (pair[1][i] - pair[0][i]));
                         eq * ra
                             * ((Fr::one() + gamma) * val
-                                + (gamma + gamma * gamma * code) * inc
+                                + (gamma + gamma * gamma * write_protected) * inc
                                 + gamma * gamma * gamma * (Fr::one() + gamma * unmapped))
                     })
                     .sum();

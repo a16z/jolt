@@ -80,7 +80,7 @@ Expected movement against `main`:
 
 | Change | Crates |
 |---|---|
-| Value-preserving protected regions | `jolt-claims` (RAM relation, `CodeEqCycle` public), `jolt-poly` (interval MLE), `jolt-program` (code intervals, protection mask), `jolt-kernels` (reference and optimized RAM read-write), `jolt-verifier` (stage 2, BlindFold, preprocessing digest), `jolt-prover` (interval plumbing) |
+| Value-preserving protected regions | `jolt-claims` (RAM relation, `WriteProtectedEqCycle` public), `jolt-poly` (interval MLE), `jolt-program` (code intervals, protection mask), `jolt-kernels` (reference and optimized RAM read-write), `jolt-verifier` (stage 2, BlindFold, preprocessing digest), `jolt-prover` (interval plumbing) |
 | Selected address on memory rows | `jolt-claims` (RAM relation), `jolt-kernels`, `jolt-verifier` |
 | Unmapped words | `jolt-claims` (RAM relation, `UnmappedEqCycle` public), `jolt-program` (`RamWordMasks`, `unmapped_word_intervals`), `jolt-kernels` (reference and optimized RAM read-write), `jolt-verifier` (stage 2, BlindFold), `jolt-prover` (mask plumbing) |
 | No RAM Hamming check | `jolt-claims` (reserved identifiers, stage-7 relations), `jolt-kernels`, `jolt-witness`, `jolt-verifier` (stages 6b and 7, BlindFold), `jolt-prover` |
@@ -92,8 +92,8 @@ The preprocessing digest hashes the whole `ProgramPreprocessing` value, so the c
 
 ### Alternatives Considered
 
-- **Check only the final code image.** Cheaper, but a program could change code and restore it before exit.
-- **A separate code relation or store-flag exclusion.** Adds relation plumbing or a flag opening for no arithmetic saving.
+- **Check only the final values of write-protected words.** Cheaper, but a program could change a write-protected word and restore it before exit.
+- **A separate write-protection relation or store-flag exclusion.** Adds relation plumbing or a flag opening for no arithmetic saving.
 - **Keep RAM Hamming booleanity.** Redundant given the access-count term, and it costs a stage-6b claim, a batching coefficient and an O(T) prover pass, plus the RAM legs of the stage-7 reduction.
 
 ## Documentation

@@ -64,7 +64,7 @@ impl<F: JoltField> PrepareKernel<F, RamReadWriteChecking<F>> for ReferenceBacken
                 layout.table(tile(&eq, copies))?,
             ),
             (
-                JoltDerivedId::from(RamReadWritePublic::CodeEqCycle),
+                JoltDerivedId::from(RamReadWritePublic::WriteProtectedEqCycle),
                 layout.table(masked_eq(relation.write_protected_word_intervals()))?,
             ),
             (

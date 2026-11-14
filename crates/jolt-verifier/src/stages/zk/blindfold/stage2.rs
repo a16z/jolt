@@ -102,7 +102,7 @@ where
     values.public(JoltDerivedId::from(RamReadWritePublic::EqCycle), eq_cycle)?;
     for (id, intervals) in [
         (
-            RamReadWritePublic::CodeEqCycle,
+            RamReadWritePublic::WriteProtectedEqCycle,
             &input.checked.ram_word_masks.write_protected,
         ),
         (
