@@ -16,7 +16,7 @@ use jolt_witness::{
 use rayon::prelude::*;
 
 use super::sparse::{SeedEntry, MAX_ENTRIES_PER_CYCLE};
-use crate::optimized::support::BundleAccess;
+use crate::optimized::support::{BundleAccess, BundleStore};
 use crate::KernelError;
 
 /// Operand indices and raw values for one cycle.
@@ -96,6 +96,52 @@ const COLLECT_CHUNK: usize = 1 << 16;
 /// Cycles per chunk of the parallel collect.
 const COLLECT_PAR_CHUNK: usize = 1 << 14;
 
+impl RegisterCycleRow {
+    /// The leading cycles of `cycles` that can hold a register operand:
+    /// those before the constant suffix `access` reports when that suffix
+    /// repeats the operand-free row, all of them otherwise.
+    pub(super) fn operand_prefix(
+        access: &BundleAccess<'_, Self>,
+        cycles: usize,
+    ) -> Result<usize, WitnessError> {
+        let prefix = access.constant_suffix_start(cycles)?;
+        if prefix < cycles && access.row(prefix)? == Self::default() {
+            Ok(prefix)
+        } else {
+            Ok(cycles)
+        }
+    }
+}
+
+/// The streamed read/write source's rows: the witness's resident rows and
+/// how many of them can hold a register operand
+/// ([`RegisterCycleRow::operand_prefix`]). The rows after those have no
+/// entry, no operand index and a zero increment, so passes skip them.
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
+pub(super) struct StreamedRows {
+    pub(super) store: BundleStore<RegisterCycleRow>,
+    pub(super) prefix_len: usize,
+}
+
+impl StreamedRows {
+    /// `store` spans `cycles` cycles.
+    pub(super) fn new(
+        store: BundleStore<RegisterCycleRow>,
+        cycles: usize,
+    ) -> Result<Self, WitnessError> {
+        let prefix_len = RegisterCycleRow::operand_prefix(&store.access(), cycles)?;
+        Ok(Self { store, prefix_len })
+    }
+
+    /// Where the `group`-cycle groups that hold a prefix row end, of `cycles`
+    /// cycles in whole groups.
+    pub(super) fn prefix_end(&self, group: usize, cycles: usize) -> usize {
+        self.prefix_len
+            .checked_next_multiple_of(group)
+            .map_or(cycles, |end| end.min(cycles))
+    }
+}
+
 /// Signed rd write delta, or zero without an rd operand.
 #[inline]
 pub(super) fn raw_rd_inc(cycle: &RegisterCycleRow) -> i128 {
@@ -151,13 +197,7 @@ impl CollectRegisterEntries {
         let mut retained = cycles;
         if let Some(access) = witness.random_access() {
             if cycles <= access.cycles() {
-                let prefix = BundleAccess::<RegisterCycleRow>::View(&access)
-                    .constant_suffix_start(cycles)?;
-                if prefix < cycles
-                    && access.window::<RegisterCycleRow>(prefix)? == RegisterCycleRow::default()
-                {
-                    retained = prefix;
-                }
+                retained = RegisterCycleRow::operand_prefix(&BundleAccess::View(&access), cycles)?;
             }
             #[cfg(feature = "parallel")]
             if cycles <= access.cycles() {
