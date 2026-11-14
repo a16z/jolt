@@ -15,24 +15,6 @@ fn mcause_code(mcause: usize) -> usize {
     mcause & ((1usize << (usize::BITS as usize - 1)) - 1)
 }
 
-#[inline(always)]
-fn advance_mepc_for_breakpoint(regs: *mut TrapFrame) {
-    unsafe {
-        let pc = (*regs).mepc;
-        (*regs).mepc = pc.wrapping_add(instr_len(pc));
-    }
-}
-
-#[inline(always)]
-fn instr_len(addr: usize) -> usize {
-    let halfword = unsafe { core::ptr::read_unaligned(addr as *const u16) };
-    if (halfword & 0b11) == 0b11 {
-        4
-    } else {
-        2
-    }
-}
-
 /// RISC-V Linux syscall numbers the trap handler answers itself.
 const SYS_WRITE: usize = 64;
 const SYS_CLOCK_GETTIME: usize = 113;
@@ -99,11 +81,7 @@ pub unsafe extern "C" fn trap_handler(regs: *mut u8) {
             );
             (*regs).a0 = ret as usize;
         }
-        code if code == (Exception::Breakpoint as usize) => {
-            advance_mepc_for_breakpoint(regs);
-        }
-        code => {
-            zeroos::foundation::kfn::kexit(code as i32);
-        }
+        // Jolt raises only ECALL; any other exception ends the run at Jolt's failure halt.
+        _ => core::arch::asm!("ebreak", options(noreturn)),
     }
 }
