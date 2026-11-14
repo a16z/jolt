@@ -8,7 +8,8 @@ use jolt::UntrustedAdvice;
 ///
 /// Public because a guest build compiles only the entry point named by
 /// `JOLT_FUNC_NAME` among the `guest_only` ones: a private helper is dead code
-/// in the builds of `heap_top` and `rounded_advice`, which do not use it.
+/// in the builds of `heap_top`, `rounded_advice`, `exact_rows` and
+/// `panic_halt`, which do not use it.
 #[cfg(feature = "guest")]
 #[repr(align(8))]
 pub struct Scratch([u8; 24]);
@@ -154,4 +155,42 @@ fn rounded_advice(untrusted: UntrustedAdvice<[u8; 16]>) -> u64 {
     let mut high = [0u8; 8];
     high.copy_from_slice(&bytes[8..]);
     u64::from_le_bytes(high)
+}
+
+/// Runs `pad` single-row no-ops (`pad <= 4096`) between a fixed prologue and
+/// epilogue, so the trace length is affine in `pad` with slope one. The e2e
+/// harness solves for the `pad` whose execution fills a power-of-two domain
+/// exactly.
+#[jolt::provable(guest_only, heap_size = 65536, max_trace_length = 65536)]
+fn exact_rows(pad: [u8; 2]) -> [u8; 2] {
+    use core::arch::asm;
+
+    let rows = usize::from(u16::from_le_bytes(pad));
+    assert!(rows <= 4096, "the no-op sled holds 4096 rows");
+    // SAFETY: jumps `rows` 4-byte no-ops before the end of a sled that falls
+    // through to `2:`.
+    unsafe {
+        asm!(
+            "lla {target}, 2f",
+            "slli {rows}, {rows}, 2",
+            "sub {target}, {target}, {rows}",
+            "jr {target}",
+            ".rept 4096",
+            ".4byte 0x00000013", // addi x0, x0, 0: one ADDI row each
+            ".endr",
+            "2:",
+            target = out(reg) _,
+            rows = inout(reg) rows => _,
+            options(nostack, nomem),
+        );
+    }
+    pad
+}
+
+/// Panics when `trigger` is set: the SDK's panic path writes the panic byte
+/// and halts at `ebreak`, so the run proves with `panic = true`.
+#[jolt::provable(guest_only, heap_size = 65536, max_trace_length = 65536)]
+fn panic_halt(trigger: bool) -> u8 {
+    assert!(!trigger, "panic_halt was asked to panic");
+    7
 }

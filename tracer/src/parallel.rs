@@ -32,8 +32,9 @@ pub struct ChunkCheckpoint {
 
 impl ChunkCheckpoint {
     /// Capture at a tick boundary of a pass-1 emulator. Workers replay by
-    /// tick count, never by stall detection, so no termination-heuristic
-    /// state is carried.
+    /// tick count, never by stall detection, so the stall flag is not
+    /// carried; the halt state is architectural and travels with the CPU
+    /// state.
     #[expect(clippy::expect_used)]
     pub fn capture(emulator: &Emulator) -> Self {
         let cpu = emulator.get_cpu();
@@ -246,18 +247,20 @@ impl PassOne {
     }
 
     /// Execute one tick. Returns `false` (without ticking further) once the
-    /// program has terminated. Termination matches `trace()` exactly: a PC
-    /// stall, or a step that would emit zero rows (trap/WFI tick — observed
-    /// here as a zero `trace_len` delta, which the execute path shares).
+    /// program has stopped. Stopping matches `trace()` exactly: a halt, a PC
+    /// stall, or a step that emits zero rows (trap/WFI tick — observed here as
+    /// a zero `trace_len` delta, which the execute path shares). Only a halt
+    /// ends a Jolt run; `finish_emulator` rejects the others.
     pub fn step(&mut self) -> bool {
         if self.done {
             return false;
         }
-        if self.emulator.get_cpu().has_stalled() {
+        let cpu = self.emulator.get_cpu();
+        if cpu.halted().is_some() || cpu.has_stalled() {
             self.done = true;
             return false;
         }
-        let ticks_before = self.emulator.get_cpu().trace_len;
+        let ticks_before = cpu.trace_len;
         self.emulator.tick(None);
         if self.emulator.get_cpu().trace_len == ticks_before {
             self.done = true;

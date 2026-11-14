@@ -6,6 +6,7 @@ pub const INLINE_OPCODE: u8 = 0x2B;
 pub const FUNCT3_VIRTUAL_R: u8 = 0b000;
 pub const FUNCT3_VIRTUAL_ASSERT_EQ: u8 = 0b001;
 pub const FUNCT3_VIRTUAL_HOST_IO: u8 = 0b010;
+pub const FUNCT3_JOLT_SUCCESS: u8 = 0b011;
 
 pub const FUNCT7_ADVICE_LB: u32 = 0x00;
 pub const FUNCT7_ADVICE_LH: u32 = 0x01;
@@ -73,6 +74,8 @@ use field_inline::{
 };
 use jal::JAL;
 use jalr::JALR;
+use jolt_panic::JoltPanic;
+use jolt_success::JoltSuccess;
 use lb::LB;
 use lbu::LBU;
 use ld::LD;
@@ -191,7 +194,7 @@ use format::{InstructionFormat, NormalizedOperands};
 pub use jolt_riscv::JoltInstructionRow;
 use jolt_riscv::{
     JoltInstructionKind, RamAccess, RamRead, RamWrite, SourceInlineKey, SourceInstructionKind,
-    RV64IMAC_JOLT,
+    JOLT_SUCCESS_WORD, RV64IMAC_JOLT,
 };
 pub use jolt_riscv::{SourceInstruction, SourceInstructionRow};
 #[cfg(any(feature = "test-utils", test))]
@@ -301,6 +304,8 @@ pub mod floor_access;
 pub mod inline;
 pub mod jal;
 pub mod jalr;
+pub mod jolt_panic;
+pub mod jolt_success;
 pub mod lb;
 pub mod lbu;
 pub mod ld;
@@ -1430,6 +1435,13 @@ impl Instruction {
                     } else {
                         Ok(VirtualHostIO::new(instr, address, true, compressed).into())
                     }
+                } else if funct3 == FUNCT3_JOLT_SUCCESS {
+                    // jolt.success: rd, rs1 and the immediate are reserved and must be zero.
+                    if instr == JOLT_SUCCESS_WORD {
+                        Ok(JoltSuccess::new(instr, address, true, compressed).into())
+                    } else {
+                        Err("Invalid jolt.success operands")
+                    }
                 } else {
                     Err("Invalid custom/virtual instruction")
                 }
@@ -2539,6 +2551,7 @@ mod tests {
             ),
             (r_type(0, 2, 1, 0b001, 0, 0x5b), "VirtualAssertEQ"),
             (r_type(0, 2, 1, 0b010, 0, 0x5b), "VirtualHostIO"),
+            (0x0000_305b, "JoltSuccess"),
         ];
 
         for (word, expected) in cases {
@@ -2613,9 +2626,12 @@ mod tests {
                 "Invalid funct7 for virtual R-type instruction",
             ),
             (
-                r_type(0, 2, 1, 0b011, 0, 0x5b),
+                r_type(0, 2, 1, 0b100, 0, 0x5b),
                 "Invalid custom/virtual instruction",
             ),
+            (0x0000_305b | (1 << 7), "Invalid jolt.success operands"),
+            (0x0000_305b | (1 << 15), "Invalid jolt.success operands"),
+            (0x0000_305b | (1 << 20), "Invalid jolt.success operands"),
             (0x0000_007f, "Unknown opcode"),
         ];
 
