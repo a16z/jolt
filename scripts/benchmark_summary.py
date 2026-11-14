@@ -45,6 +45,9 @@ def main():
                         help='Metric to display in the table')
     parser.add_argument('--protocol', choices=['dory', 'akita'], default='dory',
                         help='Protocol rows to display (default: dory)')
+    parser.add_argument('--backend', choices=['reference', 'optimized'],
+                        default='reference',
+                        help='Kernel backend rows to display (default: reference)')
     parser.add_argument('--akita-chunk-profile',
                         metavar='w<chunks>r<levels>', default='w1r0',
                         help='Akita chunk geometry to display (default: w1r0)')
@@ -54,7 +57,7 @@ def main():
     profile_label = (f", {args.akita_chunk_profile}"
                      if args.protocol == 'akita' else '')
 
-    print(f"\nBenchmark Summary ({args.protocol}{profile_label}, "
+    print(f"\nBenchmark Summary ({args.protocol}{profile_label}, {args.backend}, "
           f"{METRICS[args.metric]['label']})")
     print("=" * 60)
 
@@ -71,6 +74,8 @@ def main():
         with open(args.csv, 'r') as f:
             reader = csv.DictReader(f)
             for row in reader:
+                if (row.get('backend') or 'reference') != args.backend:
+                    continue
                 if not row[args.metric]:
                     continue
                 scale = int(row['scale'])
