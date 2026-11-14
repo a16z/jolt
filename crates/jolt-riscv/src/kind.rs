@@ -466,6 +466,21 @@ macro_rules! source_extension_for_marker {
     (VirtualXorRot61) => {
         Some(SourceExtension::JoltCustom)
     };
+    (VirtualXorRot3) => {
+        Some(SourceExtension::JoltCustom)
+    };
+    (VirtualXorRot8) => {
+        Some(SourceExtension::JoltCustom)
+    };
+    (VirtualXorRot9) => {
+        Some(SourceExtension::JoltCustom)
+    };
+    (VirtualXorRot19) => {
+        Some(SourceExtension::JoltCustom)
+    };
+    (VirtualXorRot20) => {
+        Some(SourceExtension::JoltCustom)
+    };
     (VirtualXorRotW16) => {
         Some(SourceExtension::JoltCustom)
     };
@@ -985,6 +1000,21 @@ macro_rules! source_side_effects_for_marker {
     (VirtualXorRot61) => {
         false
     };
+    (VirtualXorRot3) => {
+        false
+    };
+    (VirtualXorRot8) => {
+        false
+    };
+    (VirtualXorRot9) => {
+        false
+    };
+    (VirtualXorRot19) => {
+        false
+    };
+    (VirtualXorRot20) => {
+        false
+    };
     (VirtualXorRotW16) => {
         false
     };
@@ -1301,6 +1331,21 @@ macro_rules! jolt_target_extension_for_marker {
         Some(JoltTargetExtension::BitManipulation)
     };
     (VirtualXorRot61) => {
+        Some(JoltTargetExtension::BitManipulation)
+    };
+    (VirtualXorRot3) => {
+        Some(JoltTargetExtension::BitManipulation)
+    };
+    (VirtualXorRot8) => {
+        Some(JoltTargetExtension::BitManipulation)
+    };
+    (VirtualXorRot9) => {
+        Some(JoltTargetExtension::BitManipulation)
+    };
+    (VirtualXorRot19) => {
+        Some(JoltTargetExtension::BitManipulation)
+    };
+    (VirtualXorRot20) => {
         Some(JoltTargetExtension::BitManipulation)
     };
     (VirtualXorRotW16) => {
@@ -1649,6 +1694,21 @@ macro_rules! jolt_side_effects_for_marker {
         false
     };
     (VirtualXorRot61) => {
+        false
+    };
+    (VirtualXorRot3) => {
+        false
+    };
+    (VirtualXorRot8) => {
+        false
+    };
+    (VirtualXorRot9) => {
+        false
+    };
+    (VirtualXorRot19) => {
+        false
+    };
+    (VirtualXorRot20) => {
         false
     };
     (VirtualXorRotW16) => {
