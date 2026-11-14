@@ -400,10 +400,12 @@ mod matrix {
 
         #[test]
         fn fibonacci_ring_512() {
+            use super::StreamingFamilies;
+
             assert_eq!(
                 super::mode::prove_and_verify_trace_ring(
                     &super::fibonacci_ring_512(),
-                    super::StreamingFamilies::default(),
+                    StreamingFamilies::default(),
                 ),
                 512,
                 "the proof must commit its trace group at ring dimension 512",
