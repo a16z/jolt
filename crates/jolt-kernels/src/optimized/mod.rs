@@ -206,6 +206,8 @@ where
 #[cfg(all(test, feature = "field-inline"))]
 pub(crate) mod field_registers_testing;
 #[cfg(test)]
+pub(crate) mod heap_peak;
+#[cfg(test)]
 pub(crate) mod parity;
 #[cfg(test)]
 pub(crate) mod testing;

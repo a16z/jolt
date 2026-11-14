@@ -20,6 +20,10 @@
 //!   kernel consumed) into packed per-cycle columns — `O(T)` small scalars
 //!   shared by every trace polynomial via [`Arc`], never `K × T` oracle
 //!   tables.
+//! - **Resident trace rows**: [`StreamingJointOpening`], the stage-8 slot of
+//!   the `instruction_rows` streaming family, re-extracts that bundle from
+//!   the witness's resident rows on every read instead, so the packed
+//!   columns never exist beside the trace.
 //! - **Strided dense scatter**: a dense trace column contributes
 //!   `result[col] += left[row] · value` at `index = t · t_stride`, covering
 //!   both coefficient orders with one placement formula.
@@ -50,7 +54,7 @@ use jolt_witness::{stream_witnesses, JoltWitnessPlane, StreamConsumer};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use super::support::BundleAccess;
+use super::support::{BundleAccess, BundleStore};
 use crate::commitment::CommitmentGrid;
 use crate::commitment::CommittedColumnsWitness;
 use crate::opening::{JointOpeningPolynomials, PrecommittedOpeningTables};
@@ -64,6 +68,8 @@ use crate::{KernelError, OptimizedBackend, ProofSession};
 const COLD: u64 = u64::MAX;
 
 const COLLECT_CHUNK: usize = 1 << 12;
+
+const ROWS: &str = "joint-opening trace rows";
 
 impl<F: JoltField> JointOpeningPolynomials<F> for OptimizedBackend {
     #[tracing::instrument(
@@ -79,65 +85,9 @@ impl<F: JoltField> JointOpeningPolynomials<F> for OptimizedBackend {
         precommitted_tables: PrecommittedOpeningTables<'_, F>,
         grid: CommitmentGrid,
     ) -> Result<Vec<Box<dyn MultilinearPoly<F>>>, KernelError<F>> {
-        let mut precommitted_tables = precommitted_tables()?;
-        if grid.total_vars < grid.log_t + grid.log_k_chunk {
-            return Err(KernelError::InvalidGeometry {
-                reason: format!(
-                    "grid of {} variables cannot hold a (2^{} × 2^{}) one-hot matrix",
-                    grid.total_vars, grid.log_k_chunk, grid.log_t
-                ),
-            });
-        }
-
-        // Chunk selectors for the trace-derived subset — the same family-size
-        // counting and selector math as the commit kernel, so the opened
-        // values are the committed values by construction.
-        let trace_ids: Vec<JoltCommittedPolynomial> = polynomials
-            .iter()
-            .copied()
-            .filter(|id| !is_block_embedded(*id))
-            .collect();
-        let kinds = column_kinds(&trace_ids, grid)?;
-        let kind_by_id: BTreeMap<JoltCommittedPolynomial, ColumnKind> =
-            trace_ids.into_iter().zip(kinds).collect();
-
-        let columns = if kind_by_id.is_empty() {
-            None
-        } else {
-            Some(Arc::new(OpeningColumns::collect(witness, grid.log_t)?))
-        };
-        let placement = TracePlacement::new(grid);
-
-        polynomials
-            .iter()
-            .map(|&polynomial| {
-                if is_block_embedded(polynomial) {
-                    let table = match precommitted_tables.remove(&polynomial) {
-                        Some(table) => table,
-                        None => dense_view(witness, final_opening_id(polynomial))?,
-                    };
-                    let poly = BlockOpeningPoly::new(table, grid, polynomial)?;
-                    Ok(Box::new(poly) as Box<dyn MultilinearPoly<F>>)
-                } else {
-                    let kind =
-                        *kind_by_id
-                            .get(&polynomial)
-                            .ok_or(KernelError::InvariantViolation {
-                                reason: "trace polynomial missing from the resolved column kinds",
-                            })?;
-                    let columns =
-                        Arc::clone(columns.as_ref().ok_or(KernelError::InvariantViolation {
-                            reason: "trace columns not collected despite trace polynomials",
-                        })?);
-                    Ok(Box::new(TraceOpeningPoly::<F> {
-                        columns,
-                        kind,
-                        placement,
-                        _field: PhantomData,
-                    }) as Box<dyn MultilinearPoly<F>>)
-                }
-            })
-            .collect()
+        lazy_views(witness, polynomials, precommitted_tables, grid, || {
+            OpeningColumns::collect(witness, grid.log_t)
+        })
     }
 
     #[cfg(feature = "field-inline")]
@@ -151,6 +101,112 @@ impl<F: JoltField> JointOpeningPolynomials<F> for OptimizedBackend {
     }
 }
 
+/// The stage-8 joint opening of
+/// [`StreamingFamilies::instruction_rows`](super::StreamingFamilies::instruction_rows):
+/// the optimized kernel's lazy views, whose trace views read the witness's
+/// resident rows instead of sharing packed columns collected from them.
+pub struct StreamingJointOpening;
+
+impl<F: JoltField> JointOpeningPolynomials<F> for StreamingJointOpening {
+    #[tracing::instrument(
+        skip_all,
+        name = "StreamingJointOpening::prepare",
+        fields(polynomials = polynomials.len(), total_vars = grid.total_vars)
+    )]
+    fn prepare(
+        &self,
+        _session: &mut ProofSession,
+        witness: &dyn JoltWitnessPlane<F>,
+        polynomials: &[JoltCommittedPolynomial],
+        precommitted_tables: PrecommittedOpeningTables<'_, F>,
+        grid: CommitmentGrid,
+    ) -> Result<Vec<Box<dyn MultilinearPoly<F>>>, KernelError<F>> {
+        lazy_views(witness, polynomials, precommitted_tables, grid, || {
+            ResidentRows::new(witness, grid.log_t)
+        })
+    }
+
+    #[cfg(feature = "field-inline")]
+    fn prepare_field_inline(
+        &self,
+        session: &mut ProofSession,
+        witness: &dyn JoltWitnessPlane<F>,
+        grid: CommitmentGrid,
+    ) -> Result<Box<dyn MultilinearPoly<F>>, KernelError<F>> {
+        JointOpeningPolynomials::prepare_field_inline(&OptimizedBackend, session, witness, grid)
+    }
+}
+
+/// The lazy views of `polynomials` over `grid`: block-embedded tables from
+/// `precommitted_tables` (the witness's dense view when absent), and trace
+/// views sharing the rows `rows` resolves, called only when a trace
+/// polynomial is opened.
+fn lazy_views<F: JoltField, R: OpeningRows>(
+    witness: &dyn JoltWitnessPlane<F>,
+    polynomials: &[JoltCommittedPolynomial],
+    precommitted_tables: PrecommittedOpeningTables<'_, F>,
+    grid: CommitmentGrid,
+    rows: impl FnOnce() -> Result<R, KernelError<F>>,
+) -> Result<Vec<Box<dyn MultilinearPoly<F>>>, KernelError<F>> {
+    let mut precommitted_tables = precommitted_tables()?;
+    if grid.total_vars < grid.log_t + grid.log_k_chunk {
+        return Err(KernelError::InvalidGeometry {
+            reason: format!(
+                "grid of {} variables cannot hold a (2^{} × 2^{}) one-hot matrix",
+                grid.total_vars, grid.log_k_chunk, grid.log_t
+            ),
+        });
+    }
+
+    // Chunk selectors for the trace-derived subset — the same family-size
+    // counting and selector math as the commit kernel, so the opened
+    // values are the committed values by construction.
+    let trace_ids: Vec<JoltCommittedPolynomial> = polynomials
+        .iter()
+        .copied()
+        .filter(|id| !is_block_embedded(*id))
+        .collect();
+    let kinds = column_kinds(&trace_ids, grid)?;
+    let kind_by_id: BTreeMap<JoltCommittedPolynomial, ColumnKind> =
+        trace_ids.into_iter().zip(kinds).collect();
+
+    let rows = if kind_by_id.is_empty() {
+        None
+    } else {
+        Some(Arc::new(rows()?))
+    };
+    let placement = TracePlacement::new(grid);
+
+    polynomials
+        .iter()
+        .map(|&polynomial| {
+            if is_block_embedded(polynomial) {
+                let table = match precommitted_tables.remove(&polynomial) {
+                    Some(table) => table,
+                    None => dense_view(witness, final_opening_id(polynomial))?,
+                };
+                let poly = BlockOpeningPoly::new(table, grid, polynomial)?;
+                Ok(Box::new(poly) as Box<dyn MultilinearPoly<F>>)
+            } else {
+                let kind = *kind_by_id
+                    .get(&polynomial)
+                    .ok_or(KernelError::InvariantViolation {
+                        reason: "trace polynomial missing from the resolved column kinds",
+                    })?;
+                let rows = Arc::clone(rows.as_ref().ok_or(KernelError::InvariantViolation {
+                    reason: "trace rows not resolved despite trace polynomials",
+                })?);
+                Ok(Box::new(TraceOpeningPoly::<F, R> {
+                    rows,
+                    kind,
+                    placement,
+                    _field: PhantomData,
+                }) as Box<dyn MultilinearPoly<F>>)
+            }
+        })
+        .collect()
+}
+
 const fn is_block_embedded(polynomial: JoltCommittedPolynomial) -> bool {
     matches!(
         polynomial,
@@ -159,6 +215,19 @@ const fn is_block_embedded(polynomial: JoltCommittedPolynomial) -> bool {
             | JoltCommittedPolynomial::ProgramBytecode
             | JoltCommittedPolynomial::ProgramImageInit
     )
+}
+
+/// The committed values the trace views read: a row per cycle of the opened
+/// domain, constant from `prefix_len` on.
+trait OpeningRows: Send + Sync + 'static {
+    fn cycles(&self) -> usize;
+
+    fn prefix_len(&self) -> usize;
+
+    /// The row of every cycle from `prefix_len` on, if any.
+    fn tail(&self) -> Option<CommittedColumnsWitness>;
+
+    fn row(&self, cycle: usize) -> CommittedColumnsWitness;
 }
 
 pub(crate) struct OpeningColumns {
@@ -277,7 +346,9 @@ impl OpeningColumns {
             tail: None,
         })
     }
+}
 
+impl OpeningRows for OpeningColumns {
     fn cycles(&self) -> usize {
         self.logical_cycles
     }
@@ -286,8 +357,12 @@ impl OpeningColumns {
         self.rd_inc.len()
     }
 
+    fn tail(&self) -> Option<CommittedColumnsWitness> {
+        self.tail
+    }
+
     #[inline]
-    fn witness_row(&self, cycle: usize) -> CommittedColumnsWitness {
+    fn row(&self, cycle: usize) -> CommittedColumnsWitness {
         if let Some(tail) = self.tail.filter(|_| cycle >= self.prefix_len()) {
             return tail;
         }
@@ -299,6 +374,77 @@ impl OpeningColumns {
             lookup_index: LookupIndex(self.lookup_index[cycle]),
             bytecode_pc: BytecodePc(bytecode_pc as usize),
             ram_address: RemappedRamAddress((ram_address != COLD).then_some(ram_address)),
+        }
+    }
+}
+
+/// The witness's resident rows over the opened domain: every read
+/// re-extracts its cycle's row.
+struct ResidentRows {
+    rows: BundleStore<CommittedColumnsWitness>,
+    cycles: usize,
+    prefix_len: usize,
+    tail: Option<CommittedColumnsWitness>,
+}
+
+impl ResidentRows {
+    /// The rows of the `2^log_t`-cycle domain. Every row before the constant
+    /// suffix is extracted once here, so that an extraction error fails the
+    /// preparation and the views' reads, which cannot fail, repeat only
+    /// extractions that succeeded.
+    fn new<F: JoltField>(
+        witness: &dyn JoltWitnessPlane<F>,
+        log_t: usize,
+    ) -> Result<Self, KernelError<F>> {
+        let rows = BundleStore::<CommittedColumnsWitness>::resident(witness, log_t, ROWS)?;
+        // The rows span `2^log_t` cycles, so the shift cannot overflow.
+        let cycles = 1usize << log_t;
+        let access = rows.access();
+        let prefix_len = access.constant_suffix_start(cycles)?;
+        let tail = (prefix_len < cycles)
+            .then(|| access.row(prefix_len))
+            .transpose()?;
+        let extract = |cycle: usize| access.row(cycle).map(|_| ());
+        #[cfg(feature = "parallel")]
+        (0..prefix_len).into_par_iter().try_for_each(extract)?;
+        #[cfg(not(feature = "parallel"))]
+        (0..prefix_len).try_for_each(extract)?;
+        Ok(Self {
+            rows,
+            cycles,
+            prefix_len,
+            tail,
+        })
+    }
+}
+
+impl OpeningRows for ResidentRows {
+    fn cycles(&self) -> usize {
+        self.cycles
+    }
+
+    fn prefix_len(&self) -> usize {
+        self.prefix_len
+    }
+
+    fn tail(&self) -> Option<CommittedColumnsWitness> {
+        self.tail
+    }
+
+    #[expect(
+        clippy::expect_used,
+        reason = "`new` extracted every row before the suffix, and a row is a pure function of \
+                  the immutable trace and its cycle"
+    )]
+    #[inline]
+    fn row(&self, cycle: usize) -> CommittedColumnsWitness {
+        match self.tail {
+            Some(tail) if cycle >= self.prefix_len => tail,
+            _ => self
+                .rows
+                .access()
+                .row(cycle)
+                .expect("`ResidentRows::new` extracted every row before the suffix"),
         }
     }
 }
@@ -331,14 +477,14 @@ impl StreamConsumer for CollectOpeningColumns {
 // Trace openings
 // ---------------------------------------------------------------------------
 
-struct TraceOpeningPoly<F: JoltField> {
-    columns: Arc<OpeningColumns>,
+struct TraceOpeningPoly<F: JoltField, R> {
+    rows: Arc<R>,
     kind: ColumnKind,
     placement: TracePlacement,
     _field: PhantomData<F>,
 }
 
-impl<F: JoltField> TraceOpeningPoly<F> {
+impl<F: JoltField, R: OpeningRows> TraceOpeningPoly<F, R> {
     #[inline]
     fn column_value(&self, row: &CommittedColumnsWitness) -> Option<(usize, F)> {
         if self.kind.is_one_hot() {
@@ -353,12 +499,12 @@ impl<F: JoltField> TraceOpeningPoly<F> {
 
     #[inline]
     fn entry(&self, cycle: usize) -> Option<(usize, F)> {
-        self.column_value(&self.columns.witness_row(cycle))
+        self.column_value(&self.rows.row(cycle))
             .map(|(address, value)| (self.placement.index(cycle, address), value))
     }
 }
 
-impl<F: JoltField> MultilinearPoly<F> for TraceOpeningPoly<F> {
+impl<F: JoltField, R: OpeningRows> MultilinearPoly<F> for TraceOpeningPoly<F, R> {
     fn num_vars(&self) -> usize {
         self.placement.total_vars
     }
@@ -366,7 +512,7 @@ impl<F: JoltField> MultilinearPoly<F> for TraceOpeningPoly<F> {
     fn evaluate(&self, point: &[F]) -> F {
         debug_assert_eq!(point.len(), self.placement.total_vars);
         let eq = TensorEqTable::new(point);
-        let explicit = scatter_sum(self.columns.prefix_len(), |range| {
+        let explicit = scatter_sum(self.rows.prefix_len(), |range| {
             let mut acc = F::zero();
             for cycle in range {
                 if let Some((index, value)) = self.entry(cycle) {
@@ -377,22 +523,22 @@ impl<F: JoltField> MultilinearPoly<F> for TraceOpeningPoly<F> {
         });
         explicit
             + self
-                .columns
-                .tail
+                .rows
+                .tail()
                 .and_then(|row| self.column_value(&row))
                 .map_or(F::zero(), |(address, value)| {
                     value
                         * self.placement.suffix_evaluation(
                             point,
-                            self.columns.prefix_len(),
-                            self.columns.cycles(),
+                            self.rows.prefix_len(),
+                            self.rows.cycles(),
                             address,
                         )
                 })
     }
 
     fn for_each_row(&self, sigma: usize, f: &mut dyn FnMut(usize, &[F])) {
-        let entries = (0..self.columns.cycles())
+        let entries = (0..self.rows.cycles())
             .filter_map(|cycle| self.entry(cycle))
             .collect();
         emit_sorted_rows(entries, self.num_vars(), sigma, f);
@@ -406,7 +552,7 @@ impl<F: JoltField> MultilinearPoly<F> for TraceOpeningPoly<F> {
         );
         let num_cols = 1usize << sigma;
         let mask = num_cols - 1;
-        let mut result = scatter_fold(self.columns.prefix_len(), num_cols, |range, acc| {
+        let mut result = scatter_fold(self.rows.prefix_len(), num_cols, |range, acc| {
             for cycle in range {
                 if let Some((index, value)) = self.entry(cycle) {
                     if self.kind.is_one_hot() {
@@ -417,11 +563,11 @@ impl<F: JoltField> MultilinearPoly<F> for TraceOpeningPoly<F> {
                 }
             }
         });
-        if let Some((address, value)) = self.columns.tail.and_then(|row| self.column_value(&row)) {
+        if let Some((address, value)) = self.rows.tail().and_then(|row| self.column_value(&row)) {
             self.placement.fold_suffix(
                 left,
                 sigma,
-                self.columns.prefix_len()..self.columns.cycles(),
+                self.rows.prefix_len()..self.rows.cycles(),
                 address,
                 value,
                 &mut result,
@@ -527,11 +673,17 @@ impl<F: JoltField> MultilinearPoly<F> for BlockOpeningPoly<F> {
 #[expect(clippy::unwrap_used, reason = "test module: fail loudly")]
 mod tests {
     use jolt_claims::protocols::jolt::TracePolynomialOrder;
+    use jolt_dory::DoryScheme;
     use jolt_field::Fr;
+    use jolt_witness::{JoltVmWitnessInputs, JoltWitnessOracle, TraceBackend, WitnessError};
 
     use super::*;
-    use crate::optimized::testing::{random_scalars, with_ram_fixture, FixtureShape, RamOp};
-    use crate::ReferenceBackend;
+    use crate::optimized::heap_peak::peak_above_start;
+    use crate::optimized::streaming::StreamingFamilies;
+    use crate::optimized::testing::{
+        ram_fixture, random_scalars, with_ram_fixture, FixtureShape, RamOp,
+    };
+    use crate::{JoltBackend, ReferenceBackend};
 
     const LOG_T: usize = 4;
     const RAM_K: usize = 16;
@@ -549,15 +701,16 @@ mod tests {
         ]
     }
 
-    #[expect(clippy::type_complexity, reason = "test helper pairing both tiers")]
-    fn prepare_both(
+    /// The reference views, then the optimized and the streaming ones.
+    #[expect(clippy::type_complexity, reason = "test helper pairing the tiers")]
+    fn prepare_tiers(
         witness: &dyn JoltWitnessPlane<Fr>,
         grid: CommitmentGrid,
         mut order: Vec<JoltCommittedPolynomial>,
     ) -> (
         Vec<JoltCommittedPolynomial>,
         Vec<Box<dyn MultilinearPoly<Fr>>>,
-        Vec<Box<dyn MultilinearPoly<Fr>>>,
+        [Vec<Box<dyn MultilinearPoly<Fr>>>; 2],
     ) {
         order.push(JoltCommittedPolynomial::ProgramBytecode);
         order.push(JoltCommittedPolynomial::ProgramImageInit);
@@ -580,16 +733,31 @@ mod tests {
             grid,
         )
         .unwrap();
-        let optimized = JointOpeningPolynomials::<Fr>::prepare(
-            &OptimizedBackend,
-            &mut ProofSession::default(),
-            witness,
-            &order,
-            Box::new(|| Ok(precommitted_tables)),
-            grid,
-        )
-        .unwrap();
-        (order, reference, optimized)
+        let lazy = [
+            &OptimizedBackend as &dyn JointOpeningPolynomials<Fr>,
+            &StreamingJointOpening,
+        ]
+        .map(|backend| {
+            backend
+                .prepare(
+                    &mut ProofSession::default(),
+                    witness,
+                    &order,
+                    Box::new(|| Ok(precommitted_tables.clone())),
+                    grid,
+                )
+                .unwrap()
+        });
+        (order, reference, lazy)
+    }
+
+    /// The trace polynomials `witness` commits.
+    fn trace_ids(witness: &TraceBackend) -> Vec<JoltCommittedPolynomial> {
+        JoltWitnessOracle::<Fr>::committed_order(witness)
+            .unwrap()
+            .into_iter()
+            .filter(|id| !is_block_embedded(*id))
+            .collect()
     }
 
     fn assert_parity(order: TracePolynomialOrder, widen: usize) {
@@ -623,32 +791,35 @@ mod tests {
                     )
                 })
                 .collect();
-            let (ids, reference, optimized) = prepare_both(witness, grid, ids);
+            let (ids, reference, lazy) = prepare_tiers(witness, grid, ids);
             let point = random_scalars(grid.total_vars, 23);
-            for ((id, reference), optimized) in ids.iter().zip(&reference).zip(&optimized) {
-                assert_eq!(
-                    optimized.num_vars(),
-                    reference.num_vars(),
-                    "{id:?}: num_vars diverged"
-                );
-                assert_eq!(
-                    optimized.to_dense().as_ref(),
-                    reference.to_dense().as_ref(),
-                    "{id:?}: dense table diverged"
-                );
-                for sigma in 0..=grid.total_vars {
-                    let left = random_scalars(1 << (grid.total_vars - sigma), 29 + sigma as u64);
+            for (tier, views) in ["optimized", "streaming"].into_iter().zip(&lazy) {
+                for ((id, reference), view) in ids.iter().zip(&reference).zip(views) {
                     assert_eq!(
-                        optimized.fold_rows(&left, sigma),
-                        reference.fold_rows(&left, sigma),
-                        "{id:?}: fold_rows diverged at sigma {sigma}"
+                        view.num_vars(),
+                        reference.num_vars(),
+                        "{tier} {id:?}: num_vars diverged"
+                    );
+                    assert_eq!(
+                        view.to_dense().as_ref(),
+                        reference.to_dense().as_ref(),
+                        "{tier} {id:?}: dense table diverged"
+                    );
+                    for sigma in 0..=grid.total_vars {
+                        let left =
+                            random_scalars(1 << (grid.total_vars - sigma), 29 + sigma as u64);
+                        assert_eq!(
+                            view.fold_rows(&left, sigma),
+                            reference.fold_rows(&left, sigma),
+                            "{tier} {id:?}: fold_rows diverged at sigma {sigma}"
+                        );
+                    }
+                    assert_eq!(
+                        view.evaluate(&point),
+                        reference.evaluate(&point),
+                        "{tier} {id:?}: evaluation diverged"
                     );
                 }
-                assert_eq!(
-                    optimized.evaluate(&point),
-                    reference.evaluate(&point),
-                    "{id:?}: evaluation diverged"
-                );
             }
         });
     }
@@ -671,5 +842,99 @@ mod tests {
     #[test]
     fn address_major_odd_widening_matches_reference() {
         assert_parity(TracePolynomialOrder::AddressMajor, 1);
+    }
+
+    /// `with_streaming` installs the streaming opening. Its views open the
+    /// default opening's values, so only its behavior shows which slot a
+    /// backend holds: it refuses a witness without resident rows, from which
+    /// the default opening collects its columns. The module builds under
+    /// Dory only.
+    #[test]
+    fn with_streaming_installs_the_streaming_joint_opening() {
+        let resident = ram_fixture(
+            FixtureShape {
+                log_t: LOG_T,
+                ram_k: RAM_K,
+            },
+            Vec::new(),
+            fixture_ops(),
+        );
+        // A configured domain shorter than the trace leaves no resident
+        // rows; chunk visits still serve its `2^log_t` cycles.
+        let mut chunk_only = TraceBackend::new(
+            resident.config.clone(),
+            JoltVmWitnessInputs::new(
+                &resident.program,
+                &resident.preprocessing,
+                resident.trace.clone(),
+            ),
+        );
+        chunk_only.config.log_t = LOG_T - 1;
+        let grid = CommitmentGrid {
+            total_vars: LOG_T - 1 + 4,
+            log_t: LOG_T - 1,
+            log_k_chunk: 4,
+            order: TracePolynomialOrder::CycleMajor,
+        };
+        let ids = trace_ids(&chunk_only);
+        let prepare = |backend: JoltBackend<Fr, DoryScheme>| {
+            backend
+                .joint_opening
+                .prepare(
+                    &mut ProofSession::default(),
+                    &chunk_only,
+                    &ids,
+                    Box::new(|| Ok(BTreeMap::new())),
+                    grid,
+                )
+                .map(|_| ())
+        };
+        prepare(JoltBackend::optimized()).unwrap();
+        assert!(matches!(
+            prepare(JoltBackend::optimized().with_streaming(StreamingFamilies {
+                instruction_rows: true,
+                ..StreamingFamilies::default()
+            })),
+            Err(KernelError::Witness(WitnessError::UnavailableView { .. }))
+        ));
+    }
+
+    /// The streaming views hold no per-cycle column: preparing them stays
+    /// far below the 64 bytes per cycle the default opening collects.
+    #[test]
+    fn streaming_opening_collects_no_columns() {
+        let (log_t, ops) = (12, 3000);
+        let witness = ram_fixture(
+            FixtureShape {
+                log_t,
+                ram_k: RAM_K,
+            },
+            Vec::new(),
+            fixture_ops().into_iter().cycle().take(ops).collect(),
+        );
+        let grid = CommitmentGrid {
+            total_vars: log_t + 4,
+            log_t,
+            log_k_chunk: 4,
+            order: TracePolynomialOrder::CycleMajor,
+        };
+        let ids = trace_ids(&witness);
+        let prepare = || {
+            JointOpeningPolynomials::<Fr>::prepare(
+                &StreamingJointOpening,
+                &mut ProofSession::default(),
+                &witness,
+                &ids,
+                Box::new(|| Ok(BTreeMap::new())),
+                grid,
+            )
+            .unwrap()
+        };
+        let (views, held) = peak_above_start(prepare);
+        assert_eq!(views.len(), ids.len());
+        assert!(
+            held < 64 * ops / 8,
+            "preparing the streaming views held {held} bytes over {ops} rows"
+        );
     }
 }
