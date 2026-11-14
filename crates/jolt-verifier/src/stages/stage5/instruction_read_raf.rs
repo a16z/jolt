@@ -101,9 +101,85 @@ pub(crate) fn reconstruct_r_address<F: JoltField>(
         .collect()
 }
 
+struct InstructionReadRafPublicInputs<F> {
+    r_address: Vec<F>,
+    eq_reduction: F,
+}
+
 impl<F: JoltField> InstructionReadRaf<F> {
     pub fn dimensions(&self) -> InstructionReadRafDimensions {
         self.dimensions
+    }
+
+    fn prepare_output(
+        &self,
+        input_points: &InstructionReadRafInputClaims<Vec<F>>,
+        output_points: &InstructionReadRafOutputClaims<Vec<F>>,
+    ) -> Result<InstructionReadRafPublicInputs<F>, VerifierError> {
+        let r_cycle = output_points.instruction_raf_flag();
+        let r_address = reconstruct_r_address(output_points, r_cycle.len());
+        // eq over the upstream instruction claim-reduction cycle point; all three
+        // consumed openings share that point, so the lookup-output input carries it.
+        let eq_reduction =
+            try_eq_mle(input_points.lookup_output(), r_cycle).map_err(public_input_failed)?;
+        let address_bits = self.dimensions.instruction_address_bits();
+        // `upper_half_all_ones` below slices the leading half of this point, so a
+        // reconstruction of the wrong length would silently guard the wrong bits
+        // rather than fail. The point is verifier-derived, but the mis-slice is
+        // invisible if that ever stops being true.
+        if r_address.len() != address_bits {
+            return Err(public_input_failed(format!(
+                "instruction address point has {} coordinates, expected {address_bits}",
+                r_address.len()
+            )));
+        }
+        Ok(InstructionReadRafPublicInputs {
+            r_address,
+            eq_reduction,
+        })
+    }
+
+    fn evaluate_public(
+        &self,
+        public: &InstructionReadRafPublic,
+        prepared: &InstructionReadRafPublicInputs<F>,
+        challenges: &InstructionReadRafChallenges<F>,
+    ) -> Result<F, VerifierError> {
+        let address_bits = self.dimensions.instruction_address_bits();
+        let r_address = &prepared.r_address;
+        let eq_reduction = prepared.eq_reduction;
+        let left = || OperandPolynomial::new(address_bits, OperandSide::Left).evaluate(r_address);
+        let right = || OperandPolynomial::new(address_bits, OperandSide::Right).evaluate(r_address);
+        let gamma = challenges.gamma;
+        let gamma2 = gamma * gamma;
+        match public {
+            InstructionReadRafPublic::EqTableValue(index) => {
+                let table = LookupTableKind::<RISCV_XLEN>::iter()
+                    .find(|table| table.index() == *index)
+                    .ok_or_else(|| {
+                        public_input_failed(format!("unknown lookup table index {index}"))
+                    })?;
+                Ok(eq_reduction * table.evaluate_mle::<F, F>(r_address))
+            }
+            InstructionReadRafPublic::EqRafConstant => {
+                Ok(eq_reduction * (gamma * left() + gamma2 * right()))
+            }
+            InstructionReadRafPublic::EqRafFlag => {
+                let identity = IdentityPolynomial::new(address_bits).evaluate(r_address);
+                let mut raf = gamma2 * identity - gamma * left() - gamma2 * right();
+                if CANONICAL_INSTRUCTION_ADDRESS {
+                    // The input claim carries no γ³ term, so the sumcheck can only
+                    // close if Σ_j eq(r_red,j)·RafFlag_j·U(k_j) = 0 — i.e. no
+                    // identity-RAF cycle has an all-ones upper address half. Every
+                    // fp128 alias `k = r + p < 2^128` has exactly that shape, and
+                    // `U(k) = 0` implies `k < 2^128 - 2^64 < p`, so the surviving
+                    // address is the canonical representative of `k mod p` and the
+                    // identity leg pins it exactly. See `CANONICAL_INSTRUCTION_ADDRESS`.
+                    raf += gamma2 * gamma * upper_half_all_ones(r_address);
+                }
+                Ok(eq_reduction * raf)
+            }
+        }
     }
 }
 
@@ -161,56 +237,28 @@ impl<F: JoltField> ConcreteSumcheck<F> for InstructionReadRaf<F> {
         let JoltDerivedId::InstructionReadRaf(public) = id else {
             return Err(VerifierError::MissingStageClaimDerived { id: (*id).into() });
         };
-        let r_cycle = output_points.instruction_raf_flag();
-        let r_address = reconstruct_r_address(output_points, r_cycle.len());
-        // eq over the upstream instruction claim-reduction cycle point; all three
-        // consumed openings share that point, so the lookup-output input carries it.
-        let eq_reduction =
-            try_eq_mle(input_points.lookup_output(), r_cycle).map_err(public_input_failed)?;
-        let address_bits = self.dimensions.instruction_address_bits();
-        // `upper_half_all_ones` below slices the leading half of this point, so a
-        // reconstruction of the wrong length would silently guard the wrong bits
-        // rather than fail. The point is verifier-derived, but the mis-slice is
-        // invisible if that ever stops being true.
-        if r_address.len() != address_bits {
-            return Err(public_input_failed(format!(
-                "instruction address point has {} coordinates, expected {address_bits}",
-                r_address.len()
-            )));
-        }
-        let left = || OperandPolynomial::new(address_bits, OperandSide::Left).evaluate(&r_address);
-        let right =
-            || OperandPolynomial::new(address_bits, OperandSide::Right).evaluate(&r_address);
-        let gamma = challenges.gamma;
-        let gamma2 = gamma * gamma;
-        match public {
-            InstructionReadRafPublic::EqTableValue(index) => {
-                let table = LookupTableKind::<RISCV_XLEN>::iter()
-                    .find(|table| table.index() == *index)
-                    .ok_or_else(|| {
-                        public_input_failed(format!("unknown lookup table index {index}"))
-                    })?;
-                Ok(eq_reduction * table.evaluate_mle::<F, F>(&r_address))
-            }
-            InstructionReadRafPublic::EqRafConstant => {
-                Ok(eq_reduction * (gamma * left() + gamma2 * right()))
-            }
-            InstructionReadRafPublic::EqRafFlag => {
-                let identity = IdentityPolynomial::new(address_bits).evaluate(&r_address);
-                let mut raf = gamma2 * identity - gamma * left() - gamma2 * right();
-                if CANONICAL_INSTRUCTION_ADDRESS {
-                    // The input claim carries no γ³ term, so the sumcheck can only
-                    // close if Σ_j eq(r_red,j)·RafFlag_j·U(k_j) = 0 — i.e. no
-                    // identity-RAF cycle has an all-ones upper address half. Every
-                    // fp128 alias `k = r + p < 2^128` has exactly that shape, and
-                    // `U(k) = 0` implies `k < 2^128 - 2^64 < p`, so the surviving
-                    // address is the canonical representative of `k mod p` and the
-                    // identity leg pins it exactly. See `CANONICAL_INSTRUCTION_ADDRESS`.
-                    raf += gamma2 * gamma * upper_half_all_ones(&r_address);
-                }
-                Ok(eq_reduction * raf)
-            }
-        }
+        let prepared = self.prepare_output(input_points, output_points)?;
+        self.evaluate_public(public, &prepared, challenges)
+    }
+
+    fn expected_output(
+        &self,
+        input_points: &InstructionReadRafInputClaims<Vec<F>>,
+        output_values: &InstructionReadRafOutputClaims<F>,
+        output_points: &InstructionReadRafOutputClaims<Vec<F>>,
+        challenges: &InstructionReadRafChallenges<F>,
+    ) -> Result<F, VerifierError> {
+        let mut prepared = None;
+        self.evaluate_output_expression(output_values, challenges, |id| {
+            let JoltDerivedId::InstructionReadRaf(public) = id else {
+                return Err(VerifierError::MissingStageClaimDerived { id: (*id).into() });
+            };
+            let inputs = match &prepared {
+                Some(inputs) => inputs,
+                None => prepared.insert(self.prepare_output(input_points, output_points)?),
+            };
+            self.evaluate_public(public, inputs, challenges)
+        })
     }
 }
 
@@ -332,5 +380,103 @@ mod tests {
         } else {
             assert_eq!(actual, eq_reduction * baseline);
         }
+    }
+
+    #[test]
+    #[expect(clippy::unwrap_used)]
+    fn read_raf_output_uses_the_current_point_and_rejects_malformed_points() {
+        let relation = InstructionReadRaf::<Fr>::new(
+            InstructionReadRafDimensions::try_from((2, 128, 4)).unwrap(),
+        );
+        let zero = Fr::from_u64(0);
+        let one = Fr::from_u64(1);
+        let input_points = InstructionReadRafInputClaims {
+            lookup_output: vec![zero; 2],
+            left_lookup_operand: vec![zero; 2],
+            right_lookup_operand: vec![zero; 2],
+        };
+        // Interleaved operand address (left, right) = (0, 1).
+        let mut last_chunk = vec![zero; 31];
+        last_chunk.extend([one, zero, zero]);
+        let mut points = InstructionReadRafOutputClaims {
+            lookup_table_flags: vec![vec![zero; 2]; LookupTableKind::<RISCV_XLEN>::COUNT],
+            instruction_ra: vec![vec![zero; 34], vec![zero; 34], vec![zero; 34], last_chunk],
+            instruction_raf_flag: vec![zero; 2],
+        };
+        let values = InstructionReadRafOutputClaims {
+            lookup_table_flags: vec![zero; LookupTableKind::<RISCV_XLEN>::COUNT],
+            instruction_ra: vec![one; 4],
+            instruction_raf_flag: zero,
+        };
+        let challenges = InstructionReadRafChallenges {
+            gamma: Fr::from_u64(7),
+        };
+        assert_eq!(
+            relation
+                .expected_output(&input_points, &values, &points, &challenges)
+                .unwrap(),
+            Fr::from_u64(49)
+        );
+        points.instruction_ra = vec![vec![zero; 34]; 4];
+        assert_eq!(
+            relation
+                .expected_output(&input_points, &values, &points, &challenges)
+                .unwrap(),
+            zero
+        );
+        // Nonzero weight on every public value: sharing them across the terms
+        // gives the same output as deriving each term by itself.
+        let weighted_inputs = InstructionReadRafInputClaims {
+            lookup_output: vec![Fr::from_u64(3), Fr::from_u64(5)],
+            left_lookup_operand: vec![zero; 2],
+            right_lookup_operand: vec![zero; 2],
+        };
+        let weighted_points = InstructionReadRafOutputClaims {
+            lookup_table_flags: vec![vec![zero; 2]; LookupTableKind::<RISCV_XLEN>::COUNT],
+            instruction_ra: (0..4)
+                .map(|chunk| {
+                    (0..34)
+                        .map(|bit| Fr::from_u64(37 * chunk + bit + 2))
+                        .collect()
+                })
+                .collect(),
+            instruction_raf_flag: vec![Fr::from_u64(11), Fr::from_u64(13)],
+        };
+        let weighted_values = InstructionReadRafOutputClaims {
+            lookup_table_flags: (17..)
+                .map(Fr::from_u64)
+                .take(LookupTableKind::<RISCV_XLEN>::COUNT)
+                .collect(),
+            instruction_ra: vec![Fr::from_u64(2); 4],
+            instruction_raf_flag: Fr::from_u64(19),
+        };
+        let separately = relation
+            .evaluate_output_expression(&weighted_values, &challenges, |id| {
+                relation.derive_output_term(id, &weighted_inputs, &weighted_points, &challenges)
+            })
+            .unwrap();
+        assert_ne!(separately, zero);
+        assert_eq!(
+            relation
+                .expected_output(
+                    &weighted_inputs,
+                    &weighted_values,
+                    &weighted_points,
+                    &challenges
+                )
+                .unwrap(),
+            separately
+        );
+        points.instruction_ra.truncate(3);
+        assert!(matches!(
+            relation.expected_output(&input_points, &values, &points, &challenges),
+            Err(VerifierError::StageClaimPublicInputFailed { .. })
+        ));
+        points.instruction_ra = vec![vec![zero; 34]; 4];
+        points.instruction_raf_flag.truncate(1);
+        assert!(matches!(
+            relation.expected_output(&input_points, &values, &points, &challenges),
+            Err(VerifierError::StageClaimPublicInputFailed { .. })
+        ));
     }
 }

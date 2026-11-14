@@ -49,4 +49,6 @@ pub enum PointGeometryError {
     EvaluationDomainSizeOverflow { num_vars: usize },
     #[error("bytecode length ({bytecode_len}) must be a nonzero power of two")]
     InvalidBytecodeLength { bytecode_len: usize },
+    #[error("instruction flag class {key} is not below the class bound {bound}")]
+    FlagClassOutOfRange { key: u32, bound: usize },
 }
