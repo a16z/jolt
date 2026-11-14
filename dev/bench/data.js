@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794633621196,
+  "lastUpdate": 1794634158626,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -250954,6 +250954,270 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 888688,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "qvd@andrew.cmu.edu",
+            "name": "Quang Dao",
+            "username": "quangvdao"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "352a7476a6694ae389f9881efe86df3d443bde59",
+          "message": "fix(tracer-x86): match the interpreter's memory bounds in the native tracer (#2416)\n\n* fix(program): enforce memory layout and ELF admission checks\n\n* fix(tracer): align native backing and guest-read bounds\n\nPort dbd1978787, 95cf8d053f and f78f8785dd without protected-store, flag-word or general low-load rules. Preserve logical bounds while rounding native backing and checkpoint images to whole doublewords. Check each device-load byte against io_end and propagate bounded host-read failures.\n\nRetain this branch’s JoltDevice APIs, fast_run entry point and RAM-relative final-memory convention. Exercise the final partial heap word at offset 1160 with heap_size 8: offset 1152 with zero heap remains inside the existing canary and cannot succeed without changing excluded store rules. Omit the interpreter host-read underflow case until the general low-load guard is ported.\n\nValidation: cargo fmt --all -- --check; workspace host clippy; x86_64-unknown-linux-gnu tracer clippy; all 180 tracer nextest tests. Native runtime tests require x86 Linux.\n\n* fix(tracer): preserve host-read parity before low-load guards\n\n* Check I/O lengths against the rounded layout and align heap_end\n\nBuild the checked layout first and compare trusted advice, untrusted advice\nand input lengths with the layout's rounded capacities, in the tracer and in\nthe native x86 tracer. The rounded size is the effective maximum: the\nverifier already checks lengths against it, and the SDK now slices the I/O\nregions by it.\n\nRound heap_end up to a doubleword in MemoryLayout::try_new, matching the\nlinker's 8-aligned __heap_end, and reject an unaligned heap_end at admission.\n\nAdd e2e cases for 16 bytes of advice under a 12-byte maximum and for a store\nto the last heap byte.\n\n* Expect a doubleword-aligned heap_end in the last-heap-word tests\n\nThe layout now rounds heap_end up to a doubleword, so with a 1025-byte\nprogram the heap ends at RAM_START + 1168 instead of 1161. The interpreter\nand native tests now accept stores to the whole last word and reject the\nnext two doublewords.\n\n* Move the rounded-advice entry point into the memory-ops guest\n\nThe advice-consumer guest is built without a function name by the verifier\nand Akita tests, so a second provable function there emits a second main.\nmemory-ops already holds several guest_only entry points selected by name.\n\n* Import UntrustedAdvice in the memory-ops guest\n\n* Scope the memory-ops guest helpers to the entry points that use them\n\nA guest build compiles only the guest_only entry point that JOLT_FUNC_NAME\nselects, so with -D warnings the heap_top, rounded_advice and memory_ops\nbuilds failed on unused items. Import asm inside the two functions that use\nit, declare the linker's layout symbol inside heap_top, make Scratch public\nso the builds that skip its users do not see dead code, and drop guest_only\nfrom rounded_advice, which compiles on the host.\n\n* refactor(tracer-x86): use one aligned memory plane size\n\n---------\n\nCo-authored-by: Michael Zhu <mchl.zhu.96@gmail.com>\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-13T20:20:59-08:00",
+          "tree_id": "2066dc3065ff2e86e542955067ac263da4af6de4",
+          "url": "https://github.com/a16z/jolt/commit/352a7476a6694ae389f9881efe86df3d443bde59"
+        },
+        "date": 1794634150755,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 3.7801,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 888292,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.5086,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 464176,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 464044,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 463880,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.843,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 463856,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-mem",
+            "value": 888072,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 1.8637,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 463940,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 4.8696,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 463952,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 6.1405,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 124224,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.9343,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 888724,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.6472,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 463564,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.4838,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 463896,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 25.9295,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 463572,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 5.4516,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 463572,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 36.7897,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 702404,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 18.1795,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 604920,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 74.65,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 629740,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.8513,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 464176,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 2.1272,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 464292,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 19.6493,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 888520,
             "unit": "KB",
             "extra": ""
           }
