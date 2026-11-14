@@ -260,9 +260,10 @@ mod tests {
     /// suffix as the tables' tail value. The derived config binds the
     /// register read-write check cycle-first, so its streaming kernel runs:
     /// round 0's pass counts level 1's entries, round 1's pass fills them,
-    /// and the operand openings come from one more row walk. The
-    /// address-first route, which keeps the default kernel, is the one
-    /// `e2e_matrix`'s all-families case takes.
+    /// and the operand openings come from one more row walk, each ending
+    /// with the group of rows that holds the trace's last. The address-first
+    /// route, which keeps the default kernel, is the one `e2e_matrix`'s
+    /// all-families case takes.
     #[test]
     fn streaming_kernels_reproduce_the_default_proof() {
         let Fixture {

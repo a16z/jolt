@@ -30,7 +30,7 @@ use jolt_witness::{JoltWitnessPlane, WitnessError};
 use rayon::prelude::*;
 
 use super::read_write::ReadWriteOrder;
-use super::support::{pin_derived_term, BundleStore, GruenRoundMessage, RoundChallenges};
+use super::support::{pin_derived_term, GruenRoundMessage, RoundChallenges};
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
@@ -52,7 +52,7 @@ pub(crate) use rows::{RegisterCycleRow, SharedRdIndices};
 pub use streaming::StreamingRegistersReadWrite;
 
 use address_first::AddressFirstKernel;
-use rows::CollectRegisterEntries;
+use rows::{CollectRegisterEntries, StreamedRows};
 use sparse::{CycleState, StreamedCycleState};
 
 pub struct OptimizedRegistersReadWrite;
@@ -183,7 +183,7 @@ enum CycleSource<F: JoltField> {
     /// Passes over the witness's resident rows until a level is filled.
     Streamed {
         state: StreamedCycleState<F>,
-        rows: BundleStore<RegisterCycleRow>,
+        rows: StreamedRows,
     },
 }
 
