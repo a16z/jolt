@@ -1,7 +1,10 @@
+use crate::preprocess::PreprocessingError;
 use jolt_riscv::SourceInstructionKind;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ProgramError {
+    #[error(transparent)]
+    Preprocessing(#[from] PreprocessingError),
     #[error("unsupported program architecture: {0}")]
     UnsupportedArchitecture(&'static str),
     #[error("malformed program image: {0}")]

@@ -94,7 +94,7 @@ use jolt_verifier::stages::stage1::outer_remainder::OuterRemainder;
 #[cfg(feature = "field-inline")]
 use jolt_witness::field_inline::FieldInlineSpartanRow;
 use jolt_witness::witnesses::{
-    lookup_values, Imm, LeftInstructionInput, LeftLookupOperand, LookupOutput,
+    lookup_values, Extract as _, Imm, LeftInstructionInput, LeftLookupOperand, LookupOutput,
     NextIsFirstInSequence, NextIsVirtual, NextPc, NextUnexpandedPc, Pc, Product, RamAddress,
     RamReadValue, RamWriteValue, RdWriteValue, RightInstructionInput, RightLookupOperand, Rs1Value,
     Rs2Value, ShouldBranch, ShouldJump, UnexpandedPc, WitnessEnv,
@@ -121,6 +121,9 @@ mod guard_groups;
 #[cfg(not(feature = "field-inline"))]
 use b_folds::PreparedBFolds;
 use guard_groups::{GuardEndpointGroup, GuardEndpoints, GuardGroups, GUARD_ENDPOINT_ENTRIES};
+
+mod streaming;
+pub use streaming::StreamingOuterRemainder;
 
 const DOMAIN: usize = SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE;
 const SECOND_GROUP_LEN: usize = SPARTAN_OUTER_SECOND_GROUP_ROW_COUNT;
@@ -198,8 +201,31 @@ impl SpartanOuterRow {
                 fold_guards(lagrange, &values.a_first),
                 fold_guards(lagrange, &values.a_second),
             ],
-            values.fold_b(lagrange),
+            values.fold_b([lagrange, lagrange]),
         )
+    }
+
+    fn fold_streams<F: JoltField>(
+        &self,
+        #[cfg(feature = "field-inline")] field_row: Option<&FieldInlineSpartanRow<F>>,
+        first: &[F],
+        second: &[F],
+    ) -> [(F, F); 2] {
+        #[cfg(feature = "field-inline")]
+        if let Some(field_row) = field_row {
+            let values = self.field_group_values(field_row);
+            let [b_first, b_second] = values.fold_b([first, second]);
+            return [
+                (fold_guards(first, &values.integer.a_first), b_first),
+                (fold_guards(second, &values.integer.a_second), b_second),
+            ];
+        }
+        let values = self.group_values();
+        let [b_first, b_second] = values.fold_b([first, second]);
+        [
+            (fold_guards(first, &values.a_first), b_first),
+            (fold_guards(second, &values.a_second), b_second),
+        ]
     }
 }
 
@@ -208,7 +234,7 @@ impl WitnessBundle for SpartanOuterRow {
     fn from_row(
         row: &TraceRow,
         next: Option<&TraceRow>,
-        _env: &WitnessEnv<'_>,
+        env: &WitnessEnv<'_>,
     ) -> Result<Self, WitnessError> {
         let circuit_flags = row.circuit_flags();
         let instruction_flags = row.instruction_flags();
@@ -249,9 +275,7 @@ impl WitnessBundle for SpartanOuterRow {
                 next_flags.is_some_and(|flags| flags[CircuitFlags::IsFirstInSequence]),
             ),
             lookup_output: LookupOutput(lookup_output),
-            should_jump: ShouldJump(
-                circuit_flags[CircuitFlags::Jump] && !next.is_some_and(|row| row.is_noop()),
-            ),
+            should_jump: ShouldJump::extract(row, next, env)?,
             circuit_flags,
         })
     }
@@ -286,10 +310,10 @@ struct RowGroupValues {
 }
 
 impl RowGroupValues {
-    fn fold_b<F: JoltField>(&self, weights: &[F]) -> [F; 2] {
+    fn fold_b<F: JoltField>(&self, weights: [&[F]; 2]) -> [F; 2] {
         [
-            fold_values(weights, &self.b_first, &[0; DOMAIN]),
-            fold_values(weights, &self.b_second_lo, &self.b_second_hi),
+            fold_values(weights[0], &self.b_first, &[0; DOMAIN]),
+            fold_values(weights[1], &self.b_second_lo, &self.b_second_hi),
         ]
     }
 }
@@ -338,14 +362,14 @@ impl<F: JoltField> FieldGroupValues<F> {
     }
 
     /// Only B carries field corrections; the A folds are `self.integer`'s.
-    fn fold_b(&self, weights: &[F]) -> [F; 2] {
+    fn fold_b(&self, weights: [&[F]; 2]) -> [F; 2] {
         let [first, second] = self.integer.fold_b(weights);
-        let first_correction: F = weights[RV64_FIRST_GROUP_LEN..]
+        let first_correction: F = weights[0][RV64_FIRST_GROUP_LEN..]
             .iter()
             .zip(self.b_first)
             .map(|(c, b)| *c * b)
             .sum();
-        let second_correction: F = weights[RV64_SECOND_GROUP_LEN..SECOND_GROUP_LEN]
+        let second_correction: F = weights[1][RV64_SECOND_GROUP_LEN..SECOND_GROUP_LEN]
             .iter()
             .zip(self.b_second)
             .map(|(c, b)| *c * b)
@@ -1039,6 +1063,22 @@ impl OptimizedOuterRemainder {
     }
 }
 
+fn take_carry<F: JoltField>(
+    session: &mut ProofSession,
+) -> Result<SpartanOuterCarry<F>, KernelError<F>> {
+    session
+        .take::<SpartanOuterCarry<F>>()
+        .ok_or(KernelError::InvariantViolation {
+            reason: "the outer uni-skip slot parked no carry for the remainder member",
+        })
+}
+
+fn rows_unavailable<F: JoltField>(_: WitnessError) -> SumcheckError<F> {
+    SumcheckError::MissingEvaluationSource {
+        kind: "Spartan outer trace rows",
+    }
+}
+
 impl<F: JoltField> PrepareKernel<F, OuterRemainder<F>> for OptimizedOuterRemainder {
     fn prepare(
         &self,
@@ -1046,12 +1086,7 @@ impl<F: JoltField> PrepareKernel<F, OuterRemainder<F>> for OptimizedOuterRemaind
         _witness: &dyn JoltWitnessPlane<F>,
         inputs: ProverInputs<'_, F, OuterRemainder<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = OuterRemainder<F>>>, KernelError<F>> {
-        let carry =
-            session
-                .take::<SpartanOuterCarry<F>>()
-                .ok_or(KernelError::InvariantViolation {
-                    reason: "the outer uni-skip slot parked no carry for the remainder member",
-                })?;
+        let carry = take_carry(session)?;
         Ok(Box::new(OuterRemainderKernel::prepare(carry, &inputs)?))
     }
 }
@@ -1069,12 +1104,24 @@ struct DerivedWeights<F> {
     bz_constant: [F; 2],
 }
 
-/// The linear-time outer remainder rounds over the joint `(cycle ‖ stream)`
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
+enum OuterTables<F: JoltField> {
+    Streamed {
+        dense_round: usize,
+    },
+    Dense {
+        az: PrefixColumn<F>,
+        bz: PrefixColumn<F>,
+    },
+}
+
+/// The outer remainder rounds over the joint `(cycle ‖ stream)`
 /// domain (stream = index LSB, bound `LowToHigh`).
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct OuterRemainderKernel<F: JoltField> {
-    az: PrefixColumn<F>,
-    bz: PrefixColumn<F>,
+    tables: OuterTables<F>,
+    #[cfg_attr(feature = "allocative", allocative(skip))]
+    lagrange: [F; DOMAIN],
     prefix_cycles: usize,
     purged: bool,
     split_eq: GruenSplitEqPolynomial<F>,
@@ -1090,7 +1137,7 @@ struct OuterRemainderKernel<F: JoltField> {
     derived: DerivedWeights<F>,
 }
 impl<F: JoltField> OuterRemainderKernel<F> {
-    fn prepare(
+    fn unfilled(
         carry: SpartanOuterCarry<F>,
         inputs: &ProverInputs<'_, F, OuterRemainder<F>>,
     ) -> Result<Self, KernelError<F>> {
@@ -1112,7 +1159,11 @@ impl<F: JoltField> OuterRemainderKernel<F> {
         let uniskip_challenge = inputs.relation.uniskip_challenge();
         let tau_high = tau[log_t + 1];
         let tau_low = &tau[..=log_t];
-        let lagrange_r0 = centered_lagrange_evals::<F>(DOMAIN, uniskip_challenge)?;
+        let lagrange: [F; DOMAIN] = centered_lagrange_evals::<F>(DOMAIN, uniskip_challenge)?
+            .try_into()
+            .map_err(|_| KernelError::InvariantViolation {
+                reason: "centered Lagrange weights must span the uni-skip domain",
+            })?;
         let kernel = centered_lagrange_kernel::<F>(DOMAIN, tau_high, uniskip_challenge)?;
         let split_eq = GruenSplitEqPolynomial::new_with_scaling(
             tau_low,
@@ -1127,9 +1178,31 @@ impl<F: JoltField> OuterRemainderKernel<F> {
             .map(|&variable| outer_opening(variable))
             .collect();
         let derived = Self::derived_weights(uniskip_challenge)?;
-        #[cfg(not(feature = "field-inline"))]
-        let b_folds = PreparedBFolds::new(&derived)?;
+        Ok(Self {
+            tables: OuterTables::Streamed {
+                dense_round: rounds,
+            },
+            lagrange,
+            prefix_cycles,
+            purged: false,
+            split_eq,
+            pending_endpoints: None,
+            challenges: RoundChallenges::new(rounds),
+            rows,
+            #[cfg(feature = "field-inline")]
+            field_rows,
+            opening_ids,
+            derived,
+        })
+    }
 
+    fn fill_eager_tables(&mut self) -> Result<(), KernelError<F>> {
+        let log_t = self.challenges.total() - 1;
+        let prefix_cycles = self.prefix_cycles;
+        let rows = &self.rows;
+        let split_eq = &self.split_eq;
+        #[cfg(not(feature = "field-inline"))]
+        let b_folds = PreparedBFolds::new(&self.derived)?;
         let cycles = 1usize << log_t;
         let mut az: Vec<F> = unsafe_allocate_zero_vec(2 * prefix_cycles);
         let mut bz: Vec<F> = unsafe_allocate_zero_vec(2 * prefix_cycles);
@@ -1138,14 +1211,14 @@ impl<F: JoltField> OuterRemainderKernel<F> {
         let in_len = e_in.len();
         let width = 2 * in_len;
         let access = rows.access();
-        let lagrange = &lagrange_r0;
+        let lagrange = &self.lagrange;
         let (az_tail, bz_tail) = if prefix_cycles < cycles {
             access.row(prefix_cycles)?.folded_groups(lagrange)
         } else {
             ([F::zero(); 2], [F::zero(); 2])
         };
         #[cfg(feature = "field-inline")]
-        let field_rows_ref: &[(usize, FieldInlineSpartanRow<F>)] = &field_rows;
+        let field_rows_ref: &[(usize, FieldInlineSpartanRow<F>)] = &self.field_rows;
         // `try_reduce` discards every block result once one block fails, so
         // groups an aborted block leaves in a reused cache never reach a result.
         let block = |groups: &mut RepeatCache<GuardEndpointGroup<F>>,
@@ -1162,11 +1235,11 @@ impl<F: JoltField> OuterRemainderKernel<F> {
                 #[cfg(feature = "field-inline")]
                 let (values, [bz_zero, bz_one]) = if let Some(field_row) = field_cursor.advance(t) {
                     let values = row.field_group_values(field_row);
-                    let bz = values.fold_b(lagrange);
+                    let bz = values.fold_b([lagrange, lagrange]);
                     (values.integer, bz)
                 } else {
                     let values = row.group_values();
-                    let bz = values.fold_b(lagrange);
+                    let bz = values.fold_b([lagrange, lagrange]);
                     (values, bz)
                 };
                 #[cfg(feature = "field-inline")]
@@ -1216,7 +1289,7 @@ impl<F: JoltField> OuterRemainderKernel<F> {
             endpoints.0 + tail_mass * az_tail[0] * bz_tail[0],
             endpoints.1 + tail_mass * (az_tail[1] - az_tail[0]) * (bz_tail[1] - bz_tail[0]),
         );
-        Ok(Self {
+        self.tables = OuterTables::Dense {
             az: PrefixColumn {
                 values: az,
                 tail: az_tail,
@@ -1225,17 +1298,18 @@ impl<F: JoltField> OuterRemainderKernel<F> {
                 values: bz,
                 tail: bz_tail,
             },
-            prefix_cycles,
-            purged: false,
-            split_eq,
-            pending_endpoints: Some(endpoints),
-            challenges: RoundChallenges::new(rounds),
-            rows,
-            #[cfg(feature = "field-inline")]
-            field_rows,
-            opening_ids,
-            derived,
-        })
+        };
+        self.pending_endpoints = Some(endpoints);
+        Ok(())
+    }
+
+    fn prepare(
+        carry: SpartanOuterCarry<F>,
+        inputs: &ProverInputs<'_, F, OuterRemainder<F>>,
+    ) -> Result<Self, KernelError<F>> {
+        let mut kernel = Self::unfilled(carry, inputs)?;
+        kernel.fill_eager_tables()?;
+        Ok(kernel)
     }
 
     /// Az/Bz column weights at both stream values over the composed opening-column
@@ -1272,11 +1346,13 @@ impl<F: JoltField> OuterRemainderKernel<F> {
             .split_eq
             .round_mut()
             .ok_or_else(|| eq_round_error(round))?;
-        let shrunk = self.az.bind(challenge);
-        let _ = self.bz.bind(challenge);
-        if shrunk && !self.purged {
-            self.purged = true;
-            crate::mem::purge_retained_memory(self.challenges.total() - 1);
+        if let OuterTables::Dense { az, bz } = &mut self.tables {
+            let shrunk = az.bind(challenge);
+            let _ = bz.bind(challenge);
+            if shrunk && !self.purged {
+                self.purged = true;
+                crate::mem::purge_retained_memory(self.challenges.total() - 1);
+            }
         }
         gruen_round.bind(challenge);
         self.challenges.push(challenge);
@@ -1493,14 +1569,24 @@ impl<F: JoltField> ProveRounds<F> for OuterRemainderKernel<F> {
         if let Some(challenge) = bind {
             self.bind(challenge)?;
         }
-        let gruen_round = self.split_eq.round().ok_or_else(|| eq_round_error(round))?;
-        let (q_zero, q_infinity) = match self.pending_endpoints.take() {
-            Some(endpoints) => endpoints,
-            None => self.az.product_endpoints(&self.bz, &self.split_eq),
-        };
-        gruen_round.checked_cubic(q_zero, q_infinity, previous_claim, round, || {
-            self.az.product_at_one(&self.bz, &self.split_eq)
-        })
+        if let OuterTables::Streamed { dense_round } = self.tables {
+            if self.challenges.bound() == dense_round {
+                self.pending_endpoints = Some(self.fill_tables().map_err(rows_unavailable)?);
+            }
+        }
+        match &self.tables {
+            OuterTables::Streamed { .. } => self.streamed_round(round, previous_claim),
+            OuterTables::Dense { az, bz } => {
+                let gruen_round = self.split_eq.round().ok_or_else(|| eq_round_error(round))?;
+                let (q_zero, q_infinity) = self
+                    .pending_endpoints
+                    .take()
+                    .unwrap_or_else(|| az.product_endpoints(bz, &self.split_eq));
+                gruen_round.checked_cubic(q_zero, q_infinity, previous_claim, round, || {
+                    az.product_at_one(bz, &self.split_eq)
+                })
+            }
+        }
     }
 
     fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {

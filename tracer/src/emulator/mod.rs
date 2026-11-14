@@ -24,6 +24,7 @@ pub mod cpu;
 pub mod decode_cache;
 pub mod default_terminal;
 pub mod elf_analyzer;
+pub mod host_io;
 pub mod memory;
 pub mod mmu;
 pub mod terminal;
