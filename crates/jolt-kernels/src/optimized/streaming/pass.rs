@@ -92,7 +92,15 @@ pub(crate) struct TaskSlots<'a, T> {
     overflow: bool,
 }
 
-impl<T> TaskSlots<'_, T> {
+impl<'a, T> TaskSlots<'a, T> {
+    /// A task's counted slots, written in order.
+    pub(crate) fn new(slots: &'a mut [MaybeUninit<T>]) -> Self {
+        Self {
+            slots: slots.iter_mut(),
+            overflow: false,
+        }
+    }
+
     /// Writes the task's next item; an item past its counted slots is dropped
     /// and fails the fill.
     pub(crate) fn push(&mut self, item: T) {
@@ -102,6 +110,15 @@ impl<T> TaskSlots<'_, T> {
             }
             None => self.overflow = true,
         }
+    }
+
+    /// Whether the task wrote exactly its counted slots, every one of them
+    /// initialized.
+    pub(crate) fn finish(mut self) -> Result<(), FillMismatch> {
+        if self.overflow || self.slots.next().is_some() {
+            return Err(FillMismatch);
+        }
+        Ok(())
     }
 }
 
@@ -138,15 +155,9 @@ where
         })
         .collect();
     let write = |(task, slots): (&I, &mut [MaybeUninit<T>])| -> Result<(), E> {
-        let mut slots = TaskSlots {
-            slots: slots.iter_mut(),
-            overflow: false,
-        };
+        let mut slots = TaskSlots::new(slots);
         fill(task, &mut slots)?;
-        if slots.overflow || slots.slots.next().is_some() {
-            return Err(mismatch(FillMismatch));
-        }
-        Ok(())
+        slots.finish().map_err(&mismatch)
     };
     #[cfg(feature = "parallel")]
     tasks.par_iter().zip(task_slots).try_for_each(write)?;
