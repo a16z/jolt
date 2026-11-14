@@ -286,6 +286,7 @@ fn chunk_profiles_have_distinct_artifact_and_csv_names() {
             result_json: None,
             akita_chunk_profile: profile,
             akita_prover_pool: false,
+            akita_prover_active_wait: false,
             memory_budget: None,
         };
         assert_eq!(args.workload_name(), workload_name);
@@ -299,5 +300,51 @@ fn chunk_profiles_have_distinct_artifact_and_csv_names() {
 fn chunk_profile_parser_rejects_invalid_geometry() {
     for value in ["w0r2", "w3r2", "w1r2", "w2r0", "w2", "w128r2"] {
         assert!(parse_akita_chunk_profile(value).is_err(), "{value}");
+    }
+}
+
+#[cfg(feature = "akita")]
+#[test]
+fn active_wait_requires_an_explicit_pool_for_cli_and_direct_callers() {
+    #[derive(Parser)]
+    struct Cli {
+        #[command(flatten)]
+        args: ProfileArgs,
+    }
+    let options = ["jolt-prover", "--name", "fibonacci"];
+    assert!(
+        Cli::try_parse_from(options.into_iter().chain(["--akita-prover-active-wait"])).is_err()
+    );
+    let mut args = Cli::try_parse_from(options).unwrap().args;
+    assert!(!args.akita_prover_pool);
+    assert!(!args.akita_prover_active_wait);
+    args.akita_prover_active_wait = true;
+    assert!(super::run(&args)
+        .unwrap_err()
+        .to_string()
+        .contains("--akita-prover-active-wait requires --akita-prover-pool"));
+}
+
+#[cfg(feature = "akita")]
+#[test]
+fn active_wait_has_a_distinct_artifact_name() {
+    #[derive(Parser)]
+    struct Cli {
+        #[command(flatten)]
+        args: ProfileArgs,
+    }
+    for active in [false, true] {
+        let mut options = vec!["jolt-prover", "--name", "fibonacci", "--akita-prover-pool"];
+        if active {
+            options.push("--akita-prover-active-wait");
+        }
+        let args = Cli::try_parse_from(options).unwrap().args;
+        assert_eq!(args.akita_prover_active_wait, active);
+        let suffix = if active {
+            "_proverpool_activewait"
+        } else {
+            "_proverpool"
+        };
+        assert!(args.trace_name(20).ends_with(suffix));
     }
 }

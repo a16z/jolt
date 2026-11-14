@@ -7,7 +7,11 @@ use std::{
 };
 
 #[cfg(feature = "parallel")]
-use std::{cell::Cell, num::NonZeroUsize};
+use std::{
+    cell::Cell,
+    num::NonZeroUsize,
+    sync::atomic::{AtomicBool, AtomicUsize, Ordering},
+};
 
 use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
 use akita_params::{OpeningScheduleSelection, ScheduleRowDigest, SetupMode};
@@ -28,7 +32,7 @@ use jolt_openings::OpeningsError;
 use jolt_poly::{MultilinearPoly, OneHotIndexOrder, OneHotPolynomial, Polynomial};
 use jolt_transcript::{BytesMsg, Encoding};
 #[cfg(feature = "parallel")]
-use rayon::{ThreadPool, ThreadPoolBuildError, ThreadPoolBuilder};
+use rayon::{ThreadPool, ThreadPoolBuildError, ThreadPoolBuilder, Yield};
 use serde::{Deserialize, Serialize};
 
 use crate::configs::{AkitaChunkProfile, JoltDenseBounded, JoltDenseFull};
@@ -250,10 +254,74 @@ impl AkitaProverPool {
             .map(Self)
     }
 
+    /// Runs one operation in a fresh, private pool with active workers.
+    ///
+    /// Workers cooperatively search for Rayon work throughout the operation.
+    /// This uses released Rayon APIs and has no idle timeout: serial phases can
+    /// consume more CPU than normal waiting. Nested Rayon joins retain Rayon's
+    /// ordinary waiting policy. The operation's result or panic stops the helper
+    /// loops; outstanding detached jobs retain normal Rayon lifetime semantics.
+    ///
+    /// A fresh pool is required. Adding a waiting helper to a busy, reusable pool
+    /// could run that helper underneath the operation it waits for and deadlock.
+    /// Nested and concurrent calls to this method each create a separate pool.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if Rayon cannot create the worker pool.
+    pub fn with_active_wait<R: Send>(
+        num_threads: NonZeroUsize,
+        operation: impl FnOnce() -> R + Send,
+    ) -> Result<R, ThreadPoolBuildError> {
+        let pool = Self::new(num_threads)?;
+        Ok(with_fresh_active_workers(pool.0, operation))
+    }
+
     /// Runs the whole prover, including nested Akita work, on these workers.
     pub fn install<R: Send>(&self, operation: impl FnOnce() -> R + Send) -> R {
         self.0.install(operation)
     }
+}
+
+/// Cancels helpers even if dispatch, startup, or the root operation unwinds.
+#[cfg(feature = "parallel")]
+struct ActiveWaitStop(Arc<AtomicBool>);
+
+#[cfg(feature = "parallel")]
+impl Drop for ActiveWaitStop {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::Release);
+    }
+}
+
+/// The caller must supply a fresh pool with no prior or externally injected jobs.
+#[cfg(feature = "parallel")]
+fn with_fresh_active_workers<R: Send>(pool: ThreadPool, operation: impl FnOnce() -> R + Send) -> R {
+    let stop = Arc::new(AtomicBool::new(false));
+    let stop_guard = ActiveWaitStop(Arc::clone(&stop));
+    let entered = Arc::new(AtomicUsize::new(0));
+    let helper_entered = Arc::clone(&entered);
+    pool.spawn_broadcast(move |_| {
+        let _ = helper_entered.fetch_add(1, Ordering::Release);
+        while !stop.load(Ordering::Acquire) {
+            if rayon::yield_now() == Some(Yield::Idle) {
+                std::hint::spin_loop();
+            }
+        }
+    });
+    // No user operation can run until every worker is inside its helper.
+    // Otherwise a helper could begin underneath a nested join and wait for
+    // the very operation whose stack it has interrupted.
+    while entered.load(Ordering::Acquire) != pool.current_num_threads() {
+        std::thread::yield_now();
+    }
+    pool.install(move || {
+        // Stop before Rayon publishes the root result, including on panic.
+        let _stop_guard = stop_guard;
+        operation()
+    })
+    // Do not join helpers here. A detached job may need caller progress after
+    // this method returns. Rayon keeps the registry alive until jobs finish.
 }
 
 pub(crate) fn with_prover_backend<R: Send>(f: impl FnOnce() -> R + Send) -> R {

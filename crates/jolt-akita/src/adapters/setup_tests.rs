@@ -129,3 +129,143 @@ fn prover_pool_reuses_workers_without_changing_backend_routing() {
             .is_some());
     });
 }
+
+#[cfg(all(feature = "parallel", not(target_family = "wasm")))]
+#[test]
+fn prover_pool_active_wait_runs_parallel_work_and_broadcasts() {
+    use rayon::prelude::*;
+    for workers in [1, 4] {
+        let sum = AkitaProverPool::with_active_wait(
+            NonZeroUsize::new(workers).expect("active-wait test fixture"),
+            || {
+                let visits = rayon::broadcast(|_| {
+                    assert!(IN_PROVER_POOL.with(Cell::get));
+                    with_prover_backend(rayon::current_num_threads)
+                });
+                assert_eq!(visits, vec![workers; workers]);
+                (0usize..1000).into_par_iter().sum::<usize>()
+            },
+        )
+        .expect("active-wait test fixture");
+        assert_eq!(sum, 499_500);
+    }
+}
+
+#[cfg(all(feature = "parallel", not(target_family = "wasm")))]
+#[test]
+fn prover_pool_active_wait_returns_before_detached_jobs_need_the_caller() {
+    use std::{sync::mpsc, time::Duration};
+    let (release_tx, release_rx) = mpsc::channel();
+    let (returned_tx, returned_rx) = mpsc::channel();
+    let (finished_tx, finished_rx) = mpsc::channel();
+    let _worker = std::thread::spawn(move || {
+        AkitaProverPool::with_active_wait(
+            NonZeroUsize::new(2).expect("active-wait test fixture"),
+            || {
+                let (started_tx, started_rx) = mpsc::channel();
+                rayon::spawn(move || {
+                    started_tx.send(()).expect("active-wait test fixture");
+                    release_rx.recv().expect("active-wait test fixture");
+                    finished_tx.send(()).expect("active-wait test fixture");
+                });
+                started_rx
+                    .recv_timeout(Duration::from_secs(30))
+                    .expect("active-wait test fixture");
+            },
+        )
+        .expect("active-wait test fixture");
+        returned_tx.send(()).expect("active-wait test fixture");
+    });
+    // Joining helper threads inside the API would deadlock before this send.
+    returned_rx
+        .recv_timeout(Duration::from_secs(30))
+        .expect("active-wait test fixture");
+    release_tx.send(()).expect("active-wait test fixture");
+    finished_rx
+        .recv_timeout(Duration::from_secs(30))
+        .expect("active-wait test fixture");
+}
+
+#[cfg(all(feature = "parallel", not(target_family = "wasm")))]
+#[test]
+fn prover_pool_active_wait_preserves_cross_pool_cooperation() {
+    use std::{sync::mpsc, time::Duration};
+    let (tx, rx) = mpsc::channel();
+    let _worker = std::thread::spawn(move || {
+        let outer = ThreadPoolBuilder::new()
+            .num_threads(1)
+            .build()
+            .expect("active-wait test fixture");
+        let answer = outer.install(|| {
+            AkitaProverPool::with_active_wait(
+                NonZeroUsize::new(1).expect("active-wait test fixture"),
+                || outer.install(|| 42),
+            )
+            .expect("active-wait test fixture")
+        });
+        tx.send(answer).expect("active-wait test fixture");
+    });
+    assert_eq!(
+        rx.recv_timeout(Duration::from_secs(30))
+            .expect("active-wait test fixture"),
+        42
+    );
+}
+
+#[cfg(all(feature = "parallel", not(target_family = "wasm")))]
+#[test]
+fn prover_pool_active_wait_supports_nested_and_concurrent_calls() {
+    use std::{sync::mpsc, time::Duration};
+    let (tx, rx) = mpsc::channel();
+    for index in 0..2 {
+        let tx = tx.clone();
+        let _worker = std::thread::spawn(move || {
+            let answer = AkitaProverPool::with_active_wait(
+                NonZeroUsize::new(2).expect("active-wait test fixture"),
+                || {
+                    AkitaProverPool::with_active_wait(
+                        NonZeroUsize::new(1).expect("active-wait test fixture"),
+                        || index + 10,
+                    )
+                    .expect("active-wait test fixture")
+                },
+            )
+            .expect("active-wait test fixture");
+            tx.send(answer).expect("active-wait test fixture");
+        });
+    }
+    let mut answers = (0..2)
+        .map(|_| {
+            rx.recv_timeout(Duration::from_secs(30))
+                .expect("active-wait test fixture")
+        })
+        .collect::<Vec<_>>();
+    answers.sort_unstable();
+    assert_eq!(answers, vec![10, 11]);
+}
+
+#[cfg(all(feature = "parallel", not(target_family = "wasm")))]
+#[test]
+fn prover_pool_active_wait_stops_workers_after_normal_return_and_panic() {
+    use std::{
+        panic::AssertUnwindSafe, sync::mpsc, thread::Result as ThreadResult, time::Duration,
+    };
+    for panic in [false, true] {
+        let (tx, rx) = mpsc::channel();
+        let pool = ThreadPoolBuilder::new()
+            .num_threads(2)
+            .exit_handler(move |_| {
+                let _send_result = tx.send(());
+            })
+            .build()
+            .expect("active-wait test fixture");
+        let result: ThreadResult<()> = std::panic::catch_unwind(AssertUnwindSafe(|| {
+            with_fresh_active_workers(pool, || assert!(!panic, "intentional root panic"));
+        }));
+        assert_eq!(result.is_err(), panic);
+        for _ in 0..2 {
+            rx.recv_timeout(Duration::from_secs(30))
+                .expect("active-wait test fixture");
+        }
+    }
+}

@@ -348,6 +348,12 @@ pub struct ProfileArgs {
     #[clap(long)]
     pub akita_prover_pool: bool,
 
+    /// Keep dedicated prover workers searching during this proof, using released Rayon.
+    /// Unlike a bounded idle timeout, this can use more CPU during serial phases.
+    #[cfg(feature = "akita")]
+    #[clap(long, requires = "akita_prover_pool")]
+    pub akita_prover_active_wait: bool,
+
     /// Explicit memory budget in bytes: an integer with an optional binary
     /// suffix (KiB, MiB, GiB or TiB; e.g. 32GiB). Requires `--backend
     /// optimized`. The profile reserves against it in turn and returns an
@@ -430,7 +436,14 @@ impl ProfileArgs {
             profile => format!("_w{}r{}", profile.chunks, profile.levels),
         };
         if self.akita_prover_pool {
-            format!("{geometry}_proverpool")
+            format!(
+                "{geometry}_proverpool{}",
+                if self.akita_prover_active_wait {
+                    "_activewait"
+                } else {
+                    ""
+                }
+            )
         } else {
             geometry
         }
@@ -552,6 +565,7 @@ type ProfileResult<T> = StdResult<T, Box<dyn Error + Send + Sync>>;
 /// ([`ProverError::MemoryBudgetExceeded`](crate::ProverError::MemoryBudgetExceeded)),
 /// and, under Akita, a PCS setup failure, such as a budgeted setup shape the
 /// matrix limit does not price.
+/// Active waiting requires the dedicated Akita prover pool.
 /// Streaming selections require the optimized backend and cannot be combined
 /// with a memory budget, whose reservations price only eager kernels.
 ///
@@ -563,6 +577,10 @@ type ProfileResult<T> = StdResult<T, Box<dyn Error + Send + Sync>>;
 /// subscriber-installing format (the global tracing subscriber can only be
 /// set once).
 pub fn run(args: &ProfileArgs) -> ProfileResult<ProfileArtifacts> {
+    #[cfg(feature = "akita")]
+    if args.akita_prover_active_wait && !args.akita_prover_pool {
+        return Err("--akita-prover-active-wait requires --akita-prover-pool".into());
+    }
     if args.streaming.is_some() {
         if args.memory_budget.is_some() {
             return Err("--streaming cannot be combined with --memory-budget: streaming kernels are not priced".into());
@@ -958,6 +976,7 @@ fn run_workload(args: &ProfileArgs, scale: u32, run_dir: &Path) -> ProfileResult
         let metrics = {
             let mut metrics = metrics;
             metrics["akita_prover_pool"] = serde_json::json!(args.akita_prover_pool);
+            metrics["akita_prover_active_wait"] = serde_json::json!(args.akita_prover_active_wait);
             metrics
         };
         fs::write(
@@ -1229,10 +1248,6 @@ fn prove_workload(
         }
         None => AkitaScheme::setup(params)?,
     };
-    let prover_pool = args.akita_prover_pool.then(|| {
-        let threads = NonZeroUsize::new(rayon::current_num_threads()).expect("nonzero pool size");
-        AkitaProverPool::new(threads).expect("create explicit prover pool")
-    });
     let setup_duration = setup_now.elapsed();
     drop(setup_guard);
     let prover_preprocessing = JoltProverPreprocessing::<AkitaScheme, AkitaVc> {
@@ -1260,7 +1275,8 @@ fn prove_workload(
     );
     // --- The measured window: the full Akita prove (OneHotTrace assembly
     // and native commit, all sumcheck stages, and the native grouped opening).
-    // This interval also includes backend construction and optional pool dispatch,
+    // This interval also includes backend construction, optional pool construction,
+    // helper startup, and pool dispatch,
     // which sit outside the `jolt_prover::prove` root span.
     let now = Instant::now();
     let prove = || {
@@ -1278,9 +1294,17 @@ fn prove_workload(
             &public_io,
         )
     };
-    let proof = match &prover_pool {
-        Some(pool) => pool.install(prove),
-        None => prove(),
+    let proof = if args.akita_prover_pool {
+        let threads = NonZeroUsize::new(rayon::current_num_threads()).expect("nonzero pool size");
+        if args.akita_prover_active_wait {
+            AkitaProverPool::with_active_wait(threads, prove).expect("create active prover pool")
+        } else {
+            AkitaProverPool::new(threads)
+                .expect("create explicit prover pool")
+                .install(prove)
+        }
+    } else {
+        prove()
     }
     .expect("modular Akita prove");
     let duration = now.elapsed();
