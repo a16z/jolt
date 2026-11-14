@@ -303,10 +303,10 @@ impl ExecutionBackend for X86TracerBackend {
         let data = TraceData::new(rows);
         let dimensions = ExecutionDimensions {
             trace_length: data.proof_len(),
-            ends_in_jump: data
+            ends_in_halt: data
                 .proof_rows()
                 .last()
-                .is_some_and(|row| row.circuit_flags().get(CircuitFlags::Jump)),
+                .is_some_and(|row| row.circuit_flags().get(CircuitFlags::Halt)),
             ram_bounds,
         };
         Ok(TraceOutput::with_dimensions(

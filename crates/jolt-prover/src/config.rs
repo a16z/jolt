@@ -49,7 +49,7 @@ impl ProverConfig {
     /// Select the protocol's padded trace domain: the smallest power of two
     /// holding every executed row, and at least `MIN_PADDED_TRACE_LENGTH`.
     /// No final no-op row is reserved, for two reasons. At `T - 1` the shift
-    /// boundary already gives the final jump a no-op successor. The verifier
+    /// boundary already gives the final halt a no-op successor. The verifier
     /// accepts any power of two up to `max_padded_trace_length`. Reserving a
     /// row would therefore refuse executions that the verifier accepts.
     pub fn padded_trace_length<F: JoltField>(
@@ -74,8 +74,8 @@ impl ProverConfig {
         program_image_len_words: usize,
         max_padded_trace_length: usize,
     ) -> Result<Self, ProverError<F>> {
-        if dimensions.trace_length != 0 && !dimensions.ends_in_jump {
-            return Err(ProverError::TraceDoesNotEndInJump);
+        if !dimensions.ends_in_halt {
+            return Err(ProverError::TraceDoesNotEndInHalt);
         }
         let trace_length = Self::padded_trace_length::<F>(dimensions.trace_length)?;
         if let Some(min) = dimensions.ram_bounds.min() {
@@ -305,13 +305,13 @@ mod dimension_tests {
                             .expect("valid row")
                     })
                     .collect();
-                let jump = JoltInstructionRow {
-                    instruction_kind: JoltInstructionKind::JAL,
+                let halt = JoltInstructionRow {
+                    instruction_kind: JoltInstructionKind::JoltSuccess,
                     ..Default::default()
                 };
                 rows.push(
-                    JoltTraceRow::new(jump, Default::default(), RamAccess::NoOp, 1)
-                        .expect("jump row"),
+                    JoltTraceRow::new(halt, Default::default(), RamAccess::NoOp, 1)
+                        .expect("halt row"),
                 );
                 let dimensions = ExecutionDimensions::from_rows(&rows);
                 assert_eq!(
@@ -354,7 +354,7 @@ mod dimension_tests {
             ProverConfig::derive_from_dimensions::<Fr>(
                 ExecutionDimensions {
                     trace_length,
-                    ends_in_jump: trace_length != 0,
+                    ends_in_halt: true,
                     ram_bounds: RamAddressBounds::try_new(max_ram_address.map(|address| {
                         let address = NonZeroU64::new(address).expect("nonzero address");
                         (address, address)
@@ -368,9 +368,9 @@ mod dimension_tests {
             )
             .expect("valid execution dimensions")
         };
-        let empty = derive(0, None, 0);
-        assert_eq!(empty.trace_length, MIN_PADDED_TRACE_LENGTH);
-        assert_eq!(empty.ram_K, 1);
+        let minimal = derive(1, None, 0);
+        assert_eq!(minimal.trace_length, MIN_PADDED_TRACE_LENGTH);
+        assert_eq!(minimal.ram_K, 1);
         let touched = derive(MIN_PADDED_TRACE_LENGTH, Some(lowest + 8 * 513), 3);
         assert_eq!(touched.trace_length, MIN_PADDED_TRACE_LENGTH);
         assert_eq!(touched.ram_K, 1024);
@@ -415,12 +415,12 @@ mod dimension_tests {
         for dimensions in [
             ExecutionDimensions {
                 trace_length: usize::MAX,
-                ends_in_jump: true,
+                ends_in_halt: true,
                 ram_bounds: RamAddressBounds::default(),
             },
             ExecutionDimensions {
-                trace_length: 0,
-                ends_in_jump: false,
+                trace_length: 1,
+                ends_in_halt: true,
                 ram_bounds: RamAddressBounds::try_new(Some((
                     NonZeroU64::new(layout.get_lowest_address() - 1).expect("nonzero address"),
                     NonZeroU64::new(layout.get_lowest_address() - 1).expect("nonzero address"),
@@ -500,7 +500,7 @@ mod tests {
     }
 
     #[test]
-    fn derive_rejects_a_trace_whose_last_row_is_not_a_jump() {
+    fn derive_rejects_a_trace_whose_last_row_is_not_a_halt() {
         let self_branch = instruction(
             Kind::BEQ,
             NormalizedOperands {
@@ -509,20 +509,6 @@ mod tests {
                 ..NormalizedOperands::default()
             },
         );
-        // A taken self-branch, and the last row before a trap that emitted none.
-        for last in [self_branch, addi()] {
-            let result = derive(&[addi(), last]);
-            assert!(
-                matches!(result, Err(ProverError::TraceDoesNotEndInJump)),
-                "{:?}: {result:?}",
-                last.instruction_kind
-            );
-        }
-    }
-
-    #[test]
-    fn derive_accepts_a_trace_ending_in_a_jump() {
-        let jal = instruction(Kind::JAL, NormalizedOperands::default());
         let jalr = instruction(
             Kind::JALR,
             NormalizedOperands {
@@ -530,9 +516,32 @@ mod tests {
                 ..NormalizedOperands::default()
             },
         );
-        for last in [jal, jalr] {
+        // A taken self-branch, the last row before a trap that emitted none,
+        // and ordinary jumps, which never end a run.
+        for last in [
+            self_branch,
+            addi(),
+            instruction(Kind::JAL, NormalizedOperands::default()),
+            jalr,
+        ] {
             let result = derive(&[addi(), last]);
-            assert!(result.is_ok(), "{:?}: {result:?}", last.instruction_kind);
+            assert!(
+                matches!(result, Err(ProverError::TraceDoesNotEndInHalt)),
+                "{:?}: {result:?}",
+                last.instruction_kind
+            );
+        }
+        assert!(matches!(
+            derive(&[]),
+            Err(ProverError::TraceDoesNotEndInHalt)
+        ));
+    }
+
+    #[test]
+    fn derive_accepts_a_trace_ending_in_a_halt() {
+        for kind in [Kind::JoltSuccess, Kind::JoltPanic] {
+            let result = derive(&[addi(), instruction(kind, NormalizedOperands::default())]);
+            assert!(result.is_ok(), "{kind:?}: {result:?}");
         }
     }
 
@@ -542,7 +551,10 @@ mod tests {
     #[test]
     fn derive_accepts_a_trace_that_fills_the_maximum_domain() {
         let mut trace = vec![addi(); (1 << 12) - 1];
-        trace.push(instruction(Kind::JAL, NormalizedOperands::default()));
+        trace.push(instruction(
+            Kind::JoltSuccess,
+            NormalizedOperands::default(),
+        ));
         assert_eq!(derive(&trace).unwrap().trace_length, 1 << 12);
         trace.insert(0, addi());
         assert!(matches!(

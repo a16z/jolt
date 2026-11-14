@@ -274,9 +274,10 @@ fn commit_program_image(
 #[expect(clippy::unwrap_used)]
 mod tests {
     use crate::PreprocessingError;
-    use common::jolt_device::MemoryLayout;
+    use common::constants::RAM_START_ADDRESS;
+    use common::jolt_device::{MemoryConfig, MemoryLayout};
     use jolt_program::preprocess::JoltProgramPreprocessing;
-    use jolt_riscv::RV64IMAC_JOLT;
+    use jolt_riscv::{JoltInstructionKind, JoltInstructionRow, NormalizedOperands, RV64IMAC_JOLT};
 
     use super::{from_shared, preprocess_committed, DoryProverPreprocessing};
     use crate::JoltSharedPreprocessing;
@@ -301,11 +302,24 @@ mod tests {
 
     #[test]
     fn full_prover_preprocessing_round_trips() {
+        let entry = JoltInstructionRow {
+            instruction_kind: JoltInstructionKind::ADDI,
+            address: RAM_START_ADDRESS as usize,
+            operands: NormalizedOperands {
+                rd: Some(1),
+                rs1: Some(0),
+                ..NormalizedOperands::default()
+            },
+            ..JoltInstructionRow::default()
+        };
         let full = JoltProgramPreprocessing::new(
+            vec![entry],
             Vec::new(),
-            Vec::new(),
-            MemoryLayout::default(),
-            0,
+            MemoryLayout::new(&MemoryConfig {
+                program_size: Some(1024),
+                ..Default::default()
+            }),
+            RAM_START_ADDRESS,
             1 << 12,
             RV64IMAC_JOLT,
         )

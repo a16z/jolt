@@ -549,6 +549,7 @@ where
             });
         }
     }
+    program.validate_entry_row()?;
     #[cfg(feature = "field-inline")]
     {
         let full = program
@@ -1008,6 +1009,7 @@ where
     }
     validate_ram_remap_base(memory_layout)?;
     preprocessing.program.validate_code_word_intervals()?;
+    preprocessing.program.validate_entry_row()?;
 
     if num::u64_from_usize(public_io.inputs.len()) > memory_layout.max_input_size {
         return Err(VerifierError::InputTooLarge {
@@ -1189,6 +1191,7 @@ mod tests {
     use jolt_openings::{CommitmentScheme, OpeningsError};
     use jolt_poly::MultilinearPoly;
     use jolt_program::preprocess::JoltProgramPreprocessing;
+    use jolt_riscv::{JoltInstructionKind, JoltInstructionRow, NormalizedOperands};
     use jolt_sumcheck::{
         ClearProof, ClearSumcheckProof, CommittedSumcheckProof, CompressedSumcheckProof,
     };
@@ -1196,7 +1199,7 @@ mod tests {
     use jolt_zk::BlindFoldProof;
     use num_traits::Zero;
 
-    use crate::preprocessing::ProgramPreprocessing;
+    use crate::preprocessing::{CommittedProgramPreprocessing, ProgramPreprocessing};
 
     #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
     struct TestPcs;
@@ -1297,8 +1300,6 @@ mod tests {
 
     #[test]
     fn protocol_and_payload_reject_before_preprocessing_validation() {
-        #[cfg(feature = "field-inline")]
-        use jolt_riscv::JoltInstructionKind;
         use jolt_transcript::{verifier_transcript, Keccak};
         #[cfg_attr(not(feature = "field-inline"), expect(unused_mut))]
         let mut preprocessing = test_preprocessing();
@@ -1698,6 +1699,61 @@ mod tests {
         ));
     }
 
+    #[test]
+    #[expect(clippy::expect_used, reason = "test fixture")]
+    fn validate_inputs_rejects_an_entry_row_that_is_padding() {
+        let honest = test_preprocessing();
+        let public_io = JoltDevice {
+            memory_layout: honest.program.memory_layout().clone(),
+            ..JoltDevice::default()
+        };
+        let proof = proof_with_zk(false, clear_claims());
+        let full = honest.program.as_full().expect("full test program");
+        let mut padding_entry = full.clone();
+        padding_entry.bytecode.entry_address = 0;
+        let mut meta = full.metadata().expect("the entry names a row");
+        meta.entry_bytecode_index = 0;
+        for (program, entry_address) in [
+            (ProgramPreprocessing::Full(Arc::new(padding_entry)), 0),
+            (
+                ProgramPreprocessing::Committed(CommittedProgramPreprocessing {
+                    meta,
+                    memory_layout: full.memory_layout.clone(),
+                    max_padded_trace_length: full.max_padded_trace_length,
+                    program_image_commitment: TestCommitment,
+                    bytecode_commitment: TestCommitment,
+                    trace_order: proof.trace_polynomial_order,
+                }),
+                RAM_START_ADDRESS,
+            ),
+        ] {
+            let preprocessing = JoltVerifierPreprocessing {
+                program,
+                ..honest.clone()
+            };
+            assert!(matches!(
+                validate_inputs(&preprocessing, &public_io, &proof, false),
+                Err(VerifierError::EntryNotInstruction { entry_address: got })
+                    if got == entry_address
+            ));
+            assert!(matches!(
+                validate_inputs_from_parts(
+                    &preprocessing,
+                    &public_io,
+                    proof.trace_length,
+                    proof.ram_K,
+                    proof.trace_polynomial_order,
+                    proof.one_hot_config,
+                    false,
+                    false,
+                    false,
+                ),
+                Err(VerifierError::EntryNotInstruction { entry_address: got })
+                    if got == entry_address
+            ));
+        }
+    }
+
     /// The field-inline BlindFold generator budget must fit the largest committed round of the
     /// composed protocol: the Spartan outer uni-skip first round (degree
     /// `SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE`, one coefficient more), or `commit_round`
@@ -2086,8 +2142,18 @@ mod tests {
     fn test_preprocessing_with_layout(
         memory_layout: common::jolt_device::MemoryLayout,
     ) -> JoltVerifierPreprocessing<TestPcs, Pedersen<Bn254G1>> {
+        let entry_row = JoltInstructionRow {
+            instruction_kind: JoltInstructionKind::ADDI,
+            address: usize::try_from(RAM_START_ADDRESS).expect("RAM start fits usize"),
+            operands: NormalizedOperands {
+                rd: Some(1),
+                rs1: Some(0),
+                ..NormalizedOperands::default()
+            },
+            ..JoltInstructionRow::default()
+        };
         let program = JoltProgramPreprocessing::new(
-            Vec::new(),
+            vec![entry_row],
             Vec::new(),
             memory_layout,
             RAM_START_ADDRESS,

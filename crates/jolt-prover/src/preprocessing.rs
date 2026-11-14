@@ -46,11 +46,11 @@ impl TryFrom<Arc<JoltProgramPreprocessing>> for JoltSharedPreprocessing {
     type Error = PreprocessingError;
 
     // Fails the SDK's fallible `preprocess_shared_*` entry point early; the
-    // verifier re-checks at stage 6 via `entry_bytecode_index_checked`.
+    // verifier re-checks in `validate_inputs`.
     fn try_from(program: Arc<JoltProgramPreprocessing>) -> Result<Self, Self::Error> {
-        if program.metadata().is_none() {
+        if program.bytecode.entry_instruction().is_none() {
             return Err(PreprocessingError::InvalidProgram {
-                reason: "entry address is absent from bytecode preprocessing".to_owned(),
+                reason: "entry address does not name an instruction row".to_owned(),
             });
         }
         Ok(Self { program })
@@ -66,24 +66,50 @@ impl From<JoltSharedPreprocessing> for Arc<JoltProgramPreprocessing> {
 #[cfg(test)]
 #[expect(clippy::unwrap_used)]
 mod tests {
-    use common::jolt_device::MemoryLayout;
+    use common::constants::RAM_START_ADDRESS;
+    use common::jolt_device::{MemoryConfig, MemoryLayout};
     use jolt_program::preprocess::JoltProgramPreprocessing;
-    use jolt_riscv::RV64IMAC_JOLT;
+    use jolt_riscv::{JoltInstructionKind, JoltInstructionRow, NormalizedOperands, RV64IMAC_JOLT};
 
     use super::JoltSharedPreprocessing;
     use crate::PreprocessingError;
 
-    #[test]
-    fn shared_preprocessing_serializes_as_its_program() {
-        let program = JoltProgramPreprocessing::new(
+    /// `bytecode` loaded under a small real layout, entering at `entry_address`.
+    fn program_with_entry(
+        bytecode: Vec<JoltInstructionRow>,
+        entry_address: u64,
+    ) -> JoltProgramPreprocessing {
+        let layout = MemoryLayout::new(&MemoryConfig {
+            program_size: Some(1024),
+            ..Default::default()
+        });
+        JoltProgramPreprocessing::new(
+            bytecode,
             Vec::new(),
-            Vec::new(),
-            MemoryLayout::default(),
-            0,
+            layout,
+            entry_address,
             1 << 12,
             RV64IMAC_JOLT,
         )
-        .unwrap();
+        .unwrap()
+    }
+
+    fn addi_at_ram_start() -> JoltInstructionRow {
+        JoltInstructionRow {
+            instruction_kind: JoltInstructionKind::ADDI,
+            address: RAM_START_ADDRESS as usize,
+            operands: NormalizedOperands {
+                rd: Some(1),
+                rs1: Some(0),
+                ..NormalizedOperands::default()
+            },
+            ..JoltInstructionRow::default()
+        }
+    }
+
+    #[test]
+    fn shared_preprocessing_serializes_as_its_program() {
+        let program = program_with_entry(vec![addi_at_ram_start()], RAM_START_ADDRESS);
         let shared = JoltSharedPreprocessing::new(program.clone()).unwrap();
 
         let encoded = bincode::serde::encode_to_vec(&shared, bincode::config::standard()).unwrap();
@@ -98,28 +124,26 @@ mod tests {
     }
 
     #[test]
-    fn shared_preprocessing_rejects_an_entry_address_without_a_bytecode_row() {
-        let program = JoltProgramPreprocessing::new(
-            Vec::new(),
-            Vec::new(),
-            MemoryLayout::default(),
-            0x8000_0000,
-            1 << 12,
-            RV64IMAC_JOLT,
-        )
-        .unwrap();
-        assert!(matches!(
-            JoltSharedPreprocessing::new(program.clone()),
-            Err(PreprocessingError::InvalidProgram { .. })
-        ));
-        let encoded = bincode::serde::encode_to_vec(&program, bincode::config::standard()).unwrap();
-        assert!(
-            bincode::serde::decode_from_slice::<JoltSharedPreprocessing, _>(
-                &encoded,
-                bincode::config::standard()
-            )
-            .is_err()
-        );
+    fn shared_preprocessing_rejects_an_entry_without_an_instruction_row() {
+        // An entry absent from the bytecode, and one naming the padding row.
+        for program in [
+            program_with_entry(Vec::new(), RAM_START_ADDRESS),
+            program_with_entry(vec![addi_at_ram_start()], 0),
+        ] {
+            assert!(matches!(
+                JoltSharedPreprocessing::new(program.clone()),
+                Err(PreprocessingError::InvalidProgram { .. })
+            ));
+            let encoded =
+                bincode::serde::encode_to_vec(&program, bincode::config::standard()).unwrap();
+            assert!(
+                bincode::serde::decode_from_slice::<JoltSharedPreprocessing, _>(
+                    &encoded,
+                    bincode::config::standard()
+                )
+                .is_err()
+            );
+        }
     }
 }
 

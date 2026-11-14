@@ -214,10 +214,10 @@ fn finish_rows(
     };
     let dimensions = ExecutionDimensions {
         trace_length: data.proof_len(),
-        ends_in_jump: data
+        ends_in_halt: data
             .proof_rows()
             .last()
-            .is_some_and(|row| row.circuit_flags().get(CircuitFlags::Jump)),
+            .is_some_and(|row| row.circuit_flags().get(CircuitFlags::Halt)),
         ram_bounds,
     };
     Ok((data, dimensions))
@@ -955,7 +955,7 @@ mod conversion_tests {
                         .iter()
                         .all(|row| *row == JoltTraceRow::default()));
                     assert_eq!(dimensions.trace_length, 3);
-                    assert!(!dimensions.ends_in_jump);
+                    assert!(!dimensions.ends_in_halt);
                     assert_eq!(
                         dimensions.ram_bounds.min().map(|address| address.get()),
                         [read, write]

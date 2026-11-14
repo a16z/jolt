@@ -116,6 +116,26 @@ impl<PCS: CommitmentScheme> ProgramPreprocessing<PCS> {
             })
     }
 
+    /// Require the entry to name a real instruction row. Bytecode read-RAF's
+    /// entry term pins cycle 0 to this row; were it a no-op, an all-padding
+    /// trace would satisfy every constraint under either panic claim. A
+    /// committed key carries no rows, so here this rejects only the padding
+    /// row at index 0; that its entry index names a real row is trusted
+    /// preprocessing, like the committed rows themselves.
+    pub fn validate_entry_row(&self) -> Result<(), VerifierError> {
+        let names_instruction = match self {
+            Self::Full(full) => full.bytecode.entry_instruction().is_some(),
+            Self::Committed(committed) => committed.meta.entry_bytecode_index != 0,
+        };
+        if names_instruction {
+            Ok(())
+        } else {
+            Err(VerifierError::EntryNotInstruction {
+                entry_address: self.entry_address(),
+            })
+        }
+    }
+
     pub fn bytecode_len(&self) -> usize {
         match self {
             Self::Full(full) => full.bytecode.code_size,

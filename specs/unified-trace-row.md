@@ -313,8 +313,8 @@ event's cycle. There is no full trace conversion or normalization copy.
 `ProverConfig::derive_from_dimensions` consumes `ExecutionDimensions`
 summarizing the `proof_rows()` prefix. It pads to the smallest power of two
 holding the proof rows, subject to the protocol minimum, with no reserved
-final no-op row. Its last-row Jump precondition
-(`ProverError::TraceDoesNotEndInJump`) also depends on that prefix: summarizing
+final no-op row. Its last-row halt precondition
+(`ProverError::TraceDoesNotEndInHalt`) also depends on that prefix: summarizing
 `rows()` can include canonical padding and reject an honest trace. Witness and
 field construction validate the same retained `proof_len` against the cycle
 domain, and random-access proof consumers use that same prefix. This shared

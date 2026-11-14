@@ -299,7 +299,11 @@ mod tests {
         )
         .unwrap();
         let config = ProverConfig::derive_from_dimensions::<AkitaField>(
-            ExecutionDimensions::default(),
+            ExecutionDimensions {
+                trace_length: 1,
+                ends_in_halt: true,
+                ..Default::default()
+            },
             &program.memory_layout,
             program.ram.min_bytecode_address,
             program.ram.bytecode_words.len(),
