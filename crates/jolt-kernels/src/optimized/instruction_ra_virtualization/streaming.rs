@@ -9,11 +9,11 @@ use jolt_field::{Accumulator, JoltField};
 use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::SumcheckError;
 use jolt_verifier::stages::stage6b::instruction_ra_virtualization::InstructionRaVirtualization;
-use jolt_witness::witnesses::LookupIndex;
-use jolt_witness::{JoltWitnessPlane, WitnessBundle, WitnessError};
+use jolt_witness::{JoltWitnessPlane, WitnessError};
 
 use super::{OptimizedInstructionRaVirtualizationKernel, Selectors};
-use crate::optimized::streaming::{RowIndexSource, StreamedFoldedRa, MATERIALIZE_BYTES};
+use crate::optimized::instruction_read_raf::{LookupIndexDigits, LookupIndexRow};
+use crate::optimized::streaming::{StreamedFoldedRa, MATERIALIZE_BYTES};
 use crate::optimized::support::{
     accumulate_product_grid, eq_round_error, product_grid_scratch_len, BundleStore,
     GruenRoundMessage,
@@ -50,34 +50,6 @@ impl<F: JoltField> PrepareKernel<F, InstructionRaVirtualization<F>>
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, WitnessBundle)]
-pub(super) struct LookupIndexRow {
-    pub(super) lookup_index: LookupIndex,
-}
-
-/// Column `i` is the `i`-th most significant `bits`-bit digit of a cycle's
-/// lookup index, always hot.
-#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
-pub(super) struct LookupIndexDigits {
-    columns: usize,
-    /// At most 32: the kernel's constructor refuses wider chunks.
-    bits: usize,
-}
-
-impl RowIndexSource for LookupIndexDigits {
-    type Row = LookupIndexRow;
-
-    #[inline]
-    fn for_each_hot(&self, row: &LookupIndexRow, mut visit: impl FnMut(usize, usize)) {
-        let mask = (1u128 << self.bits) - 1;
-        let mut index = row.lookup_index.0;
-        for column in (0..self.columns).rev() {
-            visit(column, (index & mask) as usize);
-            index >>= self.bits;
-        }
-    }
-}
-
 pub(super) fn rows_unavailable<F: JoltField>(_: WitnessError) -> SumcheckError<F> {
     SumcheckError::MissingEvaluationSource {
         kind: "instruction RA virtualization trace rows",
@@ -95,10 +67,7 @@ impl<F: JoltField> OptimizedInstructionRaVirtualizationKernel<F> {
         materialize_bytes: usize,
     ) -> Result<Self, KernelError<F>> {
         Self::with_selectors(relation, gamma, |tables| {
-            let source = LookupIndexDigits {
-                columns: tables.len(),
-                bits: relation.committed_chunk_bits(),
-            };
+            let source = LookupIndexDigits::new(tables.len(), relation.committed_chunk_bits());
             let selectors = StreamedFoldedRa::new(
                 tables,
                 source,
@@ -107,7 +76,7 @@ impl<F: JoltField> OptimizedInstructionRaVirtualizationKernel<F> {
                 materialize_bytes,
             );
             // A one-cycle domain has no bind to materialize at.
-            Ok(match selectors.materialized()? {
+            Ok(match selectors.single_cycle()? {
                 Some(dense) => Selectors::Lazy(dense),
                 None => Selectors::Streamed(selectors),
             })
@@ -133,7 +102,7 @@ impl<F: JoltField> OptimizedInstructionRaVirtualizationKernel<F> {
                     &self.gruen,
                     3,
                     || (),
-                    |(), lo, hi, terms| {
+                    |(), _, lo, hi, terms| {
                         terms.fill(F::zero());
                         for (lo, hi) in lo.iter().zip(hi).take(active) {
                             terms[0] += *lo;
@@ -163,7 +132,7 @@ impl<F: JoltField> OptimizedInstructionRaVirtualizationKernel<F> {
                     steps: vec![F::zero(); n],
                     grid: vec![F::zero(); product_grid_scratch_len(n)],
                 },
-                |scratch, lo, hi, terms| {
+                |scratch, _, lo, hi, terms| {
                     scratch.row_lanes.fill(F::Accumulator::default());
                     for (lo, hi) in lo.chunks_exact(n).zip(hi.chunks_exact(n)).take(active) {
                         for (((eval, step), lo), hi) in scratch
@@ -196,7 +165,7 @@ impl<F: JoltField> OptimizedInstructionRaVirtualizationKernel<F> {
                     &self.gruen,
                     1,
                     || (),
-                    |(), lo, _, terms| {
+                    |(), _, lo, _, terms| {
                         terms[0] = lo
                             .chunks_exact(n)
                             .take(active)

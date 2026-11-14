@@ -550,8 +550,7 @@ impl<F: JoltField> OptimizedBooleanityCycleKernel<F> {
         match &mut self.tables {
             CycleTables::Lazy(tables) => tables.bind(challenge),
             CycleTables::Streamed(selectors) => {
-                selectors.bind(challenge);
-                if let Some(dense) = selectors.materialized().map_err(rows_unavailable)? {
+                if let Some(dense) = selectors.bind(challenge).map_err(rows_unavailable)? {
                     self.tables = CycleTables::Lazy(dense);
                 }
             }

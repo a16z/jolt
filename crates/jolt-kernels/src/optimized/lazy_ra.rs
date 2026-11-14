@@ -186,7 +186,8 @@ impl LazyBind {
     /// The step for branch tables of `table_lens` entries, in polynomial
     /// order with `factors` tables per polynomial (only each polynomial's
     /// first table doubles), over `cycles` cycles at `width` of at most
-    /// `max_width` branches.
+    /// `max_width` branches. A dense element count past `usize` saturates:
+    /// it exceeds every branch table that fits in memory.
     pub(super) fn new(
         width: usize,
         max_width: usize,
@@ -194,7 +195,7 @@ impl LazyBind {
         cycles: usize,
         table_lens: impl ExactSizeIterator<Item = usize>,
     ) -> Self {
-        let dense_elements = cycles / (2 * width) * (table_lens.len() / factors);
+        let dense_elements = (cycles / (2 * width)).saturating_mul(table_lens.len() / factors);
         let branch_elements = table_lens
             .enumerate()
             .map(|(column, len)| len * if column.is_multiple_of(factors) { 2 } else { 1 })

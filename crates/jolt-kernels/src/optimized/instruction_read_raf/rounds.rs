@@ -1,7 +1,7 @@
 use super::*;
 
 impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
-    fn init_cycle_rounds(&mut self) {
+    fn init_cycle_rounds(&mut self) -> Result<(), WitnessError> {
         let gamma_sqr = self.gamma * self.gamma;
         let empty_bits = LookupBits::new(0, 0);
         let table_values: Vec<F> = LookupTableKind::<RISCV_XLEN>::iter()
@@ -24,24 +24,6 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
             raf_identity += gamma_sqr * self.gamma * self.raf_upper_all_ones.checkpoint;
         }
 
-        // Snap the packed output-claim facts first: past this handoff the
-        // final flag walk reads one byte per cycle, not the 40 B row.
-        let rows = self.rows.representatives();
-        const {
-            assert!(
-                LookupTableKind::<RISCV_XLEN>::COUNT < 0x7f,
-                "table indices must fit the packed claim byte"
-            );
-        }
-        let claim_columns = Arc::new(ConstantSuffix::new(
-            map_indices(rows.len(), |j| {
-                let row = &rows[j];
-                let table = row.table_index().map_or(0, |index| index as u8 + 1);
-                table | (u8::from(row.raf_flag()) << 7)
-            }),
-            self.rows.len(),
-        ));
-        self.claim_columns = Arc::clone(&claim_columns);
         let combined_table: Vec<F> = (0..=u8::MAX)
             .map(|packed| {
                 let table_value = usize::from(packed & 0x7f)
@@ -74,9 +56,49 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
             }
             table
         });
-        let rows = std::mem::replace(&mut self.rows, Arc::new(Vec::new().into()));
-        let chunks =
-            LookupIndexChunks::new(rows, column_tables.len(), phases_per_column * CHUNK_LEN);
+        let columns = column_tables.len();
+        let chunk_bits = phases_per_column * CHUNK_LEN;
+        let factors = phases_per_ra / phases_per_column;
+        // Past this handoff the cycle tables own the rows.
+        let released = ScanRows::Collected {
+            rows: Arc::new(Vec::new().into()),
+            blocks: Vec::new(),
+        };
+        let ra = match std::mem::replace(&mut self.rows, released) {
+            ScanRows::Collected { rows, .. } => {
+                // Snap the packed output-claim facts first: past this handoff
+                // the final flag walk reads one byte per cycle, not the 40 B
+                // row.
+                let packed = rows.representatives();
+                self.claim_columns = Arc::new(ConstantSuffix::new(
+                    map_indices(packed.len(), |j| {
+                        claim_byte(packed[j].table_index(), packed[j].raf_flag())
+                    }),
+                    rows.len(),
+                ));
+                CycleRa::Lazy(LazyFoldedRa::factored(
+                    column_tables,
+                    factors,
+                    LAZY_MAX_WIDTH,
+                    LookupIndexChunks::new(rows, columns, chunk_bits),
+                ))
+            }
+            ScanRows::Resident { lookup_indices, .. } => {
+                let ra = StreamedFoldedRa::factored(
+                    column_tables,
+                    factors,
+                    LAZY_MAX_WIDTH,
+                    LookupIndexDigits::new(columns, chunk_bits),
+                    lookup_indices,
+                    self.dimensions.log_t(),
+                );
+                // A one-cycle domain has no bind to materialize at.
+                match ra.single_cycle()? {
+                    Some(dense) => CycleRa::Lazy(dense),
+                    None => CycleRa::Streamed(ra),
+                }
+            }
+        };
 
         self.cycle = Some(CycleState {
             gruen: GruenSplitEqPolynomial::new(&self.r_reduction, BindingOrder::LowToHigh),
@@ -84,22 +106,18 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
                 vec![combined_table],
                 1,
                 LAZY_MAX_WIDTH,
-                ClaimBytes(claim_columns),
+                ClaimBytes(Arc::clone(&self.claim_columns)),
             ),
-            ra: LazyFoldedRa::factored(
-                column_tables,
-                phases_per_ra / phases_per_column,
-                LAZY_MAX_WIDTH,
-                chunks,
-            ),
+            ra,
         });
 
-        // The address-phase state is dead past this point; the rows live on
-        // in the lazy RA source until the third cycle bind.
+        // The address-phase state is dead past this point; the collected rows
+        // live on in the lazy RA source until it materializes.
         self.u_evals = Vec::new();
         self.prefix_tables = Vec::new();
         self.suffix_tables = Vec::new();
-        self.blocks = ScanBlocks::new(Vec::new());
+        self.range = Vec::new();
+        Ok(())
     }
 
     fn bind(&mut self, challenge: F) -> Result<(), SumcheckError<F>> {
@@ -146,10 +164,11 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
                 }
 
                 if phase + 1 < self.phases() {
-                    self.init_phase(phase + 1);
+                    self.init_phase(phase + 1)
                 } else {
-                    self.init_cycle_rounds();
+                    self.init_cycle_rounds()
                 }
+                .map_err(rows_unavailable)?;
             }
         } else {
             let cycle = self
@@ -162,7 +181,14 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
                 .ok_or_else(|| eq_round_error(round))?
                 .bind(challenge);
             cycle.combined_val.bind(challenge);
-            cycle.ra.bind(challenge);
+            match &mut cycle.ra {
+                CycleRa::Lazy(ra) => ra.bind(challenge),
+                CycleRa::Streamed(ra) => {
+                    if let Some(dense) = ra.bind(challenge).map_err(rows_unavailable)? {
+                        cycle.ra = CycleRa::Lazy(dense);
+                    }
+                }
+            }
             self.cycle_challenges.push(challenge);
         }
         self.progress.advance();

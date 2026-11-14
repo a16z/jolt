@@ -38,6 +38,7 @@
 
 use crate::optimized::support::eq_round_error;
 mod cycle_groups;
+mod streaming;
 
 use cycle_groups::CyclePairGroups;
 use std::num::NonZeroU16;
@@ -62,22 +63,31 @@ use jolt_witness::witnesses::FusedInc;
 use jolt_witness::witnesses::{
     BytecodePc, InstructionRafFlag, LookupIndex, RemappedRamAddress, TableIndex,
 };
-use jolt_witness::{stream_witnesses, JoltWitnessPlane, StreamConsumer, WitnessBundle};
+use jolt_witness::{
+    stream_witnesses, JoltWitnessPlane, StreamConsumer, WitnessBundle, WitnessError,
+};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
+use streaming::rows_unavailable;
+pub use streaming::StreamingInstructionReadRaf;
+pub(crate) use streaming::{LookupIndexDigits, LookupIndexRow};
 
 use super::constant_suffix::ConstantSuffix;
 use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa, PairedBranchTables};
+use super::streaming::StreamedFoldedRa;
 use super::support::{
     accumulate_product_grid, collect_par_map, map_indices, map_reduce_chunks,
     product_grid_scratch_len, repeat_hash, repeats_often, scan_chunk_size, BundleAccess,
-    GruenRoundMessage, LowDegreeProductSum, PrefixCycleWeights, RepeatCache, RoundProgress,
-    TailFactorProducts,
+    BundleStore, GruenRoundMessage, LowDegreeProductSum, PrefixCycleWeights, RepeatCache,
+    RoundProgress, TailFactorProducts,
 };
+use crate::reference::instruction_read_raf::InstructionReadRafWitness;
 use crate::reference::views::eq_table;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
+
+const UNKNOWN_TABLE: &str = "stage-5 row selects an unknown lookup table";
 
 /// Address variables bound per phase — identical to the reference kernel (and
 /// to the legacy prover below its 2^24-cycle threshold).
@@ -611,7 +621,15 @@ struct CycleState<F: JoltField> {
     /// Virtual RA polynomials over lookup-index chunks of at most 16 bits
     /// (the tensor product of those phases' eq tables); wider virtual
     /// chunks are products of such columns.
-    ra: LazyFoldedRa<F, LookupIndexChunks>,
+    ra: CycleRa<F>,
+}
+
+/// The virtual RA polynomials: the default family over the packed row cache,
+/// or the streaming family until the bind that gathers it dense.
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
+enum CycleRa<F: JoltField> {
+    Lazy(LazyFoldedRa<F, LookupIndexChunks>),
+    Streamed(StreamedFoldedRa<F, LookupIndexDigits>),
 }
 
 struct RafScan<F: JoltField> {
@@ -692,6 +710,43 @@ impl<F: JoltField> RafSums<F> {
     }
 }
 
+/// One cycle's stage-5 facts, as the phase scans read them.
+trait ScanRow {
+    fn lookup_index(&self) -> u128;
+    fn table_index(&self) -> Option<usize>;
+    fn raf_flag(&self) -> bool;
+}
+
+impl ScanRow for InstructionCycleRow {
+    #[inline(always)]
+    fn lookup_index(&self) -> u128 {
+        InstructionCycleRow::lookup_index(self)
+    }
+
+    #[inline]
+    fn table_index(&self) -> Option<usize> {
+        InstructionCycleRow::table_index(self)
+    }
+
+    #[inline]
+    fn raf_flag(&self) -> bool {
+        InstructionCycleRow::raf_flag(self)
+    }
+}
+
+/// The packed output-claim facts of one cycle: `table_index + 1` in bits
+/// `0..=6` (0 for none) and the RAF flag in bit 7.
+#[inline]
+fn claim_byte(table_index: Option<usize>, raf_flag: bool) -> u8 {
+    const {
+        assert!(
+            LookupTableKind::<RISCV_XLEN>::COUNT < 0x7f,
+            "table indices must fit the packed claim byte"
+        );
+    }
+    table_index.map_or(0, |index| index as u8 + 1) | (u8::from(raf_flag) << 7)
+}
+
 /// Scan classes: `2 · (table + 1) + raf_flag`, with `2 · 0 + raf_flag` for
 /// no-table cycles.
 const SCAN_CLASSES: usize = 2 * (LookupTableKind::<RISCV_XLEN>::COUNT + 1);
@@ -715,10 +770,10 @@ struct ScanBlock {
 }
 
 impl ScanBlock {
-    /// `OptimizedInstructionReadRafKernel::new` rejects rows whose
-    /// `table_index()` is not below `LookupTableKind::COUNT` before it builds
-    /// the blocks; such a row's class would index `starts` out of bounds.
-    fn new(rows: &[InstructionCycleRow]) -> Self {
+    /// The kernel's constructors reject rows whose `table_index()` is not
+    /// below `LookupTableKind::COUNT` before any block is built; such a row's
+    /// class would index `starts` out of bounds.
+    fn new<R: ScanRow>(rows: &[R]) -> Self {
         let mut starts = [0u16; SCAN_CLASSES + 1];
         let range_class = Self::range_class();
         let mut range_keys = 0u128;
@@ -798,7 +853,7 @@ impl ScanBlock {
         left.lookup_index() == right.lookup_index() && Self::class(left) == Self::class(right)
     }
 
-    fn class(row: &InstructionCycleRow) -> usize {
+    fn class<R: ScanRow>(row: &R) -> usize {
         Self::class_index(row.table_index(), row.raf_flag())
     }
 
@@ -818,18 +873,21 @@ impl ScanBlock {
 /// across heterogeneous cores.
 const SCAN_TASKS_PER_THREAD: usize = 8;
 
+/// Where the address phases read the rows they scan, and the cycle tables
+/// their lookup indices.
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
-struct ScanBlocks<F: JoltField> {
-    layout: Vec<ScanBlock>,
-    range: Vec<Option<RangePrefixSums<F>>>,
-}
-
-impl<F: JoltField> ScanBlocks<F> {
-    fn new(layout: Vec<ScanBlock>) -> Self {
-        // Keep cached field values out of the block stride used by ordinary scans.
-        let range = (0..layout.len()).map(|_| None).collect();
-        Self { layout, range }
-    }
+enum ScanRows {
+    /// The packed row cache, bucketed into scan blocks once.
+    Collected {
+        rows: Arc<ConstantSuffix<InstructionCycleRow>>,
+        blocks: Vec<ScanBlock>,
+    },
+    /// The witness's resident rows, bucketed block by block in every scan,
+    /// and the lookup indices of the same rows.
+    Resident {
+        rows: BundleStore<InstructionReadRafWitness>,
+        lookup_indices: BundleStore<LookupIndexRow>,
+    },
 }
 
 /// Zero-prefix range-check rows occupy address chunk zero. These three moments
@@ -847,12 +905,7 @@ impl<F: JoltField> RangePrefixSums<F> {
         LookupTableKind::RangeCheck(Default::default())
     }
 
-    fn new(
-        rows: &[InstructionCycleRow],
-        weights: &[F],
-        offsets: &[u16],
-        suffix_len: usize,
-    ) -> Self {
+    fn new<R: ScanRow>(rows: &[R], weights: &[F], offsets: &[u16], suffix_len: usize) -> Self {
         let mut mass = F::SumAccumulator::default();
         let mut identity = F::Accumulator::default();
         let mut lower_word = F::Accumulator::default();
@@ -1089,7 +1142,8 @@ impl<F: JoltField> PhaseScan<'_, F> {
     /// `u_evals` in place.
     fn run(
         &self,
-        blocks: &mut ScanBlocks<F>,
+        blocks: &[ScanBlock],
+        range: &mut [Option<RangePrefixSums<F>>],
         rows: &[InstructionCycleRow],
         u_evals: &mut [F],
     ) -> PhaseSums<F> {
@@ -1098,9 +1152,8 @@ impl<F: JoltField> PhaseScan<'_, F> {
         #[cfg(feature = "parallel")]
         {
             blocks
-                .layout
                 .par_chunks(task_blocks)
-                .zip(blocks.range.par_chunks_mut(task_blocks))
+                .zip(range.par_chunks_mut(task_blocks))
                 .zip(rows.par_chunks(task_rows))
                 .zip(u_evals.par_chunks_mut(task_rows))
                 .map(|(((blocks, range), rows), u_evals)| self.scan(blocks, range, rows, u_evals))
@@ -1109,9 +1162,8 @@ impl<F: JoltField> PhaseScan<'_, F> {
         #[cfg(not(feature = "parallel"))]
         {
             blocks
-                .layout
                 .chunks(task_blocks)
-                .zip(blocks.range.chunks_mut(task_blocks))
+                .zip(range.chunks_mut(task_blocks))
                 .zip(rows.chunks(task_rows))
                 .zip(u_evals.chunks_mut(task_rows))
                 .map(|(((blocks, range), rows), u_evals)| self.scan(blocks, range, rows, u_evals))
@@ -1126,105 +1178,24 @@ impl<F: JoltField> PhaseScan<'_, F> {
         rows: &[InstructionCycleRow],
         u_evals: &mut [F],
     ) -> PhaseSums<F> {
-        let mut raf = RafScan::<F>::new();
-        let mut table_scans: Vec<Option<TableScan<F>>> = (0..LookupTableKind::<RISCV_XLEN>::COUNT)
-            .map(|_| None)
-            .collect();
-        let range_table = RangePrefixSums::<F>::table();
-        let range_class = ScanBlock::range_class();
-        let cacheable_suffixes = range_table
-            .suffixes()
-            .iter()
-            .all(|suffix| matches!(suffix, Suffixes::One | Suffixes::LowerWord));
-        let mut range_sums: Option<[F::SumAccumulator; 2]> = None;
+        let mut task = TaskScan::new(self);
         for (((block, cache), rows), u_evals) in blocks
             .iter()
             .zip(range)
             .zip(rows.chunks(SCAN_BLOCK))
             .zip(u_evals.chunks_mut(SCAN_BLOCK))
         {
-            if let Some((shift, v_prev)) = self.condense {
-                let active = usize::from(block.starts[SCAN_CLASSES]);
-                if active == rows.len() {
-                    for (row, u) in rows.iter().zip(u_evals.iter_mut()) {
-                        *u *= v_prev[((row.lookup_index() >> shift) as usize) & (CHUNK_SIZE - 1)];
-                    }
-                } else {
-                    for &offset in &block.offsets[..active] {
-                        let offset = usize::from(offset);
-                        u_evals[offset] *= v_prev
-                            [((rows[offset].lookup_index() >> shift) as usize) & (CHUNK_SIZE - 1)];
-                    }
-                }
-            }
-            for (class, range) in block.starts.windows(2).enumerate() {
-                let offsets = &block.offsets[usize::from(range[0])..usize::from(range[1])];
-                if offsets.is_empty() {
-                    continue;
-                }
-                let key_bits = usize::from(block.range_key_bits);
-                // The remaining high bit must be zero while the canonical-address
-                // all-ones predicate still has high bits to inspect.
-                let constant_prefix = key_bits < self.suffix_len
-                    || (key_bits <= self.suffix_len && self.upper_suffix_bits == 0);
-                if cacheable_suffixes && class == range_class && constant_prefix {
-                    if let (Some(sums), Some((_, previous))) = (&mut *cache, self.condense) {
-                        sums.scale(previous[0]);
-                    }
-                    let sums = cache.get_or_insert_with(|| {
-                        RangePrefixSums::new(rows, u_evals, offsets, self.suffix_len)
-                    });
-                    raf.shift_full[0].add(sums.mass);
-                    raf.identity[0].add(sums.identity);
-                    if CANONICAL_INSTRUCTION_ADDRESS && self.upper_suffix_bits == 0 {
-                        raf.upper_all_ones[0].add(sums.mass);
-                    }
-                    let table_sums =
-                        range_sums.get_or_insert_with(|| [F::SumAccumulator::default(); 2]);
-                    table_sums[0].add(sums.mass);
-                    table_sums[1].add(sums.lower_word);
-                    continue;
-                }
-                let table_scan = (class / 2).checked_sub(1).map(|table| {
-                    table_scans[table].get_or_insert_with(|| TableScan::new(self.tables[table]))
-                });
-                self.accumulate(class % 2 == 1, offsets, rows, u_evals, &mut raf, table_scan);
-            }
+            task.block(block, cache, rows, u_evals);
         }
-        let mut suffixes: Vec<_> = table_scans
-            .into_iter()
-            .map(|scan| scan.map(TableScan::reduce))
-            .collect();
-        if let Some([mass, lower_word]) = range_sums {
-            let mass = mass.reduce();
-            let lower_word = lower_word.reduce();
-            let into = suffixes[range_table.index()]
-                .get_or_insert_with(|| vec![F::zero(); range_table.suffixes().len() * CHUNK_SIZE]);
-            for (row, suffix) in into
-                .as_chunks_mut::<CHUNK_SIZE>()
-                .0
-                .iter_mut()
-                .zip(range_table.suffixes())
-            {
-                row[0] += match suffix {
-                    Suffixes::One => mass,
-                    Suffixes::LowerWord => lower_word,
-                    _ => unreachable!("range cache requires only One and LowerWord suffixes"),
-                };
-            }
-        }
-        PhaseSums {
-            raf: raf.reduce(),
-            suffixes,
-        }
+        task.finish()
     }
 
     #[inline]
-    fn accumulate(
+    fn accumulate<R: ScanRow>(
         &self,
         raf_flag: bool,
         offsets: &[u16],
-        rows: &[InstructionCycleRow],
+        rows: &[R],
         u_evals: &[F],
         raf: &mut RafScan<F>,
         mut table_scan: Option<&mut TableScan<F>>,
@@ -1272,6 +1243,131 @@ impl<F: JoltField> PhaseScan<'_, F> {
     }
 }
 
+/// One scan task's sums over its consecutive blocks.
+struct TaskScan<'a, F: JoltField> {
+    phase: &'a PhaseScan<'a, F>,
+    raf: RafScan<F>,
+    table_scans: Vec<Option<TableScan<F>>>,
+    range_sums: Option<[F::SumAccumulator; 2]>,
+    range_class: usize,
+    cacheable_suffixes: bool,
+}
+
+impl<'a, F: JoltField> TaskScan<'a, F> {
+    fn new(phase: &'a PhaseScan<'a, F>) -> Self {
+        Self {
+            phase,
+            raf: RafScan::new(),
+            table_scans: (0..LookupTableKind::<RISCV_XLEN>::COUNT)
+                .map(|_| None)
+                .collect(),
+            range_sums: None,
+            range_class: ScanBlock::range_class(),
+            cacheable_suffixes: RangePrefixSums::<F>::table()
+                .suffixes()
+                .iter()
+                .all(|suffix| matches!(suffix, Suffixes::One | Suffixes::LowerWord)),
+        }
+    }
+
+    /// Condenses one block's weights, then accumulates its class runs.
+    fn block<R: ScanRow>(
+        &mut self,
+        block: &ScanBlock,
+        cache: &mut Option<RangePrefixSums<F>>,
+        rows: &[R],
+        u_evals: &mut [F],
+    ) {
+        let phase = self.phase;
+        if let Some((shift, v_prev)) = phase.condense {
+            let active = usize::from(block.starts[SCAN_CLASSES]);
+            if active == rows.len() {
+                for (row, u) in rows.iter().zip(u_evals.iter_mut()) {
+                    *u *= v_prev[((row.lookup_index() >> shift) as usize) & (CHUNK_SIZE - 1)];
+                }
+            } else {
+                for &offset in &block.offsets[..active] {
+                    let offset = usize::from(offset);
+                    u_evals[offset] *= v_prev
+                        [((rows[offset].lookup_index() >> shift) as usize) & (CHUNK_SIZE - 1)];
+                }
+            }
+        }
+        for (class, range) in block.starts.windows(2).enumerate() {
+            let offsets = &block.offsets[usize::from(range[0])..usize::from(range[1])];
+            if offsets.is_empty() {
+                continue;
+            }
+            let key_bits = usize::from(block.range_key_bits);
+            // The remaining high bit must be zero while the canonical-address
+            // all-ones predicate still has high bits to inspect.
+            let constant_prefix = key_bits < phase.suffix_len
+                || (key_bits <= phase.suffix_len && phase.upper_suffix_bits == 0);
+            if self.cacheable_suffixes && class == self.range_class && constant_prefix {
+                if let (Some(sums), Some((_, previous))) = (&mut *cache, phase.condense) {
+                    sums.scale(previous[0]);
+                }
+                let sums = cache.get_or_insert_with(|| {
+                    RangePrefixSums::new(rows, u_evals, offsets, phase.suffix_len)
+                });
+                self.raf.shift_full[0].add(sums.mass);
+                self.raf.identity[0].add(sums.identity);
+                if CANONICAL_INSTRUCTION_ADDRESS && phase.upper_suffix_bits == 0 {
+                    self.raf.upper_all_ones[0].add(sums.mass);
+                }
+                let table_sums = self
+                    .range_sums
+                    .get_or_insert_with(|| [F::SumAccumulator::default(); 2]);
+                table_sums[0].add(sums.mass);
+                table_sums[1].add(sums.lower_word);
+                continue;
+            }
+            let table_scan = (class / 2).checked_sub(1).map(|table| {
+                self.table_scans[table].get_or_insert_with(|| TableScan::new(phase.tables[table]))
+            });
+            phase.accumulate(
+                class % 2 == 1,
+                offsets,
+                rows,
+                u_evals,
+                &mut self.raf,
+                table_scan,
+            );
+        }
+    }
+
+    fn finish(self) -> PhaseSums<F> {
+        let range_table = RangePrefixSums::<F>::table();
+        let mut suffixes: Vec<_> = self
+            .table_scans
+            .into_iter()
+            .map(|scan| scan.map(TableScan::reduce))
+            .collect();
+        if let Some([mass, lower_word]) = self.range_sums {
+            let mass = mass.reduce();
+            let lower_word = lower_word.reduce();
+            let into = suffixes[range_table.index()]
+                .get_or_insert_with(|| vec![F::zero(); range_table.suffixes().len() * CHUNK_SIZE]);
+            for (row, suffix) in into
+                .as_chunks_mut::<CHUNK_SIZE>()
+                .0
+                .iter_mut()
+                .zip(range_table.suffixes())
+            {
+                row[0] += match suffix {
+                    Suffixes::One => mass,
+                    Suffixes::LowerWord => lower_word,
+                    _ => unreachable!("range cache requires only One and LowerWord suffixes"),
+                };
+            }
+        }
+        PhaseSums {
+            raf: self.raf.reduce(),
+            suffixes,
+        }
+    }
+}
+
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub struct OptimizedInstructionReadRafKernel<F: JoltField> {
     #[cfg_attr(feature = "allocative", allocative(skip))]
@@ -1279,10 +1375,13 @@ pub struct OptimizedInstructionReadRafKernel<F: JoltField> {
     #[cfg_attr(feature = "allocative", allocative(skip))]
     gamma: F,
     r_reduction: Vec<F>,
-    rows: Arc<ConstantSuffix<InstructionCycleRow>>,
-    blocks: ScanBlocks<F>,
+    rows: ScanRows,
+    /// Each scan block's cached range-check sums, kept out of the block
+    /// stride that ordinary scans read.
+    range: Vec<Option<RangePrefixSums<F>>>,
     /// The final weight aggregates the constant row suffix. After coalescing,
-    /// only offsets retained in `blocks` are live; merged-away weights are stale.
+    /// only offsets retained in the blocks are live; merged-away weights are
+    /// stale.
     u_evals: Vec<F>,
     #[cfg_attr(feature = "allocative", allocative(visit = crate::backend::visit_heap_free_elements))]
     prefix_checkpoints: Vec<PrefixEval<F>>,
@@ -1301,10 +1400,10 @@ pub struct OptimizedInstructionReadRafKernel<F: JoltField> {
     phase_challenges: Vec<F>,
     cycle_challenges: Vec<F>,
     cycle: Option<CycleState<F>>,
-    /// Packed per-cycle output-claim facts (bits 0..=6: `table_index + 1`,
-    /// 0 for none; bit 7: the RAF flag), snapped at the address/cycle
-    /// handoff and shared with the combined value's index source — the
-    /// final flag walk needs only this byte per cycle.
+    /// Packed per-cycle output-claim facts ([`claim_byte`]), snapped at the
+    /// address/cycle handoff (by the constructor over resident rows) and
+    /// shared with the combined value's index source — the final flag walk
+    /// needs only this byte per cycle.
     claim_columns: Arc<ConstantSuffix<u8>>,
     progress: RoundProgress,
 }
@@ -1316,22 +1415,8 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
         rows: Arc<ConstantSuffix<InstructionCycleRow>>,
         gamma: F,
     ) -> Result<Self, KernelError<F>> {
-        let address_bits = dimensions.instruction_address_bits();
+        Self::check_geometry(dimensions)?;
         let log_t = dimensions.log_t();
-        if address_bits != 2 * RISCV_XLEN {
-            return Err(KernelError::Unsupported {
-                reason: "instruction read-RAF supports only the 2·XLEN interleaved-operand \
-                         address width",
-            });
-        }
-        let ra_count = dimensions.num_virtual_ra_polys();
-        if !address_bits.is_multiple_of(ra_count)
-            || !(address_bits / ra_count).is_multiple_of(CHUNK_LEN)
-        {
-            return Err(KernelError::Unsupported {
-                reason: "virtual RA chunk width must be a multiple of the phase width",
-            });
-        }
         if rows.len() != 1 << log_t {
             return Err(KernelError::TableSizeMismatch {
                 table: "stage-5 instruction rows".to_owned(),
@@ -1359,7 +1444,7 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
                     if let Some(table) = row.table_index() {
                         if table >= num_tables {
                             return Err(KernelError::InvariantViolation {
-                                reason: "stage-5 row selects an unknown lookup table",
+                                reason: UNKNOWN_TABLE,
                             });
                         }
                         present |= 1 << table;
@@ -1370,19 +1455,6 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
             |a, b| Ok(a? | b?),
             || Ok(0),
         )?;
-        let mut present_prefixes = vec![false; ALL_PREFIXES.len()];
-        for table in LookupTableKind::<RISCV_XLEN>::iter()
-            .filter(|table| present_tables & (1 << table.index()) != 0)
-        {
-            for prefix in table.prefixes() {
-                present_prefixes[*prefix as usize] = true;
-            }
-        }
-        let prefix_indices = present_prefixes
-            .into_iter()
-            .enumerate()
-            .filter_map(|(index, present)| present.then_some(index))
-            .collect();
 
         let blocks = if ScanBlock::should_coalesce(scan_rows) {
             #[cfg(feature = "parallel")]
@@ -1418,12 +1490,70 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
                 )
             })
         };
+        Self::start(
+            dimensions,
+            r_reduction,
+            gamma,
+            ScanRows::Collected { rows, blocks },
+            u_evals,
+            Arc::new(Vec::new().into()),
+            present_tables,
+        )
+    }
+
+    fn check_geometry(dimensions: InstructionReadRafDimensions) -> Result<(), KernelError<F>> {
+        let address_bits = dimensions.instruction_address_bits();
+        if address_bits != 2 * RISCV_XLEN {
+            return Err(KernelError::Unsupported {
+                reason: "instruction read-RAF supports only the 2·XLEN interleaved-operand \
+                         address width",
+            });
+        }
+        let ra_count = dimensions.num_virtual_ra_polys();
+        if !address_bits.is_multiple_of(ra_count)
+            || !(address_bits / ra_count).is_multiple_of(CHUNK_LEN)
+        {
+            return Err(KernelError::Unsupported {
+                reason: "virtual RA chunk width must be a multiple of the phase width",
+            });
+        }
+        Ok(())
+    }
+
+    /// The kernel at its first address phase. `u_evals` weighs the rows that
+    /// `rows` serves the scans, `present_tables` marks the lookup tables those
+    /// rows select (bit `LookupTableKind::index()`), and `claim_columns` is
+    /// their claim column where the source has already packed it.
+    fn start(
+        dimensions: InstructionReadRafDimensions,
+        r_reduction: &[F],
+        gamma: F,
+        rows: ScanRows,
+        u_evals: Vec<F>,
+        claim_columns: Arc<ConstantSuffix<u8>>,
+        present_tables: u64,
+    ) -> Result<Self, KernelError<F>> {
+        let mut present_prefixes = vec![false; ALL_PREFIXES.len()];
+        for table in LookupTableKind::<RISCV_XLEN>::iter()
+            .filter(|table| present_tables & (1 << table.index()) != 0)
+        {
+            for prefix in table.prefixes() {
+                present_prefixes[*prefix as usize] = true;
+            }
+        }
+        let prefix_indices = present_prefixes
+            .into_iter()
+            .enumerate()
+            .filter_map(|(index, present)| present.then_some(index))
+            .collect();
         let mut kernel = Self {
             dimensions,
             gamma,
             r_reduction: r_reduction.to_vec(),
             rows,
-            blocks: ScanBlocks::new(blocks),
+            range: (0..u_evals.len().div_ceil(SCAN_BLOCK))
+                .map(|_| None)
+                .collect(),
             u_evals,
             prefix_checkpoints: ALL_PREFIXES
                 .iter()
@@ -1440,10 +1570,10 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
             phase_challenges: Vec::new(),
             cycle_challenges: Vec::new(),
             cycle: None,
-            claim_columns: Arc::new(Vec::new().into()),
+            claim_columns,
             progress: RoundProgress::new(dimensions.sumcheck_rounds()),
         };
-        kernel.init_phase(0);
+        kernel.init_phase(0)?;
         Ok(kernel)
     }
 
@@ -1459,7 +1589,7 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
         self.address_bits() - (phase + 1) * CHUNK_LEN
     }
 
-    fn init_phase(&mut self, phase: usize) {
+    fn init_phase(&mut self, phase: usize) -> Result<(), WitnessError> {
         let suffix_len = self.suffix_len(phase);
         let previous = phase
             .checked_sub(1)
@@ -1475,11 +1605,17 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
             upper_suffix_bits: suffix_len.saturating_sub(self.address_bits() / 2),
             tables: LookupTableKind::<RISCV_XLEN>::iter().collect(),
         };
-        let PhaseSums { raf, suffixes } = scan.run(
-            &mut self.blocks,
-            &self.rows.representatives()[..self.u_evals.len()],
-            &mut self.u_evals,
-        );
+        let PhaseSums { raf, suffixes } = match &self.rows {
+            ScanRows::Collected { rows, blocks } => scan.run(
+                blocks,
+                &mut self.range,
+                &rows.representatives()[..self.u_evals.len()],
+                &mut self.u_evals,
+            ),
+            ScanRows::Resident { rows, .. } => {
+                scan.run_resident(rows, &mut self.range, &mut self.u_evals)?
+            }
+        };
 
         let q_shift_half: Vec<F> = raf
             .shift_half
@@ -1571,6 +1707,7 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
         });
 
         self.phase_challenges.clear();
+        Ok(())
     }
 
     /// The address-round quadratic, evaluated at `c ∈ {0, 2}` with
@@ -1663,8 +1800,14 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
             .cycle
             .as_ref()
             .ok_or(SumcheckError::MissingEvaluationSource { kind: "opening" })?;
+        let ra_tables = match &cycle.ra {
+            CycleRa::Lazy(ra) => ra,
+            CycleRa::Streamed(ra) => {
+                return self.streamed_cycle_message(cycle, ra, round, previous_claim);
+            }
+        };
         let factors = 1 + self.dimensions.num_virtual_ra_polys();
-        let tail_products = TailFactorProducts::new(cycle.ra.tail_values());
+        let tail_products = TailFactorProducts::new(ra_tables.tail_values());
 
         struct Scratch<F: JoltField> {
             /// Cross-row lanes for `q(1), …, q(F−1), q(∞)` — `e_in` rides in
@@ -1680,7 +1823,7 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
         let prefix_pairs = cycle
             .combined_val
             .prefix_len()
-            .max(cycle.ra.prefix_len())
+            .max(ra_tables.prefix_len())
             .div_ceil(2);
         let tail_mass = cycle.gruen.suffix_weight(prefix_pairs)
             * cycle
@@ -1689,8 +1832,8 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
                 .first()
                 .copied()
                 .unwrap_or(F::zero())
-            * cycle.ra.tail_values().iter().copied().product::<F>();
-        let groups = match (&cycle.ra, &cycle.combined_val) {
+            * ra_tables.tail_values().iter().copied().product::<F>();
+        let groups = match (ra_tables, &cycle.combined_val) {
             (
                 LazyFoldedRa::Lazy {
                     source, width: 1, ..
@@ -1714,7 +1857,7 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
         let eval_row = |scratch: &mut Scratch<F>, row: usize, e_in: F| {
             let (val, ra) = scratch.pairs.split_at_mut(1);
             cycle.combined_val.lo_hi_all(row, val);
-            cycle.ra.lo_hi_all(row, ra);
+            ra_tables.lo_hi_all(row, ra);
             let (lo, hi) = val[0];
             val[0] = (e_in * lo, e_in * hi);
             for ((&(lo, hi), eval), step) in scratch
@@ -1794,7 +1937,7 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
                         |(pairs, sum), row, _, weight| {
                             let (val, ra) = pairs.split_at_mut(1);
                             cycle.combined_val.lo_hi_all(row, val);
-                            cycle.ra.lo_hi_all(row, ra);
+                            ra_tables.lo_hi_all(row, ra);
                             let value = pairs
                                 .iter()
                                 .fold(F::one(), |product, pair| product * pair.0);
@@ -1869,9 +2012,14 @@ impl<F: JoltField> SumcheckKernel<F> for OptimizedInstructionReadRafKernel<F> {
             instruction_raf_flag += tail_mass;
         }
 
+        let CycleRa::Lazy(ra) = &cycle.ra else {
+            return Err(SumcheckKernelError::InvariantViolation {
+                reason: "cycle tables streamed after full binding",
+            });
+        };
         Ok(InstructionReadRafOutputClaims {
             lookup_table_flags,
-            instruction_ra: cycle.ra.final_values(),
+            instruction_ra: ra.final_values(),
             instruction_raf_flag,
         })
     }
