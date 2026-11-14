@@ -962,6 +962,8 @@ fn run_workload(args: &ProfileArgs, scale: u32, run_dir: &Path) -> ProfileResult
             let mut metrics = metrics;
             metrics["akita_prover_idle_spin_us"] =
                 serde_json::json!(args.akita_prover_idle_spin_us);
+            metrics["akita_prover_pool_default_wait"] =
+                serde_json::json!(args.akita_prover_pool_default_wait);
             metrics
         };
         fs::write(
@@ -1287,10 +1289,6 @@ fn prove_workload(
     // this interval; the Instant is the `--format none` baseline.
     let now = Instant::now();
     let prove = || {
-        let backend = match args.backend {
-            BackendKind::Reference => JoltBackend::reference(),
-            BackendKind::Optimized => JoltBackend::optimized(),
-        };
         crate::akita::prove::<AkitaField, AkitaScheme, AkitaVc, ProverState<Keccak>>(
             backend.with_witness(&witness),
             &prover_preprocessing,
