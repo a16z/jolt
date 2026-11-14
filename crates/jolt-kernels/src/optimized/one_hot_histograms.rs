@@ -66,9 +66,9 @@ pub(crate) fn pushforwards<F: JoltField>(
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, WitnessBundle)]
 pub(crate) struct HistogramRow {
-    lookup_index: LookupIndex,
-    bytecode_pc: BytecodePc,
-    remapped_ram_address: RemappedRamAddress,
+    pub(crate) lookup_index: LookupIndex,
+    pub(crate) bytecode_pc: BytecodePc,
+    pub(crate) remapped_ram_address: RemappedRamAddress,
 }
 
 pub(crate) fn pushforward_access<F: JoltField>(

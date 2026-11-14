@@ -68,12 +68,13 @@ register read-write check and the stage-5 register value evaluation, which
 read register operands and increments from the resident trace: no per-cycle
 `rd` index column passes from stage 4 to stage 5, and a cycle-first stage 4
 keeps no per-cycle columns (an address-first phase split keeps the eager
-stage-4 kernel). The `instruction-rows` family selects the stage-6b
-instruction RA virtualization kernel, which gathers its one-hot selectors
-from the resident trace until each fits 64 MiB dense, and not before the
-eager kernel's fourth bind. The other readers of the packed per-cycle
-instruction rows keep their eager kernels, so stage 5 still collects those
-rows. Combine
+stage-4 kernel). The `instruction-rows` family selects the booleanity
+kernels of stages 6a and 6b and the stage-6b instruction RA virtualization
+kernel. The stage-6a address phase accumulates its tables from the resident
+trace; the stage-6b kernels gather their one-hot selectors from it until
+each fits 64 MiB dense, and not before the eager kernels' fourth bind. The
+other readers of the packed per-cycle instruction rows keep their eager
+kernels, so stage 5 still collects those rows. Combine
 families with `--streaming instruction-input,spartan,ram,registers`.
 Instruction-input, Spartan and register
 early rounds recompute from the resident trace until the dense tables, or for
