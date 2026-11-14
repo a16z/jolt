@@ -2,11 +2,15 @@
 //! memory budget from the machine instead of taking one: the smaller of
 //! Linux's `MemAvailable` and, for each cgroup v2 on this process's path that
 //! sets a `memory.max`, that limit less what the cgroup and its descendants
-//! hold beyond evictable file cache. That is `memory.current` less the
-//! `inactive_file` and `active_file` of `memory.stat`: the kernel evicts the
-//! pages on those two lists before it refuses the cgroup an allocation, and
-//! `MemAvailable` counts the host's as available too, down to a low
-//! watermark. The rest of `memory.current` counts as used, tmpfs and shared
+//! hold beyond the file cache counted as evictable. That is `memory.current`
+//! less the `inactive_file` and `active_file` of `memory.stat`: the kernel
+//! evicts the pages on those two lists before it refuses the cgroup an
+//! allocation, and `MemAvailable` counts the host's as available too, down to
+//! a low watermark. One protection breaks this: file cache that a
+//! `memory.min` on another cgroup under the limited one protects stays on
+//! those lists and is not evicted, so the reading is too large by its size,
+//! while cache under a `memory.low` there gives way before the kernel
+//! refuses. The rest of `memory.current` counts as used, tmpfs and shared
 //! memory and the kernel's reclaimable caches included. Every reading is a
 //! point-in-time observation that concurrent growth can outrun, and nothing
 //! is held back for memory the caller does not price.
@@ -46,7 +50,7 @@ pub enum MemoryLimit {
     /// `MemAvailable` of `/proc/meminfo`.
     MemAvailable,
     /// The `memory.max` of this cgroup v2 directory less the part of its
-    /// `memory.current` that is not evictable file cache.
+    /// `memory.current` that is not file cache on the kernel's reclaim lists.
     Cgroup(PathBuf),
 }
 

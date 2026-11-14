@@ -97,8 +97,12 @@ optional binary suffix (`KiB`, `MiB`, `GiB` or `TiB`, e.g. `32GiB`), or
 `auto`. `auto` reads the host once, after tracing (`jolt_host::memory`): the
 smaller of `/proc/meminfo`'s `MemAvailable` and, for each cgroup v2 on the
 process's path that sets a `memory.max`, that limit less the cgroup's
-`memory.current` net of the file cache the kernel can evict (`inactive_file`
-and `active_file` in its `memory.stat`). Everything else the cgroup holds
+`memory.current` net of its file cache on the kernel's reclaim lists
+(`inactive_file` and `active_file` in its `memory.stat`). The reading counts
+that cache as evictable. The kernel does not evict the part of it that a
+`memory.min` on another cgroup under the limited one protects, so the
+reading is too large by that part, while cache under a `memory.low` is
+still evicted before an allocation fails. Everything else the cgroup holds
 counts as used, including tmpfs, shared memory and kernel memory. The budget
 is that reading plus the input, trace output, program and program
 preprocessing buffers the run already holds, which steps 1 and 2 reserve; the
