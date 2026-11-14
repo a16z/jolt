@@ -164,6 +164,8 @@ fn visit_stage1<F: JoltField>(claims: &mut Stage1OutputClaims<F>, f: &mut dyn Fn
         is_compressed,
         is_first_in_sequence,
         is_last_in_sequence,
+        halt,
+        halt_panic,
     } = outer_remainder;
     for scalar in [
         left_instruction_input,
@@ -201,6 +203,8 @@ fn visit_stage1<F: JoltField>(claims: &mut Stage1OutputClaims<F>, f: &mut dyn Fn
         is_compressed,
         is_first_in_sequence,
         is_last_in_sequence,
+        halt,
+        halt_panic,
     ] {
         f(scalar);
     }

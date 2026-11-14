@@ -1541,6 +1541,8 @@ fn expand_manifest_path(target: TamperTarget) -> Vec<&'static str> {
             "claims.stage1.outer.outer_remainder.is_compressed",
             "claims.stage1.outer.outer_remainder.is_first_in_sequence",
             "claims.stage1.outer.outer_remainder.is_last_in_sequence",
+            "claims.stage1.outer.outer_remainder.halt",
+            "claims.stage1.outer.outer_remainder.halt_panic",
             #[cfg(feature = "field-inline")]
             "claims.stage1.outer.outer_remainder.field_add",
             #[cfg(feature = "field-inline")]

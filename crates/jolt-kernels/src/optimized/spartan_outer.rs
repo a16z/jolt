@@ -83,7 +83,10 @@ use jolt_claims::protocols::composed::r1cs::{
     spartan_outer_constraints, spartan_outer_opening_columns, spartan_outer_row_weights,
     SPARTAN_OUTER_SECOND_GROUP_ROW_COUNT, SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE,
 };
-use jolt_riscv::{CircuitFlagSet, CircuitFlags, InstructionFlags, JoltTraceRow as TraceRow};
+use jolt_riscv::{
+    CircuitFlagSet, CircuitFlags, InstructionFlags, JoltTraceRow as TraceRow, CIRCUIT_FLAGS,
+    NUM_CIRCUIT_FLAGS,
+};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_utils::unsafe_allocate_zero_vec;
 use jolt_verifier::stages::relations::{
@@ -1420,6 +1423,8 @@ impl<F: JoltField> OuterRemainderKernel<F> {
 }
 
 const VARIABLE_COUNT: usize = SPARTAN_OUTER_R1CS_INPUTS.len();
+/// The circuit flags close `SPARTAN_OUTER_R1CS_INPUTS`, in `CIRCUIT_FLAGS` order.
+const FLAG_INPUT_BASE: usize = VARIABLE_COUNT - NUM_CIRCUIT_FLAGS;
 
 /// Which canonical inputs are boolean-valued: those stay on the small-scalar
 /// accumulator, whose 5-limb (320-bit) window only has headroom when the
@@ -1432,7 +1437,7 @@ const BOOLEAN_INPUT: [bool; VARIABLE_COUNT] = {
     mask[17] = true; // NextIsVirtual
     mask[18] = true; // NextIsFirstInSequence
     mask[20] = true; // ShouldJump
-    let mut flag = 21; // the circuit flags
+    let mut flag = FLAG_INPUT_BASE;
     while flag < VARIABLE_COUNT {
         mask[flag] = true;
         flag += 1;
@@ -1463,38 +1468,8 @@ impl<F: JoltField> ClaimAccumulator<F> {
         flag(17, row.next_is_virtual.0);
         flag(18, row.next_is_first_in_sequence.0);
         flag(20, row.should_jump.0);
-        flag(21, row.circuit_flags[CircuitFlags::AddOperands]);
-        flag(22, row.circuit_flags[CircuitFlags::SubtractOperands]);
-        flag(23, row.circuit_flags[CircuitFlags::MultiplyOperands]);
-        flag(24, row.circuit_flags[CircuitFlags::Load]);
-        flag(25, row.circuit_flags[CircuitFlags::Store]);
-        flag(26, row.circuit_flags[CircuitFlags::Jump]);
-        flag(27, row.circuit_flags[CircuitFlags::WriteLookupOutputToRD]);
-        flag(28, row.circuit_flags[CircuitFlags::VirtualInstruction]);
-        flag(29, row.circuit_flags[CircuitFlags::Assert]);
-        flag(30, row.circuit_flags[CircuitFlags::DoNotUpdateUnexpandedPC]);
-        flag(31, row.circuit_flags[CircuitFlags::Advice]);
-        flag(32, row.circuit_flags[CircuitFlags::IsCompressed]);
-        flag(33, row.circuit_flags[CircuitFlags::IsFirstInSequence]);
-        flag(34, row.circuit_flags[CircuitFlags::IsLastInSequence]);
-        #[cfg(feature = "field-inline")]
-        {
-            flag(35, row.circuit_flags[CircuitFlags::FieldAdd]);
-            flag(36, row.circuit_flags[CircuitFlags::FieldSub]);
-            flag(37, row.circuit_flags[CircuitFlags::FieldMul]);
-            flag(38, row.circuit_flags[CircuitFlags::FieldInv]);
-            flag(39, row.circuit_flags[CircuitFlags::FieldAssertEq]);
-            flag(
-                40,
-                row.circuit_flags[CircuitFlags::FieldLoadAccumulateFromRegister],
-            );
-            flag(41, row.circuit_flags[CircuitFlags::FieldAssertZero]);
-            flag(42, row.circuit_flags[CircuitFlags::FieldLoadImm]);
-            flag(
-                43,
-                row.circuit_flags[CircuitFlags::FieldLoadAccumulateFromMemory],
-            );
-            flag(44, row.circuit_flags[CircuitFlags::FieldAdviceLimb]);
+        for (offset, circuit_flag) in CIRCUIT_FLAGS.into_iter().enumerate() {
+            flag(FLAG_INPUT_BASE + offset, row.circuit_flags[circuit_flag]);
         }
 
         let mut word = |index: usize, magnitude: u128, is_positive: bool| {

@@ -275,6 +275,8 @@ impl<F: JoltField> ConcreteSumcheck<F> for OuterRemainder<F> {
             is_compressed: opening_point.clone(),
             is_first_in_sequence: opening_point.clone(),
             is_last_in_sequence: opening_point.clone(),
+            halt: opening_point.clone(),
+            halt_panic: opening_point.clone(),
             #[cfg(feature = "field-inline")]
             field_add: opening_point.clone(),
             #[cfg(feature = "field-inline")]
@@ -425,6 +427,8 @@ mod tests {
             is_compressed: next(),
             is_first_in_sequence: next(),
             is_last_in_sequence: next(),
+            halt: next(),
+            halt_panic: next(),
         }
     }
 
@@ -512,7 +516,7 @@ mod tests {
         let log_t = 3usize;
         let dimensions = SpartanOuterDimensions::rv64(log_t);
         let variable_count = dimensions.variables().len();
-        assert_eq!(variable_count, 35);
+        assert_eq!(variable_count, 37);
 
         let tau_len = log_t + 2;
         let remainder_len = 1 + log_t;

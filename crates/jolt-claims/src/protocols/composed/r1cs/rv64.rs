@@ -59,6 +59,8 @@ pub const V_FLAG_ADVICE: usize = 32;
 pub const V_FLAG_IS_COMPRESSED: usize = 33;
 pub const V_FLAG_IS_FIRST_IN_SEQUENCE: usize = 34;
 pub const V_FLAG_IS_LAST_IN_SEQUENCE: usize = 35;
+pub const V_FLAG_HALT: usize = flag_column(CircuitFlags::Halt);
+pub const V_FLAG_HALT_PANIC: usize = flag_column(CircuitFlags::HaltPanic);
 
 pub const V_BRANCH: usize = 1 + NUM_R1CS_INPUTS;
 pub const V_NEXT_IS_NOOP: usize = V_BRANCH + 1;
@@ -112,6 +114,8 @@ pub const RV64_VARIABLE_NAMES: [&str; NUM_VARS_PER_CYCLE] = {
     names[V_FLAG_IS_COMPRESSED] = "OpFlags_IsCompressed";
     names[V_FLAG_IS_FIRST_IN_SEQUENCE] = "OpFlags_IsFirstInSequence";
     names[V_FLAG_IS_LAST_IN_SEQUENCE] = "OpFlags_IsLastInSequence";
+    names[V_FLAG_HALT] = "OpFlags_Halt";
+    names[V_FLAG_HALT_PANIC] = "OpFlags_HaltPanic";
     #[cfg(feature = "field-inline")]
     #[expect(
         clippy::indexing_slicing,

@@ -105,6 +105,10 @@ pub struct OuterRemainderOutputClaims<C> {
     pub is_first_in_sequence: C,
     #[opening(OpFlags(CircuitFlags::IsLastInSequence))]
     pub is_last_in_sequence: C,
+    #[opening(OpFlags(CircuitFlags::Halt))]
+    pub halt: C,
+    #[opening(OpFlags(CircuitFlags::HaltPanic))]
+    pub halt_panic: C,
     #[cfg(feature = "field-inline")]
     #[opening(OpFlags(CircuitFlags::FieldAdd))]
     pub field_add: C,

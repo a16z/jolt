@@ -4,7 +4,7 @@ use jolt_claims::protocols::field_inline::{
     geometry::spartan::FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUTS, FieldInlinePolynomialId,
 };
 use jolt_claims::protocols::jolt::geometry::spartan::SPARTAN_OUTER_R1CS_INPUTS;
-use jolt_claims::protocols::jolt::JoltPolynomialId;
+use jolt_claims::protocols::jolt::{JoltPolynomialId, JoltVirtualPolynomial};
 use jolt_claims::NoChallenges;
 use jolt_field::signed::S128;
 use jolt_field::{Fr, Ring};
@@ -44,53 +44,7 @@ fn variable_field_value<F: JoltField>(row: &SpartanOuterRow, index: usize) -> F 
         18 => row.next_is_first_in_sequence.to_field(),
         19 => row.lookup_output.to_field(),
         20 => row.should_jump.to_field(),
-        21 => F::from_u64(u64::from(row.circuit_flags[CircuitFlags::AddOperands])),
-        22 => F::from_u64(u64::from(row.circuit_flags[CircuitFlags::SubtractOperands])),
-        23 => F::from_u64(u64::from(row.circuit_flags[CircuitFlags::MultiplyOperands])),
-        24 => F::from_u64(u64::from(row.circuit_flags[CircuitFlags::Load])),
-        25 => F::from_u64(u64::from(row.circuit_flags[CircuitFlags::Store])),
-        26 => F::from_u64(u64::from(row.circuit_flags[CircuitFlags::Jump])),
-        27 => F::from_u64(u64::from(
-            row.circuit_flags[CircuitFlags::WriteLookupOutputToRD],
-        )),
-        28 => F::from_u64(u64::from(
-            row.circuit_flags[CircuitFlags::VirtualInstruction],
-        )),
-        29 => F::from_u64(u64::from(row.circuit_flags[CircuitFlags::Assert])),
-        30 => F::from_u64(u64::from(
-            row.circuit_flags[CircuitFlags::DoNotUpdateUnexpandedPC],
-        )),
-        31 => F::from_u64(u64::from(row.circuit_flags[CircuitFlags::Advice])),
-        32 => F::from_u64(u64::from(row.circuit_flags[CircuitFlags::IsCompressed])),
-        33 => F::from_u64(u64::from(
-            row.circuit_flags[CircuitFlags::IsFirstInSequence],
-        )),
-        34 => F::from_u64(u64::from(row.circuit_flags[CircuitFlags::IsLastInSequence])),
-        #[cfg(feature = "field-inline")]
-        35 => F::from_u64(u64::from(row.circuit_flags[CircuitFlags::FieldAdd])),
-        #[cfg(feature = "field-inline")]
-        36 => F::from_u64(u64::from(row.circuit_flags[CircuitFlags::FieldSub])),
-        #[cfg(feature = "field-inline")]
-        37 => F::from_u64(u64::from(row.circuit_flags[CircuitFlags::FieldMul])),
-        #[cfg(feature = "field-inline")]
-        38 => F::from_u64(u64::from(row.circuit_flags[CircuitFlags::FieldInv])),
-        #[cfg(feature = "field-inline")]
-        39 => F::from_u64(u64::from(row.circuit_flags[CircuitFlags::FieldAssertEq])),
-        #[cfg(feature = "field-inline")]
-        40 => F::from_u64(u64::from(
-            row.circuit_flags[CircuitFlags::FieldLoadAccumulateFromRegister],
-        )),
-        #[cfg(feature = "field-inline")]
-        41 => F::from_u64(u64::from(row.circuit_flags[CircuitFlags::FieldAssertZero])),
-        #[cfg(feature = "field-inline")]
-        42 => F::from_u64(u64::from(row.circuit_flags[CircuitFlags::FieldLoadImm])),
-        #[cfg(feature = "field-inline")]
-        43 => F::from_u64(u64::from(
-            row.circuit_flags[CircuitFlags::FieldLoadAccumulateFromMemory],
-        )),
-        #[cfg(feature = "field-inline")]
-        44 => F::from_u64(u64::from(row.circuit_flags[CircuitFlags::FieldAdviceLimb])),
-        _ => unreachable!("canonical R1CS inputs"),
+        _ => F::from_bool(row.circuit_flags[CIRCUIT_FLAGS[index - FLAG_INPUT_BASE]]),
     }
 }
 
@@ -265,7 +219,7 @@ fn true_input_claim(
                 )
         }
         #[cfg(not(feature = "field-inline"))]
-        unreachable!("the rv64 selection has exactly 35 columns")
+        unreachable!("the rv64 selection has exactly VARIABLE_COUNT columns")
     };
     let mut total = Fr::from_u64(0);
     for (s, stream) in [Fr::from_u64(0), Fr::from_u64(1)].into_iter().enumerate() {
@@ -566,6 +520,16 @@ fn streamed_remainder_matches_reference_at_every_crossover() {
         }
     }
     parity_case_with_eq(Some(13), 13, 389, None, false, None, None);
+}
+
+#[test]
+fn flag_inputs_follow_circuit_flag_order() {
+    for (offset, flag) in CIRCUIT_FLAGS.into_iter().enumerate() {
+        assert_eq!(
+            SPARTAN_OUTER_R1CS_INPUTS[FLAG_INPUT_BASE + offset],
+            JoltVirtualPolynomial::OpFlags(flag)
+        );
+    }
 }
 
 #[test]
