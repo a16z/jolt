@@ -219,6 +219,28 @@ mod tests {
     type TestField = Fp128<TEST_MODULUS>;
 
     #[test]
+    fn sum_accumulator_merge_headroom() {
+        fn check<const P: u128>() {
+            let modulus = BigUint::from(P);
+            for value in [0, 1, u128::from(u64::MAX), 1 << 64, P - 1] {
+                let mut accumulator = Fp128SumAccumulator::<P>::default();
+                let mut terms = BigUint::from(0u8);
+                for bits in 1..=64 {
+                    accumulator.merge(accumulator);
+                    accumulator.add(Fp128::<P>::from_u128(value));
+                    terms = (terms << 1) + BigUint::from(1u8);
+                    let expected = (BigUint::from(value) * &terms) % &modulus;
+                    let [lo, hi] = accumulator.reduce().to_limbs();
+                    let actual = (BigUint::from(hi) << 64) + BigUint::from(lo);
+                    assert_eq!(actual, expected, "bits={bits}, value={value}");
+                }
+            }
+        }
+        check::<TEST_MODULUS>();
+        check::<{ 0u128.wrapping_sub(u32::MAX as u128) }>();
+    }
+
+    #[test]
     fn ring_accumulator_matches_naive() {
         let mut rng = ChaCha20Rng::seed_from_u64(1);
         let mut candidate = Fp128Accumulator::<TEST_MODULUS>::default();
