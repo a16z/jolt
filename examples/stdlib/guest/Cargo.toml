@@ -13,7 +13,10 @@ jolt = { package = "jolt-sdk", path = "../../../jolt-sdk", features = [
   "thread",
   "stdout",
 ] }
+# `keccak-inline`: in the guest, `DigestHasher` runs the Keccak-f inline.
+jolt-transcript = { workspace = true, features = ["keccak-inline"] }
 rayon = "1.12"
+sha3.workspace = true
 
 [lib]
 test = false

@@ -26,6 +26,8 @@ mod matrix {
     use std::collections::BTreeMap;
 
     #[cfg(not(feature = "field-inline"))]
+    use jolt_transcript::DigestHasher;
+    #[cfg(not(feature = "field-inline"))]
     use serde::Serialize;
     #[cfg(not(feature = "field-inline"))]
     use sha2::{Digest, Sha256};
@@ -60,6 +62,13 @@ mod matrix {
     #[cfg(not(feature = "field-inline"))]
     fn keccak256(bytes: &[u8]) -> [u8; 32] {
         Keccak256::digest(bytes).into()
+    }
+
+    /// The host's `DigestHasher` over `bytes`, which the `digest_hasher` guest
+    /// must reproduce through the Keccak-f inline.
+    #[cfg(not(feature = "field-inline"))]
+    fn digest_hasher_reference(bytes: &[u8]) -> [u8; 32] {
+        DigestHasher::digest(bytes).into()
     }
 
     #[cfg(not(feature = "field-inline"))]
@@ -299,6 +308,18 @@ mod matrix {
                     expected_output: Some(encode(
                         &(0..16).map(|i| i.to_string()).collect::<String>(),
                     )),
+                    ..GuestCase::new("stdlib-guest")
+                };
+                // `jolt_transcript::DigestHasher` in a guest built with
+                // `keccak-inline`: 300 bytes as a 100-byte prefix and one
+                // update, which completes the buffered block, absorbs a second
+                // one from its input and leaves 28 bytes for the padded block.
+                digest_hasher => GuestCase {
+                    func: Some("digest_hasher"),
+                    std: true,
+                    stack_size: Some(1 << 20),
+                    inputs: encode(&message(300)),
+                    expected_output: Some(encode(&digest_hasher_reference(&message(300)))),
                     ..GuestCase::new("stdlib-guest")
                 };
                 memory_copy => GuestCase {

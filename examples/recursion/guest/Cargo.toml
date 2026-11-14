@@ -14,7 +14,7 @@ field-inline-bn254 = ["field-inline", "jolt-field/field-inline-guest-bn254"]
 field-inline-fp128 = ["field-inline", "jolt-field/field-inline-guest-fp128"]
 akita = ["jolt_sdk/akita", "dep:jolt-akita", "dep:jolt-crypto"]
 fast-alloc = ["jolt_sdk/guest-size-class-alloc"]
-hash-inlines = ["jolt_sdk/blake2-inline"]
+hash-inlines = ["jolt_sdk/blake2-inline", "jolt_sdk/keccak-inline"]
 
 [package.metadata.cargo-machete]
 # Generated embedded_bytecode.rs imports jolt-riscv when the host prepares an

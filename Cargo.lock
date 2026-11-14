@@ -4106,6 +4106,7 @@ dependencies = [
  "getrandom 0.4.3",
  "jolt-field",
  "jolt-inlines-blake2",
+ "jolt-inlines-keccak256",
  "jolt-transcript",
  "light-poseidon",
  "num-bigint",
@@ -5608,6 +5609,7 @@ dependencies = [
  "jolt-akita",
  "jolt-field",
  "jolt-inlines-blake2",
+ "jolt-inlines-keccak256",
  "jolt-inlines-ntt",
  "jolt-poly",
  "jolt-program",
@@ -6670,7 +6672,9 @@ name = "stdlib-guest"
 version = "0.1.0"
 dependencies = [
  "jolt-sdk",
+ "jolt-transcript",
  "rayon",
+ "sha3 0.12.0",
 ]
 
 [[package]]

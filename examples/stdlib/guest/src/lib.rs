@@ -1,4 +1,6 @@
+use jolt_transcript::DigestHasher;
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
+use sha3::Digest;
 
 #[jolt::provable(max_trace_length = 65536, stack_size = 1048576)]
 fn int_to_string(n: i32) -> i32 {
@@ -46,4 +48,15 @@ fn memory_copy(n: u32) -> Vec<u8> {
     let mut result = vec![0; n + 8];
     result[1..n + 1].copy_from_slice(&data[..n]);
     result
+}
+
+/// A digest through `jolt_transcript::DigestHasher` built with `keccak-inline`:
+/// in the guest, the Keccak-f inline hasher behind the RustCrypto traits.
+#[jolt::provable(max_trace_length = 65536, stack_size = 1048576)]
+fn digest_hasher(input: &[u8]) -> [u8; 32] {
+    let (prefix, rest) = input.split_at(input.len() / 3);
+    DigestHasher::new_with_prefix(prefix)
+        .chain_update(rest)
+        .finalize()
+        .into()
 }
