@@ -702,6 +702,9 @@ jobs:
       - name: Guest function selection invalidates cached builds
         run: python3 jolt-sdk/tests/guest_function_cache.py
 
+      - name: Guest memory layout invalidates cached builds
+        run: python3 jolt-sdk/tests/guest_layout_cache.py
+
       - name: Use the `jolt` binary to generate code
         run: jolt new sample_project
 
