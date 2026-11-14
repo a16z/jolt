@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794615847190,
+  "lastUpdate": 1794616666559,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -249370,6 +249370,270 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 888128,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "qvd@andrew.cmu.edu",
+            "name": "Quang Dao",
+            "username": "quangvdao"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "91cd12f183fda964e29f68ebf65a36c74460328c",
+          "message": "feat(jolt-program): support CSRRC, CSRRWI, CSRRSI and CSRRCI (#2384)\n\n* fix(jolt-program): follow the privileged spec for M-mode traps and CSR writes\n\nECALL now moves mstatus.MIE into MPIE instead of overwriting mstatus, and\nMRET moves MPIE back into MIE and sets MPIE. CSR writes are legalized for an\nM-only hart: mstatus keeps only MIE and MPIE and reads with MPP = M (so it\nreads 0x1800 after reset), mepc clears bit 0, and an mtvec write with a\nreserved MODE keeps the previous MODE instead of sending the next trap into\nthe middle of an instruction.\n\nECALL writes AUIPC straight into mepc. Register writes and sets of mtvec\nbuild a mask with VirtualShiftRightBitmask that drops a reserved operand\nMODE. That consumes the source before the read, so aliased forms need no\ncopy. CSRRS on mstatus and mepc masks its operand before the read, which\nremoves the alias copy there too.\n\nThe sequences use only existing instruction kinds, so no constraint changes.\nspecs/m-mode-trap-csr-semantics.md gives the spec citations, a guest program\nfor each divergence, the cost and rationale of every path, and why LR/SC,\nEBREAK and the tracer's halting failures stay as they are. Tests pin every\npath's row count and check the expansions against an independent model of\nthe architectural formulas.\n\n* feat(jolt-program): support CSRRC, CSRRWI, CSRRSI and CSRRCI\n\nJolt decoded only CSRRW and CSRRS; the other Zicsr instructions panicked\nthe tracer, although the riscv crate that jolt-sdk depends on emits\ncsrrc/csrrci to disable interrupts. Add the four instructions as source\nkinds in both decoders and the tracer, with the same CSR whitelist and\nlegalization as CSRRW/CSRRS.\n\nThe CSRRS helper becomes emit_csr_bit_update, shared with CSRRC, with\nunchanged rows. A clear is one ANDN on the virtual register: the legal\nmstatus, mepc and mtvec values are closed under clearing bits. The\nimmediate forms fold uimm and the WARL masks at expansion time.\n\nThe new kinds sit in a separate group declared after INLINE, so every\npersisted Cycle and Instruction variant keeps its postcard position. The\nfour Zicsr ACT4 tests come off the skip list.\n\n* docs(spec): compare M-mode trap and CSR costs with main only\n\nThe cost and rationale tables compared each path with an intermediate\ncommit that is not on main. Drop that column and the sentences that\nreferred to it, so every count is relative to main.\n\n* chore(typos): allow the RISC-V mstatus field name SXL\n\n* docs(spec): qualify M-mode trap test coverage\n\n* docs(program): qualify Sail CSR write semantics\n\n* refactor(tracer): make the six CSR exec bodies panic\n\nThe CSRs live in virtual registers that only the inline sequence updates.\nThe old exec bodies read and wrote the raw cpu.csr array without\nlegalization, so a direct execute call could disagree with the sequence:\nat reset, `csrrci a0, mstatus, 8` gives a0 = 0x1800 through the sequence\nand 0 through exec.\n\nCSRRW, CSRRS, CSRRC, CSRRWI, CSRRSI and CSRRCI now panic in exec, as\nINLINE::exec already does, and callers must use trace. The csr_address\nhelpers had no other caller and are removed. read_csr_raw and\nwrite_csr_raw stay for the trap code in the emulator.\n\n---------\n\nCo-authored-by: Michael Zhu <mchl.zhu.96@gmail.com>",
+          "timestamp": "2026-11-13T15:26:34-08:00",
+          "tree_id": "1edd0e84b846d307b47ba3ab61b7557ccf7e0f04",
+          "url": "https://github.com/a16z/jolt/commit/91cd12f183fda964e29f68ebf65a36c74460328c"
+        },
+        "date": 1794616658439,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 3.7171,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 888836,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.4971,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 463360,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 463580,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 463436,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.8495,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 463584,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-mem",
+            "value": 889540,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 1.8743,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 463572,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 5.1075,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 463464,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 5.1242,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 130244,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.9665,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 889300,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.6451,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 463772,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.4777,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 463688,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 25.5447,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 463784,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 5.5626,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 463228,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 37.0305,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 700588,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 17.9461,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 601392,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 74.339,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 630268,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.8594,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 463588,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 2.1794,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 463280,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 19.4823,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 888292,
             "unit": "KB",
             "extra": ""
           }
