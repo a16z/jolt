@@ -350,9 +350,9 @@ pub struct ProfileArgs {
     /// (KiB, MiB, GiB or TiB; e.g. 32GiB), or `auto`. Requires `--backend
     /// optimized`. `auto` is read from the host after tracing: what it can
     /// still give this process (the smaller of `MemAvailable` and each cgroup
-    /// v2 `memory.max` less `memory.current` on the process's path) plus the
-    /// buffers the process already holds and reserves below. A host whose
-    /// limits cannot be read fails an `auto` run.
+    /// v2 `memory.max` on its path less that cgroup's usage other than file
+    /// cache) plus the buffers the process already holds and reserves below.
+    /// A host whose limits cannot be read fails an `auto` run.
     /// The profile reserves against the budget in turn and returns an
     /// error at the first reservation that does not fit. After tracing and
     /// before PCS setup, it reserves the input, the trace output, the program
