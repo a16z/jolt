@@ -307,7 +307,6 @@ fn device_load_failures_report_io_overflow() {
 fn advice_write_follows_guest_load_bounds() {
     let layout = JoltDevice::new(&memory_config()).memory_layout;
     let program = single_row_program(row(Kind::VirtualHostIO(VirtualHostIO(())), None, None, 0));
-    // A rejected range leaves the tape empty and the run continues.
     for (address, tape) in [
         (layout.get_lowest_address() - 1, Some(0)),
         (layout.heap_end, None),
@@ -332,7 +331,7 @@ fn advice_write_follows_guest_load_bounds() {
     }
 }
 
-fn partial_word_program(config: &MemoryConfig, offset: u64, value: u64) -> JoltProgram {
+fn heap_word_program(config: &MemoryConfig, offset: u64, value: u64) -> JoltProgram {
     let layout = JoltDevice::new(config).memory_layout;
     let mut store = row(Kind::SD, Some(1), None, offset.into());
     store.operands.rs2 = Some(3);
@@ -365,7 +364,7 @@ fn partial_word_program(config: &MemoryConfig, offset: u64, value: u64) -> JoltP
 }
 
 #[test]
-fn last_heap_word_preserves_backing_bytes_across_checkpoints() {
+fn last_heap_word_survives_checkpoints() {
     let config = MemoryConfig {
         program_size: Some(1025),
         stack_size: 0,
@@ -373,7 +372,7 @@ fn last_heap_word_preserves_backing_bytes_across_checkpoints() {
         ..Default::default()
     };
     let inputs = TraceInputs::new(Vec::new(), Vec::new(), Vec::new(), config);
-    let program = partial_word_program(&config, 1160, 256);
+    let program = heap_word_program(&config, 1160, 256);
     let mut backend = X86TracerBackend::new();
     backend.set_min_checkpoint_spacing_rows(1);
     let trace = backend
@@ -402,7 +401,7 @@ fn last_heap_word_preserves_backing_bytes_across_checkpoints() {
         assert_eq!(replay.rows(), std::slice::from_ref(expected));
     }
     for offset in [1168, 1176] {
-        let outside = partial_word_program(&config, offset, 0);
+        let outside = heap_word_program(&config, offset, 0);
         let inputs = TraceInputs::new(Vec::new(), Vec::new(), Vec::new(), config);
         assert!(X86TracerBackend::new().fast_run(&outside, inputs).is_err());
     }

@@ -632,7 +632,7 @@ impl ChunkedExecutionBackend for X86TracerBackend {
         let boundary = &checkpoint.boundary;
         let device = boundary.restore_device();
 
-        let mut plane = MemoryPlane::new(device.memory_layout.get_total_memory_size() as usize)?;
+        let mut plane = MemoryPlane::new(boundary.memory.len())?;
         plane.restore(&boundary.memory);
 
         let mut host = HostContext {

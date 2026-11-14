@@ -1977,7 +1977,6 @@ mod test_cpu {
         };
         let layout = JoltDevice::new(&config).memory_layout;
         let scratch = DRAM_BASE + 32;
-        // A rejected range leaves the tape empty and the run continues.
         for (address, tape) in [
             (layout.get_lowest_address() - 1, Some(0)),
             (layout.heap_end, None),
@@ -1985,7 +1984,6 @@ mod test_cpu {
             (scratch, Some(0xab)),
         ] {
             let mut cpu = create_cpu();
-            // Let heap_end reach the MMU check after trace_load reads its word.
             cpu.mmu.init_memory(layout.get_total_memory_size() + 8);
             cpu.mmu.jolt_device = Some(JoltDevice::new(&config));
             // VirtualHostIO, as in test_run_two_pass_replays_advice_writes.
