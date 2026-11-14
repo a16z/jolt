@@ -250,8 +250,8 @@ unless a later optimization PR makes that explicit.
       `JoltTraceRow`, not raw `Cycle`.
 - [ ] Spartan outer sumcheck hot loops consume `JoltTraceRow` or
       phase-local columns derived from it.
-- [ ] RAM read-write, RAM RA, RAM hamming, register read-write, bytecode RA,
-      and instruction lookup phases no longer repeatedly adapt raw cycles for
+- [ ] RAM read-write, RAM RA, register read-write, bytecode RA, and
+      instruction lookup phases no longer repeatedly adapt raw cycles for
       final-row metadata.
 - [ ] `JoltTraceCycle::try_new` call sites in proof hot paths are removed or
       reduced to construction-time checks.
@@ -313,7 +313,7 @@ least these measurements:
 - time to build `Vec<JoltTraceRow>` from raw trace data;
 - Spartan outer sumcheck time;
 - instruction lookup read-RAF time;
-- RAM read-write, RAM RA, RAM hamming, and RAM val-check time;
+- RAM read-write, RAM RA, and RAM val-check time;
 - register read-write and register val-check time;
 - bytecode read-RAF time;
 - cache behavior when bytecode is small, medium, and intentionally large enough

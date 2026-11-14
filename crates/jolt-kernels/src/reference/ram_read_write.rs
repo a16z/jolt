@@ -1,7 +1,7 @@
 //! The RAM read/write-checking (stage 2) kernel: a naive member over the
 //! joint `(address ‖ cycle)` domain.
 //!
-//! The summand `eq(τ_low, j) · ra(k,j) · (val(k,j) + γ·(val(k,j) + inc(j)))`
+//! The summand `eq(τ_low,j)·ra(k,j)·[(1+γ)val(k,j)+(γ+γ²C(k))inc(j)+γ³+γ⁴N(k)]`
 //! is one `Expr` over dense tables of size `2^(log_K + log_T)` in
 //! address-major layout (`index = k·2^log_T + j`), reordered to bind
 //! `LowToHigh` in the configured phase order. The cycle-indexed `inc` and
@@ -46,10 +46,32 @@ impl<F: JoltField> PrepareKernel<F, RamReadWriteChecking<F>> for ReferenceBacken
                 layout.table(tile(&dense_view(witness, ram_inc())?, copies))?,
             ),
         ]);
-        let derived_tables = BTreeMap::from([(
-            JoltDerivedId::from(RamReadWritePublic::EqCycle),
-            layout.table(tile(&eq_table(tau_low), copies))?,
-        )]);
+        let eq = eq_table(tau_low);
+        let masked_eq = |intervals: &[(usize, usize)]| -> Vec<F> {
+            (0..copies)
+                .flat_map(|address| {
+                    let inside = intervals
+                        .iter()
+                        .any(|&(start, end)| start <= address && address < end);
+                    eq.iter()
+                        .map(move |&weight| if inside { weight } else { F::zero() })
+                })
+                .collect()
+        };
+        let derived_tables = BTreeMap::from([
+            (
+                JoltDerivedId::from(RamReadWritePublic::EqCycle),
+                layout.table(tile(&eq, copies))?,
+            ),
+            (
+                JoltDerivedId::from(RamReadWritePublic::WriteProtectedEqCycle),
+                layout.table(masked_eq(relation.write_protected_word_intervals()))?,
+            ),
+            (
+                JoltDerivedId::from(RamReadWritePublic::UnmappedEqCycle),
+                layout.table(masked_eq(relation.unmapped_word_intervals()))?,
+            ),
+        ]);
 
         Ok(Box::new(NaiveSumcheckProver::new(
             &inputs,

@@ -128,7 +128,7 @@ BlindFold sits at Stage 8 of the Jolt prover pipeline, after all sumcheck stages
 | 3 | Spartan shift, instruction input, registers claim reduction | Collect round commitments, stage configs |
 | 4 | Registers read-write, RAM val evaluation, RAM val final | Collect round commitments, stage configs |
 | 5 | Instruction read-RAF, RAM RA reduction, registers val evaluation | Collect round commitments, stage configs |
-| 6 | Bytecode read-RAF, booleanity, Hamming booleanity, RA virtual, inc reduction, advice reduction | Collect round commitments, stage configs |
+| 6 | Bytecode read-RAF, booleanity, RA virtual, inc reduction, advice reduction | Collect round commitments, stage configs |
 | 7 | Hamming weight claim reduction, advice reduction (address phase) | Collect round commitments, stage configs |
 | **8** | **Batched opening proof + BlindFold** | Build R1CS, fold, prove |
 

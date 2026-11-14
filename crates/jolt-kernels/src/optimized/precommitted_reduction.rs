@@ -454,6 +454,7 @@ mod tests {
             )
             .unwrap(),
             ram: RAMPreprocessing {
+                code_word_intervals: Vec::new(),
                 min_bytecode_address: 0x8000_0000,
                 bytecode_words: vec![7, 11, 13, 17, 19],
             },

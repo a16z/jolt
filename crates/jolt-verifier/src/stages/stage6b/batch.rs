@@ -53,7 +53,6 @@ use super::instruction_ra_virtualization::{
     InstructionRaVirtualization, InstructionRaVirtualizationChallenges,
 };
 use super::outputs::{Stage6bChallenges, Stage6bSumchecks};
-use super::ram_hamming_booleanity::RamHammingBooleanity;
 use super::ram_ra_virtualization::RamRaVirtualization;
 use crate::preprocessing::JoltVerifierPreprocessing;
 use crate::proof::JoltProof;
@@ -241,7 +240,7 @@ impl<F: JoltField> Stage6bSumchecks<F> {
 
     /// The leg-assembly core of `Self::build`, over data both sides
     /// hold: the prove-side stage-6b recipe constructs the batch through this
-    /// same constructor from its clear carriers, so the ten member legs are
+    /// same constructor from its clear carriers, so the member legs are
     /// single-sourced.
     pub fn build_from_parts(parts: Stage6bBuildParts<'_, F>) -> Result<Self, VerifierError> {
         let Stage6bBuildParts {
@@ -266,7 +265,6 @@ impl<F: JoltField> Stage6bSumchecks<F> {
             untrusted_advice_reference_point,
         } = parts;
         let log_t = formula_dimensions.trace.log_t();
-        let trace_dimensions = formula_dimensions.trace;
 
         #[cfg(not(feature = "akita"))]
         let trusted_advice_layout = precommitted.trusted_advice.as_ref();
@@ -439,8 +437,6 @@ impl<F: JoltField> Stage6bSumchecks<F> {
             carried.booleanity.reference_address.clone(),
             stage5_instruction_cycle.iter().rev().copied().collect(),
         );
-        let ram_hamming_booleanity =
-            RamHammingBooleanity::new(trace_dimensions, stage1_cycle_binding);
         let ram_ra_virtualization = RamRaVirtualization::new(
             formula_dimensions.ram_ra_virtualization,
             ram_reduced_address.to_vec(),
@@ -455,7 +451,7 @@ impl<F: JoltField> Stage6bSumchecks<F> {
         );
         #[cfg(not(feature = "akita"))]
         let inc_claim_reduction = IncClaimReduction::new(
-            trace_dimensions,
+            formula_dimensions.trace,
             ram_read_write_cycle.to_vec(),
             ram_val_check_cycle.to_vec(),
             registers_read_write_cycle,
@@ -484,7 +480,6 @@ impl<F: JoltField> Stage6bSumchecks<F> {
         Ok(Self {
             bytecode_read_raf,
             booleanity,
-            ram_hamming_booleanity,
             ram_ra_virtualization,
             instruction_ra_virtualization,
             #[cfg(not(feature = "akita"))]
@@ -518,7 +513,6 @@ impl<F: JoltField> Stage6bSumchecks<F> {
             booleanity: BooleanityCyclePhaseChallenges {
                 gamma: carried.booleanity.gamma,
             },
-            ram_hamming_booleanity: NoChallenges::default(),
             ram_ra_virtualization: NoChallenges::default(),
             instruction_ra_virtualization: InstructionRaVirtualizationChallenges {
                 gamma: draws.instruction_ra_gamma,

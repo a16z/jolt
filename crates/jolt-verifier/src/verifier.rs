@@ -14,6 +14,7 @@ use jolt_openings::CommitmentScheme;
 use jolt_openings::GroupBatchOpening;
 #[cfg(not(feature = "akita"))]
 use jolt_openings::{AdditivelyHomomorphic, ZkOpeningScheme};
+use jolt_program::preprocess::ram::RamWordMasks;
 use jolt_program::preprocess::{compute_max_ram_k, compute_min_ram_k};
 use jolt_sumcheck::SumcheckProof;
 #[cfg(feature = "akita")]
@@ -455,6 +456,7 @@ pub struct CheckedInputs {
     pub ram_K: usize,
     pub entry_address: u64,
     pub preprocessing_digest: [u8; 32],
+    pub ram_word_masks: RamWordMasks,
     pub untrusted_advice_commitment_present: bool,
     pub trusted_advice_commitment_present: bool,
     pub vc_capacity: Option<usize>,
@@ -490,6 +492,7 @@ where
         return Err(VerifierError::MemoryLayoutMismatch);
     }
     validate_ram_remap_base(memory_layout)?;
+    preprocessing.program.validate_code_word_intervals()?;
 
     if num::u64_from_usize(public_io.inputs.len()) > memory_layout.max_input_size {
         return Err(VerifierError::InputTooLarge {
@@ -634,6 +637,14 @@ where
         ram_K: ram_k,
         entry_address: program.entry_address(),
         preprocessing_digest: preprocessing.preprocessing_digest,
+        ram_word_masks: RamWordMasks::new(
+            preprocessing.program.code_word_intervals(),
+            memory_layout,
+            ram_k,
+        )
+        .map_err(|error| VerifierError::InvalidMemoryLayout {
+            reason: error.to_string(),
+        })?,
         untrusted_advice_commitment_present,
         trusted_advice_commitment_present,
         vc_capacity,
@@ -996,6 +1007,7 @@ where
         return Err(VerifierError::MemoryLayoutMismatch);
     }
     validate_ram_remap_base(memory_layout)?;
+    preprocessing.program.validate_code_word_intervals()?;
 
     if num::u64_from_usize(public_io.inputs.len()) > memory_layout.max_input_size {
         return Err(VerifierError::InputTooLarge {
@@ -1120,6 +1132,14 @@ where
         ram_K: ram_k,
         entry_address: preprocessing.program.entry_address(),
         preprocessing_digest: preprocessing.preprocessing_digest,
+        ram_word_masks: RamWordMasks::new(
+            preprocessing.program.code_word_intervals(),
+            memory_layout,
+            ram_k,
+        )
+        .map_err(|error| VerifierError::InvalidMemoryLayout {
+            reason: error.to_string(),
+        })?,
         untrusted_advice_commitment_present,
         trusted_advice_commitment_present,
         vc_capacity,
@@ -1516,6 +1536,12 @@ mod tests {
                 )
                 .unwrap();
             }),
+            // Derived during validation from the code intervals and memory
+            // layout, which the preprocessing digest binds, and from ram_K,
+            // which is bound.
+            ("ram_word_masks", |c, _| {
+                c.ram_word_masks.unmapped.push((0, 1));
+            }),
         ];
         for (field, edit) in unbound {
             let (mut edited, mut edited_config) = (checked.clone(), config);
@@ -1591,7 +1617,10 @@ mod tests {
         let mut memory_layout = test_memory_layout();
         memory_layout.trusted_advice_start -= 4;
         memory_layout.untrusted_advice_start -= 4;
-        let preprocessing = test_preprocessing_with_layout(memory_layout);
+        let mut preprocessing = test_preprocessing();
+        if let ProgramPreprocessing::Full(full) = &mut preprocessing.program {
+            Arc::make_mut(full).memory_layout = memory_layout;
+        }
         let public_io = JoltDevice {
             memory_layout: preprocessing.program.memory_layout().clone(),
             ..JoltDevice::default()
@@ -1927,9 +1956,6 @@ mod tests {
                     instruction_ra: Vec::new(),
                     bytecode_ra: Vec::new(),
                     ram_ra: Vec::new(),
-                },
-                ram_hamming_booleanity: stage6b::outputs::RamHammingBooleanityOutputClaims {
-                    ram_hamming_weight: zero,
                 },
                 ram_ra_virtualization: stage6b::outputs::RamRaVirtualizationOutputClaims {
                     ram_ra: Vec::new(),

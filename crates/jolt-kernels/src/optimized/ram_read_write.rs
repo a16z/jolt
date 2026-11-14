@@ -2,7 +2,7 @@
 //! `RamReadWriteCheckingProver` ported onto the kernel seam.
 //!
 //! Same summand, variable order, and binding order as the reference kernel —
-//! `eq(τ_low, j) · ra(k,j) · (val(k,j) + γ·(val(k,j) + inc(j)))` over the
+//! `eq(τ_low,j)·ra(k,j)·[(1+γ)val(k,j)+(γ+γ²C(k))inc(j)+γ³+γ⁴N(k)]` over the
 //! joint `(address ‖ cycle)` domain, bound low-to-high — but the `(K × T)`
 //! `ra`/`val` grids are never materialized:
 //!
@@ -49,11 +49,11 @@ use jolt_witness::JoltWitnessPlane;
 use super::prefix_product::PrefixColumn;
 use super::ram_events::RamEventLog;
 use super::ram_trace::{ram_access_columns_bytes, RamAccessColumns};
-use super::read_write::ReadWriteOrder;
+use super::read_write::{AddressMasks, ReadWriteBatch, ReadWriteOrder};
 use super::rw_matrix::{
     round0_bind, round0_bind_bytes, round0_event_bind, round0_event_q_at_one,
-    round0_event_quadratic, round0_q_at_one, round0_quadratic_coefficients, val_slope_term,
-    AddressMajorMatrix, CycleMajorMatrix, SparseCycleColumn,
+    round0_event_quadratic, round0_q_at_one, round0_quadratic_coefficients, AddressMajorMatrix,
+    CycleMajorMatrix, SparseCycleColumn,
 };
 use super::streaming::FillMismatch;
 use super::support::{map_indices, pin_derived_term_if_derived, GruenRoundMessage};
@@ -120,7 +120,8 @@ pub(crate) struct RamReadWriteKernel<F: JoltField> {
     phase: Option<Phase<F>>,
     val_init: Polynomial<F>,
     #[cfg_attr(feature = "allocative", allocative(skip))]
-    gamma: F,
+    batch: ReadWriteBatch<F>,
+    mask: AddressMasks<F>,
     log_t: usize,
     log_k: usize,
 }
@@ -136,6 +137,28 @@ impl<F: JoltField> Phase<F> {
 const LATE_PURGE_CYCLE_ROUNDS: usize = 6;
 
 impl<F: JoltField> RamReadWriteKernel<F> {
+    /// The kernel from its first phase, batching with the relation's γ powers
+    /// and address masks.
+    fn new(
+        inputs: &ProverInputs<'_, F, RamReadWriteChecking<F>>,
+        phase: Phase<F>,
+        val_init: Polynomial<F>,
+        log_t: usize,
+        log_k: usize,
+    ) -> Result<Self, KernelError<F>> {
+        Ok(Self {
+            phase: Some(phase),
+            val_init,
+            batch: ReadWriteBatch::new(inputs.challenges.gamma),
+            mask: AddressMasks::new(
+                inputs.relation.write_protected_word_intervals(),
+                inputs.relation.unmapped_word_intervals(),
+            )?,
+            log_t,
+            log_k,
+        })
+    }
+
     fn ingest(&mut self, r: F, round: usize) -> Result<(), SumcheckError<F>> {
         self.phase = Some(match self.phase.take().ok_or_else(Phase::error)? {
             Phase::Round0 {
@@ -175,6 +198,7 @@ impl<F: JoltField> RamReadWriteKernel<F> {
                 inc,
             } => {
                 matrix.bind(r, &mut self.val_init);
+                self.mask.bind(r);
                 if round + 1 == self.log_t + self.log_k {
                     self.finish_address(matrix, merged_eq, inc.value(0))
                 } else {
@@ -192,7 +216,9 @@ impl<F: JoltField> RamReadWriteKernel<F> {
                 gruen,
             } => {
                 matrix.bind(r, &mut self.val_init);
+                self.mask.bind(r);
                 if round + 1 == self.log_k {
+                    self.mask.finish_address();
                     crate::mem::drop_in_background_thread(eq);
                     let (ra, val) = matrix.into_cycle_tables(self.val_init.evals()[0]);
                     Phase::DenseCycle {
@@ -352,7 +378,8 @@ impl<F: JoltField> RamReadWriteKernel<F> {
                         columns,
                         |pair| e_out[pair >> in_bits] * e_in[pair & in_mask],
                         inc,
-                        self.gamma,
+                        self.batch,
+                        &self.mask,
                     ),
                 )
             }
@@ -366,7 +393,8 @@ impl<F: JoltField> RamReadWriteKernel<F> {
                     matrix.quadratic_coefficients(
                         |pair| e_out[pair >> in_bits] * e_in[pair & in_mask],
                         inc,
-                        self.gamma,
+                        self.batch,
+                        &self.mask,
                     ),
                 )
             }
@@ -380,7 +408,8 @@ impl<F: JoltField> RamReadWriteKernel<F> {
                     round0_event_quadratic(
                         log,
                         |pair| e_out[pair >> in_bits] * e_in[pair & in_mask],
-                        self.gamma,
+                        self.batch,
+                        &self.mask,
                     ),
                 )
             }
@@ -394,7 +423,8 @@ impl<F: JoltField> RamReadWriteKernel<F> {
                     matrix.sparse_quadratic_coefficients(
                         |pair| e_out[pair >> in_bits] * e_in[pair & in_mask],
                         inc,
-                        self.gamma,
+                        self.batch,
+                        &self.mask,
                     ),
                 )
             }
@@ -404,6 +434,9 @@ impl<F: JoltField> RamReadWriteKernel<F> {
                 inc,
                 gruen,
             }) => {
+                // Address binding reduces each mask to one scalar. C scales the
+                // increment and N folds into count, which affects q(0) only.
+                let coefficients = self.batch.bound(self.mask.value(0));
                 let quadratic = gruen.par_fold_out_in_prefix(
                     ra.values.len().div_ceil(2),
                     || [F::zero(); 2],
@@ -415,9 +448,8 @@ impl<F: JoltField> RamReadWriteKernel<F> {
                         let ra = pair(ra);
                         let val = pair(val);
                         let inc = pair(inc);
-                        for i in 0..2 {
-                            acc[i] += e_in * ra[i] * val_slope_term(val[i], inc[i], self.gamma);
-                        }
+                        acc[0] += e_in * ra[0] * coefficients.value(val[0], inc[0]);
+                        acc[1] += e_in * ra[1] * coefficients.slope(val[1], inc[1]);
                     },
                     |_x_out, e_out, acc| acc.map(|value| e_out * value),
                     |a, b| [a[0] + b[0], a[1] + b[1]],
@@ -437,23 +469,24 @@ impl<F: JoltField> RamReadWriteKernel<F> {
                 let weight = |pair| e_out[pair >> in_bits] * e_in[pair & in_mask];
                 match &self.phase {
                     Some(Phase::Round0 { columns, inc, .. }) => {
-                        round0_q_at_one(columns, weight, inc, self.gamma)
+                        round0_q_at_one(columns, weight, inc, self.batch, &self.mask)
                     }
                     Some(Phase::Cycle { matrix, inc, .. }) => {
-                        matrix.q_at_one(weight, inc, self.gamma)
+                        matrix.q_at_one(weight, inc, self.batch, &self.mask)
                     }
                     Some(Phase::EventRound0 { log, .. }) => {
-                        round0_event_q_at_one(log, weight, self.gamma)
+                        round0_event_q_at_one(log, weight, self.batch, &self.mask)
                     }
                     Some(Phase::SparseCycle { matrix, inc, .. }) => {
-                        matrix.sparse_q_at_one(weight, inc, self.gamma)
+                        matrix.sparse_q_at_one(weight, inc, self.batch, &self.mask)
                     }
                     Some(Phase::DenseCycle { ra, val, inc, .. }) => {
+                        let coefficients = self.batch.bound(self.mask.value(0));
                         (0..ra.values.len().div_ceil(2)).fold(F::zero(), |sum, pair| {
                             let row = 2 * pair + 1;
                             sum + weight(pair)
                                 * ra.value(row)
-                                * val_slope_term(val.value(row), inc.value(row), self.gamma)
+                                * coefficients.value(val.value(row), inc.value(row))
                         })
                     }
                     _ => unreachable!("cycle phase was checked above"),
@@ -476,7 +509,7 @@ impl<F: JoltField> RamReadWriteKernel<F> {
             }) => (matrix, eq, inc),
             _ => return Err(Phase::error()),
         };
-        let evals = matrix.address_round_evals(&self.val_init, inc, eq, self.gamma);
+        let evals = matrix.address_round_evals(&self.val_init, inc, eq, self.batch, &self.mask);
         Ok(UnivariatePoly::from_evals_and_hint(previous_claim, &evals))
     }
 }
@@ -563,6 +596,22 @@ impl<F: JoltField> SumcheckKernel<F> for RamReadWriteKernel<F> {
             output_points,
             challenges,
             merged_eq[0],
+        )?;
+        pin_derived_term_if_derived(
+            relation,
+            JoltDerivedId::from(RamReadWritePublic::WriteProtectedEqCycle),
+            input_points,
+            output_points,
+            challenges,
+            merged_eq[0] * self.mask.value(0).protected(),
+        )?;
+        pin_derived_term_if_derived(
+            relation,
+            JoltDerivedId::from(RamReadWritePublic::UnmappedEqCycle),
+            input_points,
+            output_points,
+            challenges,
+            merged_eq[0] * self.mask.value(0).unmapped(),
         )
     }
 }
@@ -644,13 +693,9 @@ impl<F: JoltField> PrepareKernel<F, RamReadWriteChecking<F>> for OptimizedBacken
                 }
             }
         };
-        Ok(Box::new(RamReadWriteKernel {
-            phase: Some(phase),
-            val_init,
-            gamma: inputs.challenges.gamma,
-            log_t,
-            log_k,
-        }))
+        Ok(Box::new(RamReadWriteKernel::new(
+            &inputs, phase, val_init, log_t, log_k,
+        )?))
     }
 }
 
@@ -811,22 +856,22 @@ impl<F: JoltField> PrepareKernel<F, RamReadWriteChecking<F>> for StreamingRamRea
                 }
             }
         };
-        Ok(Box::new(RamReadWriteKernel {
-            phase: Some(phase),
-            val_init,
-            gamma: inputs.challenges.gamma,
-            log_t,
-            log_k,
-        }))
+        Ok(Box::new(RamReadWriteKernel::new(
+            &inputs, phase, val_init, log_t, log_k,
+        )?))
     }
 }
 
 #[cfg(test)]
 #[expect(clippy::unwrap_used)]
 mod tests {
+    use common::jolt_device::MemoryLayout;
     use jolt_claims::protocols::jolt::geometry::ram::{ram_ra, ram_val};
-    use jolt_field::{Fr, Ring};
+    use jolt_claims::{OutputClaims, SumcheckChallenges, SymbolicSumcheck};
+    use jolt_field::{Fr, One, Ring};
     use jolt_poly::EqPolynomial;
+    use jolt_program::preprocess::ram::{write_protected_word_intervals, RamWordMasks};
+    use jolt_verifier::stages::relations::ConcreteSumcheck;
     use jolt_verifier::stages::stage2::ram_read_write_checking::{
         RamReadWriteChallenges, RamReadWriteInputClaims,
     };
@@ -838,22 +883,55 @@ mod tests {
     use crate::optimized::parity::ExceptionalEq;
     use crate::ReferenceBackend;
 
+    fn indicator(intervals: &[(usize, usize)], address: usize) -> Fr {
+        Fr::from_u64(u64::from(
+            intervals
+                .iter()
+                .any(|&(start, end)| start <= address && address < end),
+        ))
+    }
+
+    /// The input claim: the relation's output expression summed over the
+    /// Boolean `(address, cycle)` domain, each public weight at its Boolean
+    /// value, `eq(τ_low, j)` times `C(k)` or `N(k)` for a masked weight.
     fn dense_input_claim(
         witness: &dyn JoltWitnessPlane<Fr>,
-        tau_low: &[Fr],
-        gamma: Fr,
-        ram_k: usize,
+        relation: &RamReadWriteChecking<Fr>,
+        challenges: &RamReadWriteChallenges<Fr>,
     ) -> Fr {
-        let cycles = 1usize << tau_low.len();
-        let eq = EqPolynomial::new(tau_low.to_vec()).evaluations();
+        let log_t = relation.product_tau_low().len();
+        let eq = EqPolynomial::new(relation.product_tau_low().to_vec()).evaluations();
         let ra: Vec<Fr> = witness.oracle_table(ram_ra().polynomial_id()).unwrap();
         let val: Vec<Fr> = witness.oracle_table(ram_val().polynomial_id()).unwrap();
         let inc: Vec<Fr> = witness.oracle_table(ram_inc().polynomial_id()).unwrap();
+        let expression = relation.symbolic().output_expression::<Fr>();
         let mut claim = Fr::from_u64(0);
-        for k in 0..ram_k {
-            for j in 0..cycles {
-                let index = (k << tau_low.len()) | j;
-                claim += eq[j] * ra[index] * (val[index] + gamma * (val[index] + inc[j]));
+        for k in 0..1usize << relation.ram_log_k() {
+            for (j, &eq_j) in eq.iter().enumerate() {
+                let index = (k << log_t) | j;
+                let outputs = RamReadWriteOutputClaims {
+                    val: val[index],
+                    ra: ra[index],
+                    inc: inc[j],
+                };
+                claim += expression.evaluate(
+                    |id| outputs.resolve_output(id).unwrap(),
+                    |id| challenges.resolve_challenge(id).unwrap(),
+                    |id| {
+                        let JoltDerivedId::RamReadWrite(public) = id else {
+                            unreachable!("not a RAM read-write public: {id:?}")
+                        };
+                        eq_j * match public {
+                            RamReadWritePublic::EqCycle => Fr::one(),
+                            RamReadWritePublic::WriteProtectedEqCycle => {
+                                indicator(relation.write_protected_word_intervals(), k)
+                            }
+                            RamReadWritePublic::UnmappedEqCycle => {
+                                indicator(relation.unmapped_word_intervals(), k)
+                            }
+                        }
+                    },
+                );
             }
         }
         claim
@@ -874,7 +952,7 @@ mod tests {
         ops: Vec<RamOp>,
         phase_splits: &[(usize, usize)],
     ) {
-        run_parity_case(shape, init_words, ops, phase_splits, None);
+        run_parity_case(shape, init_words, ops, phase_splits, None, None);
     }
 
     fn run_parity_case(
@@ -883,6 +961,7 @@ mod tests {
         ops: Vec<RamOp>,
         phase_splits: &[(usize, usize)],
         exceptional: Option<ExceptionalEq>,
+        masks: Option<RamWordMasks>,
     ) {
         with_ram_fixture_init(shape, init_words, ops, |witness| {
             let first_cycle = if phase_splits[0].0 == 0 {
@@ -899,16 +978,32 @@ mod tests {
             let claims = RamReadWriteInputClaims {
                 ram_read_value: Fr::from_u64(0),
                 ram_write_value: Fr::from_u64(0),
+                load: Fr::from_u64(0),
+                store: Fr::from_u64(0),
             };
             let points = RamReadWriteInputClaims::<Vec<Fr>>::default();
             let challenges = RamReadWriteChallenges { gamma };
-            let input_claim = dense_input_claim(witness, &tau_low, gamma, shape.ram_k);
+            let masks = masks.unwrap_or_else(|| {
+                if shape.ram_k >= 8 {
+                    RamWordMasks {
+                        write_protected: vec![(3, 6), (7, shape.ram_k)],
+                        unmapped: vec![(1, 3), (6, 7)],
+                    }
+                } else {
+                    RamWordMasks {
+                        write_protected: vec![(0, 1)],
+                        unmapped: vec![(1, shape.ram_k)],
+                    }
+                }
+            });
             for &(phase1, phase2) in phase_splits {
                 let relation = RamReadWriteChecking::<Fr>::new(
                     ReadWriteDimensions::new(shape.log_t, shape.log_k(), phase1, phase2),
                     shape.log_k(),
                     tau_low.clone(),
+                    masks.clone(),
                 );
+                let input_claim = dense_input_claim(witness, &relation, &challenges);
 
                 let slots: [&dyn PrepareKernel<Fr, RamReadWriteChecking<Fr>>; 2] =
                     [&OptimizedBackend, &StreamingRamReadWrite];
@@ -954,6 +1049,51 @@ mod tests {
                 RamOp::Read { word: 4 },
                 RamOp::Write { word: 12, post: 1 },
             ],
+        );
+    }
+
+    #[test]
+    fn protected_io_mask_matches_reference_in_both_binding_orders() {
+        let lowest = super::super::testing::fixture_lowest_address();
+        let layout = MemoryLayout {
+            trusted_advice_start: lowest,
+            trusted_advice_end: lowest + 16,
+            untrusted_advice_start: lowest + 16,
+            untrusted_advice_end: lowest + 32,
+            input_start: lowest + 32,
+            input_end: lowest + 40,
+            stack_end: lowest + 88,
+            heap_end: lowest + 256,
+            ..Default::default()
+        };
+        let intervals = write_protected_word_intervals(&[(7, 9)], &layout, 32).unwrap();
+        assert_eq!(intervals, [(0, 5), (7, 9), (11, 27)]);
+        let masks = RamWordMasks {
+            write_protected: intervals,
+            unmapped: vec![(5, 7), (29, 32)],
+        };
+        let shape = FixtureShape {
+            log_t: 4,
+            ram_k: 32,
+        };
+        run_parity_case(
+            shape,
+            Vec::new(),
+            vec![
+                RamOp::Read { word: 0 },
+                RamOp::Write { word: 2, post: 17 },
+                RamOp::Write { word: 4, post: 23 },
+                RamOp::Write { word: 7, post: 29 },
+                RamOp::Write { word: 11, post: 31 },
+                RamOp::Write { word: 26, post: 37 },
+                RamOp::Write { word: 28, post: 41 },
+                RamOp::Read { word: 6 },
+                RamOp::Write { word: 30, post: 43 },
+                RamOp::Write { word: 2, post: 0 },
+            ],
+            &[(shape.log_t, shape.log_k()), (0, shape.log_k())],
+            None,
+            Some(masks),
         );
     }
 
@@ -1060,10 +1200,13 @@ mod tests {
                 ),
                 shape.log_k(),
                 tau_low,
+                RamWordMasks::default(),
             );
             let claims = RamReadWriteInputClaims {
                 ram_read_value: Fr::from_u64(0),
                 ram_write_value: Fr::from_u64(0),
+                load: Fr::from_u64(0),
+                store: Fr::from_u64(0),
             };
             let points = RamReadWriteInputClaims::<Vec<Fr>>::default();
             let challenges = RamReadWriteChallenges {
@@ -1107,6 +1250,7 @@ mod tests {
                     ],
                     &[phase],
                     Some(case),
+                    None,
                 );
             }
         }

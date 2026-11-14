@@ -15,10 +15,9 @@ use crate::field_inline::FieldInlineWitnessOracle;
 use crate::witnesses::{
     BytecodeRaChunk, Imm, InstructionFlag, InstructionRaChunk, InstructionRafFlag,
     LeftInstructionInput, LeftLookupOperand, LookupOutput, LookupTableFlag, NextIsFirstInSequence,
-    NextIsNoop, NextIsVirtual, NextPc, NextUnexpandedPc, OpFlag, Pc, Product, RamAddress,
-    RamHammingWeight, RamInc, RamRaChunk, RamReadValue, RamWriteValue, RdInc, RdWriteValue,
-    RightInstructionInput, RightLookupOperand, Rs1Value, Rs2Value, ShouldBranch, ShouldJump,
-    UnexpandedPc,
+    NextIsNoop, NextIsVirtual, NextPc, NextUnexpandedPc, OpFlag, Pc, Product, RamAddress, RamInc,
+    RamRaChunk, RamReadValue, RamWriteValue, RdInc, RdWriteValue, RightInstructionInput,
+    RightLookupOperand, Rs1Value, Rs2Value, ShouldBranch, ShouldJump, UnexpandedPc,
 };
 use crate::{JoltWitnessOracle, PolynomialEncoding, Shape};
 
@@ -126,9 +125,9 @@ impl JoltVmWitnessMetadata<'_> {
                 | V::RamAddress
                 | V::RamReadValue
                 | V::RamWriteValue
-                | V::RamHammingWeight
                 | V::OpFlags(_)
                 | V::InstructionFlags(_) => Ok(Shape::new(self.trace_log_rows(), Dense)),
+                V::Reserved34(retired) => match retired {},
                 V::Rd | V::InstructionRaf | V::RamValInit => Err(not_served(id, UNSERVED_REASON)),
                 V::UnivariateSkip
                 | V::BytecodeValClaim(_)
@@ -218,7 +217,7 @@ impl<F: JoltField> JoltWitnessOracle<F> for TraceBackend {
                 V::RamAddress => self.materialize_cycle::<F, RamAddress>(),
                 V::RamReadValue => self.materialize_cycle::<F, RamReadValue>(),
                 V::RamWriteValue => self.materialize_cycle::<F, RamWriteValue>(),
-                V::RamHammingWeight => self.materialize_cycle::<F, RamHammingWeight>(),
+                V::Reserved34(retired) => match retired {},
                 V::OpFlags(flag) => self.materialize_cycle_indexed::<F, OpFlag, _>(flag),
                 V::InstructionFlags(flag) => {
                     self.materialize_cycle_indexed::<F, InstructionFlag, _>(flag)

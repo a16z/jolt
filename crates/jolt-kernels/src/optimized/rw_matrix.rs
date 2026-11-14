@@ -33,6 +33,7 @@ use rayon::prelude::*;
 use super::prefix_product::PrefixColumn;
 use super::ram_events::{RamEvent, RamEventLog};
 use super::ram_trace::{RamAccessColumns, NO_ACCESS};
+use super::read_write::{AddressMaskValues, AddressMasks, ReadWriteBatch, ReadWriteCoefficients};
 use super::streaming::{bind_groups_in_place, exact_task_fill, key_runs, FillMismatch, TaskSlots};
 
 /// One explicit matrix entry while cycle variables bind (row-major order).
@@ -123,7 +124,7 @@ impl<F: JoltField> CycleMajorEntry<F> {
         even: Option<&Self>,
         odd: Option<&Self>,
         inc_evals: [F; 2],
-        gamma: F,
+        coefficients: ReadWriteCoefficients<F>,
     ) -> [F; 2] {
         let (ra_evals, val_evals) = match (even, odd) {
             (Some(even), Some(odd)) => {
@@ -138,21 +139,16 @@ impl<F: JoltField> CycleMajorEntry<F> {
                 let even_val = F::from_u64(odd.prev_val);
                 return [
                     F::zero(),
-                    odd.ra * (val_slope_term(odd.val - even_val, inc_evals[1], gamma)),
+                    odd.ra * (coefficients.slope(odd.val - even_val, inc_evals[1])),
                 ];
             }
             (None, None) => unreachable!("a merged pair has at least one side"),
         };
         [
-            ra_evals[0] * val_slope_term(val_evals[0], inc_evals[0], gamma),
-            ra_evals[1] * val_slope_term(val_evals[1], inc_evals[1], gamma),
+            ra_evals[0] * coefficients.value(val_evals[0], inc_evals[0]),
+            ra_evals[1] * coefficients.slope(val_evals[1], inc_evals[1]),
         ]
     }
-}
-
-#[inline]
-pub(super) fn val_slope_term<F: JoltField>(val: F, inc: F, gamma: F) -> F {
-    val + gamma * (inc + val)
 }
 
 fn merge_bind_rows<F: JoltField>(
@@ -192,7 +188,8 @@ fn merge_quadratic_evals<F: JoltField>(
     even: &[CycleMajorEntry<F>],
     odd: &[CycleMajorEntry<F>],
     inc_evals: [F; 2],
-    gamma: F,
+    batch: ReadWriteBatch<F>,
+    mask: &AddressMasks<F>,
 ) -> [F; 2] {
     let mut acc = [F::zero(); 2];
     let mut add = |evals: [F; 2]| {
@@ -208,7 +205,7 @@ fn merge_quadratic_evals<F: JoltField>(
                     Some(&even[i]),
                     Some(&odd[j]),
                     inc_evals,
-                    gamma,
+                    batch.unbound(mask.contains_unbound(even[i].col as usize)),
                 ));
                 i += 1;
                 j += 1;
@@ -218,7 +215,7 @@ fn merge_quadratic_evals<F: JoltField>(
                     Some(&even[i]),
                     None,
                     inc_evals,
-                    gamma,
+                    batch.unbound(mask.contains_unbound(even[i].col as usize)),
                 ));
                 i += 1;
             }
@@ -227,7 +224,7 @@ fn merge_quadratic_evals<F: JoltField>(
                     None,
                     Some(&odd[j]),
                     inc_evals,
-                    gamma,
+                    batch.unbound(mask.contains_unbound(odd[j].col as usize)),
                 ));
                 j += 1;
             }
@@ -238,7 +235,7 @@ fn merge_quadratic_evals<F: JoltField>(
             Some(entry),
             None,
             inc_evals,
-            gamma,
+            batch.unbound(mask.contains_unbound(entry.col as usize)),
         ));
     }
     for entry in &odd[j..] {
@@ -246,7 +243,7 @@ fn merge_quadratic_evals<F: JoltField>(
             None,
             Some(entry),
             inc_evals,
-            gamma,
+            batch.unbound(mask.contains_unbound(entry.col as usize)),
         ));
     }
     acc
@@ -270,16 +267,27 @@ fn pair_quadratic<F: JoltField>(
     group: &[CycleMajorEntry<F>],
     inc_evals: [F; 2],
     head: F,
-    gamma: F,
+    batch: ReadWriteBatch<F>,
+    mask: &AddressMasks<F>,
 ) -> [F; 2] {
     let (even, odd) = split_row_pair(group);
-    let inner = merge_quadratic_evals(even, odd, inc_evals, gamma);
+    let inner = merge_quadratic_evals(even, odd, inc_evals, batch, mask);
     [head * inner[0], head * inner[1]]
 }
 
 /// An odd-row entry's summand at `t = 1`, against `inc` at its row.
-fn odd_entry_at_one<F: JoltField>(entry: &CycleMajorEntry<F>, inc: F, gamma: F) -> F {
-    CycleMajorEntry::quadratic_evals(Some(entry), None, [inc, F::zero()], gamma)[0]
+fn odd_entry_at_one<F: JoltField>(
+    entry: &CycleMajorEntry<F>,
+    inc: F,
+    batch: ReadWriteBatch<F>,
+    mask: &AddressMasks<F>,
+) -> F {
+    CycleMajorEntry::quadratic_evals(
+        Some(entry),
+        None,
+        [inc, F::zero()],
+        batch.unbound(mask.contains_unbound(entry.col as usize)),
+    )[0]
 }
 
 /// `q(1)` of the phase-1 round: every odd-row entry against `inc` at its row.
@@ -287,14 +295,15 @@ fn odd_rows_at_one<F: JoltField>(
     entries: &[CycleMajorEntry<F>],
     eq_head: impl Fn(usize) -> F,
     mut inc_at: impl FnMut(usize) -> F,
-    gamma: F,
+    batch: ReadWriteBatch<F>,
+    mask: &AddressMasks<F>,
 ) -> F {
     entries
         .iter()
         .filter(|entry| entry.row % 2 == 1)
         .fold(F::zero(), |sum, entry| {
             let row = entry.row as usize;
-            sum + eq_head(row / 2) * odd_entry_at_one(entry, inc_at(row), gamma)
+            sum + eq_head(row / 2) * odd_entry_at_one(entry, inc_at(row), batch, mask)
         })
 }
 
@@ -370,20 +379,23 @@ impl<F: JoltField> CycleMajorMatrix<F> {
     }
 
     /// The quadratic factor `[q(0), q_∞]` of the phase-1 round message:
-    /// `q(t) = Σ_pairs eq_head(pair) · Σ_cols ra(t)·(val(t) + γ(inc(t)+val(t)))`,
+    /// `q(t) = Σ_pairs eq_head(pair) · Σ_cols ra(t)·[(1+γ)val(t)+(γ+γ²C)inc(t)+γ³+γ⁴N]`,
     /// with `eq_head` supplied per pair index (the Gruen head weight) and
     /// `inc` the bound committed increment column.
     pub fn quadratic_coefficients(
         &self,
         eq_head: impl Fn(usize) -> F + Sync,
         inc: &PrefixColumn<F>,
-        gamma: F,
+        batch: ReadWriteBatch<F>,
+        mask: &AddressMasks<F>,
     ) -> [F; 2] {
+        // Each surviving entry adds one interval search and a coefficient selection
+        // in the existing merge; count changes q(0), not the quadratic leading term.
         let per_group = |group: &[CycleMajorEntry<F>]| -> [F; 2] {
             let pair = (group[0].row / 2) as usize;
             let inc_0 = inc.value(2 * pair);
             let inc_evals = [inc_0, inc.value(2 * pair + 1) - inc_0];
-            pair_quadratic(group, inc_evals, eq_head(pair), gamma)
+            pair_quadratic(group, inc_evals, eq_head(pair), batch, mask)
         };
 
         #[cfg(feature = "parallel")]
@@ -402,8 +414,14 @@ impl<F: JoltField> CycleMajorMatrix<F> {
         }
     }
 
-    pub fn q_at_one(&self, eq_head: impl Fn(usize) -> F, inc: &PrefixColumn<F>, gamma: F) -> F {
-        odd_rows_at_one(&self.entries, eq_head, |row| inc.value(row), gamma)
+    pub fn q_at_one(
+        &self,
+        eq_head: impl Fn(usize) -> F,
+        inc: &PrefixColumn<F>,
+        batch: ReadWriteBatch<F>,
+        mask: &AddressMasks<F>,
+    ) -> F {
+        odd_rows_at_one(&self.entries, eq_head, |row| inc.value(row), batch, mask)
     }
 
     /// [`Self::bind`] in place ([`bind_groups_in_place`]), without a second
@@ -425,7 +443,8 @@ impl<F: JoltField> CycleMajorMatrix<F> {
         &self,
         eq_head: impl Fn(usize) -> F + Sync,
         inc: &SparseCycleColumn<F>,
-        gamma: F,
+        batch: ReadWriteBatch<F>,
+        mask: &AddressMasks<F>,
     ) -> [F; 2] {
         let task = |run: &&[CycleMajorEntry<F>]| -> [F; 2] {
             let mut cursor = inc.cursor(run.first().map_or(0, |entry| entry.row as usize / 2));
@@ -434,7 +453,7 @@ impl<F: JoltField> CycleMajorMatrix<F> {
                     let pair = (group[0].row / 2) as usize;
                     let [inc_0, inc_1] = cursor.pair(pair);
                     let [q_0, q_infty] =
-                        pair_quadratic(group, [inc_0, inc_1 - inc_0], eq_head(pair), gamma);
+                        pair_quadratic(group, [inc_0, inc_1 - inc_0], eq_head(pair), batch, mask);
                     [acc[0] + q_0, acc[1] + q_infty]
                 })
         };
@@ -451,10 +470,17 @@ impl<F: JoltField> CycleMajorMatrix<F> {
         &self,
         eq_head: impl Fn(usize) -> F,
         inc: &SparseCycleColumn<F>,
-        gamma: F,
+        batch: ReadWriteBatch<F>,
+        mask: &AddressMasks<F>,
     ) -> F {
         let mut cursor = inc.cursor(0);
-        odd_rows_at_one(&self.entries, eq_head, |row| cursor.pair(row / 2)[1], gamma)
+        odd_rows_at_one(
+            &self.entries,
+            eq_head,
+            |row| cursor.pair(row / 2)[1],
+            batch,
+            mask,
+        )
     }
 
     /// Reinterpret as address-major once every cycle variable is bound: all
@@ -501,7 +527,8 @@ pub(crate) fn round0_q_at_one<F: JoltField>(
     columns: &RamAccessColumns,
     eq_head: impl Fn(usize) -> F,
     inc: &PrefixColumn<F>,
-    gamma: F,
+    batch: ReadWriteBatch<F>,
+    mask: &AddressMasks<F>,
 ) -> F {
     (1..columns.addresses.prefix_len())
         .step_by(2)
@@ -509,7 +536,7 @@ pub(crate) fn round0_q_at_one<F: JoltField>(
             let Some(entry) = round0_entry::<F>(columns, row) else {
                 return sum;
             };
-            sum + eq_head(row / 2) * odd_entry_at_one(&entry, inc.value(row), gamma)
+            sum + eq_head(row / 2) * odd_entry_at_one(&entry, inc.value(row), batch, mask)
         })
 }
 
@@ -519,15 +546,32 @@ fn round0_pair_quadratic<F: JoltField>(
     even: Option<&CycleMajorEntry<F>>,
     odd: Option<&CycleMajorEntry<F>>,
     inc_evals: [F; 2],
-    gamma: F,
+    batch: ReadWriteBatch<F>,
+    mask: &AddressMasks<F>,
 ) -> [F; 2] {
     match (even, odd) {
         (Some(even), Some(odd)) if even.col != odd.col => {
-            let lone_even = CycleMajorEntry::quadratic_evals(Some(even), None, inc_evals, gamma);
-            let lone_odd = CycleMajorEntry::quadratic_evals(None, Some(odd), inc_evals, gamma);
+            let lone_even = CycleMajorEntry::quadratic_evals(
+                Some(even),
+                None,
+                inc_evals,
+                batch.unbound(mask.contains_unbound(even.col as usize)),
+            );
+            let lone_odd = CycleMajorEntry::quadratic_evals(
+                None,
+                Some(odd),
+                inc_evals,
+                batch.unbound(mask.contains_unbound(odd.col as usize)),
+            );
             [lone_even[0] + lone_odd[0], lone_even[1] + lone_odd[1]]
         }
-        _ => CycleMajorEntry::quadratic_evals(even, odd, inc_evals, gamma),
+        (Some(entry), _) | (None, Some(entry)) => CycleMajorEntry::quadratic_evals(
+            even,
+            odd,
+            inc_evals,
+            batch.unbound(mask.contains_unbound(entry.col as usize)),
+        ),
+        (None, None) => unreachable!("a merged pair has at least one side"),
     }
 }
 
@@ -557,7 +601,8 @@ pub(crate) fn round0_quadratic_coefficients<F: JoltField>(
     columns: &RamAccessColumns,
     eq_head: impl Fn(usize) -> F + Sync,
     inc: &PrefixColumn<F>,
-    gamma: F,
+    batch: ReadWriteBatch<F>,
+    mask: &AddressMasks<F>,
 ) -> [F; 2] {
     let pairs = columns.addresses.prefix_len().div_ceil(2);
     let per_pair = |pair: usize| -> [F; 2] {
@@ -568,7 +613,7 @@ pub(crate) fn round0_quadratic_coefficients<F: JoltField>(
         }
         let inc_0 = inc.value(2 * pair);
         let inc_evals = [inc_0, inc.value(2 * pair + 1) - inc_0];
-        let inner = round0_pair_quadratic(even.as_ref(), odd.as_ref(), inc_evals, gamma);
+        let inner = round0_pair_quadratic(even.as_ref(), odd.as_ref(), inc_evals, batch, mask);
         let head = eq_head(pair);
         [head * inner[0], head * inner[1]]
     };
@@ -645,7 +690,8 @@ fn event_pair_runs(log: &RamEventLog) -> Vec<&[RamEvent]> {
 pub(crate) fn round0_event_quadratic<F: JoltField>(
     log: &RamEventLog,
     eq_head: impl Fn(usize) -> F + Sync,
-    gamma: F,
+    batch: ReadWriteBatch<F>,
+    mask: &AddressMasks<F>,
 ) -> [F; 2] {
     let task = |run: &&[RamEvent]| -> [F; 2] {
         run.chunk_by(same_event_pair)
@@ -658,7 +704,8 @@ pub(crate) fn round0_event_quadratic<F: JoltField>(
                     even.as_ref(),
                     odd.as_ref(),
                     [inc_0, inc_1 - inc_0],
-                    gamma,
+                    batch,
+                    mask,
                 );
                 let head = eq_head(pair);
                 [acc[0] + head * inner[0], acc[1] + head * inner[1]]
@@ -677,7 +724,8 @@ pub(crate) fn round0_event_quadratic<F: JoltField>(
 pub(crate) fn round0_event_q_at_one<F: JoltField>(
     log: &RamEventLog,
     eq_head: impl Fn(usize) -> F,
-    gamma: F,
+    batch: ReadWriteBatch<F>,
+    mask: &AddressMasks<F>,
 ) -> F {
     log.events()
         .iter()
@@ -685,7 +733,7 @@ pub(crate) fn round0_event_q_at_one<F: JoltField>(
         .fold(F::zero(), |sum, event| match unbound_entry::<F>(event) {
             Some(entry) => {
                 let inc = F::from_i128(event.inc());
-                sum + eq_head(event.cycle as usize / 2) * odd_entry_at_one(&entry, inc, gamma)
+                sum + eq_head(event.cycle as usize / 2) * odd_entry_at_one(&entry, inc, batch, mask)
             }
             None => sum,
         })
@@ -829,7 +877,7 @@ impl<F: JoltField> AddressMajorEntry<F> {
         odd_checkpoint: F,
         inc_eval: F,
         eq_eval: F,
-        gamma: F,
+        coefficients: [ReadWriteCoefficients<F>; 2],
     ) -> [F; 2] {
         let (ra_evals, val_evals) = match (even, odd) {
             (Some(even), Some(odd)) => {
@@ -848,14 +896,14 @@ impl<F: JoltField> AddressMajorEntry<F> {
                     F::zero(),
                     eq_eval
                         * (odd.ra + odd.ra)
-                        * val_slope_term(odd.val + odd.val - even_checkpoint, inc_eval, gamma),
+                        * coefficients[1].value(odd.val + odd.val - even_checkpoint, inc_eval),
                 ];
             }
             (None, None) => unreachable!("a merged pair has at least one side"),
         };
         [
-            eq_eval * ra_evals[0] * val_slope_term(val_evals[0], inc_eval, gamma),
-            eq_eval * ra_evals[1] * val_slope_term(val_evals[1], inc_eval, gamma),
+            eq_eval * ra_evals[0] * coefficients[0].value(val_evals[0], inc_eval),
+            eq_eval * ra_evals[1] * coefficients[1].value(val_evals[1], inc_eval),
         ]
     }
 }
@@ -945,7 +993,7 @@ fn merge_address_round_evals<F: JoltField>(
     mut odd_checkpoint: F,
     inc: &PrefixColumn<F>,
     eq: &[F],
-    gamma: F,
+    coefficients: [ReadWriteCoefficients<F>; 2],
 ) -> [F; 2] {
     let mut acc = [F::zero(); 2];
     let mut add = |evals: [F; 2]| {
@@ -964,7 +1012,7 @@ fn merge_address_round_evals<F: JoltField>(
                     odd_checkpoint,
                     inc.value(even[i].row as usize),
                     eq[even[i].row as usize],
-                    gamma,
+                    coefficients,
                 ));
                 even_checkpoint = even[i].next_val;
                 odd_checkpoint = odd[j].next_val;
@@ -979,7 +1027,7 @@ fn merge_address_round_evals<F: JoltField>(
                     odd_checkpoint,
                     inc.value(even[i].row as usize),
                     eq[even[i].row as usize],
-                    gamma,
+                    coefficients,
                 ));
                 even_checkpoint = even[i].next_val;
                 i += 1;
@@ -992,7 +1040,7 @@ fn merge_address_round_evals<F: JoltField>(
                     odd_checkpoint,
                     inc.value(odd[j].row as usize),
                     eq[odd[j].row as usize],
-                    gamma,
+                    coefficients,
                 ));
                 odd_checkpoint = odd[j].next_val;
                 j += 1;
@@ -1007,7 +1055,7 @@ fn merge_address_round_evals<F: JoltField>(
             odd_checkpoint,
             inc.value(entry.row as usize),
             eq[entry.row as usize],
-            gamma,
+            coefficients,
         ));
         even_checkpoint = entry.next_val;
     }
@@ -1019,7 +1067,7 @@ fn merge_address_round_evals<F: JoltField>(
             odd_checkpoint,
             inc.value(entry.row as usize),
             eq[entry.row as usize],
-            gamma,
+            coefficients,
         ));
         odd_checkpoint = entry.next_val;
     }
@@ -1168,11 +1216,20 @@ impl<F: JoltField> AddressMajorMatrix<F> {
         val_init: &Polynomial<F>,
         inc: &PrefixColumn<F>,
         eq: &[F],
-        gamma: F,
+        batch: ReadWriteBatch<F>,
+        mask: &AddressMasks<F>,
     ) -> [F; 2] {
         let per_group = |group: &[AddressMajorEntry<F>]| -> [F; 2] {
             let (even, odd) = split_col_pair(group);
             let even_col = 2 * (group[0].col / 2) as usize;
+            // Reuse the existing column-pair pass. The structural mask adds
+            // O(s) public boundary lookups per pair, without a K-sized table.
+            let mask_even = mask.value(even_col);
+            let mask_odd = mask.value(even_col + 1);
+            let coefficients = [
+                batch.bound(mask_even),
+                batch.bound(AddressMaskValues::at_two(mask_even, mask_odd)),
+            ];
             merge_address_round_evals(
                 even,
                 odd,
@@ -1180,7 +1237,7 @@ impl<F: JoltField> AddressMajorMatrix<F> {
                 val_init.evals()[even_col + 1],
                 inc,
                 eq,
-                gamma,
+                coefficients,
             )
         };
 

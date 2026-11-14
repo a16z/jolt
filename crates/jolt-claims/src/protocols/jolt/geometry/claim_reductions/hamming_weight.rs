@@ -3,12 +3,11 @@ use jolt_field::{JoltField, Ring};
 use crate::protocols::jolt::{
     HammingWeightClaimReductionChallenge, HammingWeightClaimReductionPublic,
 };
-use crate::{challenge, derived, opening};
+use crate::{challenge, derived};
 
 use super::super::super::{JoltExpr, JoltOpeningId, JoltRelationId};
 use super::super::dimensions::PointGeometryError;
 use super::super::ra::{JoltRaPolynomial, JoltRaPolynomialLayout};
-use super::super::ram::ram_hamming_weight;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct HammingWeightClaimReductionDimensions {
@@ -86,12 +85,6 @@ pub fn gamma_pow<F: Ring>(gamma: F, mut exponent: usize) -> F {
     result
 }
 
-/// One past the largest gamma exponent the base (non-lattice) claim reduction
-/// uses: three legs per layout polynomial.
-pub fn gamma_power_bound(dimensions: HammingWeightClaimReductionDimensions) -> usize {
-    3 * dimensions.layout.polynomials().count()
-}
-
 pub fn claim_reduction_output_openings(
     dimensions: HammingWeightClaimReductionDimensions,
 ) -> HammingWeightClaimReductionOutputOpenings {
@@ -114,13 +107,14 @@ pub fn claim_reduction_output_openings(
     }
 }
 
-pub(crate) fn hamming_weight_claim<F>(polynomial: JoltRaPolynomial) -> JoltExpr<F>
-where
-    F: Ring,
-{
+/// Whether `polynomial` has a Hamming-weight leg in the base reduction. Instruction
+/// and bytecode chunks must select one row on every cycle; their leg's claim is the
+/// public constant one. RAM chunks have none: the RAM read-write relation's
+/// access-count term pins the RAM selector's weight instead.
+pub fn has_hamming_weight_leg(polynomial: JoltRaPolynomial) -> bool {
     match polynomial {
-        JoltRaPolynomial::Instruction(_) | JoltRaPolynomial::Bytecode(_) => JoltExpr::one(),
-        JoltRaPolynomial::Ram(_) => opening(ram_hamming_weight()),
+        JoltRaPolynomial::Instruction(_) | JoltRaPolynomial::Bytecode(_) => true,
+        JoltRaPolynomial::Ram(_) => false,
     }
 }
 

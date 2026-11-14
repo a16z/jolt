@@ -476,6 +476,7 @@ mod tests {
             ram: RAMPreprocessing {
                 min_bytecode_address: 0x8000_0000,
                 bytecode_words,
+                code_word_intervals: Vec::new(),
             },
             memory_layout: MemoryLayout::default(),
             max_padded_trace_length: 2,

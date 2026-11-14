@@ -152,14 +152,87 @@ anywhere pays across every subsystem; (2) additional *rarely-active* RAM-side co
 nearly free; (3) additional *dense* columns (or 8× lane columns active on every memory op) are
 expensive; (4) making the RAM sumchecks somewhat more complex is nearly irrelevant at ~0.6%.
 
-## Tracer memory guards
+## Current RAM guards
+
+The ordinary RAM read-write relation in `jolt-claims` also checks protected-word
+preservation, memory-row address selection and unmapped-word exclusion. With
+$E(j)=eq(r_0,j)$, the public protected-word mask $C(k)$ and the public
+unmapped-word mask $N(k)$, its batched identity is
+
+```
+Read(r0) + gamma Write(r0) + gamma^3 (Load + Store)(r0)
+  = sum_(k,j) E(j) ra(k,j)
+      [(1 + gamma) Val(k,j) + (gamma + gamma^2 C(k)) Inc(j) + gamma^3
+       + gamma^4 N(k)].
+```
+
+The third unbatched input is zero, with output weight `E*C`. The fourth input uses
+the Load and Store openings already produced by the outer remainder. The fifth
+input is zero, with output weight `E*N`. The three
+output openings remain Val, ra and Inc at the existing joint point, with degree
+three and unchanged round count. Clear verification and BlindFold consume this
+single relation; both masks come from authenticated preprocessing (the code
+intervals and the memory layout) in both modes.
+
+`C` is the union of canonical sorted, disjoint, nonadjacent half-open intervals
+of RAM indices. Preprocessing derives its code intervals from real source
+instruction extents (two or four bytes), rounded outward to doublewords.
+Address-zero padding and intermediate expansion rows contribute no new extents.
+`write_protected_word_intervals` adds the input, trusted-advice, untrusted-advice
+and stack-canary extents from the public memory layout, rounded outward the same
+way, and clips the union to the proof's RAM domain. Full admission and
+full-preprocessing deserialization validate the code intervals' exact coverage,
+checked arithmetic, canonical shape and RAM bounds. Committed keys carry the
+same intervals and validate shape and bounds; hidden source coverage is part of
+the trusted key. The preprocessing digest domains are versioned for the added
+metadata.
+
+`N` covers the I/O padding `[io_end, RAM_START_ADDRESS)` and the heap padding
+from `heap_end` to the end of the proof's RAM domain, clipped to that domain
+(`unmapped_word_intervals`). Both bounds are doubleword aligned: layout
+construction rounds every I/O region size to a multiple of eight and rounds
+`heap_end` up to a doubleword, admission rejects an unaligned `heap_end`, and
+`unmapped_word_intervals` rejects an unaligned bound. `RamWordMasks` carries `C`
+and `N` together and rejects masks that overlap.
+
+ELF admission rejects any writable section, including `.bss`, that shares a
+protected word. Read-only bytes sharing a real code word are also frozen. A word
+containing only text padding remains unprotected. The SDK linker aligns rodata
+and writable data to eight bytes, but arbitrary ELF inputs still require this
+check.
+
+The optimized kernel fuses the count term, with `gamma^4 N(k)` folded into its
+coefficient, and the modified increment coefficient into its existing sparse
+accumulations. Before address binding one binary search over both masks'
+merged, tagged intervals gives an index's Boolean membership in each. During
+low-bit address binding it keeps full blocks and at most two weighted boundary
+blocks per interval; after address binding it keeps one scalar per mask. It
+allocates no K-sized mask or extra trace-sized table and makes no extra trace
+pass. The verifier evaluates each mask's MLE once, in `O(s log K)` for `s`
+intervals.
+
+Commitments bind the trace before the random cycle point `r0` and batching
+challenge `gamma`. The fourth identity, with Booleanity of every committed
+`RamRa` chunk, makes the selector one-hot on memory rows and zero elsewhere. It
+is the only RAM one-hotness check: RAM has no Hamming-booleanity sumcheck and no
+leg in the stage-7 Hamming-weight reduction. Given that, the third identity tests
+the fixed vector of protected-word increments at `r0`, and the fifth tests the
+fixed 0/1 vector `sum_k N(k) ra(k,j)` of unmapped selections. The cycle
+zero-test bound is at most `log T/|F|` for each, and batching the five
+identities adds at most `4/|F|` for fixed nonzero residuals in the ideal uniform
+challenge analysis. The total protocol error also
+includes sumcheck, RA reductions, commitments and transcript security.
+Final-memory equality alone would not exclude a code modification followed by
+restoration.
 
 Tracer admission rejects changed protected words before mutation and permits
-same-value stores at every width. It also rejects loads below `lowest_address`.
-AMOs, successful SC, lazy tracing, parallel replay and native fast stores use
-these guards. Host calls read guest buffers under the guest-load bounds through
-`identity_loads_succeed`; a buffer with a byte below `lowest_address` is logged
-and ignored rather than failing the run.
+same-value stores at every width. It also rejects loads below `lowest_address`
+and any access at or above `io_end` below DRAM or at or above `heap_end` in
+DRAM. AMOs, successful SC, lazy tracing, parallel replay and native fast stores use
+these guards. The constraints continue to leave the tracer's other memory-map
+permissions separate. Host calls read guest buffers under the guest-load bounds
+through `identity_loads_succeed`; a buffer with a byte below `lowest_address` is
+logged and ignored rather than failing the run.
 
 ## Intent
 
@@ -575,7 +648,8 @@ LD/SD-dominant traffic this multiplies RAM's commit footprint ~4–8× while the
 re-affinization O(T), tier-2 Miller loops ~√(k_chunk·T), `combine_hints` scalar-muls); the read
 value arrives as 8 separate lane claims needing weighted (256^i) recombination and
 sign-extension machinery in R1CS; `Val`/`Inc` go byte-granular (8× val-evaluation terms on
-stores); Hamming-booleanity is definitionally single-port (`H(j) = bool`, `H² = H`); and
+stores); the RAM access-count term (`Σ_k ra(k,j) = Load(j) + Store(j) ∈ {0,1}`) is
+definitionally single-port; and
 crossing *still* spans two doublewords unless ports are fully independent byte columns. Byte
 granularity also adds +3 to `log K` everywhere K-sized state lives, and the K-dense memory
 cliffs bite first: `val_check`'s `RaPolynomialRound3::bind` transiently allocates *eight*
@@ -604,7 +678,7 @@ additions) and read/write checking's sparse matrices price idle entries at ~zero
 port-count assumption runs deeper than it looks: registers are *not* a commitment precedent
 (their `ra` polynomials are virtual, discharged against bytecode because register indices are
 bytecode-hardcoded — data-dependent RAM addresses can't use that trick), so a second port
-duplicates the whole committed family (commitment + Hamming-booleanity, which is definitionally
+duplicates the whole committed family (commitment + access-count term, which is definitionally
 single-port, + ra-virtualization + claim reductions + Dory openings), un-merges `ra`/`wa`
 (`witness.rs:37-40`), and touches the fused akita Inc column, the 64-byte `JoltTraceRow`, and
 the hardcoded 35-input R1CS layout. All of that only accelerates the rare crossing case that

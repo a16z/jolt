@@ -105,6 +105,8 @@ fn address_fault(jolt_device: &JoltDevice, ea: u64, is_write: bool) -> Option<Ad
     let layout = &jolt_device.memory_layout;
     if ea < DRAM_BASE {
         // Nothing is mapped between `io_end` and DRAM, so any access there faults.
+        // The RAM read-write relation rejects every access to the same words through
+        // its unmapped-word mask N (`jolt_program::preprocess::ram::unmapped_word_intervals`).
         if ea >= layout.io_end {
             return Some(AddressFault::IoOverflow);
         }

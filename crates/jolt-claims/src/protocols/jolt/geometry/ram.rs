@@ -235,13 +235,6 @@ pub fn committed_ram_ra(index: usize) -> JoltOpeningId {
     )
 }
 
-pub fn ram_hamming_weight() -> JoltOpeningId {
-    JoltOpeningId::virtual_polynomial(
-        JoltVirtualPolynomial::RamHammingWeight,
-        JoltRelationId::RamHammingBooleanity,
-    )
-}
-
 #[cfg(test)]
 #[expect(clippy::panic)]
 mod tests {

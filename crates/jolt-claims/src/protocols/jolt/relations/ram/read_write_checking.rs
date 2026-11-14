@@ -1,4 +1,5 @@
 use jolt_field::Ring;
+use jolt_riscv::CircuitFlags;
 use serde::{Deserialize, Serialize};
 
 use crate::protocols::jolt::{
@@ -28,7 +29,7 @@ pub struct RamReadWriteOutputClaims<C> {
     pub inc: C,
 }
 
-/// Consumed RAM read/write value openings from stage 1's outer sumcheck, reduced
+/// Consumed RAM values and Load/Store flags from stage 1's outer sumcheck, reduced
 /// by the read-write checking sumcheck. The relation reads only these values (its
 /// output points come from its own sumcheck point and `product_tau_low`), so the
 /// input points are left empty. Generic over the cell.
@@ -38,6 +39,10 @@ pub struct RamReadWriteInputClaims<C> {
     pub ram_read_value: C,
     #[opening(RamWriteValue, from = SpartanOuter)]
     pub ram_write_value: C,
+    #[opening(OpFlags(CircuitFlags::Load), from = SpartanOuter)]
+    pub load: C,
+    #[opening(OpFlags(CircuitFlags::Store), from = SpartanOuter)]
+    pub store: C,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, SumcheckChallenges)]
@@ -47,9 +52,12 @@ pub struct RamReadWriteChallenges<F> {
     pub gamma: F,
 }
 
-/// The RAM read/write-checking sumcheck: folds the read and write values by
-/// `gamma` on the input side, and reconstructs them from `ra`, `val`, and `inc`
-/// weighted by the cycle-`eq` public on the output side.
+/// RAM read-write checking batches value consistency, write-protected value
+/// preservation, address selection and unmapped-word exclusion. Its public
+/// weights are cycle equality and that equality times the write-protected-word
+/// mask C or the unmapped-word mask N; all five identities share `ra`, `val` and
+/// `inc`. The last claim, `Σ eq·N·ra = 0`, forces every cycle's zero-or-one-hot
+/// `ra` (pinned by the fourth claim and Booleanity) off the unmapped words.
 #[derive(Clone)]
 pub struct ReadWriteChecking {
     shape: ReadWriteDimensions,
@@ -76,6 +84,33 @@ impl ReadWriteChecking {
                     output: v(JoltVirtualPolynomial::RamRa)
                         * (v(JoltVirtualPolynomial::RamVal) + c(JoltCommittedPolynomial::RamInc)),
                     output_weight: RamReadWritePublic::EqCycle.into(),
+                    offset: false,
+                },
+                UnbatchedClaim {
+                    input_relation: JoltRelationId::SpartanOuter,
+                    input: UnbatchedClaimExpr::constant(0),
+                    output: v(JoltVirtualPolynomial::RamRa) * c(JoltCommittedPolynomial::RamInc),
+                    output_weight: RamReadWritePublic::WriteProtectedEqCycle.into(),
+                    offset: false,
+                },
+                // The only RAM one-hotness check. With Booleanity of every committed
+                // `RamRa` chunk, `Σ_k ra(k, j) = Load(j) + Store(j)` (exclusive Boolean
+                // flags; `load_store_exclusive` in jolt-riscv) makes `ra = Π_i ra_i`
+                // select one word on memory rows and none on other rows. Chunk weights
+                // are not checked individually.
+                UnbatchedClaim {
+                    input_relation: JoltRelationId::SpartanOuter,
+                    input: v(JoltVirtualPolynomial::OpFlags(CircuitFlags::Load))
+                        + v(JoltVirtualPolynomial::OpFlags(CircuitFlags::Store)),
+                    output: v(JoltVirtualPolynomial::RamRa),
+                    output_weight: RamReadWritePublic::EqCycle.into(),
+                    offset: false,
+                },
+                UnbatchedClaim {
+                    input_relation: JoltRelationId::SpartanOuter,
+                    input: UnbatchedClaimExpr::constant(0),
+                    output: v(JoltVirtualPolynomial::RamRa),
+                    output_weight: RamReadWritePublic::UnmappedEqCycle.into(),
                     offset: false,
                 },
             ],

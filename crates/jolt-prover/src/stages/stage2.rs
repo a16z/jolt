@@ -48,7 +48,7 @@ use jolt_verifier::stages::stage2::ram_raf_evaluation::RamRafEvaluation;
 use jolt_verifier::stages::stage2::ram_read_write_checking::RamReadWriteChecking;
 use jolt_verifier::stages::stage2::{product_tau_low, stage2_batch_input_values_from_upstream};
 use jolt_verifier::stages::uniskip::draw_spartan_product_tau_high;
-use jolt_verifier::VerifierError;
+use jolt_verifier::{CheckedInputs, VerifierError};
 
 use crate::recorder::ProofMode;
 use crate::{ProverConfig, ProverError, StageProver as _};
@@ -75,6 +75,7 @@ pub struct Stage2ProverOutput<F: JoltField, C> {
 pub fn prove_stage2<F, PCS, VC, T>(
     backend: &mut KernelContext<'_, F, JoltBackend<F, PCS>>,
     mode: &ProofMode<'_, VC>,
+    checked: &CheckedInputs,
     config: &ProverConfig,
     public_io: &JoltDevice,
     stage1: &Stage1ClearOutput<F>,
@@ -135,7 +136,12 @@ where
         }
     })?;
     let sumchecks = Stage2BatchSumchecks {
-        ram_read_write: RamReadWriteChecking::new(read_write_dimensions, log_k, tau_low.clone()),
+        ram_read_write: RamReadWriteChecking::new(
+            read_write_dimensions,
+            log_k,
+            tau_low.clone(),
+            checked.ram_word_masks.clone(),
+        ),
         product_remainder: ProductRemainder::new(
             product_dimensions,
             uniskip_challenge,
@@ -225,7 +231,7 @@ mod field_inline_round_trip {
 
     use super::*;
     use crate::stages::field_inline_fixtures::{
-        field_arithmetic_backend, test_prover_config, test_public_io, LOG_T,
+        field_arithmetic_backend, test_checked_inputs, test_prover_config, test_public_io, LOG_T,
     };
     use crate::stages::stage1::prove_stage1;
 
@@ -236,6 +242,7 @@ mod field_inline_round_trip {
         let mut context = backend.with_witness(&witness);
         let mode = ProofMode::<Pedersen<Bn254G1>>::new(None).unwrap();
         let config = test_prover_config();
+        let checked = test_checked_inputs(&witness.preprocessing);
         let public_io = test_public_io();
 
         let mut prover_state = prover_transcript::<Keccak>(
@@ -252,6 +259,7 @@ mod field_inline_round_trip {
         let out = prove_stage2::<Fr, DoryScheme, Pedersen<Bn254G1>, ProverState<Keccak>>(
             &mut context,
             &mode,
+            &checked,
             &config,
             &public_io,
             &stage1.clear_output,
@@ -275,7 +283,14 @@ mod field_inline_round_trip {
             b"",
         );
         twins::replay_stage1(&mut transcript, &stage1);
-        twins::replay_stage2(&mut transcript, &config, &public_io, &stage1, &out);
+        twins::replay_stage2(
+            &mut transcript,
+            &config,
+            &checked,
+            &public_io,
+            &stage1,
+            &out,
+        );
 
         assert_eq!(
             transcript.verifier_message::<[u8; 32]>(),
@@ -296,12 +311,10 @@ mod field_inline_zk {
     use jolt_verifier::stages::stage1::outer_remainder::OuterRemainder;
     use jolt_verifier::stages::stage1::outputs::Stage1BatchSumchecks;
     use jolt_verifier::stages::uniskip::{self, UniskipParams};
-    use jolt_verifier::stages::PrecommittedSchedule;
-    use jolt_verifier::CheckedInputs;
 
     use super::*;
     use crate::stages::field_inline_fixtures::{
-        field_arithmetic_backend, test_prover_config, test_public_io, ENTRY, LOG_T,
+        field_arithmetic_backend, test_checked_inputs, test_prover_config, test_public_io, LOG_T,
     };
     use crate::stages::stage1::prove_stage1;
 
@@ -315,6 +328,7 @@ mod field_inline_zk {
         let setup = PedersenSetup::new(vec![Bn254G1::default(); CAPACITY], Bn254G1::default());
         let mode = ProofMode::<Pedersen<Bn254G1>>::new(Some(&setup)).unwrap();
         let config = test_prover_config();
+        let checked = test_checked_inputs(&witness.preprocessing);
         let public_io = test_public_io();
 
         let mut prover_state = prover_transcript::<Keccak>(
@@ -331,6 +345,7 @@ mod field_inline_zk {
         let out = prove_stage2::<Fr, DoryScheme, Pedersen<Bn254G1>, ProverState<Keccak>>(
             &mut context,
             &mode,
+            &checked,
             &config,
             &public_io,
             &stage1.clear_output,
@@ -349,23 +364,6 @@ mod field_inline_zk {
 
         // The replay (stage2::verify's zk body over its public constituents),
         // mirroring blindfold.rs's transcript hard check at stage scope.
-        let checked = CheckedInputs {
-            public_io: JoltDevice::default(),
-            zk: true,
-            trace_length: 1 << LOG_T,
-            ram_K: 1 << 4,
-            entry_address: ENTRY,
-            preprocessing_digest: [0u8; 32],
-            untrusted_advice_commitment_present: false,
-            trusted_advice_commitment_present: false,
-            vc_capacity: Some(CAPACITY),
-            precommitted: PrecommittedSchedule {
-                trusted_advice: None,
-                untrusted_advice: None,
-                bytecode: None,
-                program_image: None,
-            },
-        };
         let mut transcript = prover_transcript::<Keccak>(
             &jolt_transcript::protocol_tag(b"stage2-field-inline-zk"),
             b"",
@@ -413,6 +411,7 @@ mod field_inline_zk {
                 read_write_dimensions,
                 log_k,
                 tau_low.clone(),
+                checked.ram_word_masks.clone(),
             ),
             product_remainder: ProductRemainder::new(
                 product_dimensions,

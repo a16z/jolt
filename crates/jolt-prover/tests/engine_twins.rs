@@ -8,13 +8,14 @@
 
 #![expect(clippy::unwrap_used, reason = "test crate")]
 
-use jolt_claims::protocols::jolt::geometry::dimensions::TraceDimensions;
+use jolt_claims::protocols::jolt::geometry::dimensions::{ReadWriteDimensions, TraceDimensions};
 use jolt_claims::protocols::jolt::geometry::instruction::InstructionReadRafDimensions;
 use jolt_claims::protocols::jolt::relations::instruction::InstructionReadRafInputClaims;
 use jolt_claims::protocols::jolt::relations::registers::RegistersValEvaluationInputClaims;
 use jolt_crypto::{Bn254, Bn254G1, JoltGroup, Pedersen, PedersenSetup};
-use jolt_field::{Fr, JoltField, Ring};
+use jolt_field::{Fr, JoltField, One, Ring, Zero};
 use jolt_poly::{UnivariatePoly, UnivariatePolynomial};
+use jolt_program::preprocess::ram::RamWordMasks;
 use jolt_sumcheck::{
     prove_batch, prove_uniskip_clear, CenteredIntegerDomain, ClearRound, ClearSumcheckRecorder,
     CommittedSumcheckRecorder, ProveRounds, SequentialRounds, SumcheckDomain, SumcheckError,
@@ -22,8 +23,12 @@ use jolt_sumcheck::{
 };
 use jolt_transcript::{prover_transcript, Keccak, Transcript};
 use jolt_verifier::stages::relations::{ConcreteSumcheck as _, SumcheckBatch};
+use jolt_verifier::stages::stage2::ram_read_write_checking::{
+    RamReadWriteChecking, RamReadWriteInputClaims, RamReadWriteOutputClaims,
+};
 use jolt_verifier::stages::stage5::{InstructionReadRaf, RegistersValEvaluation};
 use jolt_verifier::stages::uniskip::{self, UniskipParams};
+use rand_core::OsRng;
 
 #[derive(SumcheckBatch)]
 struct TwinFixtureSumchecks<F: JoltField> {
@@ -246,8 +251,7 @@ fn committed_engine_twin_matches_generated_verify_zk() {
         57,
     );
 
-    let mut recorder =
-        CommittedSumcheckRecorder::<Fr, VC, _>::new(&setup, rand_core::OsRng).unwrap();
+    let mut recorder = CommittedSumcheckRecorder::<Fr, VC, _>::new(&setup, OsRng).unwrap();
     let (batch, prover_coefficients) = sumchecks
         .begin_batch(
             &inputs,
@@ -337,5 +341,219 @@ fn uniskip_prover_twin_matches_uniskip_verify_clear() {
     assert_eq!(
         prover_state.verifier_message::<[u8; 32]>(),
         verifier_transcript.verifier_message::<[u8; 32]>()
+    );
+}
+
+#[derive(SumcheckBatch)]
+struct RamGuardTwinSumchecks<F: JoltField> {
+    ram_read_write: RamReadWriteChecking<F>,
+}
+
+fn ram_guard_fixture() -> (RamGuardTwinSumchecks<Fr>, RamGuardTwinInputClaims<Fr>) {
+    (
+        RamGuardTwinSumchecks {
+            ram_read_write: RamReadWriteChecking::new(
+                ReadWriteDimensions::new(1, 1, 1, 1),
+                1,
+                vec![Fr::from_u64(2)],
+                RamWordMasks {
+                    write_protected: vec![(0, 1)],
+                    unmapped: Vec::new(),
+                },
+            ),
+        },
+        RamGuardTwinInputClaims {
+            ram_read_write: RamReadWriteInputClaims {
+                ram_read_value: Fr::from_u64(9),
+                ram_write_value: Fr::from_u64(13),
+                load: Fr::zero(),
+                store: Fr::one(),
+            },
+        },
+    )
+}
+
+/// Two cycles: an unchanged-value store to a write-protected word followed by
+/// a data update. The five factors are EqCycle, ra, val, inc and the public
+/// write-protected mask.
+struct RamGuardMember {
+    rows: Vec<[Fr; 5]>,
+    gamma: Fr,
+}
+
+impl RamGuardMember {
+    fn new(gamma: Fr) -> Self {
+        let fr = Fr::from_u64;
+        Self {
+            rows: vec![
+                [-Fr::one(), fr(1), fr(5), fr(0), fr(1)],
+                [fr(2), fr(0), fr(5), fr(2), fr(1)],
+                [-Fr::one(), fr(0), fr(7), fr(0), fr(0)],
+                [fr(2), fr(1), fr(7), fr(2), fr(0)],
+            ],
+            gamma,
+        }
+    }
+
+    fn bind(&mut self, r: Fr) {
+        self.rows = self
+            .rows
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|pair| std::array::from_fn(|i| pair[0][i] + r * (pair[1][i] - pair[0][i])))
+            .collect();
+    }
+
+    fn outputs(&self) -> RamGuardTwinOutputClaims<Fr> {
+        let row = self.rows[0];
+        RamGuardTwinOutputClaims {
+            ram_read_write: RamReadWriteOutputClaims {
+                val: row[2],
+                ra: row[1],
+                inc: row[3],
+            },
+        }
+    }
+}
+
+impl ProveRounds<Fr> for RamGuardMember {
+    fn num_rounds(&self) -> usize {
+        2
+    }
+
+    fn prove_round(
+        &mut self,
+        bind: Option<Fr>,
+        _round: usize,
+        previous_claim: Fr,
+    ) -> Result<UnivariatePoly<Fr>, SumcheckError<Fr>> {
+        if let Some(r) = bind {
+            self.bind(r);
+        }
+        let gamma = self.gamma;
+        let evals: Vec<Fr> = (0..=3)
+            .map(|node| {
+                let x = Fr::from_u64(node);
+                self.rows
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .map(|pair| {
+                        let [eq, ra, val, inc, write_protected] =
+                            std::array::from_fn(|i| pair[0][i] + x * (pair[1][i] - pair[0][i]));
+                        eq * ra
+                            * ((Fr::one() + gamma) * val
+                                + (gamma + gamma * gamma * write_protected) * inc
+                                + gamma * gamma * gamma)
+                    })
+                    .sum()
+            })
+            .collect();
+        assert_eq!(evals[0] + evals[1], previous_claim);
+        Ok(UnivariatePoly::from_evals(&evals))
+    }
+
+    fn finish_rounds(&mut self, bind: Fr) -> Result<(), SumcheckError<Fr>> {
+        self.bind(bind);
+        Ok(())
+    }
+}
+
+#[test]
+fn ram_guards_clear_engine_twin_checks_public_mask_and_access_count() {
+    let (sumchecks, inputs) = ram_guard_fixture();
+    let mut prover =
+        prover_transcript::<Keccak>(&jolt_transcript::protocol_tag(b"ram-guard-clear-twin"), b"");
+    let challenges = sumchecks.draw_challenges(&mut prover).unwrap();
+    let gamma = challenges.ram_read_write.gamma;
+    let input = sumchecks
+        .ram_read_write
+        .input_claim(&inputs.ram_read_write, &challenges.ram_read_write)
+        .unwrap();
+    assert_eq!(
+        input,
+        Fr::from_u64(9) + gamma * Fr::from_u64(13) + gamma * gamma * gamma
+    );
+    let mut member = RamGuardMember::new(gamma);
+    let mut recorder = ClearSumcheckRecorder::new();
+    let (batch, _) = sumchecks
+        .begin_batch(&inputs, &challenges, &mut recorder, &mut prover)
+        .unwrap();
+    let proved = prove_batch(
+        &batch,
+        &mut [&mut member as &mut dyn ProveRounds<Fr>],
+        &mut SequentialRounds,
+        &mut recorder,
+        &mut prover,
+    )
+    .unwrap();
+    let outputs = member.outputs();
+    let recorded = recorder
+        .finish(&sumchecks.opening_values(&outputs), &mut prover)
+        .unwrap();
+
+    let mut verifier =
+        prover_transcript::<Keccak>(&jolt_transcript::protocol_tag(b"ram-guard-clear-twin"), b"");
+    let challenges = sumchecks.draw_challenges(&mut verifier).unwrap();
+    let points = sumchecks
+        .verify_clear(
+            &inputs,
+            &sumchecks.empty_input_points(),
+            &challenges,
+            &outputs,
+            &SumcheckProof::<Fr, Bn254G1>::from(recorded.proof),
+            &mut verifier,
+            2,
+        )
+        .unwrap();
+    sumchecks.append_output_claims(&mut verifier, &outputs);
+    assert_eq!(
+        points.ram_read_write.val,
+        vec![proved.challenges[1], proved.challenges[0]]
+    );
+    assert_eq!(
+        prover.verifier_message::<[u8; 32]>(),
+        verifier.verifier_message::<[u8; 32]>()
+    );
+}
+
+#[test]
+fn ram_guards_committed_engine_twin_keeps_transcripts_equal() {
+    type VC = Pedersen<Bn254G1>;
+    let setup = pedersen_setup(8);
+    let (sumchecks, inputs) = ram_guard_fixture();
+    let mut prover =
+        prover_transcript::<Keccak>(&jolt_transcript::protocol_tag(b"ram-guard-zk-twin"), b"");
+    let challenges = sumchecks.draw_challenges(&mut prover).unwrap();
+    let mut member = RamGuardMember::new(challenges.ram_read_write.gamma);
+    let mut recorder = CommittedSumcheckRecorder::<Fr, VC, _>::new(&setup, OsRng).unwrap();
+    let (batch, coefficients) = sumchecks
+        .begin_batch(&inputs, &challenges, &mut recorder, &mut prover)
+        .unwrap();
+    let proved = prove_batch(
+        &batch,
+        &mut [&mut member as &mut dyn ProveRounds<Fr>],
+        &mut SequentialRounds,
+        &mut recorder,
+        &mut prover,
+    )
+    .unwrap();
+    let recorded = recorder
+        .finish(&sumchecks.opening_values(&member.outputs()), &mut prover)
+        .unwrap();
+    let mut verifier =
+        prover_transcript::<Keccak>(&jolt_transcript::protocol_tag(b"ram-guard-zk-twin"), b"");
+    let _challenges = sumchecks.draw_challenges(&mut verifier).unwrap();
+    let verified = sumchecks.verify_zk(&recorded.proof, &mut verifier).unwrap();
+    assert!(recorded.committed_witness.is_some());
+    assert_eq!(verified.challenges(), proved.challenges);
+    assert_eq!(
+        verified.batching_coefficients,
+        vec![coefficients.ram_read_write]
+    );
+    assert_eq!(
+        prover.verifier_message::<[u8; 32]>(),
+        verifier.verifier_message::<[u8; 32]>()
     );
 }

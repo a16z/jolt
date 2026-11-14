@@ -23,7 +23,6 @@ pub use super::field_registers_inc_claim_reduction::{
 };
 pub use super::inc_claim_reduction::IncClaimReductionOutputClaims;
 pub use super::instruction_ra_virtualization::InstructionRaVirtualizationOutputClaims;
-pub use super::ram_hamming_booleanity::RamHammingBooleanityOutputClaims;
 pub use super::ram_ra_virtualization::RamRaVirtualizationOutputClaims;
 
 use super::booleanity::Booleanity;
@@ -38,7 +37,6 @@ use super::committed_reduction_cycle_phase::{TrustedAdviceCyclePhase, UntrustedA
 #[cfg(not(feature = "akita"))]
 use super::inc_claim_reduction::IncClaimReduction;
 use super::instruction_ra_virtualization::InstructionRaVirtualization;
-use super::ram_hamming_booleanity::RamHammingBooleanity;
 use super::ram_ra_virtualization::RamRaVirtualization;
 
 /// Source-of-truth for stage 6b's cycle-phase sumcheck batch, in canonical
@@ -81,7 +79,6 @@ use super::ram_ra_virtualization::RamRaVirtualization;
 pub struct Stage6bSumchecks<F: JoltField> {
     pub bytecode_read_raf: BytecodeReadRafCycle<F>,
     pub booleanity: Booleanity<F>,
-    pub ram_hamming_booleanity: RamHammingBooleanity<F>,
     pub ram_ra_virtualization: RamRaVirtualization<F>,
     pub instruction_ra_virtualization: InstructionRaVirtualization<F>,
     /// Absent on the Akita path: the inc claims are discharged inside the
@@ -216,7 +213,6 @@ impl<F: JoltField> Stage6bOutputPoints<F> {
             + self.booleanity.instruction_ra.len()
             + self.booleanity.bytecode_ra.len()
             + self.booleanity.ram_ra.len()
-            + 1
             + self.ram_ra_virtualization.ram_ra.len()
             + self
                 .instruction_ra_virtualization
@@ -245,7 +241,6 @@ impl<F: JoltField> Stage6bOutputClaims<F> {
     pub fn new(
         bytecode_read_raf: BytecodeReadRafOutputClaims<F>,
         booleanity: BooleanityOutputClaims<F>,
-        ram_hamming_booleanity: RamHammingBooleanityOutputClaims<F>,
         ram_ra_virtualization: RamRaVirtualizationOutputClaims<F>,
         instruction_ra_virtualization: InstructionRaVirtualizationOutputClaims<F>,
         inc_claim_reduction: IncClaimReductionOutputClaims<F>,
@@ -257,7 +252,6 @@ impl<F: JoltField> Stage6bOutputClaims<F> {
         Self {
             bytecode_read_raf,
             booleanity,
-            ram_hamming_booleanity,
             ram_ra_virtualization,
             instruction_ra_virtualization,
             inc_claim_reduction,
@@ -277,7 +271,6 @@ impl<F: JoltField> Stage6bOutputClaims<F> {
     pub fn new(
         bytecode_read_raf: LatticeBytecodeReadRafOutputClaims<F>,
         booleanity: BooleanityOutputClaims<F>,
-        ram_hamming_booleanity: RamHammingBooleanityOutputClaims<F>,
         ram_ra_virtualization: RamRaVirtualizationOutputClaims<F>,
         instruction_ra_virtualization: InstructionRaVirtualizationOutputClaims<F>,
         bytecode_reduction: Option<BytecodeReductionCyclePhaseOutputClaims<F>>,
@@ -286,7 +279,6 @@ impl<F: JoltField> Stage6bOutputClaims<F> {
         Self {
             bytecode_read_raf,
             booleanity,
-            ram_hamming_booleanity,
             ram_ra_virtualization,
             instruction_ra_virtualization,
             #[cfg(feature = "field-inline")]

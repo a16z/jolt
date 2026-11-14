@@ -53,11 +53,22 @@ where
         )),
         gamma,
     )?;
-    for exponent in 2..hamming_weight::gamma_power_bound(hamming_dimensions) {
-        values.public(
-            JoltDerivedId::from(HammingWeightClaimReductionPublic::GammaPow(exponent)),
-            hamming_weight::gamma_pow(gamma, exponent),
-        )?;
+    for expression in [
+        hamming_claims.input_expression::<PCS::Field>(),
+        hamming_claims.output_expression::<PCS::Field>(),
+    ] {
+        for term in expression.terms {
+            for factor in term.factors {
+                if let Source::Derived(
+                    id @ JoltDerivedId::HammingWeightClaimReduction(
+                        HammingWeightClaimReductionPublic::GammaPow(exponent),
+                    ),
+                ) = factor
+                {
+                    values.public(id, hamming_weight::gamma_pow(gamma, exponent))?;
+                }
+            }
+        }
     }
     let hamming_point = input
         .stage7
