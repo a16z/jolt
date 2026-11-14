@@ -598,6 +598,7 @@ impl RamReadWriteBytes {
 mod tests {
     use common::jolt_device::MemoryLayout;
     use jolt_claims::protocols::jolt::geometry::ram::{ram_ra, ram_val};
+    use jolt_claims::{OutputClaims, SumcheckChallenges, SymbolicSumcheck};
     use jolt_field::{Fr, One, Ring};
     use jolt_poly::EqPolynomial;
     use jolt_program::preprocess::ram::{write_protected_word_intervals, RamWordMasks};
@@ -607,7 +608,7 @@ mod tests {
     };
 
     use super::super::testing::{
-        random_scalars, with_ram_fixture, with_ram_fixture_init, FixtureShape, RamOp,
+        assert_parity, random_scalars, with_ram_fixture, with_ram_fixture_init, FixtureShape, RamOp,
     };
     use super::*;
     use crate::optimized::parity::ExceptionalEq;
@@ -621,139 +622,50 @@ mod tests {
         ))
     }
 
+    /// The input claim: the relation's output expression summed over the
+    /// Boolean `(address, cycle)` domain, each public weight at its Boolean
+    /// value, `eq(τ_low, j)` times `C(k)` or `N(k)` for a masked weight.
     fn dense_input_claim(
         witness: &dyn JoltWitnessPlane<Fr>,
-        tau_low: &[Fr],
-        gamma: Fr,
-        ram_k: usize,
-        masks: &RamWordMasks,
+        relation: &RamReadWriteChecking<Fr>,
+        challenges: &RamReadWriteChallenges<Fr>,
     ) -> Fr {
-        let cycles = 1usize << tau_low.len();
-        let eq = EqPolynomial::new(tau_low.to_vec()).evaluations();
+        let log_t = relation.product_tau_low().len();
+        let eq = EqPolynomial::new(relation.product_tau_low().to_vec()).evaluations();
         let ra: Vec<Fr> = witness.oracle_table(ram_ra().polynomial_id()).unwrap();
         let val: Vec<Fr> = witness.oracle_table(ram_val().polynomial_id()).unwrap();
         let inc: Vec<Fr> = witness.oracle_table(ram_inc().polynomial_id()).unwrap();
+        let expression = relation.symbolic().output_expression::<Fr>();
         let mut claim = Fr::from_u64(0);
-        for k in 0..ram_k {
-            for j in 0..cycles {
-                let index = (k << tau_low.len()) | j;
-                let write_protected = indicator(&masks.write_protected, k);
-                let unmapped = indicator(&masks.unmapped, k);
-                claim += eq[j]
-                    * ra[index]
-                    * ((Fr::one() + gamma) * val[index]
-                        + (gamma + gamma * gamma * write_protected) * inc[j]
-                        + gamma * gamma * gamma * (Fr::one() + gamma * unmapped));
+        for k in 0..1usize << relation.ram_log_k() {
+            for (j, &eq_j) in eq.iter().enumerate() {
+                let index = (k << log_t) | j;
+                let outputs = RamReadWriteOutputClaims {
+                    val: val[index],
+                    ra: ra[index],
+                    inc: inc[j],
+                };
+                claim += expression.evaluate(
+                    |id| outputs.resolve_output(id).unwrap(),
+                    |id| challenges.resolve_challenge(id).unwrap(),
+                    |id| {
+                        let JoltDerivedId::RamReadWrite(public) = id else {
+                            unreachable!("not a RAM read-write public: {id:?}")
+                        };
+                        eq_j * match public {
+                            RamReadWritePublic::EqCycle => Fr::one(),
+                            RamReadWritePublic::WriteProtectedEqCycle => {
+                                indicator(relation.write_protected_word_intervals(), k)
+                            }
+                            RamReadWritePublic::UnmappedEqCycle => {
+                                indicator(relation.unmapped_word_intervals(), k)
+                            }
+                        }
+                    },
+                );
             }
         }
         claim
-    }
-
-    /// Evaluate the defining multilinear sum directly on the Boolean domain,
-    /// independently of the sparse representation and the reference Expr engine.
-    fn assert_parity_and_brute(
-        mut reference: Box<dyn SumcheckKernel<Fr, Relation = RamReadWriteChecking<Fr>>>,
-        mut optimized: Box<dyn SumcheckKernel<Fr, Relation = RamReadWriteChecking<Fr>>>,
-        witness: &dyn JoltWitnessPlane<Fr>,
-        input_claim: Fr,
-        inputs: &ProverInputs<'_, Fr, RamReadWriteChecking<Fr>>,
-        seed: u64,
-    ) {
-        let relation = inputs.relation;
-        let dimensions = relation.dimensions();
-        let log_t = dimensions.log_t();
-        let log_k = dimensions.log_k();
-        let address_first = dimensions.phase1_num_rounds() == 0;
-        let ra: Vec<Fr> = witness.oracle_table(ram_ra().polynomial_id()).unwrap();
-        let val: Vec<Fr> = witness.oracle_table(ram_val().polynomial_id()).unwrap();
-        let inc: Vec<Fr> = witness.oracle_table(ram_inc().polynomial_id()).unwrap();
-        let mut rows: Vec<[Fr; 6]> = (0..1 << (log_t + log_k))
-            .map(|index| {
-                let (address, cycle) = if address_first {
-                    (index & ((1 << log_k) - 1), index >> log_k)
-                } else {
-                    (index >> log_t, index & ((1 << log_t) - 1))
-                };
-                let eq = relation
-                    .product_tau_low()
-                    .iter()
-                    .enumerate()
-                    .map(|(bit, &r)| {
-                        if (cycle >> (log_t - 1 - bit)) & 1 == 0 {
-                            Fr::one() - r
-                        } else {
-                            r
-                        }
-                    })
-                    .product();
-                [
-                    eq,
-                    ra[(address << log_t) | cycle],
-                    val[(address << log_t) | cycle],
-                    inc[cycle],
-                    indicator(relation.write_protected_word_intervals(), address),
-                    indicator(relation.unmapped_word_intervals(), address),
-                ]
-            })
-            .collect();
-        let gamma = inputs.challenges.gamma;
-        let bindings = random_scalars(log_t + log_k, seed);
-        let mut claim = input_claim;
-        for (round, &binding) in bindings.iter().enumerate() {
-            let previous = round.checked_sub(1).map(|bit| bindings[bit]);
-            let reference_poly = reference.prove_round(previous, round, claim).unwrap();
-            let optimized_poly = optimized.prove_round(previous, round, claim).unwrap();
-            for node in 0..=3 {
-                let x = Fr::from_u64(node);
-                let expected: Fr = rows
-                    .as_chunks::<2>()
-                    .0
-                    .iter()
-                    .map(|pair| {
-                        let [eq, ra, val, inc, write_protected, unmapped] =
-                            std::array::from_fn(|i| pair[0][i] + x * (pair[1][i] - pair[0][i]));
-                        eq * ra
-                            * ((Fr::one() + gamma) * val
-                                + (gamma + gamma * gamma * write_protected) * inc
-                                + gamma * gamma * gamma * (Fr::one() + gamma * unmapped))
-                    })
-                    .sum();
-                assert_eq!(
-                    reference_poly.evaluate(x),
-                    expected,
-                    "reference round={round}, node={node}"
-                );
-                assert_eq!(
-                    optimized_poly.evaluate(x),
-                    expected,
-                    "optimized round={round}, node={node}"
-                );
-            }
-            rows = rows
-                .as_chunks::<2>()
-                .0
-                .iter()
-                .map(|pair| {
-                    std::array::from_fn(|i| pair[0][i] + binding * (pair[1][i] - pair[0][i]))
-                })
-                .collect();
-            claim = reference_poly.evaluate(binding);
-        }
-        reference.finish_rounds(*bindings.last().unwrap()).unwrap();
-        optimized.finish_rounds(*bindings.last().unwrap()).unwrap();
-        assert_eq!(
-            reference.output_claims(inputs.claims).unwrap(),
-            optimized.output_claims(inputs.claims).unwrap()
-        );
-        let output_points = relation
-            .derive_opening_points(&bindings, inputs.points)
-            .unwrap();
-        reference
-            .validate_derived_tables(relation, inputs.points, &output_points, inputs.challenges)
-            .unwrap();
-        optimized
-            .validate_derived_tables(relation, inputs.points, &output_points, inputs.challenges)
-            .unwrap();
     }
 
     fn run_parity(shape: FixtureShape, ops: Vec<RamOp>) {
@@ -815,7 +727,6 @@ mod tests {
                     }
                 }
             });
-            let input_claim = dense_input_claim(witness, &tau_low, gamma, shape.ram_k, &masks);
             for &(phase1, phase2) in phase_splits {
                 let relation = RamReadWriteChecking::<Fr>::new(
                     ReadWriteDimensions::new(shape.log_t, shape.log_k(), phase1, phase2),
@@ -823,6 +734,7 @@ mod tests {
                     tau_low.clone(),
                     masks.clone(),
                 );
+                let input_claim = dense_input_claim(witness, &relation, &challenges);
 
                 let mut reference_session = ProofSession::default();
                 let reference = PrepareKernel::<Fr, _>::prepare(
@@ -851,10 +763,9 @@ mod tests {
                 )
                 .unwrap();
 
-                assert_parity_and_brute(
+                assert_parity(
                     reference,
                     optimized,
-                    witness,
                     input_claim,
                     &ProverInputs {
                         relation: &relation,
