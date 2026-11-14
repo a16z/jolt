@@ -46,10 +46,10 @@ def github(path, *, authenticated=True, media='application/vnd.github+json'):
 
 def labelled_pr(number, *, authenticated):
     pr = github(f'pulls/{number}', authenticated=authenticated)
-    if (pr['state'] != 'open' or (pr['head']['repo'] or {}).get('full_name') != 'a16z/jolt'
+    if (pr['state'] != 'open' or not pr['head']['repo']
             or pr['base']['repo']['full_name'] != 'a16z/jolt' or pr['base']['ref'] != 'main'
             or 'benchmark' not in [label['name'] for label in pr['labels']]):
-        raise ValueError('benchmark requires an open, labelled, same-repository PR into main')
+        raise ValueError('benchmark requires an open, labelled PR into main whose head repository exists')
     latest, page = None, 1
     while True:
         events = github(f'issues/{number}/events?per_page=100&page={page}', authenticated=authenticated)
@@ -62,7 +62,8 @@ def labelled_pr(number, *, authenticated):
     if latest is None or latest['event'] != 'labeled':
         raise ValueError('benchmark label has no current application event')
     admission = {'label_event_id': latest['id'], 'label_actor': latest['actor']['login'],
-                 'label_created_at': latest['created_at'], 'head_ref': pr['head']['ref']}
+                 'label_created_at': latest['created_at'],
+                 'head_repo': pr['head']['repo']['full_name'], 'head_ref': pr['head']['ref']}
     if authenticated:
         permission = github(f'collaborators/{quote(admission["label_actor"], safe="")}/permission')
         if permission['role_name'] not in ('maintain', 'admin'):
@@ -77,7 +78,7 @@ def recheck_pr(plan):
     # and the merge ref after planning, so neither is rechecked.
     pr, admission = labelled_pr(plan['provenance']['pr_number'], authenticated=False)
     if admission != plan['admission'] or pr['head']['sha'] != plan['runs'][0]['submitted_head']:
-        raise ValueError('PR label, branch or head changed after trusted admission')
+        raise ValueError('PR label, head repository, branch or head changed after trusted admission')
 
 
 def resolve(event_name, event, repository, sha):
@@ -92,9 +93,14 @@ def resolve(event_name, event, repository, sha):
         pr, admission = labelled_pr(number, authenticated=True)
         submitted = event['pull_request']['head']
         if (pr['head']['sha'] != submitted['sha'] or pr['head']['ref'] != submitted['ref']
-                or (submitted['repo'] or {}).get('full_name') != repository
+                or (submitted['repo'] or {}).get('full_name') != admission['head_repo']
                 or (event['action'] == 'labeled' and event['sender']['login'] != admission['label_actor'])):
             raise ValueError('the labelled PR request is no longer current')
+        # Pushing a same-repository branch takes write access; pushing a fork branch
+        # takes none. A label therefore admits a fork only at the head its own event names.
+        if admission['head_repo'] != repository and event['action'] != 'labeled':
+            raise ValueError('a fork PR is benchmarked only at the head a maintainer labelled; '
+                             'review the new head, then remove and re-apply the benchmark label')
         if pr.get('mergeable') is False:
             raise ValueError('PR conflicts with main; resolve the conflicts before benchmarking')
         bench.capture(['git', 'fetch', '--no-tags', 'origin',

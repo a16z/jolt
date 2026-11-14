@@ -4,9 +4,11 @@ These scripts reuse `jolt-prover profile --backend optimized`. They build real
 guest ELFs before measurement, run fresh prover processes, verify every successful
 proof, and retain raw samples. There is no reference-backend timing lane.
 
-PR benchmarks are opt-in. A maintainer or administrator adds `benchmark` to a
-same-repository PR; subsequent pushes retain that admission while the label stays
-applied. The target builds both legs using its local Cargo state, then proves.
+PR benchmarks are opt-in. A maintainer or administrator adds `benchmark` to a PR
+into main. On a same-repository PR, subsequent pushes retain that admission while
+the label stays applied. On a fork PR the label admits only the head it was
+applied to; after a push, the label must be removed and applied again.
+The target builds both legs using its local Cargo state, then proves.
 Every main push's new first-parent commits and the nightly run instead build on
 GitHub-hosted runners; the target downloads, verifies and runs those artifacts
 without any Cargo/toolchain fallback. Both routes keep the repository's `release`
@@ -740,9 +742,10 @@ starts no target work. No self-hosted GitHub runner or organization registration
 token is needed.
 
 The hosted planner reads the current PR and all issue-event pages. It requires
-an open same-repository PR into main, its current `benchmark` label application,
-and an applier whose current API `role_name` is `maintain` or `admin`, not merely
-`write`. It pins the submitted head and GitHub's merge commit. That commit must
+an open PR into main whose head repository still exists, its current `benchmark`
+label application, and an applier whose current API `role_name` is `maintain` or
+`admin`, not merely `write` or `triage`. It records the head repository and
+branch, and pins the submitted head and GitHub's merge commit. That commit must
 have exactly two parents: a commit on main's fetched first-parent history, then
 the submitted head. GitHub's merge ref can lag main; the comparison uses its
 actual first parent as the base, not a newer unmerged main revision. Calibration
@@ -750,20 +753,58 @@ references match this exact base and expire after 48 hours. If that older base
 has no matching reference, measurements still run with an unavailable reference.
 When GitHub reports `mergeable: false`, planning instead refuses with a request
 to resolve conflicts with main. Unknown (`null`) mergeability does not block planning.
-Replays older than the label application are refused. Later pushes
-remain admitted while the same label application stays current.
+Replays older than the label application are refused.
+
+Under a current maintainer label, PR code runs on the target only if someone
+with write access pushed it or the label was applied to that exact head.
+Pushing a same-repository branch takes write access, so later pushes to a
+same-repository PR remain admitted while the same label application stays
+current. Pushing a fork branch takes none, so a fork PR is admitted only by the
+label event itself, for the head named in that event, and only while that head
+is still the PR's head. A push to a labelled fork PR is refused with the sticky
+comment: a maintainer reviews the new head, then removes and re-applies the
+label. GitHub applies a label to whichever head is current at that instant, so
+a fork push that lands just before the click is the head admitted. The
+benchmark check sits on the submitted head, and the result and refusal comments
+name it; compare it with the reviewed commit.
+
+The planner reads PR content only as Git objects: it fetches the PR's merge ref
+and inspects it with `git show` and `git ls-tree`. No job in `e2e-bench.yml` or
+`e2e-bench-ingest.yml` checks out, builds or runs PR code; their hosted builds
+are for main, nightly and calibration only. The contract tests in
+`e2e-bench-request.yml` do run PR code, as an ordinary `pull_request` job with a
+read-only token and no secrets.
 
 The App repeats admission when enqueueing and immediately before submitting.
-Every request must be a successful `.github/workflows/e2e-bench.yml` run whose
-repository and head repository are `a16z/jolt`. Main push, schedule and manual
-requests must have head branch `main`; the API comparison of the measured SHA
-against main must be `identical` or `ahead`. PR requests must have exactly one
-payload PR with base `main` and the dispatch's PR number. The App rechecks the
-open PR, same-repository head, main base, exact head SHA and current label. All
-issue-event pages must identify the dispatch's latest label event and actor,
-with no later removal. The actor must still hold `maintain` or `admin`. API
-errors refuse admission. For `pull_request_target`, the run's head SHA and branch
-are the submitted PR's; the payload PR's base ref binds it to main.
+Every request must be a successful `.github/workflows/e2e-bench.yml` run in
+`a16z/jolt`. The run's head repository may differ from `a16z/jolt` only for a
+`pull_request_target` run. GitHub takes that event's workflow file and checkout
+from the repository's default branch, whatever the PR's base branch
+([changelog](https://github.blog/changelog/2025-11-07-actions-pull_request_target-and-environment-branch-protections-changes/),
+in effect since December 8, 2025). A fork's `pull_request` run instead runs in
+the context of the PR's merge commit, so its workflow file is the PR's own
+version of the same path and can upload artifacts under the plan and dispatch
+names. The App must refuse such a run before reading any artifact. Main push,
+schedule and manual requests must have head repository `a16z/jolt` and head
+branch `main`; the API comparison of the measured SHA against main must be
+`identical` or `ahead`.
+
+A PR request must come from a `pull_request_target` run and takes its PR number
+from the dispatch. A run that lists pull requests must list exactly one, with
+that number and base `main`. A run that lists none is decided by the PR read
+alone; GitHub lists none for a fork head. The App reads the PR and requires it
+to be open, into `main` of `a16z/jolt`, labelled `benchmark`, at the head SHA
+that the dispatch and the run both name, with the run's head repository and
+head branch. A PR whose head repository was deleted is refused. For a fork head
+the run's actor must also be the label actor. That check is not the head pin:
+the labeller's own push to a labelled fork PR passes it, so the planner's
+refusal of fork `synchronize` events stays the rule that binds a label to one
+head. All issue-event pages must identify the dispatch's latest label event and
+actor, with no later removal. The actor must still hold `maintain` or `admin`.
+API errors refuse admission. Because both checks require the PR's current head
+to be the planned one, a fork push after planning refuses the job. A dispatcher
+without these fork rules refuses every fork-head run: planning succeeds, and no
+check, target job or result comment follows.
 
 The App connects to `jolt-bench` as `runner` with a dedicated forced-command SSH
 key. Its root-owned entry accepts only `submit`, `status`, `fetch` and `remove`
@@ -783,7 +824,7 @@ The worker uses a fixed environment with the `runner` Rust and uv directories
 on PATH and no inherited GitHub, SSH, cloud or Pika credentials. It calls
 `ci.py target`, which uses `local` for PRs and `execute` for
 main/nightly/calibration, then always finalizes the result. The PR path anonymously rechecks the same label,
-branch and head after acquiring the kernel lock and again before proving.
+head repository, branch and head after acquiring the kernel lock and again before proving.
 Removing the label does not terminate a build or proof already running. The App
 submits one job at a time in FIFO order; the kernel lock also serializes manual
 target commands. Submission is size-capped and staged before acquiring the jobs
@@ -795,7 +836,10 @@ process tree has stopped.
 
 PR source, including `build.rs`, executes only on `jolt-bench` as `runner`.
 While a label remains, anyone able to push that same-repository branch can change
-the code that runs without a new label application. Environment filtering is
+the code that runs without a new label application. A labelled fork head runs
+in the same account with the same reach, so labelling a fork PR accepts that
+head's source, build scripts and dependency changes running as `runner`.
+Environment filtering is
 not a sandbox: PR code can change that account's files, warm Cargo state and
 future measurements. Hash validation authenticates neither a persistent host nor
 locally produced PR binaries. This remains accepted persistent-account trust
@@ -875,7 +919,14 @@ and treats all downloaded files as data.
 
 The default branch's `publication.py` validates provenance, planned revisions,
 build inputs, matrix, sampling, physical affinity and successful metrics. The
-plan and dispatch come from that producer attempt's own artifacts. Main/nightly
+plan and dispatch come from that producer attempt's own artifacts. Ingest and
+the history publisher accept a producer with a fork head only for
+`pull_request_target`, refuse any other fork-head producer before downloading
+its artifacts, and require the run's head repository and branch to equal the
+plan's admitted ones. A PR plan that records no head repository comes from a
+planner that admitted only `a16z/jolt` heads, so both bind it to `a16z/jolt`.
+Main, nightly and calibration producers must have head
+repository `a16z/jolt`. Main/nightly
 manifest and index digests come from the hosted dispatch. PR manifests are checked
 against the plan's pinned native inputs; their binary hashes are target observations,
 not independent hosted-build attestations. The ingest run publishes canonical

@@ -37,13 +37,17 @@ A push voids the line. After opening a pull request and after every push, review
 
 When the Pika App dispatcher and forced-command target are configured and the
 `JOLT_E2E_ENABLED` repository variable is `true` (setup in
-`scripts/bench/README.md`), a maintainer or administrator can add the `benchmark` label to a same-repository PR. The label
-persists across pushes: each admitted run builds base and candidate locally with
-release/znver4, then runs the PR suite in `scripts/bench/suites.json`. Forks
-and labels applied by write-only contributors are not admitted. While the label
+`scripts/bench/README.md`), a maintainer or administrator can add the `benchmark` label to a PR into main.
+Each admitted run builds base and candidate locally with
+release/znver4, then runs the PR suite in `scripts/bench/suites.json`. Labels
+applied by write-only contributors are not admitted. On a same-repository PR the
+label persists across pushes: while it
 remains, any later push to the branch, by anyone who can push to it, runs its code
 (including `build.rs`) on the benchmark machine's persistent account without new
-approval. Only `runner` on `jolt-bench` executes PR code; no Pika agent runs there.
+approval. On a fork PR the label admits only the head it was applied to: after a
+push, a maintainer reviews the new head, then removes and re-applies the label.
+A fork PR also needs a Pika App dispatcher that admits fork heads (contract in
+`scripts/bench/README.md`). Only `runner` on `jolt-bench` executes PR code; no Pika agent runs there.
 The App rechecks admission before dispatch and publishes an **End-to-end benchmark**
 check. Results are in the **End-to-end benchmark ingest** run's `jolt-e2e-*`
 artifact and the dashboard's **Pull requests** view at

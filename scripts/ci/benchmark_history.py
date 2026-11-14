@@ -342,12 +342,15 @@ def producer_run(ingest):
         raise ValueError("Ingest run title does not identify a producer attempt")
     run_id, attempt = map(int, title.groups())
     run = json.loads(gh(f"repos/{REPOSITORY}/actions/runs/{run_id}/attempts/{attempt}"))
+    # A fork head is trusted only under pull_request_target, whose workflow file GitHub
+    # takes from the default branch; producer_plan binds it to the admitted PR.
     if (run["id"] != run_id or run["run_attempt"] != attempt
             or run["repository"]["full_name"] != REPOSITORY
-            or (run.get("head_repository") or {}).get("full_name") != REPOSITORY
             or run["name"] != PLAN_WORKFLOW or run["path"] != PLAN_WORKFLOW_FILE
             or run["event"] not in {"push", "schedule", "workflow_dispatch", "pull_request_target"}
-            or (run["event"] != "pull_request_target" and run["head_branch"] != "main")
+            or (run["event"] != "pull_request_target" and (
+                (run.get("head_repository") or {}).get("full_name") != REPOSITORY
+                or run["head_branch"] != "main"))
             or run["status"] != "completed" or run["conclusion"] != "success"):
         raise ValueError("Ingest names an untrusted plan producer")
     return run
@@ -409,8 +412,11 @@ def producer_plan(ingest, bundle, run):
                 or (run.get("pull_requests") and not any(pr["number"] == provenance["pr_number"]
                     and pr["base"]["ref"] == "main" for pr in run["pull_requests"]))):
             raise ValueError("PR plan number is not a pull request of the producer run")
+        # A plan without head_repo comes from a planner that admitted only a16z/jolt heads.
         if (item["submitted_head"] != run["head_sha"] or not revision(item["base"])
-                or not revision(item["head"]) or admission["head_ref"] != run["head_branch"]
+                or not revision(item["head"])
+                or admission.get("head_repo", REPOSITORY) != (run.get("head_repository") or {}).get("full_name")
+                or admission["head_ref"] != run["head_branch"]
                 or dispatch["check_sha"] != item["submitted_head"]
                 or dispatch["pr"] != {"number": provenance["pr_number"], "head_sha": item["submitted_head"],
                     "label_event_id": admission["label_event_id"], "label_actor": admission["label_actor"]}):
