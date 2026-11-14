@@ -85,9 +85,10 @@ only RAM one-hotness check (see [No-op cycles](#no-op-cycles)). Virtual memory
 rows and the field-inline memory accumulator carry these same flags.
 The $\gamma^4$ identity, $0=\sum_{k,j}E(j)N(k)\textsf{ra}(k,j)$, forbids
 selecting an unmapped word on any row. With `ra` zero-or-one-hot on each
-cycle (the $\gamma^3$ identity with Booleanity), its terms are nonnegative
-integers fixed before $r_0$ is drawn, so the
-sum vanishes at a random $r_0$ only if no cycle selects an unmapped word,
+cycle (the $\gamma^3$ identity with Booleanity), each cycle's count
+$v(j)=\sum_k N(k)\textsf{ra}(k,j)$ is 0 or 1 and is fixed before $r_0$ is
+drawn. The sum equals $\widetilde{v}(r_0)$, which vanishes at a random $r_0$
+only if every count is zero, that is, no cycle selects an unmapped word,
 except with probability $\log T/|\mathbb{F}|$. Layout construction rounds
 `heap_end` up to a doubleword, matching the linker's aligned `__heap_end`, and
 admission rejects an unaligned `heap_end`, so a guest that uses the whole heap
