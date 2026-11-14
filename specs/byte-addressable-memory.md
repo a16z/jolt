@@ -152,6 +152,15 @@ anywhere pays across every subsystem; (2) additional *rarely-active* RAM-side co
 nearly free; (3) additional *dense* columns (or 8× lane columns active on every memory op) are
 expensive; (4) making the RAM sumchecks somewhat more complex is nearly irrelevant at ~0.6%.
 
+## Tracer memory guards
+
+Tracer admission rejects changed protected words before mutation and permits
+same-value stores at every width. It also rejects loads below `lowest_address`.
+AMOs, successful SC, lazy tracing, parallel replay and native fast stores use
+these guards. Host calls read guest buffers under the guest-load bounds through
+`identity_loads_succeed`; a buffer with a byte below `lowest_address` is logged
+and ignored rather than failing the run.
+
 ## Intent
 
 ### Goal
@@ -344,9 +353,8 @@ enters and in how applicability is encoded; both deviations remove protocol surf
   - Constraint 0 adds `Rs1Value + Imm` unwrapped, so an access whose sum carries past 2^64 is
     unprovable. Decoded offsets are signed 12-bit, and `materialize_inline` rejects an inline load
     or store offset outside that range, so such an access lands within 2 KiB of 0 or 2^64, outside
-    the memory layout of any program the tracer can run. The tracer faults there or reads a load
-    as 0, which is unprovable anyway except in the no-access zero doubleword (the argument is
-    constraint 0's NOTE in `rv64.rs`).
+    the memory layout of any program the tracer can run. The tracer faults there, including on
+    loads below `lowest_address` (the argument is constraint 0's NOTE in `rv64.rs`).
   - On main, narrow accesses formed the address with wrapping lookups (`AlignAddr` for loads,
     `ADDI` for stores), so any inline offset worked and a narrow load carrying into the zero
     doubleword proved; only carrying `LD`/`SD` accesses were unprovable. The inline bound is

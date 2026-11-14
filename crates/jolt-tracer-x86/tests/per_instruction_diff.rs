@@ -479,15 +479,20 @@ fn host_io(rng: &mut StdRng) -> Instance {
         0..=2 => (scratch_slot(rng), rng.gen_range(0..48)),
         3 => (layout.input_start, rng.gen_range(1..16)),
         // Ranges a guest load rejects: past the memory plane, between the
-        // I/O region and RAM, in an emulator peripheral, wrapping around
-        // the address space, and past the plane at the top of the `u32`
-        // range that print and cycle-marker pointers use.
+        // I/O region and RAM, in an emulator peripheral, starting below the
+        // lowest mapped word, wrapping around the address space, and past the
+        // plane at the top of the `u32` range that print and cycle-marker
+        // pointers use.
         4 => (RAM_START_ADDRESS + MEM_CAPACITY - 4, 8),
         5 => (layout.io_end + 1, 4),
         6 => (0x1020, 4),
-        _ => *[(u64::MAX - 3, 8), (u64::from(u32::MAX) - 1, 4)]
-            .get(rng.gen_range(0..2))
-            .unwrap(),
+        _ => *[
+            (layout.get_lowest_address() - 4, 8),
+            (u64::MAX - 3, 8),
+            (u64::from(u32::MAX) - 1, 4),
+        ]
+        .get(rng.gen_range(0..3))
+        .unwrap(),
     };
     i.pre_regs[11] = ptr;
     i.pre_regs[12] = len;
@@ -570,6 +575,7 @@ fn native_prints_exactly_the_readable_messages() {
         (RAM_START_ADDRESS + MEM_CAPACITY - 4, 8),
         (layout.io_end + 1, 4),
         (0x1020, 4),
+        (layout.get_lowest_address() - 4, 8),
     ] {
         assert_eq!(
             native_print_output(ptr, len, JOLT_PRINT_STRING),

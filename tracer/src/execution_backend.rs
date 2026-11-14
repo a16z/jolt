@@ -287,6 +287,7 @@ pub struct TracerChunkCheckpoint {
 struct WorkerSeed {
     device: Option<JoltDevice>,
     decode: DecodeCache,
+    code_word_intervals: Arc<[(usize, usize)]>,
     bytecode: BytecodePreprocessing,
 }
 
@@ -337,6 +338,7 @@ impl TracerBackend {
                 .mmu
                 .decode_cache
                 .snapshot_with_empty_entries(),
+            code_word_intervals: Arc::clone(&emulator.get_cpu().mmu.code_word_intervals),
             bytecode,
         });
 
@@ -417,6 +419,7 @@ impl ChunkedExecutionBackend for TracerBackend {
         let mut worker = ChunkWorker::from_seed(
             checkpoint.seed.device.clone(),
             checkpoint.seed.decode.clone(),
+            Arc::clone(&checkpoint.seed.code_word_intervals),
         );
         let _previous =
             worker.install_chunk(&checkpoint.boundary, checkpoint.image.as_ref().clone());
