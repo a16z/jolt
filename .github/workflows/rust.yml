@@ -469,6 +469,12 @@ jobs:
         run: cargo nextest run --cargo-profile ci -p jolt-prover --features akita,prover-fixtures
       - name: Test Akita profiling artifact and CSV names
         run: cargo nextest run --cargo-profile ci -p jolt-prover --features akita,profiling --lib -E 'test(profile::tests)' --cargo-quiet
+      # Guest builds land in target/jolt-guest-targets, and rust-cache saves
+      # the dependency artifacts of every profile directory under target/:
+      # about 300 MB per guest. This job is the only cache saver that builds
+      # guests.
+      - name: Drop guest builds before the cache save
+        run: rm -rf target/jolt-guest-targets
 
   # NOTE: the profiling smoke test (`cargo nextest run -p jolt-prover
   # --features profiling -E 'binary(profiling_smoke)'`) is deliberately not

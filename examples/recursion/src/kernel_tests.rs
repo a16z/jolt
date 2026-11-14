@@ -1,6 +1,7 @@
 use super::kernel_cases::KernelCase;
 use super::{GuestField as F, GuestProgram, RecordLimits};
 use jolt_field::{CanonicalEncoding, Field, Ring};
+use jolt_sdk::host::default_target_dir;
 
 fn next_field(seed: &mut u64, index: usize) -> F {
     match index % 8 {
@@ -97,7 +98,7 @@ pub(super) fn run() {
     let mut program = super::configured_recursion_program(config);
     program.set_func("check_field_kernels");
     program.add_guest_feature("kernel-tests");
-    program.build("/tmp/jolt-guest-targets");
+    program.build(&default_target_dir().to_string_lossy());
     let (rows, device) = program.execute_with_output(&input, &[], &[]);
     assert!(!device.panic, "field kernel differential guest panicked");
     assert_eq!(super::decode_verifier_output(&device.outputs), 1);

@@ -1,4 +1,4 @@
-use jolt_host::Program;
+use jolt_host::{default_target_dir, Program};
 use jolt_prover::ProverConfig;
 
 use crate::guests::{self, GuestConfig, GuestProgram, ProverPreprocessing, VerifierField};
@@ -38,7 +38,7 @@ impl<G: GuestConfig + 'static> Objective for ProverTimeObjective<G> {
         let mc = self.guest.memory_config();
         let input = self.guest.input();
 
-        let target_dir = std::env::temp_dir().join("jolt-eval-bench-targets");
+        let target_dir = default_target_dir().join("eval-bench");
         let mut host_program = Program::new(self.guest.package());
         if let Some(func) = self.guest.func() {
             host_program.set_func(func);

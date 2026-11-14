@@ -2,7 +2,7 @@
 //! jolt CLI, mirroring `jolt_host::Program`'s defaults
 //! (no-std, backtrace off, default memory layout, `--release`, feature
 //! `guest`) so the two paths produce byte-identical guest ELFs and reuse the
-//! same cached builds under `jolt-guest-targets` in the system temp dir.
+//! same cached builds under `jolt_host::default_target_dir`.
 
 use common::constants::{
     DEFAULT_HEAP_SIZE, DEFAULT_MAX_INPUT_SIZE, DEFAULT_MAX_OUTPUT_SIZE,
@@ -22,8 +22,7 @@ pub fn build_guest(package: &str) -> (Vec<u8>, PathBuf, MemoryConfig) {
     let jolt_cmd = std::env::var("JOLT_PATH").unwrap_or_else(|_| "jolt".to_string());
     // Same layout as host::Program::build_with_features; the trailing '-' is
     // its `{guest}-{func}` naming with func unset.
-    let guest_target_dir = std::env::temp_dir()
-        .join("jolt-guest-targets")
+    let guest_target_dir = jolt_host::default_target_dir()
         .join(format!("{package}-"))
         .to_string_lossy()
         .into_owned();
