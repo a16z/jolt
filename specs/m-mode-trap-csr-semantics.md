@@ -12,7 +12,8 @@
 Jolt runs guests on an M-mode-only RV64IMAC hart with no F, D or V and no interrupt sources.
 The inline sequences for `ECALL`, `MRET`, `CSRRW` and `CSRRS` keep the machine-mode CSRs in reserved virtual registers, but they store every CSR write raw and do not update `mstatus` the way the privileged specification requires for that configuration.
 A guest can observe the difference: `mstatus` reads 0 at reset instead of `0x1800`, a trap forgets `MIE`, and an `mtvec` write with a reserved MODE makes the next `ECALL` jump into the middle of an instruction.
-This spec changes the four sequences so that they compute exactly what the specification prescribes for this hart. The result also matches the Sail RISC-V model configured the same way, except for one WLRL policy noted below (`mcause`).
+A guest also cannot use the other four Zicsr instructions (`CSRRC`, `CSRRWI`, `CSRRSI`, `CSRRCI`): the decoder rejects them and the tracer panics, although the `riscv` crate that jolt-sdk depends on emits `CSRRC` to disable interrupts.
+This spec changes the four sequences so that they compute exactly what the specification prescribes for this hart, and adds the four missing Zicsr instructions with the same semantics. The result also matches the Sail RISC-V model configured the same way, except for one WLRL policy noted below (`mcause`).
 The change adds rows for CSR legalization and trap return, saves one row per trap entry, uses only instruction kinds that Jolt already proves, and changes no constraint.
 It also records why the LR/SC sequences stay as they are, why `EBREAK` is Jolt's failure halt, and why tracer panics are acceptable as halting failures.
 
@@ -25,7 +26,7 @@ All specification references are to [riscv-isa-manual `717aeca3`](https://github
 
 ### Goal
 
-For every program, every source instruction among `ECALL`, `MRET` and the Zicsr instructions `CSRRW` and `CSRRS` (on `mstatus`, `mtvec`, `mepc`, `mcause`, `mtval`, `mscratch`) leaves the architectural state the RISC-V privileged specification prescribes for an M-only hart with IALIGN = 16, with the WARL choices listed below.
+For every program, every source instruction among `ECALL`, `MRET` and the six Zicsr instructions `CSRRW`, `CSRRS`, `CSRRC`, `CSRRWI`, `CSRRSI`, `CSRRCI` (on `mstatus`, `mtvec`, `mepc`, `mcause`, `mtval`, `mscratch`) leaves the architectural state the RISC-V privileged specification prescribes for an M-only hart with IALIGN = 16, with the WARL choices listed below.
 
 ### The hart configuration and what it implies
 
@@ -70,7 +71,6 @@ The first three invariants hold at every source-instruction boundary, that is, b
 
 - Turning tracer panics into architectural exceptions (misaligned `LR`/`SC`, `LR`/`SC` below `RAM_START`). See "Tracer panics are halting failures".
 - Interrupts, U/S-mode, or any CSR not listed above.
-- `CSRRC`, `CSRRWI`, `CSRRSI` and `CSRRCI`, which both decoders still reject.
 
 ## Design
 
@@ -138,9 +138,40 @@ Setting `mtvec` with a reserved operand MODE contributes only its BASE bits. The
 
 For both `mtvec` algorithms, legal operand MODEs 0 and 1 use `M = !0`; reserved MODEs 2 and 3 use `M = !3`, independently of old MODE 0 or 1 and BASE. An all-ones operand therefore writes `!3 | old_MODE` for `CSRRW` and sets every BASE bit while retaining old MODE for `CSRRS`. With old `mtvec = 5`, operands 3 and 10 produce respectively 1 and 9 for `CSRRW`, and 5 and 13 for `CSRRS`. Neither result depends on whether `rd = x0`, is distinct, or aliases `rs1`; a nonzero `rd` receives 5.
 
+**`CSRRC`** (`csr.rs`): suppress the write for `rs1 = x0` as above. Otherwise preserve `rs1` with `ADDI t, rs1, 0` only for `rd = rs1 ≠ x0`, optionally read, then emit `ANDN vr, vr, bits`. Each legal set is closed under clearing bits, so no legalization follows. For `mstatus`, the read-only MPP bits belong to the abstraction relation and remain set architecturally.
+
+**`CSRRWI`** (`csr_immediate.rs`): optionally read, then write the zero-extended constant directly:
+
+```
+mstatus: ADDI v39, x0, uimm & 0x88
+mepc:    ADDI v36, x0, uimm & !1
+raw:     ADDI vr, x0, uimm
+mtvec, uimm[1] = 0: ADDI v34, x0, uimm
+mtvec, uimm[1] = 1:
+  ANDI v34, v34, 1
+  ORI  v34, v34, uimm & !3    # omit if BASE = 0 (uimm = 2 or 3)
+```
+
+`rd = x0` suppresses the read, including when `uimm = 0`. Every `CSRRWI` writes, even for zero.
+
+**`CSRRSI` / `CSRRCI`** (`csr_immediate.rs`): compute the effective operand mask in Rust:
+
+| CSR | Set mask | Clear mask |
+|---|---|---|
+| `mstatus` | `uimm & 0x88` | `uimm & 0x88` |
+| `mepc` | `uimm & !1` | `uimm & !1` |
+| `mtvec` | `uimm & !3` if bit 1 is set, else `uimm` | `uimm & !2` |
+| raw | `uimm` | `uimm` |
+
+Emit `read(rd)` if `rd ≠ x0`, then `ORI vr, vr, mask` for set or `ANDI vr, vr, !mask` for clear. A zero mask needs no update row. If there is no read either, retain one canonical no-op row so the source instruction advances. These CSRs have no write side effects, so an effective no-op can omit the physical write even for a nonzero immediate. With `uimm = 0`, Zicsr's architectural write suppression is preserved exactly. Immediate forms need no temporaries.
+
+Expansion operands and row encoding support these constants: `NormalizedOperands::imm` is `i128`, arithmetic/bitwise rows have no 12-bit immediate restriction, and trace-row encoding accepts RV64 immediates from `i64::MIN` through `u64::MAX`. Clear masks use `format_i_imm` to retain their RV64 bit patterns. Only memory offsets have the signed 12-bit range check.
+
+Both decoders accept all six Zicsr forms on the six supported CSRs. Unsupported CSRs and reserved funct3 4 retain their rejection behavior.
+
 ### Cost per expansion
 
-Every entry is **main (`9407f93fb`) → final**, in executed rows per source instruction. Raw means each of `mcause`, `mtval` and `mscratch`. Register cases are disjoint; `rd = rs1` below means a nonzero alias.
+Every entry is **main (`9407f93fb`) → final**, in executed rows per source instruction. A dash means the instruction was unsupported on main. Raw means each of `mcause`, `mtval` and `mscratch`. Register cases are disjoint; `rd = rs1` below means a nonzero alias.
 
 | Instruction | Operand case | mstatus | mepc | mtvec | raw |
 |---|---|---|---|---|---|
@@ -156,18 +187,49 @@ Every entry is **main (`9407f93fb`) → final**, in executed rows per source ins
 | `CSRRS` | `rd ≠ x0, rs1 = x0` | 1 → 1 | 1 → 1 | 1 → 1 | 1 → 1 |
 | `CSRRS` | `rd ≠ x0, rs1 ≠ x0, rd ≠ rs1` | 2 → 3 | 2 → 3 | 2 → 5 | 2 → 2 |
 | `CSRRS` | `rd = rs1 ≠ x0` | 3 → 3 | 3 → 3 | 3 → 5 | 3 → 3 |
+| `CSRRC` | `rd = x0, rs1 = x0` | — → 1 | — → 1 | — → 1 | — → 1 |
+| `CSRRC` | `rd = x0, rs1 ≠ x0` | — → 1 | — → 1 | — → 1 | — → 1 |
+| `CSRRC` | `rd ≠ x0, rs1 = x0` | — → 1 | — → 1 | — → 1 | — → 1 |
+| `CSRRC` | `rd ≠ x0, rs1 ≠ x0, rd ≠ rs1` | — → 2 | — → 2 | — → 2 | — → 2 |
+| `CSRRC` | `rd = rs1 ≠ x0` | — → 3 | — → 3 | — → 3 | — → 3 |
+
+For immediate forms, `R = 0` when `rd = x0` and `R = 1` otherwise. `R + 1` means one CSR update plus the optional read; an entry of 1 for an ineffective update includes either the read or the canonical no-op.
+
+| Instruction | CSR | Immediate class | main → final |
+|---|---|---|---|
+| `CSRRWI` | mstatus, mepc, raw | all 0–31 | — → R + 1 |
+| `CSRRWI` | mtvec | bit 1 clear, or uimm = 2, 3 | — → R + 1 |
+| `CSRRWI` | mtvec | bit 1 set and BASE ≠ 0 | — → R + 2 |
+| `CSRRSI` | mstatus | bit 3 clear | — → 1 |
+| `CSRRSI` | mstatus | bit 3 set | — → R + 1 |
+| `CSRRSI` | mepc | uimm = 0, 1 | — → 1 |
+| `CSRRSI` | mepc | uimm = 2–31 | — → R + 1 |
+| `CSRRSI` | mtvec | uimm = 0, 2, 3 | — → 1 |
+| `CSRRSI` | mtvec | other values | — → R + 1 |
+| `CSRRSI` | raw | uimm = 0 | — → 1 |
+| `CSRRSI` | raw | uimm = 1–31 | — → R + 1 |
+| `CSRRCI` | mstatus | bit 3 clear | — → 1 |
+| `CSRRCI` | mstatus | bit 3 set | — → R + 1 |
+| `CSRRCI` | mepc | uimm = 0, 1 | — → 1 |
+| `CSRRCI` | mepc | uimm = 2–31 | — → R + 1 |
+| `CSRRCI` | mtvec | uimm = 0, 2 | — → 1 |
+| `CSRRCI` | mtvec | other values | — → R + 1 |
+| `CSRRCI` | raw | uimm = 0 | — → 1 |
+| `CSRRCI` | raw | uimm = 1–31 | — → R + 1 |
 
 Relative to main, a register `CSRRW` to `mtvec` with a nonzero source costs four extra rows, or three with an alias; a writing `CSRRS mtvec` costs three extra rows, or two with an alias. `CSRRS mstatus` and `CSRRS mepc` cost one extra row except aliases, whose cost equals main. `ECALL` saves one row and `MRET` costs two extra rows. The boot `mtvec` register write therefore costs four extra rows.
 
 ### Instruction-count rationale
 
-The tables enumerate each path with **main** and **final** counts. Each raw row applies separately to `mcause`, `mtval` and `mscratch`. Counts are pinned as literals by `system_expansion_counts_match_spec_paths`; the tracer test `system_expansions_refine_architectural_formulas` independently checks the architectural formulas and invariants.
+The tables enumerate each path with **main** and **final** counts. Each raw row applies separately to `mcause`, `mtval` and `mscratch`. Immediate value classes partition all 32 values, and both destination cases are explicit. Counts are pinned as literals by `system_expansion_counts_match_spec_paths`; the tracer test `system_expansions_refine_architectural_formulas` independently checks the architectural formulas and invariants.
 
 A row has one register output, except a control-flow row also sets the next PC. Distinct required register outputs give a lower bound. The canonical no-op is the minimum one-row representation of an advancing source instruction. The lower bounds below fix the current representation: v39 stores only bits 3 and 7, v34 is architectural `mtvec`, and v36 is canonical architectural `mepc`. Other registers and memory are arbitrary unless an earlier row supplies a required output.
 
-**Aliased two-output paths need at least three rows.** With only two rows, each must write one final output, `rd` or the CSR. Reading into `rd` first destroys the source: different sources with the same old CSR then become indistinguishable although they require different updates. Writing the CSR first destroys the old value needed by `rd`. For a swap, fix a legal source and vary the old CSR: the final CSR is the same. For a set, choose a source with every writable bit set (legal MODE 1 for `mtvec`); every old CSR maps to the same final CSR. The old architectural read cannot be recovered in any of these cases. This information-loss bound applies to the three-row aliased swaps and raw sets in the tables, including the masked sets whose operand preparation preserves the needed source information.
+**Aliased two-output paths need at least three rows.** With only two rows, each must write one final output, `rd` or the CSR. Reading into `rd` first destroys the source: different sources with the same old CSR then become indistinguishable although they require different updates. Writing the CSR first destroys the old value needed by `rd`. For a swap, fix a legal source and vary the old CSR: the final CSR is the same. For a set, choose a source with every writable bit set (legal MODE 1 for `mtvec`); every old CSR maps to the same final CSR. For a clear, choose the same all-writable-bits source; every old CSR maps to zero writable bits. The old architectural read cannot be recovered in any of these cases. This information-loss bound applies to the three-row aliased swaps, raw sets and clears in the tables, including the masked sets whose operand preparation preserves the needed source information.
 
 **Masked register sets on `mstatus` and `mepc` need two writing rows.** At old value 0 the result must be `rs1 & mask`, but the same row must also merge arbitrary old writable bits. OR admits forbidden operand bits; AND and ANDN compute intersections or differences instead of the required union. Arithmetic introduces carries, and extract/shift kinds cannot merge old bits with the masked operand. Comparisons and mask generators have the wrong output range; memory, advice and control-flow rows cannot supply this register-only function. Thus no single kind implements the masked merge in this representation. A distinct read adds one row; an alias also has the three-row information-loss bound above.
+
+**A reserved `CSRRWI mtvec` with nonzero BASE needs two writing rows.** Its function is `old → B | (old & 1)`, for a fixed nonzero `B = uimm & !3`. Zero-preserving kinds fail at old = 0. ADD/OR/XOR immediates can insert B but cannot erase arbitrary old BASE; subtraction has the same problem. Pow2 and the mask kinds have the wrong output shape, while constant-output kinds cannot retain the old MODE. Comparisons, memory, advice and control flow cannot implement the function either. This bound relies on canonical v34; a distinct read adds one row.
 
 **The `mtvec` register algorithms are best found; lower bound open.** The five-row write and the three-row `CSRRS` operand transform use the dynamic mask to keep either the whole operand or only its BASE. Bounded searches found nothing shorter:
 
@@ -257,23 +319,131 @@ This exclusion supplies the two-status-row lower bound for both instructions in 
 | raw: `rd ≠ x0, rs1 ≠ x0, rd ≠ rs1` | 2 | 2 | One OR update; one distinct read. |
 | raw: `rd = rs1 ≠ x0` | 3 | 3 | One OR update, one read and one preserved input meet the three-row alias bound above. |
 
+#### CSRRC
+
+| CSR / operand path | main | final | Rationale |
+|---|---|---|---|
+| mstatus: `rd = x0, rs1 = x0` | — | 1 | One read, or one canonical no-op when both registers are x0. |
+| mstatus: `rd = x0, rs1 ≠ x0` | — | 1 | One ANDN update. |
+| mstatus: `rd ≠ x0, rs1 = x0` | — | 1 | One read, or one canonical no-op when both registers are x0. |
+| mstatus: `rd ≠ x0, rs1 ≠ x0, rd ≠ rs1` | — | 2 | One ANDN update; one distinct read. |
+| mstatus: `rd = rs1 ≠ x0` | — | 3 | One ANDN update, one read and one preserved input meet the three-row alias bound above. |
+| mepc: `rd = x0, rs1 = x0` | — | 1 | One read, or one canonical no-op when both registers are x0. |
+| mepc: `rd = x0, rs1 ≠ x0` | — | 1 | One ANDN update. |
+| mepc: `rd ≠ x0, rs1 = x0` | — | 1 | One read, or one canonical no-op when both registers are x0. |
+| mepc: `rd ≠ x0, rs1 ≠ x0, rd ≠ rs1` | — | 2 | One ANDN update; one distinct read. |
+| mepc: `rd = rs1 ≠ x0` | — | 3 | One ANDN update, one read and one preserved input meet the three-row alias bound above. |
+| mtvec: `rd = x0, rs1 = x0` | — | 1 | One read, or one canonical no-op when both registers are x0. |
+| mtvec: `rd = x0, rs1 ≠ x0` | — | 1 | One ANDN update. |
+| mtvec: `rd ≠ x0, rs1 = x0` | — | 1 | One read, or one canonical no-op when both registers are x0. |
+| mtvec: `rd ≠ x0, rs1 ≠ x0, rd ≠ rs1` | — | 2 | One ANDN update; one distinct read. |
+| mtvec: `rd = rs1 ≠ x0` | — | 3 | One ANDN update, one read and one preserved input meet the three-row alias bound above. |
+| raw: `rd = x0, rs1 = x0` | — | 1 | One read, or one canonical no-op when both registers are x0. |
+| raw: `rd = x0, rs1 ≠ x0` | — | 1 | One ANDN update. |
+| raw: `rd ≠ x0, rs1 = x0` | — | 1 | One read, or one canonical no-op when both registers are x0. |
+| raw: `rd ≠ x0, rs1 ≠ x0, rd ≠ rs1` | — | 2 | One ANDN update; one distinct read. |
+| raw: `rd = rs1 ≠ x0` | — | 3 | One ANDN update, one read and one preserved input meet the three-row alias bound above. |
+
+#### CSRRWI
+
+| CSR / immediate / destination path | main | final | Rationale |
+|---|---|---|---|
+| mstatus: `uimm = 0`, `rd = x0` | — | 1 | One constant CSR write. Read suppressed. |
+| mstatus: `uimm = 0`, `rd ≠ x0` | — | 2 | One constant CSR write. One distinct rd output. |
+| mepc: `uimm = 0`, `rd = x0` | — | 1 | One constant CSR write. Read suppressed. |
+| mepc: `uimm = 0`, `rd ≠ x0` | — | 2 | One constant CSR write. One distinct rd output. |
+| raw: `uimm = 0`, `rd = x0` | — | 1 | One constant CSR write. Read suppressed. |
+| raw: `uimm = 0`, `rd ≠ x0` | — | 2 | One constant CSR write. One distinct rd output. |
+| mstatus: `uimm = 1–31`, `rd = x0` | — | 1 | One constant CSR write. Read suppressed. |
+| mstatus: `uimm = 1–31`, `rd ≠ x0` | — | 2 | One constant CSR write. One distinct rd output. |
+| mepc: `uimm = 1–31`, `rd = x0` | — | 1 | One constant CSR write. Read suppressed. |
+| mepc: `uimm = 1–31`, `rd ≠ x0` | — | 2 | One constant CSR write. One distinct rd output. |
+| raw: `uimm = 1–31`, `rd = x0` | — | 1 | One constant CSR write. Read suppressed. |
+| raw: `uimm = 1–31`, `rd ≠ x0` | — | 2 | One constant CSR write. One distinct rd output. |
+| mtvec: `uimm = 0`, `rd = x0` | — | 1 | One constant CSR write. Read suppressed. |
+| mtvec: `uimm = 0`, `rd ≠ x0` | — | 2 | One constant CSR write. One distinct rd output. |
+| mtvec: `bit 1 clear, uimm ≠ 0`, `rd = x0` | — | 1 | One constant CSR write. Read suppressed. |
+| mtvec: `bit 1 clear, uimm ≠ 0`, `rd ≠ x0` | — | 2 | One constant CSR write. One distinct rd output. |
+| mtvec: `uimm = 2, 3`, `rd = x0` | — | 1 | One mask keeps the old MODE; the new BASE is zero. Read suppressed. |
+| mtvec: `uimm = 2, 3`, `rd ≠ x0` | — | 2 | One mask keeps the old MODE; the new BASE is zero. One distinct rd output. |
+| mtvec: `bit 1 set, BASE ≠ 0`, `rd = x0` | — | 2 | Isolating old MODE and inserting nonzero BASE meet the two-writing-row bound above. Read suppressed. |
+| mtvec: `bit 1 set, BASE ≠ 0`, `rd ≠ x0` | — | 3 | Isolating old MODE and inserting nonzero BASE meet the two-writing-row bound above. One distinct rd output. |
+
+#### CSRRSI
+
+| CSR / immediate / destination path | main | final | Rationale |
+|---|---|---|---|
+| mstatus: `uimm = 0`, `rd = x0` | — | 1 | Effective mask is zero: one canonical no-op. |
+| mstatus: `uimm = 0`, `rd ≠ x0` | — | 1 | Effective mask is zero: one required read. |
+| mstatus: `uimm ≠ 0, bit 3 clear`, `rd = x0` | — | 1 | Effective mask is zero: one canonical no-op. |
+| mstatus: `uimm ≠ 0, bit 3 clear`, `rd ≠ x0` | — | 1 | Effective mask is zero: one required read. |
+| mstatus: `bit 3 set`, `rd = x0` | — | 1 | One immediate bit update. |
+| mstatus: `bit 3 set`, `rd ≠ x0` | — | 2 | One immediate bit update and one distinct rd output. |
+| mepc: `uimm = 0`, `rd = x0` | — | 1 | Effective mask is zero: one canonical no-op. |
+| mepc: `uimm = 0`, `rd ≠ x0` | — | 1 | Effective mask is zero: one required read. |
+| mepc: `uimm = 1`, `rd = x0` | — | 1 | Effective mask is zero: one canonical no-op. |
+| mepc: `uimm = 1`, `rd ≠ x0` | — | 1 | Effective mask is zero: one required read. |
+| mepc: `uimm = 2–31`, `rd = x0` | — | 1 | One immediate bit update. |
+| mepc: `uimm = 2–31`, `rd ≠ x0` | — | 2 | One immediate bit update and one distinct rd output. |
+| mtvec: `uimm = 0`, `rd = x0` | — | 1 | Effective mask is zero: one canonical no-op. |
+| mtvec: `uimm = 0`, `rd ≠ x0` | — | 1 | Effective mask is zero: one required read. |
+| mtvec: `uimm = 2, 3`, `rd = x0` | — | 1 | Effective mask is zero: one canonical no-op. |
+| mtvec: `uimm = 2, 3`, `rd ≠ x0` | — | 1 | Effective mask is zero: one required read. |
+| mtvec: `other nonzero values`, `rd = x0` | — | 1 | One immediate bit update. |
+| mtvec: `other nonzero values`, `rd ≠ x0` | — | 2 | One immediate bit update and one distinct rd output. |
+| raw: `uimm = 0`, `rd = x0` | — | 1 | Effective mask is zero: one canonical no-op. |
+| raw: `uimm = 0`, `rd ≠ x0` | — | 1 | Effective mask is zero: one required read. |
+| raw: `uimm = 1–31`, `rd = x0` | — | 1 | One immediate bit update. |
+| raw: `uimm = 1–31`, `rd ≠ x0` | — | 2 | One immediate bit update and one distinct rd output. |
+
+#### CSRRCI
+
+| CSR / immediate / destination path | main | final | Rationale |
+|---|---|---|---|
+| mstatus: `uimm = 0`, `rd = x0` | — | 1 | Effective mask is zero: one canonical no-op. |
+| mstatus: `uimm = 0`, `rd ≠ x0` | — | 1 | Effective mask is zero: one required read. |
+| mstatus: `uimm ≠ 0, bit 3 clear`, `rd = x0` | — | 1 | Effective mask is zero: one canonical no-op. |
+| mstatus: `uimm ≠ 0, bit 3 clear`, `rd ≠ x0` | — | 1 | Effective mask is zero: one required read. |
+| mstatus: `bit 3 set`, `rd = x0` | — | 1 | One immediate bit update. |
+| mstatus: `bit 3 set`, `rd ≠ x0` | — | 2 | One immediate bit update and one distinct rd output. |
+| mepc: `uimm = 0`, `rd = x0` | — | 1 | Effective mask is zero: one canonical no-op. |
+| mepc: `uimm = 0`, `rd ≠ x0` | — | 1 | Effective mask is zero: one required read. |
+| mepc: `uimm = 1`, `rd = x0` | — | 1 | Effective mask is zero: one canonical no-op. |
+| mepc: `uimm = 1`, `rd ≠ x0` | — | 1 | Effective mask is zero: one required read. |
+| mepc: `uimm = 2–31`, `rd = x0` | — | 1 | One immediate bit update. |
+| mepc: `uimm = 2–31`, `rd ≠ x0` | — | 2 | One immediate bit update and one distinct rd output. |
+| mtvec: `uimm = 0`, `rd = x0` | — | 1 | Effective mask is zero: one canonical no-op. |
+| mtvec: `uimm = 0`, `rd ≠ x0` | — | 1 | Effective mask is zero: one required read. |
+| mtvec: `uimm = 2`, `rd = x0` | — | 1 | Effective mask is zero: one canonical no-op. |
+| mtvec: `uimm = 2`, `rd ≠ x0` | — | 1 | Effective mask is zero: one required read. |
+| mtvec: `other nonzero values`, `rd = x0` | — | 1 | One immediate bit update. |
+| mtvec: `other nonzero values`, `rd ≠ x0` | — | 2 | One immediate bit update and one distinct rd output. |
+| raw: `uimm = 0`, `rd = x0` | — | 1 | Effective mask is zero: one canonical no-op. |
+| raw: `uimm = 0`, `rd ≠ x0` | — | 1 | Effective mask is zero: one required read. |
+| raw: `uimm = 1–31`, `rd = x0` | — | 1 | One immediate bit update. |
+| raw: `uimm = 1–31`, `rd ≠ x0` | — | 2 | One immediate bit update and one distinct rd output. |
+
 Where the sequences save rows, and why:
 
 - `ECALL` needs no PC copy, one row less than on `main`, because `AUIPC` can target v36 directly.
 - A nonzero register `mtvec` swap masks the full source/old difference in five writing rows. This consumes the source before the read, so the alias case needs no copy. A zero source needs no masking at all: one write.
 - Register `CSRRS mtvec` transforms only the operand with a dynamic mask, without constructing `old | bits` or comparing it with old MODE. This also consumes the source, so its alias case needs no copy. Masking the operand before the read removes the source copy for aliased `CSRRS mstatus` and `CSRRS mepc` too, so their alias cost equals `main`'s.
-- For the remaining three-row aliased swaps and raw sets, reordering alone cannot remove preservation: the information-loss argument above excludes either two-row ordering.
+- No immediate is materialized in a register. Constant `mstatus`/`mepc` swaps also fold legalization into the write. Constant set masks fold the post-OR legalization into the immediate; constant `mtvec` updates resolve the reserved predicate at expansion time. Effective-zero updates omit the update row when a read already represents the instruction, or retain a single canonical no-op otherwise.
+- For the remaining three-row aliased swaps, raw sets and clears, reordering alone cannot remove preservation: the information-loss argument above excludes either two-row ordering.
 
 ### Effect on proving
 
-- Only bytecode changes. Every row uses an instruction kind Jolt already proves (`ORI`, `ANDI`, `AND`, `XOR`, `OR`, `ADDI`, `AUIPC`, `JALR`, `VirtualMULI`, `VirtualSRLI`, `VirtualShiftRightBitmask`), so R1CS, lookup tables, RAM and register checking are unchanged.
-- The virtual registers v32–v39 keep their roles; sequences use at most two of the eight instruction temporaries.
+- Only bytecode changes. Every row uses an instruction kind Jolt already proves (`ORI`, `ANDI`, `AND`, `ANDN`, `XOR`, `OR`, `ADDI`, `AUIPC`, `JALR`, `VirtualMULI`, `VirtualSRLI`, `VirtualShiftRightBitmask`), so R1CS, lookup tables, RAM and register checking are unchanged. The four new kinds are source-only: they always expand, like `CSRRW`/`CSRRS`, and are serialized by canonical name, so no target-row tag changes. The tracer's `Cycle` and `Instruction` enums are persisted with postcard, which encodes a variant by its position, so `jolt_riscv::for_each_instruction_kind!` lists the four kinds in a separate `appended` group that the tracer declares after `INLINE`. Every existing variant keeps its position, and test `persisted_variants_keep_their_postcard_positions` pins the positions of `main`.
+- The virtual registers v32–v39 keep their roles; sequences use at most two of the eight instruction temporaries; immediate forms use none.
 - Trace length changes by the per-instance differences above. A trace that crosses a power-of-two padding boundary as a result grows the proof like any longer trace; the proof format does not change.
-- The golden expansion fixture (`crates/jolt-program/src/expand/fixtures/main_expand_parity_hashes.json`) differs from main in exactly 24 of its 360 cases: `CSRRW` and `CSRRS` on `mstatus` (768), `mtvec` (773) and `mepc` (833), and `ECALL` and `MRET`, each with suffixes `_compressed_false`, `_compressed_true` and `_rd0`. Only output hashes change; inputs, metadata, raw CSR cases and every other key keep main's values. Regenerate it only with `JOLT_UPDATE_EXPANSION_FIXTURES=1`.
+- The golden expansion fixture (`crates/jolt-program/src/expand/fixtures/main_expand_parity_hashes.json`) differs from main in exactly 24 of its 360 cases: `CSRRW` and `CSRRS` on `mstatus` (768), `mtvec` (773) and `mepc` (833), and `ECALL` and `MRET`, each with suffixes `_compressed_false`, `_compressed_true` and `_rd0`. Only output hashes change; inputs, metadata, raw CSR cases and every other key keep main's values. Regenerate it only with `JOLT_UPDATE_EXPANSION_FIXTURES=1`. The four new instructions have no main fixture cases; the literal cost table and the independent reference test cover them.
 - The full end-to-end proving matrix (`jolt-prover` `e2e_matrix`, clear mode: fibonacci, muldiv, memory-ops, memory-copy, sha2, sha3, sha3-aligned, btreemap, stdlib, advice-consumer) proves and verifies on this branch.
 
 ### Alternatives considered
 
+- **Keep rejecting `CSRRC`, `CSRRWI`, `CSRRSI`, `CSRRCI`.** Compilers do not emit CSR instructions, so only hand-written assembly reaches them. But Jolt guests reach it through a library: jolt-sdk depends on the `riscv` crate (0.16) for `riscv64` targets, and that crate's `interrupt::machine::disable` and `interrupt::free` clear MIE with `csrrc x0, mstatus, rs` (`register/macros.rs:396`), while its single-hart critical section, behind the `critical-section-single-hart` feature, is `csrrci rd, mstatus, 8` (`critical_section.rs:12`). C code reaches them through the usual `csrci`/`csrsi` idioms. Each such guest panics the tracer and cannot be proved, and a refinement proof against the Sail model would need a "no step" exception for four whole instructions. The four forms reuse the existing helpers and add only source kinds, so they are added.
+- **Materialize every immediate and reuse register bodies.** Simpler expansion sharing, but it spends rows on known constants and runtime legalization. The immediate bodies instead fold constants and WARL masks at expansion time; the independent architectural reference covers all 32 values.
+- **Legalize after a clear**, as after a set. Adds one row for `mstatus`/`mepc` and five for `mtvec`; the write is already legal, as argued under Final sequences.
 - **Keep the fields inert**, the previous design: no interrupt sources exist, so MIE and MPIE never change control flow, and ZeroOS restores `mstatus` itself before `mret`. But a guest observes the fields through `csrr`, a reserved `mtvec` MODE crashes the tracer, and a refinement proof against the specification has to carry every disagreement as an exception. The correct sequences cost a few rows, so the exceptions are not worth keeping.
 
 - **Store the full architectural `mstatus` in v39** (`0x1800` included). Every write then needs `ANDI` and `ORI` (one more row each), and the reset value needs either an initialization row or a special case. Storing only the writable bits makes reads one `ORI`, writes one `ANDI`, and reset correct for free.
@@ -297,6 +467,10 @@ Each test below is in `tracer/src/instruction/system_semantics_tests.rs`. It sto
 | `mtvec_reserved_mode_keeps_previous_mode` | `csrw mtvec, HANDLER\|1`, then `csrw mtvec, HANDLER\|2`, then `csrw mtvec, (HANDLER+0x40)\|3`, then `csrw mtvec, 0; csrrs mtvec, HANDLER\|2`, reading `mtvec` after each of the last three | `0x8000_0102`, `0x8000_0143`, `0x8000_0102` | `0x8000_0101`, `0x8000_0141`, `0x8000_0100` |
 | `ecall_with_reserved_mtvec_mode_traps_to_base` | `csrw mtvec, HANDLER\|2; ecall` | jumps to `HANDLER + 2`, mid-instruction: the tracer panics with "Failed to decode instruction" | traps to `HANDLER` |
 | `mepc_write_clears_bit_zero` | `csrw mepc, CODE+13; csrr` | `0x8000_000d` | `0x8000_000c` |
+| `mstatus_clear_and_immediate_forms` | `csrsi mstatus, 8; csrs mstatus, 0x80; csrrci a0, mstatus, 8; csrr; csrrwi a2, mstatus, 31; csrr; csrrc a4, mstatus, -1; csrr` | the tracer panics: "Unsupported SYSTEM instruction" | `0x1888`, `0x1880`, `0x1880`, `0x1808`, `0x1808`, `0x1800` |
+| `csrrc_clears_bits_with_rd_equal_rs1_and_x0_forms` | `csrw mscratch, 0xff; csrrc t1, mscratch, t1` (`t1 = 0x0f`); `csrr`; `csrrc a1, mscratch, x0`; `csrc mscratch, 0x30`; `csrr` | panics | `t1 = 0xff`, `0xf0`, `0xf0`, `0xc0` |
+| `csr_immediates_are_zero_extended_and_zero_writes_only_for_csrrwi` | `csrrwi x0, mscratch, 31`; `csrrsi`/`csrrci` with 0; `csrrci a4, mscratch, 5`; `csrrwi a5, mscratch, 0`; reads | panics | `31` (not −1) four times, old `31`, old `26`, then `0` |
+| `mtvec_and_mepc_immediate_and_clear_forms_are_legalized` | `csrw mtvec, HANDLER\|1; csrrci mtvec, 1; csrrsi mtvec, 2; csrrwi mtvec, 1; csrrwi mtvec, 6; csrr`; `csrrwi mepc, 31; csrrci a5, mepc, 2; csrr` | panics | old values `0x8000_0101`, `0x8000_0100`, `0x8000_0100`, `1`, then `mtvec = 5`; `mepc` old `30`, then `28` |
 
 These tests also pass on `main` and pin behaviour that does not change: `raw_csrs_store_any_value`, `mret_to_odd_mepc_write_lands_on_even_address` (`JALR` already clears bit 0), and the eight LR/SC tests below.
 
@@ -382,7 +556,7 @@ A run that ends at `EBREAK` is an abnormal end: the SDK's panic, abort and exit 
 
 ### Acceptance criteria
 
-- [x] The nine divergence tests above pass on this branch and fail on `main`; the ten behaviour-pinning tests pass on both.
+- [x] The thirteen divergence tests above pass on this branch and fail on `main` (the last four because `main` cannot decode the instructions); the ten behaviour-pinning tests pass on both.
 - [x] `cargo nextest run -p jolt-program` passes, including the 360-case golden fixture (24 differences from main).
 - [x] `cargo nextest run -p tracer` passes.
 - [x] `cargo nextest run -p jolt-prover --features prover-fixtures -E 'binary(e2e_matrix)'` proves and verifies all guests.
@@ -390,7 +564,7 @@ A run that ends at `EBREAK` is an abnormal end: the SDK's panic, abort and exit 
 
 ### Testing strategy
 
-The existing tracer guests assert concrete values derived from the specification. The independent architectural reference test covers every instruction/CSR/operand class, invariant-satisfying old states, high-bit operands and aliases; it checks registers, the abstraction relation, invariants and trap/return PCs. The literal expansion-count table pins every path, and the golden fixture pins unchanged expansions and format metadata. The e2e matrix's std guests (`stdlib` and `memory_copy`) cover the boot `mtvec` write and the trap path.
+The existing tracer guests assert concrete values derived from the specification. The independent architectural reference test covers every instruction/CSR/operand class, invariant-satisfying old states, high-bit operands, aliases and all 32 immediate values; it checks registers, the abstraction relation, invariants and trap/return PCs. The literal expansion-count table pins every path, and the golden fixture pins unchanged expansions and format metadata. The e2e matrix's std guests (`stdlib` and `memory_copy`) cover the boot `mtvec` write and the trap path.
 
 ### Performance
 
@@ -398,7 +572,7 @@ The per-instance row differences are listed under Cost per expansion; a guest th
 
 ## Documentation
 
-Module docs in `crates/jolt-program/src/expand/control_flow/{csr,ecall,mret,csrrw,csrrs,ebreak}.rs` and `tracer/src/instruction/{ecall,mret,csrrw,ebreak}.rs` describe the semantics above, and `tracer/src/utils/virtual_registers.rs` documents what v39 holds. The book's emulation page (`book/src/how/architecture/emulation.md`) now describes the new trap and CSR behaviour, and its LR/SC section is corrected to match the code: `LR.D` sets both reservation registers, and SC success is computed from the reservation, not supplied as advice.
+Module docs in `crates/jolt-program/src/expand/control_flow/{csr,csr_immediate,ecall,mret,csrrw,csrrs,csrrc,ebreak}.rs` and `tracer/src/instruction/{ecall,mret,csrrw,csrrc,csrrwi,csrrsi,csrrci,ebreak}.rs` describe the semantics above, and `tracer/src/utils/virtual_registers.rs` documents what v39 holds. The book's emulation page (`book/src/how/architecture/emulation.md`) now describes the new trap and CSR behaviour, and its LR/SC section is corrected to match the code: `LR.D` sets both reservation registers, and SC success is computed from the reservation, not supplied as advice.
 
 ## Open decisions
 

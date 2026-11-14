@@ -56,6 +56,23 @@ fn csrrs(rd: u8, csr: u32, rs1: u8) -> u32 {
     i_type(csr, rs1, 2, rd, 0x73)
 }
 
+fn csrrc(rd: u8, csr: u32, rs1: u8) -> u32 {
+    i_type(csr, rs1, 3, rd, 0x73)
+}
+
+/// The immediate forms carry the 5-bit `uimm` in the `rs1` field.
+fn csrrwi(rd: u8, csr: u32, uimm: u8) -> u32 {
+    i_type(csr, uimm, 5, rd, 0x73)
+}
+
+fn csrrsi(rd: u8, csr: u32, uimm: u8) -> u32 {
+    i_type(csr, uimm, 6, rd, 0x73)
+}
+
+fn csrrci(rd: u8, csr: u32, uimm: u8) -> u32 {
+    i_type(csr, uimm, 7, rd, 0x73)
+}
+
 fn csrr(rd: u8, csr: u32) -> u32 {
     csrrs(rd, csr, 0)
 }
@@ -398,6 +415,131 @@ fn raw_csrs_store_any_value() {
     }
 }
 
+#[test]
+fn mstatus_clear_and_immediate_forms() {
+    // The `riscv` crate's critical section is `csrrci rd, mstatus, 8`.
+    //     csrsi  mstatus, 8      ; MIE := 1
+    //     csrs   mstatus, t1     ; t1 = 0x80: MPIE := 1
+    //     csrrci a0, mstatus, 8  ; a0 = old value; MIE := 0
+    //     csrr   a1, mstatus
+    //     csrrwi a2, mstatus, 31 ; writes 0b11111: only MIE sticks
+    //     csrr   a3, mstatus
+    //     csrrc  a4, mstatus, t0 ; t0 = all ones: MPP stays M
+    //     csrr   a5, mstatus
+    let program = [
+        csrrsi(0, MSTATUS, 8),
+        csrrs(0, MSTATUS, T1),
+        csrrci(A0, MSTATUS, 8),
+        csrr(A1, MSTATUS),
+        csrrwi(A2, MSTATUS, 31),
+        csrr(A3, MSTATUS),
+        csrrc(A4, MSTATUS, T0),
+        csrr(A5, MSTATUS),
+        EBREAK,
+    ];
+    let mut cpu = hart(&program, &[], &[(T0, u64::MAX), (T1, 0x80)]);
+    run(&mut cpu);
+    assert_eq!(x(&cpu, A0), 0x1888, "old value: MIE = MPIE = 1");
+    assert_eq!(x(&cpu, A1), 0x1880, "MIE cleared, MPIE kept");
+    assert_eq!(x(&cpu, A2), 0x1880, "old value");
+    assert_eq!(x(&cpu, A3), 0x1808);
+    assert_eq!(x(&cpu, A4), 0x1808, "old value");
+    assert_eq!(x(&cpu, A5), 0x1800);
+}
+
+#[test]
+fn csrrc_clears_bits_with_rd_equal_rs1_and_x0_forms() {
+    //     csrw  mscratch, t0     ; t0 = 0xff
+    //     csrrc t1, mscratch, t1 ; t1 = 0x0f: rd = rs1
+    //     csrr  a0, mscratch
+    //     csrrc a1, mscratch, x0 ; rs1 = x0: read only
+    //     csrc  mscratch, t2     ; t2 = 0x30: rd = x0
+    //     csrr  a2, mscratch
+    let program = [
+        csrw(MSCRATCH, T0),
+        csrrc(T1, MSCRATCH, T1),
+        csrr(A0, MSCRATCH),
+        csrrc(A1, MSCRATCH, 0),
+        csrrc(0, MSCRATCH, T2),
+        csrr(A2, MSCRATCH),
+        EBREAK,
+    ];
+    let mut cpu = hart(&program, &[], &[(T0, 0xff), (T1, 0x0f), (T2, 0x30)]);
+    run(&mut cpu);
+    assert_eq!(x(&cpu, T1), 0xff, "old value");
+    assert_eq!(x(&cpu, A0), 0xf0);
+    assert_eq!(x(&cpu, A1), 0xf0);
+    assert_eq!(x(&cpu, A2), 0xc0);
+}
+
+#[test]
+fn csr_immediates_are_zero_extended_and_zero_writes_only_for_csrrwi() {
+    //     csrrwi x0, mscratch, 31  ; uimm is zero-extended: 31, not -1
+    //     csrr   a0, mscratch
+    //     csrrsi a1, mscratch, 0   ; uimm = 0: read only
+    //     csrrci a2, mscratch, 0   ; uimm = 0: read only
+    //     csrrsi x0, mscratch, 0   ; no effect
+    //     csrr   a3, mscratch
+    //     csrrci a4, mscratch, 5   ; 31 & !5
+    //     csrrwi a5, mscratch, 0   ; CSRRWI writes even uimm = 0
+    //     csrr   t2, mscratch
+    let program = [
+        csrrwi(0, MSCRATCH, 31),
+        csrr(A0, MSCRATCH),
+        csrrsi(A1, MSCRATCH, 0),
+        csrrci(A2, MSCRATCH, 0),
+        csrrsi(0, MSCRATCH, 0),
+        csrr(A3, MSCRATCH),
+        csrrci(A4, MSCRATCH, 5),
+        csrrwi(A5, MSCRATCH, 0),
+        csrr(T2, MSCRATCH),
+        EBREAK,
+    ];
+    let mut cpu = hart(&program, &[], &[]);
+    run(&mut cpu);
+    assert_eq!(x(&cpu, A0), 31);
+    assert_eq!(x(&cpu, A1), 31);
+    assert_eq!(x(&cpu, A2), 31);
+    assert_eq!(x(&cpu, A3), 31);
+    assert_eq!(x(&cpu, A4), 31, "old value");
+    assert_eq!(x(&cpu, A5), 26, "old value: 31 & !5");
+    assert_eq!(x(&cpu, T2), 0);
+}
+
+#[test]
+fn mtvec_and_mepc_immediate_and_clear_forms_are_legalized() {
+    //     csrw   mtvec, t0       ; t0 = HANDLER | 1 (Vectored)
+    //     csrrci a0, mtvec, 1    ; MODE := Direct
+    //     csrrsi a1, mtvec, 2    ; writes MODE 2 (reserved): MODE stays Direct
+    //     csrrwi a2, mtvec, 1    ; BASE 0, Vectored
+    //     csrrwi a3, mtvec, 6    ; BASE 4, MODE 2 (reserved): MODE stays Vectored
+    //     csrr   a4, mtvec
+    //     csrrwi x0, mepc, 31    ; bit 0 cleared
+    //     csrrci a5, mepc, 2     ; a5 = old value
+    //     csrr   t2, mepc
+    let program = [
+        csrw(MTVEC, T0),
+        csrrci(A0, MTVEC, 1),
+        csrrsi(A1, MTVEC, 2),
+        csrrwi(A2, MTVEC, 1),
+        csrrwi(A3, MTVEC, 6),
+        csrr(A4, MTVEC),
+        csrrwi(0, MEPC, 31),
+        csrrci(A5, MEPC, 2),
+        csrr(T2, MEPC),
+        EBREAK,
+    ];
+    let mut cpu = hart(&program, &[], &[(T0, HANDLER | 1)]);
+    run(&mut cpu);
+    assert_eq!(x(&cpu, A0), HANDLER | 1, "old value");
+    assert_eq!(x(&cpu, A1), HANDLER, "old value");
+    assert_eq!(x(&cpu, A2), HANDLER, "old value");
+    assert_eq!(x(&cpu, A3), 1, "old value");
+    assert_eq!(x(&cpu, A4), 4 | 1);
+    assert_eq!(x(&cpu, A5), 30, "old value");
+    assert_eq!(x(&cpu, T2), 28);
+}
+
 /// Runs `program` with `a0 = DATA`, `a1 = new value`, and the doubleword at
 /// `DATA` holding `OLD`; returns the hart.
 fn lr_sc(program: &[u32], handler: &[u32]) -> Cpu {
@@ -545,10 +687,18 @@ fn system_expansions_refine_architectural_formulas() {
         (MTVAL, 38, &operands),
     ];
     for &(csr, virtual_reg, old_values) in states {
-        for funct3 in [1, 2] {
-            let cases = [(0, 0), (A0, 0), (0, T0), (T0, T0), (A0, T0)]
-                .into_iter()
-                .flat_map(|(rd, rs1)| operands.map(|value| (rd, rs1, value)));
+        for funct3 in [1, 2, 3, 5, 6, 7] {
+            let cases: Vec<_> = if funct3 < 5 {
+                [(0, 0), (A0, 0), (0, T0), (T0, T0), (A0, T0)]
+                    .into_iter()
+                    .flat_map(|(rd, rs1)| operands.map(|value| (rd, rs1, value)))
+                    .collect()
+            } else {
+                [0, T0]
+                    .into_iter()
+                    .flat_map(|rd| (0..32).map(move |uimm| (rd, uimm, 0)))
+                    .collect()
+            };
             for (rd, source, register_value) in cases {
                 let word = i_type(csr, source, funct3, rd, 0x73);
                 let decoded = Instruction::decode(word, CODE, false).expect("system decode");
@@ -567,16 +717,23 @@ fn system_expansions_refine_architectural_formulas() {
                         cpu.x[reg] = value as i64;
                     }
                     cpu.x[virtual_reg] = (if csr == MSTATUS { old & 0x88 } else { old }) as i64;
-                    if source != 0 {
+                    if funct3 < 5 && source != 0 {
                         cpu.x[source as usize] = register_value as i64;
                     }
                     let mut expected = cpu.x;
-                    let operand = if source == 0 { 0 } else { register_value };
+                    let operand = if funct3 >= 5 {
+                        u64::from(source)
+                    } else if source == 0 {
+                        0
+                    } else {
+                        register_value
+                    };
                     // These are the architectural Zicsr formulas, including
                     // write suppression by operand field rather than value.
                     let written = match funct3 {
-                        1 => Some(operand),
-                        2 if source != 0 => Some(old | operand),
+                        1 | 5 => Some(operand),
+                        2 | 6 if source != 0 => Some(old | operand),
+                        3 | 7 if source != 0 => Some(old & !operand),
                         _ => None,
                     };
                     let after = written.map_or(old, |value| reference_csr_write(csr, old, value));

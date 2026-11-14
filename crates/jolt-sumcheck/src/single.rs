@@ -6,7 +6,7 @@
 //! round polynomial `s` without its linear coefficient and checks
 //! `s(0) + s(1) = claim`. [`SingleFormat::EqFactored`] factors round `i` as
 //! `eq(τ_i, X) · q(X)`, sends `q` without its constant coefficient, and checks
-//! `(1 − τ_i) q(0) + τ_i q(1) = claim` ([`EqFactoredRound`]); its running claim
+//! `(1 − τ_i) q(0) + τ_i q(1) = claim` ([`crate::EqFactoredRound`]); its running claim
 //! is normalized to `q(r_i)`, so the final claim is the summand `g(r)` itself
 //! and the unnormalized claim is `Π eq(τ_i, r_i) · g(r)`.
 //!
@@ -17,22 +17,20 @@
 //! work at the instance's degree, and the round challenge.
 
 use jolt_field::Field;
-#[cfg(feature = "prover")]
-use jolt_poly::UnivariatePoly;
-use jolt_poly::{CompressedPoly, OmittedConstantPoly, Point, LOW_TO_HIGH};
+use jolt_poly::{eval_round_wire, Point, WireFormat, LOW_TO_HIGH};
 #[cfg(feature = "prover")]
 use jolt_transcript::ProverTranscript;
-use jolt_transcript::{Encoding, FieldTranscript, PrivateChannel};
+use jolt_transcript::{Encoding, FieldTranscript};
 use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
 
-#[cfg(feature = "prover")]
-use crate::domain::{BooleanHypercube, EqFactoredRound, SumcheckDomain};
 use crate::error::SumcheckError;
 #[cfg(feature = "prover")]
-use crate::pow::grind_round;
-use crate::pow::RoundNonces;
-#[cfg(feature = "prover")]
 use crate::prover::ProveRounds;
+#[cfg(feature = "prover")]
+use crate::{BooleanHypercube, EqFactoredRound, SumcheckDomain};
+#[cfg(feature = "prover")]
+use jolt_poly::UnivariatePoly;
 
 /// How each round of a single instance is factored and sent.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -77,20 +75,19 @@ pub struct SingleReduction<E> {
     pub output_claim: E,
 }
 
-impl<E: Field + Encoding> SingleInstance<E> {
-    /// Checks the public shape: a nonzero degree bound, a representable
-    /// `degree × rounds` proof size, and, for eq-factored instances, one
-    /// equality coordinate per round and at least one round.
-    fn validate(&self) -> Result<(), SumcheckError<E>> {
-        if self.degree == 0 {
-            return Err(SumcheckError::ZeroDegreeBound);
-        }
-        if self.degree.checked_mul(self.rounds).is_none() {
-            return Err(SumcheckError::ShapeOverflow {
-                rounds: self.rounds,
-                degree: self.degree,
-            });
-        }
+mod channels;
+#[cfg(feature = "prover")]
+mod prover;
+mod shape;
+use channels::ClearVerifierRounds;
+pub use channels::{BindScalarClaim, RoundSpec, VerifierRoundChannel};
+#[cfg(feature = "prover")]
+pub use prover::{ClearProverRounds, ProverRoundChannel};
+pub use shape::SumcheckShape;
+
+impl<E: Field> SingleInstance<E> {
+    pub fn shape(&self) -> Result<SumcheckShape, SumcheckError<E>> {
+        let shape = SumcheckShape::new(self.rounds, self.degree)?;
         if let SingleFormat::EqFactored { equality_point } = &self.format {
             if self.rounds == 0 {
                 return Err(SumcheckError::EqFactoredZeroRounds);
@@ -102,19 +99,18 @@ impl<E: Field + Encoding> SingleInstance<E> {
                 });
             }
         }
-        Ok(())
+        Ok(shape)
     }
 
-    /// `τ_round` for eq-factored instances, which [`validate`](Self::validate)
-    /// gives one coordinate per round.
-    fn tau(&self, round: usize) -> Result<Option<E>, SumcheckError<E>> {
+    /// Round `round`'s wire format; [`shape`](Self::shape) gives eq-factored
+    /// instances one equality coordinate per round.
+    fn wire_format(&self, round: usize) -> Result<WireFormat<E>, SumcheckError<E>> {
         match &self.format {
-            SingleFormat::Compressed => Ok(None),
+            SingleFormat::Compressed => Ok(WireFormat::Compressed),
             SingleFormat::EqFactored { equality_point } => equality_point
                 .as_slice()
                 .get(round)
-                .copied()
-                .map(Some)
+                .map(|&tau| WireFormat::EqFactored { tau })
                 .ok_or(SumcheckError::EqualityPointLengthMismatch {
                     expected: self.rounds,
                     got: equality_point.len(),
@@ -122,49 +118,50 @@ impl<E: Field + Encoding> SingleInstance<E> {
         }
     }
 
-    /// Self-checks `poly` against `claim` and returns its `degree` wire
-    /// coefficients.
+    /// Self-checks the kernel's round polynomial against `claim` and returns
+    /// its `degree` wire coefficients, reusing the kernel's buffer.
     #[cfg(feature = "prover")]
     fn wire_coefficients(
         &self,
         round: usize,
         claim: E,
-        poly: &UnivariatePoly<E>,
-    ) -> Result<Vec<E>, SumcheckError<E>> {
+        poly: UnivariatePoly<E>,
+    ) -> Result<Vec<E>, SumcheckError<E>>
+    where
+        E: Encoding,
+    {
         // Kernels may sample a polynomial at more points than its degree
-        // needs, leaving zero leading coefficients.
+        // needs, leaving zero leading coefficients. Visit every excess
+        // coefficient: length is public, only invalid kernel output errs.
         let coefficients = poly.coefficients();
-        let degree = coefficients
+        let excess = coefficients
             .iter()
-            .rposition(|coefficient| !coefficient.is_zero())
-            .unwrap_or(0);
-        if degree > self.degree {
+            .skip(self.degree + 1)
+            .fold(false, |acc, c| acc | !c.is_zero());
+        if excess {
             return Err(SumcheckError::DegreeBoundExceeded {
-                got: degree,
+                got: coefficients.iter().rposition(|c| !c.is_zero()).unwrap_or(0),
                 max: self.degree,
             });
         }
-        let width = self.degree + 1;
-        let mut padded: Vec<E> = coefficients.iter().copied().take(width).collect();
-        padded.resize(width, E::zero());
-        let padded = UnivariatePoly::new(padded);
-        match self.tau(round)? {
-            None => {
-                BooleanHypercube.check_round_sum(round, claim, &padded)?;
-                Ok(padded.compress().coeffs_except_linear_term().to_vec())
+        let omitted = match self.wire_format(round)? {
+            WireFormat::Compressed => {
+                BooleanHypercube.check_round_sum(round, claim, &poly)?;
+                1
             }
-            Some(tau) => {
-                EqFactoredRound { tau }.check_round_sum(round, claim, &padded)?;
-                Ok(
-                    OmittedConstantPoly::from_q_coefficients(padded.into_coefficients())
-                        .into_coefficients(),
-                )
+            WireFormat::EqFactored { tau } => {
+                EqFactoredRound { tau }.check_round_sum(round, claim, &poly)?;
+                0
             }
+        };
+        let mut wire = poly.into_coefficients();
+        if omitted < wire.len() {
+            let _ = wire.remove(omitted);
         }
+        wire.resize(self.degree, E::zero());
+        Ok(wire)
     }
 
-    /// The running claim after a round whose wire coefficients are `wire`,
-    /// recovering the omitted coefficient from `claim`.
     fn next_claim(
         &self,
         round: usize,
@@ -172,13 +169,114 @@ impl<E: Field + Encoding> SingleInstance<E> {
         wire: &[E],
         challenge: E,
     ) -> Result<E, SumcheckError<E>> {
-        Ok(match self.tau(round)? {
-            None => CompressedPoly::new(wire.to_vec()).eval_from_hint(&claim, &challenge),
-            Some(tau) => {
-                OmittedConstantPoly::new(wire.to_vec()).evaluate_from_claim(claim, tau, challenge)
-            }
-        })
+        Ok(eval_round_wire(
+            self.wire_format(round)?,
+            wire,
+            claim,
+            challenge,
+        ))
     }
+}
+
+/// Drives a kernel through a privacy-aware transport. Channel and kernel
+/// errors pass through unchanged; driver errors convert into the channel's.
+#[cfg(feature = "prover")]
+pub fn prove_single_with<E, C, K>(
+    kernel: &mut K,
+    instance: &SingleInstance<E>,
+    channel: &mut C,
+) -> Result<SingleReduction<E>, C::Error>
+where
+    E: Field + Encoding,
+    C: ProverRoundChannel<E>,
+    K: ProveRounds<E, C::Error> + ?Sized,
+{
+    let shape = instance.shape()?;
+    if kernel.num_rounds() != shape.num_rounds() {
+        return Err(SumcheckError::RoundCountMismatch {
+            expected: shape.num_rounds(),
+            got: kernel.num_rounds(),
+        }
+        .into());
+    }
+    channel.bind_input_claim(&instance.input_claim)?;
+    let mut claim = instance.input_claim;
+    let mut challenges = Vec::with_capacity(shape.num_rounds());
+    for round in 0..shape.num_rounds() {
+        let poly = kernel.prove_round(challenges.last().copied(), round, claim)?;
+        let wire = instance.wire_coefficients(round, claim, poly)?;
+        channel.send_round(round, &wire)?;
+        let challenge = channel.round_challenge(round, shape.degree_bound())?;
+        claim = instance.next_claim(round, claim, &wire, challenge)?;
+        channel.finish_round(wire);
+        challenges.push(challenge);
+    }
+    if let Some(&last) = challenges.last() {
+        kernel.finish_rounds(last)?;
+    }
+    Ok(SingleReduction {
+        challenges,
+        output_claim: claim,
+    })
+}
+
+/// Streams each wire directly to the visitor. The channel may lend a reused
+/// buffer or transfer ownership; the driver never collects round messages.
+///
+/// Reads rounds `0..shape.num_rounds()` in order, once each. The caller binds
+/// the input claim beforehand, and the channel must reject a proof that holds
+/// more rounds than `shape`.
+pub fn visit_single_rounds<E, C>(
+    shape: SumcheckShape,
+    channel: &mut C,
+    mut visit: impl FnMut(usize, Cow<'_, [E]>, C::Slots, E) -> Result<(), C::Error>,
+) -> Result<(), C::Error>
+where
+    E: Field,
+    C: VerifierRoundChannel<E>,
+{
+    let spec = RoundSpec {
+        width: shape.degree_bound(),
+        degree: shape.degree_bound(),
+    };
+    for round in 0..shape.num_rounds() {
+        channel.verify_round(round, spec, |wire, slots, challenge| {
+            if wire.len() != shape.degree_bound() {
+                return Err(SumcheckError::WrongRoundWidth {
+                    round,
+                    expected: shape.degree_bound(),
+                    got: wire.len(),
+                }
+                .into());
+            }
+            visit(round, wire, slots, challenge)
+        })?;
+    }
+    Ok(())
+}
+
+/// Folds a scalar claim over streamed clear rounds, before the caller's oracle check.
+pub fn verify_single_with<E, C>(
+    instance: &SingleInstance<E>,
+    channel: &mut C,
+) -> Result<SingleReduction<E>, C::Error>
+where
+    E: Field,
+    C: BindScalarClaim<E>,
+{
+    let shape = instance.shape()?;
+    channel.bind_input_claim(&instance.input_claim)?;
+    let mut claim = instance.input_claim;
+    let mut challenges = Vec::with_capacity(shape.num_rounds());
+    visit_single_rounds(shape, channel, |round, wire, (), challenge| {
+        claim = instance.next_claim(round, claim, &wire, challenge)?;
+        challenges.push(challenge);
+        Ok(())
+    })?;
+    Ok(SingleReduction {
+        challenges,
+        output_claim: claim,
+    })
 }
 
 /// Proves one instance: the input claim bound as a derived claim; per round,
@@ -187,8 +285,8 @@ impl<E: Field + Encoding> SingleInstance<E> {
 /// Sends no output claims.
 ///
 /// `instance.input_claim` must be derivable from values already absorbed:
-/// it is bound with [`PrivateChannel::bind_derived`], which a clear
-/// transcript absorbs as a public value.
+/// it is bound with [`jolt_transcript::PrivateChannel::bind_derived`], which
+/// a clear transcript absorbs as a public value.
 ///
 /// The kernel's round API is fused, as for the batched engine: round `i > 0`
 /// receives challenge `i − 1`, and [`ProveRounds::finish_rounds`] the last.
@@ -206,44 +304,9 @@ where
     T: FieldTranscript<E> + ProverTranscript,
     Err: From<SumcheckError<E>>,
 {
-    instance.validate()?;
-    if member.num_rounds() != instance.rounds {
-        return Err(SumcheckError::RoundCountMismatch {
-            expected: instance.rounds,
-            got: member.num_rounds(),
-        }
-        .into());
-    }
-
-    let mut claim = instance.input_claim;
-    transcript.bind_derived(&claim);
-
-    let mut proof = SingleSumcheckProof {
-        rounds: Vec::with_capacity(instance.rounds),
-        pow_nonces: Vec::new(),
-    };
-    let mut challenges: Vec<E> = Vec::with_capacity(instance.rounds);
-    for round in 0..instance.rounds {
-        let poly = member.prove_round(challenges.last().copied(), round, claim)?;
-        let wire = instance.wire_coefficients(round, claim, &poly)?;
-        transcript.append_private(&wire);
-        grind_round(instance.degree, round, &mut proof.pow_nonces, transcript)?;
-        let challenge = transcript.challenge().map_err(SumcheckError::from)?;
-        claim = instance.next_claim(round, claim, &wire, challenge)?;
-        challenges.push(challenge);
-        proof.rounds.push(wire);
-    }
-    if let Some(&last) = challenges.last() {
-        member.finish_rounds(last)?;
-    }
-
-    Ok((
-        proof,
-        SingleReduction {
-            challenges,
-            output_claim: claim,
-        },
-    ))
+    let mut channel = ClearProverRounds::new(transcript);
+    let reduction = prove_single_with(member, instance, &mut channel)?;
+    Ok((channel.into_proof(), reduction))
 }
 
 /// Replays one instance's rounds as [`prove_single`] absorbs them and
@@ -253,8 +316,8 @@ where
 /// carries soundness.
 ///
 /// `instance.input_claim` must be derivable from values already absorbed:
-/// it is bound with [`PrivateChannel::bind_derived`], which a clear
-/// transcript absorbs as a public value.
+/// it is bound with [`jolt_transcript::PrivateChannel::bind_derived`], which
+/// a clear transcript absorbs as a public value.
 ///
 /// # Errors
 ///
@@ -270,40 +333,6 @@ where
     E: Field + Encoding,
     T: FieldTranscript<E>,
 {
-    instance.validate()?;
-    if proof.rounds.len() != instance.rounds {
-        return Err(SumcheckError::WrongNumberOfRounds {
-            expected: instance.rounds,
-            got: proof.rounds.len(),
-        });
-    }
-    if let Some((round, wire)) = proof
-        .rounds
-        .iter()
-        .enumerate()
-        .find(|(_, wire)| wire.len() != instance.degree)
-    {
-        return Err(SumcheckError::WrongRoundWidth {
-            round,
-            expected: instance.degree,
-            got: wire.len(),
-        });
-    }
-    let pow = RoundNonces::new::<E, T>(instance.degree, instance.rounds, &proof.pow_nonces)?;
-
-    let mut claim = instance.input_claim;
-    transcript.bind_derived(&claim);
-
-    let mut challenges = Vec::with_capacity(instance.rounds);
-    for (round, wire) in proof.rounds.iter().enumerate() {
-        transcript.append_private(wire);
-        pow.check(round, transcript)?;
-        let challenge = transcript.challenge()?;
-        claim = instance.next_claim(round, claim, wire, challenge)?;
-        challenges.push(challenge);
-    }
-    Ok(SingleReduction {
-        challenges,
-        output_claim: claim,
-    })
+    let mut channel = ClearVerifierRounds::new(instance.shape()?, proof, transcript)?;
+    verify_single_with(instance, &mut channel)
 }

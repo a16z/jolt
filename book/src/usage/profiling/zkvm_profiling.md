@@ -58,6 +58,26 @@ Workloads and default scales (`--scale <log2 trace length>` overrides):
 attribution is meaningful relatively — while `optimized` is the performance
 tier, slotting into the same instrumented seams.
 
+`profile --backend optimized --streaming instruction-input` opts into the
+stage-3 instruction-input streaming kernel, for either Dory or Akita. The
+`spartan` family selects the stage-1 outer and stage-2 product remainders.
+The `ram` family selects the read-write, RAF, value-check, RA claim-reduction
+and RA-virtualization kernels: stages 2–5 share sparse events, and stage 6b
+collects its own address column. Combine families with
+`--streaming instruction-input,spartan,ram`. Instruction-input and Spartan
+early rounds recompute from the resident trace until the dense tables fit a fixed 4 GiB
+cap; the full trace remains resident. This is not a process-memory cap, and
+streaming can use more memory than eager kernels on small or padded traces.
+Streaming workload, CSV and trace names append `_streaming_<families>` in
+canonical order (`instruction_input`, `spartan`, `ram`), so their run directories
+and `latest_` links stay separate from eager runs.
+The option belongs to `profile` only: `benchmark` sweeps have no streaming
+selection, and a resumed sweep ignores streaming profile artifacts.
+`summary.json` records the selection in `run.streaming_families`;
+`--result-json` records it in `streaming_families`.
+The option cannot be combined with `--memory-budget`: the budget checks
+price only eager kernels, not a streaming selection.
+
 `--memory-budget` (optimized backend only) is an explicit budget in bytes,
 with an optional binary suffix (`KiB`, `MiB`, `GiB` or `TiB`, e.g. `32GiB`).
 The profile reserves bytes against it in this order and exits with an error
