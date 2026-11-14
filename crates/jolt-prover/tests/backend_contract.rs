@@ -268,13 +268,16 @@ mod tests {
     /// round from them; its virtual RA polynomials turn dense at the first
     /// cycle bind, where the default kernel's do on a trace this small, and
     /// the parity tests cover the later binds. The booleanity address phase
-    /// (stage 6a) accumulates its masses from the rows. Stage 6b's booleanity
+    /// (stage 6a) accumulates its masses from the rows, and the bytecode
+    /// read-RAF address phase its stage pushforwards: the guest's bytecode
+    /// table is small enough for the walk's direct path, and the unit tests
+    /// in `jolt-kernels` cover the routed one. Stage 6b's booleanity
     /// cycle phase and instruction RA virtualization read the rows in rounds
     /// 0–3 and hold their tables dense from the fourth bind, the earliest at
     /// any budget; the parity tests cover later ones. The trace ends inside
-    /// its padded domain, so stage 5's streamed cycle round and stage 6b's
-    /// rounds 0–3 each weigh a constant suffix once, and the tables those
-    /// kernels turn dense hold it as their tail.
+    /// its padded domain, so stage 5's streamed cycle round, stage 6a's walks
+    /// and stage 6b's rounds 0–3 each weigh a constant suffix once, and the
+    /// tables those kernels turn dense hold it as their tail.
     #[test]
     fn streaming_kernels_reproduce_the_default_proof() {
         let Fixture {
