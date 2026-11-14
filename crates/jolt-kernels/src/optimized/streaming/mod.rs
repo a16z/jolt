@@ -18,6 +18,7 @@ use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
 
 use super::booleanity::{StreamingBooleanityAddress, StreamingBooleanityCycle};
+use super::bytecode_read_raf::StreamingBytecodeReadRafAddress;
 use super::instruction_input::StreamingInstructionInput;
 use super::instruction_ra_virtualization::StreamingInstructionRaVirtualization;
 use super::instruction_read_raf::StreamingInstructionReadRaf;
@@ -55,16 +56,15 @@ pub struct StreamingFamilies {
     pub registers: bool,
     /// Readers of the per-cycle instruction rows, which the default kernels
     /// share from stage 5 on as a packed row cache: the instruction read-RAF
-    /// check (stage 5), the booleanity address phase (stage 6a) and stage
-    /// 6b's booleanity cycle phase and instruction RA virtualization read the
-    /// witness's resident rows in their own passes, which stop at the rows'
-    /// constant suffix as the default kernels' tables do. The bytecode
-    /// read-RAF kernels keep their default kernels, so the cache is no longer
-    /// collected in stage 5 but by stage 6a's bytecode read-RAF address
-    /// phase, and lives until the stage-6b bytecode read-RAF cycle kernel
-    /// releases it. Stage 7's Hamming-weight claim reduction has no streaming
-    /// kernel: its default kernel reads the resident rows whenever no cache
-    /// is live.
+    /// check (stage 5), the booleanity and bytecode read-RAF address phases
+    /// (stage 6a) and stage 6b's booleanity cycle phase and instruction RA
+    /// virtualization read the witness's resident rows in their own passes,
+    /// which stop at the rows' constant suffix as the default kernels' tables
+    /// do. The bytecode read-RAF cycle phase keeps its default kernel, so the
+    /// cache is no longer collected in stage 5 but by that kernel in stage
+    /// 6b, which is then its only holder until it releases it. Stage 7's
+    /// Hamming-weight claim reduction has no streaming kernel: its default
+    /// kernel reads the resident rows whenever no cache is live.
     pub instruction_rows: bool,
 }
 
@@ -105,6 +105,7 @@ where
         if instruction_rows {
             self.instruction_read_raf = Box::new(StreamingInstructionReadRaf);
             self.booleanity_address = Box::new(StreamingBooleanityAddress);
+            self.bytecode_read_raf_address = Box::new(StreamingBytecodeReadRafAddress);
             self.instruction_ra_virtualization = Box::new(StreamingInstructionRaVirtualization);
             self.booleanity_cycle = Box::new(StreamingBooleanityCycle);
         }

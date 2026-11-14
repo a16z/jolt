@@ -45,24 +45,21 @@ fn membership_is_independent_of_zero_contributions() {
             .collect::<Vec<_>>()
     };
 
-    let unweighted =
-        stage_pushforwards::<Fr, _>(&points, &[], &rows, addresses, |row| row.pc, |_| Fr::one());
-    let weighted = stage_pushforwards::<Fr, _>(
-        &[],
-        &points,
-        &rows,
-        addresses,
-        |row| row.pc,
-        |row| row.weight,
-    );
-    let combined = stage_pushforwards::<Fr, _>(
-        &points,
-        &points,
-        &rows,
-        addresses,
-        |row| row.pc,
-        |row| row.weight,
-    );
+    let pushforwards = |base: &[Vec<Fr>], weighted: &[Vec<Fr>]| {
+        stage_pushforwards(
+            base,
+            weighted,
+            |index| Ok(rows[index]),
+            rows.len() - 1,
+            addresses,
+            |row| row.pc,
+            |row| row.weight,
+        )
+        .unwrap()
+    };
+    let unweighted = pushforwards(&points, &[]);
+    let weighted = pushforwards(&[], &points);
+    let combined = pushforwards(&points, &points);
     assert_eq!(unweighted, expected(false));
     assert_eq!(weighted, expected(true));
     assert_eq!(
@@ -104,14 +101,18 @@ fn tiled_weighted_pushforwards<F: JoltField>(log_t: usize, base_stages: usize, a
     for prefix in [0, 1, 9, rows.len() / 2 + 1, rows.len()] {
         let mut dense = rows.clone();
         dense[prefix..].fill((addresses - 1, F::from_u64(7)));
+        // A read past the prefix and its tail row is out of bounds.
+        let served = &dense[..(prefix + 1).min(dense.len())];
         let actual = stage_pushforwards(
             &points[..base_stages],
             &points[base_stages..],
-            &dense[..(prefix + 1).min(dense.len())],
+            |index| Ok(served[index]),
+            served.len() - 1,
             addresses,
             |row| row.0,
             |row| row.1,
-        );
+        )
+        .unwrap();
         for (stage, point) in points.iter().enumerate() {
             let eq = eq_table(point);
             let mut expected = vec![F::zero(); addresses];

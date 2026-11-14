@@ -22,7 +22,9 @@ use crate::optimized::booleanity::testing::with_booleanity_backend;
 use crate::optimized::parity::{probe_input_claim, run_lockstep, synthetic_point};
 use crate::ReferenceBackend;
 
-fn address_parity(log_t: usize, log_k_chunk: u8, committed_program: bool) {
+type AddressSlot = dyn PrepareKernel<Fr, BytecodeReadRafAddressPhase<Fr>>;
+
+fn address_parity(log_t: usize, log_k_chunk: u8, committed_program: bool, kernel: &AddressSlot) {
     with_booleanity_backend(log_t, log_k_chunk, |backend, base_dimensions| {
         let bytecode_len = backend.program_preprocessing().bytecode.bytecode.len();
         let dimensions = BytecodeReadRafDimensions::new(
@@ -30,7 +32,7 @@ fn address_parity(log_t: usize, log_k_chunk: u8, committed_program: bool) {
             bytecode_len.ilog2() as usize,
             base_dimensions.layout.bytecode(),
         );
-        address_parity_on(backend, dimensions, committed_program);
+        address_parity_on(backend, dimensions, committed_program, kernel);
     });
 }
 
@@ -38,6 +40,7 @@ fn address_parity_on(
     backend: &dyn JoltWitnessPlane<Fr>,
     dimensions: BytecodeReadRafDimensions,
     committed_program: bool,
+    kernel: &AddressSlot,
 ) {
     let log_t = dimensions.log_t();
     let relation = BytecodeReadRafAddressPhase::new(
@@ -85,7 +88,7 @@ fn address_parity_on(
             },
         )
         .unwrap();
-    let mut optimized = OptimizedBytecodeReadRafAddress
+    let mut optimized = kernel
         .prepare(
             &mut session,
             backend,
@@ -222,8 +225,7 @@ fn cycle_parity(log_t: usize, log_k_chunk: u8) {
 }
 
 #[cfg(feature = "field-inline")]
-#[test]
-fn bytecode_address_matches_reference_with_active_field_inline() {
+fn address_parity_with_active_field_inline(kernel: &AddressSlot) {
     use crate::optimized::field_registers_testing::structured_field_register_fixture;
     use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, JoltPolynomialId};
     use jolt_witness::JoltWitnessOracle;
@@ -241,8 +243,20 @@ fn bytecode_address_matches_reference_with_active_field_inline() {
             .count();
         let dimensions =
             BytecodeReadRafDimensions::new(5, bytecode_len.ilog2() as usize, bytecode_chunks);
-        address_parity_on(backend, dimensions, true);
+        address_parity_on(backend, dimensions, true, kernel);
     });
+}
+
+#[cfg(feature = "field-inline")]
+#[test]
+fn bytecode_address_matches_reference_with_active_field_inline() {
+    address_parity_with_active_field_inline(&OptimizedBytecodeReadRafAddress);
+}
+
+#[cfg(feature = "field-inline")]
+#[test]
+fn streaming_address_matches_reference_with_active_field_inline() {
+    address_parity_with_active_field_inline(&StreamingBytecodeReadRafAddress);
 }
 
 #[test]
@@ -264,10 +278,24 @@ fn bytecode_cycle_matches_reference_k256() {
 
 #[test]
 fn bytecode_address_matches_reference_k16() {
-    address_parity(2, 4, false);
+    address_parity(2, 4, false, &OptimizedBytecodeReadRafAddress);
 }
 
 #[test]
 fn bytecode_address_matches_reference_k256_committed() {
-    address_parity(3, 8, true);
+    address_parity(3, 8, true, &OptimizedBytecodeReadRafAddress);
+}
+
+/// 4 of 64 cycles leave a padding suffix after a walk that ends inside a
+/// block; 4 of 4 leave none.
+#[test]
+fn streaming_address_matches_reference_over_resident_rows() {
+    for (log_t, committed_program) in [(6, true), (2, false)] {
+        address_parity(
+            log_t,
+            4,
+            committed_program,
+            &StreamingBytecodeReadRafAddress,
+        );
+    }
 }

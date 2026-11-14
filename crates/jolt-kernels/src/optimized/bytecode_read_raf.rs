@@ -40,6 +40,8 @@
 //! column: the pushforward slot and the committed one-hot hot index are the
 //! same value on every row.
 
+mod streaming;
+
 use std::collections::HashMap;
 use std::ops::Range;
 use std::sync::Arc;
@@ -68,7 +70,7 @@ use jolt_verifier::stages::stage6a::bytecode_read_raf::{
 };
 use jolt_verifier::stages::stage6b::bytecode_read_raf::BytecodeReadRafCycle;
 use jolt_witness::witnesses::RaChunkSelector;
-use jolt_witness::JoltWitnessPlane;
+use jolt_witness::{JoltWitnessPlane, WitnessError};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
@@ -85,28 +87,31 @@ use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
 
-fn stage_pushforwards<F: JoltField, R: Sync>(
+pub use streaming::StreamingBytecodeReadRafAddress;
+
+/// `row_at` serves the cycles up to `prefix_len`, whose row every later cycle
+/// of the domain repeats.
+fn stage_pushforwards<F: JoltField, R>(
     base_cycle_points: &[Vec<F>],
     weighted_cycle_points: &[Vec<F>],
-    rows: &[R],
+    row_at: impl Fn(usize) -> Result<R, WitnessError> + Sync,
+    prefix_len: usize,
     addresses: usize,
     pc: impl Fn(&R) -> usize + Sync,
     row_weight: impl Fn(&R) -> F + Sync,
-) -> Vec<Vec<F>> {
+) -> Result<Vec<Vec<F>>, WitnessError> {
     let Some(first_stage) = base_cycle_points
         .first()
         .or_else(|| weighted_cycle_points.first())
     else {
-        return Vec::new();
+        return Ok(Vec::new());
     };
     let log_t = first_stage.len();
     let base_stages = base_cycle_points.len();
     let num_stages = base_stages + weighted_cycle_points.len();
-    // The caller retains an explicit prefix and one representative tail row.
-    let prefix_len = rows.len() - 1;
-    let tail = &rows[prefix_len];
-    let finish = |mut outputs: Vec<Vec<F>>| {
-        let address = pc(tail);
+    let finish = |mut outputs: Vec<Vec<F>>| -> Result<Vec<Vec<F>>, WitnessError> {
+        let tail = row_at(prefix_len)?;
+        let address = pc(&tail);
         for (stage, point) in base_cycle_points
             .iter()
             .chain(weighted_cycle_points)
@@ -115,11 +120,11 @@ fn stage_pushforwards<F: JoltField, R: Sync>(
             let weight = if stage < base_stages {
                 F::one()
             } else {
-                row_weight(tail)
+                row_weight(&tail)
             };
             outputs[stage][address] += EqPolynomial::suffix_sum(point, prefix_len) * weight;
         }
-        outputs
+        Ok(outputs)
     };
     let lo_bits = log_t / 2;
     let hi_bits = log_t - lo_bits;
@@ -178,7 +183,7 @@ fn stage_pushforwards<F: JoltField, R: Sync>(
             seen: vec![false; addresses],
             touched: Vec::with_capacity(addresses.min(in_len)),
         };
-        let accumulate = |mut tile: Tile<F>, hi: usize| {
+        let accumulate = |mut tile: Tile<F>, hi: usize| -> Result<Tile<F>, WitnessError> {
             for address in tile.touched.drain(..) {
                 for inner in &mut tile.inner {
                     inner[address] = F::zero();
@@ -186,8 +191,8 @@ fn stage_pushforwards<F: JoltField, R: Sync>(
                 tile.seen[address] = false;
             }
             for lo in 0..in_len.min(prefix_len - hi * in_len) {
-                let row = &rows[hi * in_len + lo];
-                let address = pc(row);
+                let row = row_at(hi * in_len + lo)?;
+                let address = pc(&row);
                 if !tile.seen[address] {
                     tile.seen[address] = true;
                     tile.touched.push(address);
@@ -197,7 +202,7 @@ fn stage_pushforwards<F: JoltField, R: Sync>(
                     inner[address] += eq[lo];
                 }
                 if !weighted.is_empty() {
-                    let weight = row_weight(row);
+                    let weight = row_weight(&row);
                     for (inner, eq) in weighted.iter_mut().zip(&e_lo[base_stages..]) {
                         inner[address] += eq[lo] * weight;
                     }
@@ -208,7 +213,7 @@ fn stage_pushforwards<F: JoltField, R: Sync>(
                     partial[address] += inner[address] * eq[hi];
                 }
             }
-            tile
+            Ok(tile)
         };
         #[cfg(feature = "parallel")]
         {
@@ -231,17 +236,18 @@ fn stage_pushforwards<F: JoltField, R: Sync>(
                     .step_by(chunk)
                     .map(|start| {
                         (start..(start + chunk).min(out_len))
-                            .fold(tile(), accumulate)
-                            .partial
+                            .try_fold(tile(), accumulate)
+                            .map(|tile| tile.partial)
                     })
-                    .reduce_with(merge)
+                    .try_reduce_with(|left, right| Ok(merge(left, right)))
+                    .transpose()?
                     .unwrap_or_else(|| tile().partial),
             );
         }
         #[cfg(not(feature = "parallel"))]
         return finish(
             (0..prefix_len.div_ceil(in_len))
-                .fold(tile(), accumulate)
+                .try_fold(tile(), accumulate)?
                 .partial,
         );
     }
@@ -255,20 +261,21 @@ fn stage_pushforwards<F: JoltField, R: Sync>(
     let mut outputs = (0..num_stages)
         .map(|_| vec![F::zero(); addresses])
         .collect::<Vec<_>>();
-    for (batch_index, batch) in rows[..prefix_len].chunks(BATCH_ROWS).enumerate() {
+    for batch in (0..prefix_len).step_by(BATCH_ROWS) {
         let mut tiles: HashMap<usize, Vec<RoutedRow<F>>> = HashMap::new();
-        for (index, row) in batch.iter().enumerate() {
-            let address = pc(row);
+        for cycle in batch..(batch + BATCH_ROWS).min(prefix_len) {
+            let row = row_at(cycle)?;
+            let address = pc(&row);
             tiles
                 .entry(address / TILE_ADDRESSES)
                 .or_default()
                 .push(RoutedRow {
-                    cycle: batch_index * BATCH_ROWS + index,
+                    cycle,
                     address: address % TILE_ADDRESSES,
                     weight: if weighted_cycle_points.is_empty() {
                         F::zero()
                     } else {
-                        row_weight(row)
+                        row_weight(&row)
                     },
                 });
         }
@@ -388,10 +395,47 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafAddressPhase<F>>
         inputs: ProverInputs<'_, F, BytecodeReadRafAddressPhase<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = BytecodeReadRafAddressPhase<F>>>, KernelError<F>>
     {
+        let dimensions = inputs.relation.dimensions();
+        let addresses = 1usize << dimensions.log_k();
+        let cycles = 1usize << dimensions.log_t();
+        let rows = InstructionCycleRow::shared_for_next_consumer(session, witness, cycles)?;
+        let representatives = rows.representatives();
+        let push_pc = InstructionCycleRow::bytecode_pc;
+        if representatives.iter().any(|row| push_pc(row) >= addresses) {
+            return Err(KernelError::InvariantViolation {
+                reason: "bytecode index outside the padded bytecode domain",
+            });
+        }
+        #[cfg(not(feature = "akita"))]
+        let row_weight = |_: &InstructionCycleRow| F::one();
+        #[cfg(feature = "akita")]
+        let row_weight = InstructionCycleRow::fused_inc::<F>;
+        Ok(Box::new(AddressKernel::new(
+            witness,
+            &inputs,
+            |cycle| Ok(representatives[cycle]),
+            rows.prefix_len(),
+            push_pc,
+            row_weight,
+        )?))
+    }
+}
+
+impl<F: JoltField> AddressKernel<F> {
+    /// `row_at` serves the cycles up to `prefix_len`, whose row every later
+    /// cycle of the domain repeats. `pc` is a row's bytecode index, below the
+    /// relation's address count, and `row_weight` its fused increment.
+    fn new<R>(
+        witness: &dyn JoltWitnessPlane<F>,
+        inputs: &ProverInputs<'_, F, BytecodeReadRafAddressPhase<F>>,
+        row_at: impl Fn(usize) -> Result<R, WitnessError> + Sync,
+        prefix_len: usize,
+        pc: impl Fn(&R) -> usize + Sync,
+        row_weight: impl Fn(&R) -> F + Sync,
+    ) -> Result<Self, KernelError<F>> {
         let relation = inputs.relation;
         let dimensions = relation.dimensions();
         let addresses = 1usize << dimensions.log_k();
-        let cycles = 1usize << dimensions.log_t();
 
         let program = witness.program_preprocessing();
         if program.bytecode.bytecode.len() != addresses {
@@ -425,15 +469,8 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafAddressPhase<F>>
                 });
             }
         }
-        let rows = InstructionCycleRow::shared_for_next_consumer(session, witness, cycles)?;
-        let push_pc = InstructionCycleRow::bytecode_pc;
         let entry_bytecode_index = relation.entry_bytecode_index();
-        if entry_bytecode_index >= addresses
-            || rows
-                .representatives()
-                .iter()
-                .any(|row| push_pc(row) >= addresses)
-        {
+        if entry_bytecode_index >= addresses {
             return Err(KernelError::InvariantViolation {
                 reason: "bytecode index outside the padded bytecode domain",
             });
@@ -486,10 +523,6 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafAddressPhase<F>>
             )
         };
 
-        #[cfg(not(feature = "akita"))]
-        let row_weight = |_: &InstructionCycleRow| F::one();
-        #[cfg(feature = "akita")]
-        let row_weight = InstructionCycleRow::fused_inc::<F>;
         #[cfg(feature = "field-inline")]
         let active_legs = field_inline_values
             .into_iter()
@@ -514,14 +547,15 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafAddressPhase<F>>
         #[cfg(not(feature = "field-inline"))]
         let walk_points: &[Vec<F>] = stage_cycle_points;
         #[cfg_attr(not(feature = "field-inline"), expect(unused_mut))]
-        let mut pushforwards = stage_pushforwards::<F, _>(
+        let mut pushforwards = stage_pushforwards(
             walk_points,
             fused_cycle_points,
-            rows.representatives(),
+            &row_at,
+            prefix_len,
             addresses,
-            push_pc,
+            &pc,
             row_weight,
-        );
+        )?;
         #[cfg(feature = "field-inline")]
         let field_inline = FieldInlineAddressLegs {
             legs: pushforwards
@@ -567,7 +601,7 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafAddressPhase<F>>
             Polynomial::new(table)
         };
 
-        Ok(Box::new(AddressKernel {
+        Ok(Self {
             progress: RoundProgress::new(relation.rounds()),
             committed_program: relation.committed_program(),
             stage_weights: gamma_powers[..num_stages].to_vec(),
@@ -577,11 +611,11 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafAddressPhase<F>>
             values,
             stage_values,
             int_table,
-            entry_trace: one_hot(push_pc(&rows[0])),
+            entry_trace: one_hot(pc(&row_at(0)?)),
             entry_expected: one_hot(entry_bytecode_index),
             #[cfg(feature = "field-inline")]
             field_inline,
-        }))
+        })
     }
 }
 
@@ -1446,6 +1480,7 @@ impl<F: JoltField> SumcheckKernel<F> for CycleKernel<F> {
 }
 
 #[cfg(test)]
+#[expect(clippy::unwrap_used, reason = "test module")]
 mod stage_pushforward_tests;
 
 /// Byte-parity of both phases against the reference kernels, run as a PAIR
