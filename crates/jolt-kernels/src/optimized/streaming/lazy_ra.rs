@@ -40,7 +40,9 @@ const DEFAULT_MATERIALIZE_DEPTH: usize = (2 * DEFAULT_MAX_WIDTH).ilog2() as usiz
 /// The bind depth at which a family over `2^rounds` cycles materializes: the
 /// first whose polynomials, `2^rounds >> depth` entries each, fit `bytes`; at
 /// least the default family's, so no streamed polynomial is longer than the
-/// default family's where the domain has that many binds; and at most the
+/// default family's where the domain has that many binds and its rows end in
+/// no constant suffix: the default family stops at one, where this family
+/// holds every polynomial over the whole domain; and at most the
 /// last bind, so the final claims are always dense entries. Sizes are
 /// compared in entries against the entries `bytes` holds, which is the same
 /// test as bytes against `bytes` and cannot overflow where the byte count of
