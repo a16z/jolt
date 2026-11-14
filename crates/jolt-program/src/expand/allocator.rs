@@ -8,6 +8,10 @@ const RISCV_REGISTER_BASE: u8 = RISCV_REGISTER_COUNT;
 const NUM_RESERVED_VIRTUAL_REGISTERS: usize = 8;
 const FIRST_INLINE_REGISTER_INDEX: usize =
     NUM_RESERVED_VIRTUAL_REGISTERS + NUM_VIRTUAL_INSTRUCTION_REGISTERS;
+/// First register an inline row may write besides `x0`: the instruction temps
+/// (`vr40..vr47`) and inline registers (`vr48..`) follow it.
+pub(super) const FIRST_INLINE_WRITE_TARGET: u8 =
+    RISCV_REGISTER_BASE + NUM_RESERVED_VIRTUAL_REGISTERS as u8;
 pub(super) const FIRST_INLINE_REGISTER: u8 =
     RISCV_REGISTER_BASE + FIRST_INLINE_REGISTER_INDEX as u8;
 pub(super) const NUM_INLINE_REGISTERS: usize = NUM_VIRTUAL_REGISTERS - FIRST_INLINE_REGISTER_INDEX;

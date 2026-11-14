@@ -64,13 +64,14 @@ Both SHA-256 entries read a raw 64-byte block in SHA-256's big-endian byte order
 | SHA256        | 0x0B   | 0x00   | 0x00   | SHA-256 compression with existing state and big-endian input block    |
 | SHA256INIT    | 0x0B   | 0x00   | 0x01   | SHA-256 compression with initial constants and big-endian input block |
 | KECCAK256     | 0x0B   | 0x01   | 0x00   | Keccak-256 permutation                     |
+| KECCAK256_ABSORB_PERMUTE | 0x0B | 0x01 | 0x01 | XOR a 136-byte rate block into the state, then Keccak-256 permutation |
 | BLAKE2B       | 0x0B   | 0x02   | 0x00   | BLAKE2b compression                        |
 | BLAKE3        | 0x0B   | 0x03   | 0x00   | BLAKE3 compression                         |
-| BLAKE3KEYED64 | 0x0B   | 0x03   | 0x01   | BLAKE3 compression keyed                   |
+| BLAKE3KEYED64 | 0x0B   | 0x03   | 0x01   | BLAKE3 keyed hash of a 64-byte input       |
 | BIGINT256_MUL | 0x0B   | 0x04   | 0x00   | 256-bit bigint multiplication              |
-| SECP256K1_*   | 0x0B   | 0x05   | 0x00–0x07 | secp256k1 field ops + GLV advice        |
-| GRUMPKIN_*    | 0x0B   | 0x06   | 0x00–0x01 | grumpkin field division advice           |
-| P256_*        | 0x0B   | 0x07   | 0x00–0x07 | P-256 field ops + Fake GLV advice       |
+| SECP256K1_*   | 0x0B   | 0x05   | 0x00–0x02, 0x04–0x07 | secp256k1 field ops (`MULQ`, `SQUAREQ`, `DIVQ`, `MULR`, `SQUARER`, `DIVR`) and GLV advice (`GLVR_ADV`); 0x03 is unused |
+| GRUMPKIN_*    | 0x0B   | 0x06   | 0x00–0x02 | Grumpkin field division advice (`DIVQ_ADV`, `DIVR_ADV`) and GLV advice (`GLVR_ADV`) |
+| P256_*        | 0x0B   | 0x07   | 0x00–0x02, 0x04–0x07 | P-256 field ops (`MULQ`, `SQUAREQ`, `DIVQ`, `MULR`, `SQUARER`, `DIVR`) and Fake GLV advice (`FAKE_GLV_ADV`); 0x03 is unused |
 | NTT64_I32_FORWARD | 0x0B | 0x08 | 0x00 | 64-point negacyclic i32 Montgomery NTT |
 | NTT64_I32_POINTWISE_DOT6 | 0x0B | 0x09 | 0x00 | Six-product pointwise dot of NTT rows |
 

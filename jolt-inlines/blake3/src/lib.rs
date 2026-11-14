@@ -3,7 +3,10 @@
 pub const INLINE_OPCODE: u32 = 0x0B;
 
 pub const BLAKE3_FUNCT3: u32 = 0x00;
-pub const BLAKE3_KEYED64_FUNCT3: u32 = 0x01; // Keyed64: hash(left || right) with IV from rd, PARENT flag
+// Keyed64: blake3::keyed_hash(key, left || right) for a 64-byte input, as one
+// compression with the key from rd as chaining value and flags
+// CHUNK_START | CHUNK_END | ROOT | KEYED_HASH. The hash overwrites the key.
+pub const BLAKE3_KEYED64_FUNCT3: u32 = 0x01;
 pub const BLAKE3_FUNCT7: u32 = 0x03;
 pub const BLAKE3_NAME: &str = "BLAKE3_INLINE";
 pub const BLAKE3_KEYED64_NAME: &str = "BLAKE3_KEYED64_INLINE";
