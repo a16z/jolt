@@ -21,7 +21,9 @@ use jolt_witness::{JoltVmWitnessInputs, JoltWitnessOracle, ProgramSource, TraceB
 
 use super::super::instruction_read_raf::{SharedInstructionRows, SharedInstructionRowsWeak};
 use super::*;
-use crate::optimized::booleanity::testing::{alu_row, load_row, mixed_rows, with_trace_backend};
+use crate::optimized::booleanity::testing::{
+    alu_row, load_row, mixed_rows, with_halting_backend, with_trace_backend, Halt,
+};
 #[cfg(feature = "field-inline")]
 use crate::optimized::field_registers_testing::structured_field_register_fixture;
 use crate::optimized::parity::{
@@ -338,6 +340,26 @@ fn streaming_phases_match_reference_over_resident_rows() {
         with_trace_backend(log_t, 4, rows, |backend, _| {
             run_pair_on(backend, false, true);
         });
+    }
+}
+
+/// Runs that end at `jolt.success` and at `EBREAK`: 37 of 64 cycles and 1,500
+/// of 2,048 leave padding after the halt, and 16 of 16 end at the halt on the
+/// domain's last cycle, the row the streaming address walk weighs as its
+/// constant suffix. The default and streaming kernels of both phases match
+/// the reference in both program modes.
+#[test]
+fn bytecode_phases_match_reference_on_runs_that_end_at_a_halt() {
+    for halt in [Halt::Success, Halt::Panic] {
+        for (log_t, len) in [(6, 37), (4, 16), (11, 1500)] {
+            with_halting_backend(log_t, 4, len, halt, |backend, _| {
+                for committed_program in [false, true] {
+                    for streaming in [false, true] {
+                        run_pair_on(backend, committed_program, streaming);
+                    }
+                }
+            });
+        }
     }
 }
 
