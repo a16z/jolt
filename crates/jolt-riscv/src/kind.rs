@@ -460,6 +460,12 @@ macro_rules! source_extension_for_marker {
     (VirtualXorRot63) => {
         Some(SourceExtension::JoltCustom)
     };
+    (VirtualXorRot2) => {
+        Some(SourceExtension::JoltCustom)
+    };
+    (VirtualXorRot61) => {
+        Some(SourceExtension::JoltCustom)
+    };
     (VirtualXorRotW16) => {
         Some(SourceExtension::JoltCustom)
     };
@@ -973,6 +979,12 @@ macro_rules! source_side_effects_for_marker {
     (VirtualXorRot63) => {
         false
     };
+    (VirtualXorRot2) => {
+        false
+    };
+    (VirtualXorRot61) => {
+        false
+    };
     (VirtualXorRotW16) => {
         false
     };
@@ -1283,6 +1295,12 @@ macro_rules! jolt_target_extension_for_marker {
         Some(JoltTargetExtension::BitManipulation)
     };
     (VirtualXorRot63) => {
+        Some(JoltTargetExtension::BitManipulation)
+    };
+    (VirtualXorRot2) => {
+        Some(JoltTargetExtension::BitManipulation)
+    };
+    (VirtualXorRot61) => {
         Some(JoltTargetExtension::BitManipulation)
     };
     (VirtualXorRotW16) => {
@@ -1625,6 +1643,12 @@ macro_rules! jolt_side_effects_for_marker {
         false
     };
     (VirtualXorRot63) => {
+        false
+    };
+    (VirtualXorRot2) => {
+        false
+    };
+    (VirtualXorRot61) => {
         false
     };
     (VirtualXorRotW16) => {
@@ -2229,11 +2253,11 @@ mod tests {
         );
         assert_eq!(
             JoltInstructionKind::JoltSuccess.tag(),
-            JoltInstructionTag(0x00a8)
+            JoltInstructionTag(0x00aa)
         );
         assert_eq!(
             JoltInstructionKind::JoltPanic.tag(),
-            JoltInstructionTag(0x00a9)
+            JoltInstructionTag(0x00ab)
         );
     }
 
