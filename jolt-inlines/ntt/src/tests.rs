@@ -4,6 +4,7 @@ use super::{
     forward_ntt64, pointwise_builder::PointwiseDot64, pointwise_dot64,
     sequence_builder::ForwardNtt64, DEGREE, DOT_PRODUCTS,
 };
+use crate::pointwise::{DOT_FUNCT7, DOT_NONNEGATIVE_FUNCT7};
 use jolt_inlines_sdk::{
     assert_edge_cases_match_reference, assert_random_cases_match_reference, InlineReference,
     InlineSpec,
@@ -90,18 +91,7 @@ impl InlineSpec for ForwardNtt64 {
     }
     fn load(h: &mut InlineTestHarness, state: &Self::Input) {
         let (psi, twiddles, pinv) = parameters();
-        let mut words = vec![
-            DRAM_BASE + 24,
-            DRAM_BASE + 24 + DEGREE as u64 * 4,
-            P as u64 | (u64::from(pinv as u32) << 32),
-        ];
-        for table in [psi, twiddles] {
-            for pair in table.as_chunks::<2>().0 {
-                words.push(u64::from(pair[0] as u32) | (u64::from(pair[1] as u32) << 32));
-            }
-        }
-        h.load_input64(&words);
-        h.load_state32(&state.map(|a| a as u32));
+        load_ntt(h, state, &psi, &twiddles, pinv);
     }
     fn read(h: &mut InlineTestHarness) -> Self::Output {
         h.read_output32(DEGREE)
@@ -110,6 +100,51 @@ impl InlineSpec for ForwardNtt64 {
             .collect::<Vec<_>>()
             .try_into()
             .unwrap()
+    }
+}
+
+fn load_ntt(
+    h: &mut InlineTestHarness,
+    state: &[i32; DEGREE],
+    psi: &[i32; DEGREE],
+    twiddles: &[i32; DEGREE],
+    pinv: i32,
+) {
+    let mut words = vec![
+        DRAM_BASE + 24,
+        DRAM_BASE + 24 + DEGREE as u64 * 4,
+        P as u64 | (u64::from(pinv as u32) << 32),
+    ];
+    for table in [psi, twiddles] {
+        for pair in table.as_chunks::<2>().0 {
+            words.push(u64::from(pair[0] as u32) | (u64::from(pair[1] as u32) << 32));
+        }
+    }
+    h.load_input64(&words);
+    h.load_state32(&state.map(|a| a as u32));
+}
+
+#[test]
+fn expanded_ntt_preserves_signed_twiddle_words() {
+    use tracer::instruction::RISCVTrace;
+    let (psi, _, pinv) = parameters();
+    let edges = [i32::MIN, i32::MAX, -1, 0, 1, -123_456_789];
+    let state = core::array::from_fn(|i| edges[i % edges.len()]);
+    for shift in 0..edges.len() {
+        let twiddles = core::array::from_fn(|i| edges[(i + shift) % edges.len()]);
+        let mut expected = state;
+        forward_ntt64(&mut expected, &psi, &twiddles, P as i32, pinv);
+        let mut harness = ForwardNtt64::harness();
+        harness.setup_registers();
+        load_ntt(&mut harness, &state, &psi, &twiddles, pinv);
+        let mut rows = Vec::new();
+        ForwardNtt64::instruction().trace(&mut harness.cpu, Some(&mut rows));
+        let actual = harness
+            .read_output32(DEGREE)
+            .into_iter()
+            .map(|word| word as i32)
+            .collect::<Vec<_>>();
+        assert_eq!(actual, expected);
     }
 }
 
@@ -210,18 +245,7 @@ impl InlineSpec for PointwiseDot64 {
     }
     fn load(h: &mut InlineTestHarness, input: &Self::Input) {
         let (_, _, pinv) = parameters();
-        let data = DRAM_BASE + (2 * DOT_PRODUCTS + 1) as u64 * 8;
-        let mut words = (0..2 * DOT_PRODUCTS)
-            .map(|i| data + (i * DEGREE * 4) as u64)
-            .collect::<Vec<_>>();
-        words.push(P as u64 | (u64::from(pinv as u32) << 32));
-        for row in input.lhs.iter().chain(&input.rhs) {
-            for pair in row.as_chunks::<2>().0 {
-                words.push(u64::from(pair[0] as u32) | (u64::from(pair[1] as u32) << 32));
-            }
-        }
-        h.load_input64(&words);
-        h.load_state32(&input.acc.map(|a| a as u32));
+        load_dot(h, input, P as i32, pinv);
     }
     fn read(h: &mut InlineTestHarness) -> Self::Output {
         h.read_output32(DEGREE)
@@ -279,5 +303,489 @@ fn expanded_pointwise_dot_preserves_wrapping_word_semantics() {
         let mut rows = Vec::new();
         PointwiseDot64::instruction().trace(&mut harness.cpu, Some(&mut rows));
         assert_eq!(PointwiseDot64::read(&mut harness), expected);
+    }
+}
+
+fn load_dot(h: &mut InlineTestHarness, input: &DotInput, p: i32, pinv: i32) {
+    let data = DRAM_BASE + (2 * DOT_PRODUCTS + 1) as u64 * 8;
+    let mut words = (0..2 * DOT_PRODUCTS)
+        .map(|i| data + (i * DEGREE * 4) as u64)
+        .collect::<Vec<_>>();
+    words.push(u64::from(p as u32) | (u64::from(pinv as u32) << 32));
+    for row in input.lhs.iter().chain(&input.rhs) {
+        for pair in row.as_chunks::<2>().0 {
+            words.push(u64::from(pair[0] as u32) | (u64::from(pair[1] as u32) << 32));
+        }
+    }
+    h.load_input64(&words);
+    h.load_state32(&input.acc.map(|a| a as u32));
+}
+
+fn trace_dot(input: &DotInput, p: i32, pinv: i32, selector: u32) -> [i32; DEGREE] {
+    use tracer::instruction::RISCVTrace;
+    let mut harness = PointwiseDot64::harness();
+    harness.setup_registers();
+    load_dot(&mut harness, input, p, pinv);
+    let mut instruction = PointwiseDot64::instruction();
+    instruction.funct7 = selector;
+    instruction.trace(&mut harness.cpu, None);
+    PointwiseDot64::read(&mut harness)
+}
+
+#[test]
+fn pointwise_nonnegative_correction_preserves_every_word_domain() {
+    let edges = [i32::MIN, i32::MAX, -1, 0, 1, 1 << 30];
+    for p in [
+        0,
+        1,
+        2,
+        1 << 30,
+        i32::MAX,
+        1_073_707_009,
+        1_073_698_817,
+        1_073_692_673,
+        1_073_682_433,
+        1_073_668_097,
+        1_073_655_809,
+    ] {
+        let mut inverse = 1i32;
+        for _ in 0..5 {
+            inverse = inverse.wrapping_mul(2i32.wrapping_sub(p.wrapping_mul(inverse)));
+        }
+        for pinv in [0, -1, i32::MIN, i32::MAX, inverse] {
+            let input = DotInput {
+                acc: core::array::from_fn(|i| edges[i % edges.len()]),
+                lhs: core::array::from_fn(|j| {
+                    core::array::from_fn(|i| edges[(i + j) % edges.len()])
+                }),
+                rhs: core::array::from_fn(|j| {
+                    core::array::from_fn(|i| edges[(i + 2 * j + 1) % edges.len()])
+                }),
+            };
+            let mut expected = input.acc;
+            pointwise_dot64(
+                &mut expected,
+                input.lhs.each_ref(),
+                input.rhs.each_ref(),
+                p,
+                pinv,
+            );
+            let short = trace_dot(&input, p, pinv, DOT_NONNEGATIVE_FUNCT7);
+            let signed = trace_dot(&input, p, pinv, DOT_FUNCT7);
+            assert_eq!(short, expected, "p={p}, pinv={pinv}");
+            assert_eq!(signed, short, "p={p}, pinv={pinv}");
+        }
+    }
+}
+
+// Fixed signed-word vectors for the portable operation and selector 9.
+#[test]
+fn negative_moduli_match_signed_word_vectors() {
+    use tracer::instruction::RISCVTrace;
+    // Reducing the zero product gives 5; adding -6 presents x=-1, p=-5
+    // to the final correction, where the two instruction domains differ.
+    let input = DotInput {
+        acc: [-6; DEGREE],
+        lhs: [[0; DEGREE]; DOT_PRODUCTS],
+        rhs: [[0; DEGREE]; DOT_PRODUCTS],
+    };
+    assert_eq!(trace_dot(&input, -5, 0, DOT_FUNCT7), [4; DEGREE]);
+    assert_eq!(
+        trace_dot(&input, -5, 0, DOT_NONNEGATIVE_FUNCT7),
+        [-1; DEGREE]
+    );
+    let edges = [i32::MIN, i32::MAX, -1, 0, 1, 1 << 30];
+    let cases: [(i32, i32, [i32; 6]); 30] = [
+        (
+            -1,
+            0,
+            [
+                1_342_177_280,
+                -1_073_741_826,
+                536_870_912,
+                -1_073_741_827,
+                1_073_741_826,
+                536_870_913,
+            ],
+        ),
+        (
+            -1,
+            -1,
+            [
+                1_342_177_280,
+                -1_073_741_825,
+                536_870_912,
+                -1_073_741_827,
+                1_073_741_826,
+                536_870_913,
+            ],
+        ),
+        (
+            -1,
+            -2_147_483_648,
+            [
+                1_342_177_280,
+                -1_073_741_826,
+                536_870_912,
+                -1_073_741_828,
+                1_073_741_825,
+                536_870_913,
+            ],
+        ),
+        (
+            -1,
+            2_147_483_647,
+            [
+                1_342_177_280,
+                -1_073_741_826,
+                536_870_912,
+                -1_073_741_827,
+                1_073_741_826,
+                536_870_913,
+            ],
+        ),
+        (
+            -1,
+            -1,
+            [
+                1_342_177_280,
+                -1_073_741_825,
+                536_870_912,
+                -1_073_741_827,
+                1_073_741_826,
+                536_870_913,
+            ],
+        ),
+        (
+            -2,
+            0,
+            [
+                1_342_177_280,
+                -1_073_741_826,
+                536_870_914,
+                -1_073_741_829,
+                1_073_741_828,
+                536_870_913,
+            ],
+        ),
+        (
+            -2,
+            -1,
+            [
+                1_342_177_279,
+                -1_073_741_825,
+                536_870_913,
+                -1_073_741_830,
+                1_073_741_827,
+                536_870_912,
+            ],
+        ),
+        (
+            -2,
+            -2_147_483_648,
+            [
+                1_342_177_280,
+                -1_073_741_827,
+                536_870_914,
+                -1_073_741_830,
+                1_073_741_827,
+                536_870_913,
+            ],
+        ),
+        (
+            -2,
+            2_147_483_647,
+            [
+                1_342_177_279,
+                -1_073_741_826,
+                536_870_913,
+                -1_073_741_829,
+                1_073_741_828,
+                536_870_912,
+            ],
+        ),
+        (
+            -2,
+            -250_667_200,
+            [
+                1_342_177_280,
+                -1_073_741_826,
+                536_870_914,
+                -1_073_741_829,
+                1_073_741_828,
+                536_870_913,
+            ],
+        ),
+        (
+            -1_073_741_824,
+            0,
+            [
+                1_342_177_280,
+                1_073_741_822,
+                -1_610_612_738,
+                -1_073_741_825,
+                1_073_741_824,
+                -1_610_612_735,
+            ],
+        ),
+        (
+            -1_073_741_824,
+            -1,
+            [
+                1_073_741_824,
+                1_342_177_278,
+                2_147_483_646,
+                -1_342_177_281,
+                -1_342_177_280,
+                -2_147_483_647,
+            ],
+        ),
+        (
+            -1_073_741_824,
+            -2_147_483_648,
+            [
+                1_342_177_280,
+                536_870_910,
+                -1_610_612_738,
+                -1_610_612_737,
+                -1_610_612_736,
+                -1_610_612_735,
+            ],
+        ),
+        (
+            -1_073_741_824,
+            2_147_483_647,
+            [
+                1_073_741_824,
+                805_306_366,
+                2_147_483_646,
+                1_342_177_279,
+                1_342_177_280,
+                -2_147_483_647,
+            ],
+        ),
+        (
+            -1_073_741_824,
+            32,
+            [
+                1_342_177_280,
+                1_073_741_814,
+                -1_610_612_738,
+                1_073_741_831,
+                1_073_741_832,
+                -1_610_612_735,
+            ],
+        ),
+        (
+            -1_073_707_009,
+            0,
+            [
+                1_342_177_280,
+                1_073_672_192,
+                -1_610_682_368,
+                1_073_811_453,
+                -1_073_811_454,
+                -1_610_682_365,
+            ],
+        ),
+        (
+            -1_073_707_009,
+            -1,
+            [
+                1_073_750_528,
+                1_342_098_945,
+                2_147_431_424,
+                -1_342_168_578,
+                -1_342_238_207,
+                17_409,
+            ],
+        ),
+        (
+            -1_073_707_009,
+            -2_147_483_648,
+            [
+                1_342_177_280,
+                536_818_688,
+                -1_610_682_368,
+                -1_610_595_330,
+                -1_610_664_959,
+                -1_610_682_365,
+            ],
+        ),
+        (
+            -1_073_707_009,
+            2_147_483_647,
+            [
+                1_073_750_528,
+                805_245_440,
+                2_147_431_424,
+                1_342_098_945,
+                1_342_168_576,
+                17_409,
+            ],
+        ),
+        (
+            -1_073_707_009,
+            -138_446_849,
+            [
+                1_073_750_528,
+                1_376_709_535,
+                2_147_431_424,
+                -1_376_779_167,
+                -1_376_848_796,
+                17_409,
+            ],
+        ),
+        (
+            -2_147_483_647,
+            0,
+            [
+                1_342_177_278,
+                -1_073_741_828,
+                536_870_908,
+                -1_073_741_827,
+                1_073_741_822,
+                536_870_911,
+            ],
+        ),
+        (
+            -2_147_483_647,
+            -1,
+            [
+                805_306_366,
+                -536_870_916,
+                -536_870_915,
+                -1_610_612_739,
+                536_870_910,
+                -536_870_912,
+            ],
+        ),
+        (
+            -2_147_483_647,
+            -2_147_483_648,
+            [
+                1_342_177_278,
+                2_147_483_645,
+                536_870_908,
+                2_147_483_645,
+                -2,
+                536_870_911,
+            ],
+        ),
+        (
+            -2_147_483_647,
+            2_147_483_647,
+            [
+                805_306_366,
+                -1_610_612_739,
+                -536_870_915,
+                -536_870_916,
+                1_610_612_733,
+                -536_870_912,
+            ],
+        ),
+        (
+            -2_147_483_647,
+            -2_147_483_647,
+            [
+                1_879_048_190,
+                -536_870_916,
+                -536_870_915,
+                -1_610_612_738,
+                536_870_911,
+                -536_870_912,
+            ],
+        ),
+        (
+            -2_147_483_648,
+            0,
+            [
+                1_342_177_280,
+                -1_073_741_826,
+                536_870_910,
+                -1_073_741_825,
+                1_073_741_824,
+                536_870_913,
+            ],
+        ),
+        (
+            -2_147_483_648,
+            -1,
+            [
+                805_306_368,
+                -536_870_913,
+                -536_870_914,
+                -1_610_612_738,
+                536_870_911,
+                -536_870_911,
+            ],
+        ),
+        (
+            -2_147_483_648,
+            -2_147_483_648,
+            [
+                1_342_177_280,
+                2_147_483_646,
+                536_870_910,
+                2_147_483_647,
+                0,
+                536_870_913,
+            ],
+        ),
+        (
+            -2_147_483_648,
+            2_147_483_647,
+            [
+                805_306_368,
+                -1_610_612_737,
+                -536_870_914,
+                -536_870_914,
+                1_610_612_735,
+                -536_870_911,
+            ],
+        ),
+        (
+            -2_147_483_648,
+            32,
+            [
+                1_342_177_280,
+                -1_073_741_842,
+                536_870_910,
+                -1_073_741_809,
+                1_073_741_840,
+                536_870_913,
+            ],
+        ),
+    ];
+    for (p, pinv, expected) in cases {
+        let input = DotInput {
+            acc: core::array::from_fn(|i| edges[i % edges.len()]),
+            lhs: core::array::from_fn(|j| core::array::from_fn(|i| edges[(i + j) % edges.len()])),
+            rhs: core::array::from_fn(|j| {
+                core::array::from_fn(|i| edges[(i + 2 * j + 1) % edges.len()])
+            }),
+        };
+        let mut actual = input.acc;
+        pointwise_dot64(
+            &mut actual,
+            input.lhs.each_ref(),
+            input.rhs.each_ref(),
+            p,
+            pinv,
+        );
+        assert_eq!(
+            actual,
+            core::array::from_fn(|i| expected[i % 6]),
+            "p={p}, pinv={pinv}"
+        );
+        let mut harness = PointwiseDot64::harness();
+        harness.setup_registers();
+        load_dot(&mut harness, &input, p, pinv);
+        PointwiseDot64::instruction().trace(&mut harness.cpu, None);
+        assert_eq!(
+            PointwiseDot64::read(&mut harness),
+            actual,
+            "p={p}, pinv={pinv}"
+        );
     }
 }

@@ -146,9 +146,20 @@ field-inline instructions (`field_inline.rs`).
   These expand into existing proved integer instructions, with no advice and no
   new constraints. Akita's `ntt-inline` feature dispatches the 64-dimension CRT
   transforms and lazy Montgomery dots to them. The signed-digit conversion is
-  fused into the twist (`psi^i · R^2` table). Butterfly sums are reduced by a
+  fused into the twist ($\psi^i R^2$ table). Butterfly sums are reduced by a
   Montgomery product with the stage's first twiddle, the Montgomery form of 1
   (5 rows against a 7-row conditional reduction).
+  Selector 8 now loads paired stage entries and requires the stage-table
+  pointer to be aligned to $8$ bytes. The Rust wrapper has always established
+  that alignment. A directly emitted selector with a stage-table pointer
+  congruent to $4 \pmod 8$, previously accepted by word loads, now fails the
+  tracer's doubleword-alignment assertion. The new expansion changes traces
+  and preprocessing for every guest executing selector 8, even when its ELF
+  is unchanged; those artifacts must be generated with the same expansion.
+  Selector 9 retains the pointwise instruction's wrapping semantics for all
+  signed moduli. Selector 10 uses a six-row correction for $p \ge 0$; the guest
+  wrapper selects it only for nonnegative moduli and aligned arrays, otherwise
+  using the portable path. The measured recursion path uses selector 10.
 
 ### Prepared verifier setup
 
