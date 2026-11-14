@@ -4,6 +4,8 @@ the agent path, withdraw that approval otherwise, and publish the gate's labels 
 
     ai_merge_gate.py resolve      # write pr=<number> for the triggering event to $GITHUB_OUTPUT
     ai_merge_gate.py evaluate N   # evaluate pull request N
+    ai_merge_gate.py refresh N    # clear stale gate labels and sync merge conflicts for N
+    ai_merge_gate.py refresh-all  # refresh labels for open PRs into the default branch
 
 The policy, its truth table and the admin setup are in .github/ai-merge-gate.md; `Gate.decide`
 implements that table in order. Every PR input is read from the GitHub API when the gate runs.
@@ -21,6 +23,7 @@ import os
 import re
 import sys
 import tarfile
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -45,6 +48,7 @@ RISK_LABELS = {f"risk-{level}" for level in range(1, 5)}
 NEEDS_MAINTAINER = "needs-maintainer-review"
 MERGE_ELIGIBLE = "merge-eligible"
 NO_REVIEWER = "no-reviewer-assigned"
+MERGE_CONFLICT = "merge-conflict"
 MANAGED_LABELS = frozenset(RISK_LABELS | {NEEDS_MAINTAINER, MERGE_ELIGIBLE, NO_REVIEWER})
 # REST users/0xandoroid-ai-agent[bot] and GraphQL node lookup agree on this identity.
 PIKA_BOT_ID = "BOT_kgDOFAtqNQ"
@@ -55,7 +59,7 @@ ATTESTATION = re.compile(
 )
 # The only review models and efforts an attestation may name, spelled as .github/ai-merge-gate.md
 # lists them; any model may pair with any effort.
-REVIEW_MODELS = ("GPT-6 Astra", "Claude Opus 5.5")
+REVIEW_MODELS = ("GPT-6 Astra", "Claude Opus 5.5", "Claude Fable 5.2")
 REVIEW_EFFORTS = ("max", "xhigh")
 LEDGER = re.compile(r"<!-- ai-merge-gate/attempts (\{.*\}) -->")
 # The run-name of .github/workflows/ai-merge-gate-events.yml, which GitHub reports as display_title.
@@ -65,7 +69,6 @@ AGENT_WORKFLOW = ".github/workflows/ai-merge-gate-evaluate.yml"
 CLASSIFIER_INPUTS = ("scripts/ci/classifier_agent.py", AGENT_WORKFLOW, "scripts/ci/ai_merge_gate.py",
                      "scripts/ci/diff_classifier.py", WORKFLOW, ".claude/skills/verifier-classifier/SKILL.md")
 MAX_HEAD_ATTEMPTS = 2
-MAX_PR_ATTEMPTS = 3
 MAX_TREE_BYTES = 500_000_000
 MAX_TEXT = 60_000
 
@@ -107,7 +110,10 @@ def log(message: str) -> None:
 def clip(text: str) -> str:
     if len(text) <= MAX_TEXT:
         return text
-    return text[:MAX_TEXT] + f"\n\n[display clipped: {len(text) - MAX_TEXT} more characters]"
+    clipped = text[:MAX_TEXT] + f"\n\n[display clipped: {len(text) - MAX_TEXT} more characters]"
+    if "<details>" in clipped and "</details>" not in clipped:
+        clipped += "\n\n</details>" + text.partition("</details>")[2]
+    return clipped
 
 
 class GitHub:
@@ -316,7 +322,7 @@ def unassigned(pull: dict) -> bool:
 
 
 class Gate:
-    def __init__(self, github: GitHub, model: Classifier, default_branch: str, maintainer_list: str,
+    def __init__(self, github: GitHub, model: Classifier | None, default_branch: str, maintainer_list: str,
                  run_id: str) -> None:
         self.github, self.model, self.repo = github, model, github.repo
         self.default_branch, self.maintainer_list, self.run_id = default_branch, maintainer_list, run_id
@@ -359,6 +365,63 @@ class Gate:
                 and run["event"] in ("issue_comment", "workflow_run") \
                 and (run.get("head_repository") or {}).get("full_name") == self.repo
         return self.gate_runs[run_id]
+
+    def refresh(self, number: int) -> bool:
+        pull = self.github.get(f"/repos/{self.repo}/pulls/{number}")
+        present = {label["name"] for label in pull["labels"]} & MANAGED_LABELS
+        if present:
+            head, page = pull["head"]["sha"], 1
+            while True:
+                query = urllib.parse.urlencode({"check_name": GATE, "filter": "all", "per_page": 100, "page": page})
+                runs = self.github.get(f"/repos/{self.repo}/commits/{head}/check-runs?{query}")["check_runs"]
+                evaluated = any((run.get("app") or {}).get("id") == ACTIONS_APP_ID
+                                and run["head_sha"] == head and self.from_gate(run) for run in runs)
+                if evaluated or len(runs) < 100:
+                    break
+                page += 1
+            if not evaluated:
+                for name in sorted(present):
+                    self.github.call("DELETE", f"/repos/{self.repo}/issues/{number}/labels/{name}", missing_ok=True)
+        return self.sync_conflict(number)
+
+    def sync_conflict(self, number: int) -> bool:
+        pull = self.github.get(f"/repos/{self.repo}/pulls/{number}")
+        if pull["state"] != "open" or pull["base"]["ref"] != self.default_branch:
+            return True
+        if pull["mergeable"] is None:
+            return False
+        present = any(label["name"] == MERGE_CONFLICT for label in pull["labels"])
+        route = f"/repos/{self.repo}/issues/{number}/labels"
+        if pull["mergeable"] is False and not present:
+            if self.github.get(f"/repos/{self.repo}/labels/{MERGE_CONFLICT}", missing_ok=True) is None:
+                raise GateError(f"repository label {MERGE_CONFLICT!r} is missing; an admin must create the gate's labels")
+            self.github.post(route, {"labels": [MERGE_CONFLICT]})
+        elif pull["mergeable"] is True and present:
+            self.github.call("DELETE", route + "/" + MERGE_CONFLICT, missing_ok=True)
+        return True
+
+    def refresh_many(self, numbers: list[int]) -> None:
+        deadline = time.monotonic() + 60
+        pending = [number for number in numbers if not self.refresh(number)]
+        while pending:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            time.sleep(min(2, remaining))
+            pending = [number for number in pending if not self.sync_conflict(number)]
+        for number in pending:
+            log(f"PR #{number}: mergeability still unknown; leaving {MERGE_CONFLICT} unchanged")
+
+    def refresh_all(self) -> None:
+        numbers, page = [], 1
+        while True:
+            query = urllib.parse.urlencode({"state": "open", "base": self.default_branch, "per_page": 100, "page": page})
+            pulls = self.github.get(f"/repos/{self.repo}/pulls?{query}")
+            numbers.extend(pull["number"] for pull in pulls)
+            if len(pulls) < 100:
+                break
+            page += 1
+        self.refresh_many(numbers)
 
     def recorded(self, head: str, name: str) -> Record | None:
         """A classification for this head with matching inputs, from this run or a check run
@@ -438,12 +501,10 @@ class Gate:
         self.ledger = self.attempts()
         source = self.pinned(pull)
         paths = source.changed()
-        used = sum(self.ledger.values())
-        if not self.model.prepaid(source) and (self.ledger.get(head, 0) >= MAX_HEAD_ATTEMPTS or used >= MAX_PR_ATTEMPTS):
+        if not self.model.prepaid(source) and self.ledger.get(head, 0) >= MAX_HEAD_ATTEMPTS:
             self.records.append(Record(CLASSIFIER, "skipped", "Verifier classifier: attempts spent",
                                        f"This head has used {self.ledger.get(head, 0)} of {MAX_HEAD_ATTEMPTS} "
-                                       f"paid classifier attempts and the pull request {used} of "
-                                       f"{MAX_PR_ATTEMPTS}. The head stays unclassified, so only a person can "
+                                       "paid classifier attempts. The head stays unclassified, so only a person can "
                                        "approve it. No risk label is assigned; policy requires an independent "
                                        "current-head maintainer approval.", None))
             return
@@ -452,8 +513,7 @@ class Gate:
             # Counted durably before the first paid request, so a timeout or crash still counts.
             self.ledger[head] = self.ledger.get(head, 0) + 1
             self.comment(number, head, "Verifier classifier: running",
-                         f"Paid attempt {self.ledger[head]} of {MAX_HEAD_ATTEMPTS} for this head and "
-                         f"{used + 1} of {MAX_PR_ATTEMPTS} for this pull request. The verdict replaces "
+                         f"Paid attempt {self.ledger[head]} of {MAX_HEAD_ATTEMPTS} for this head. The verdict replaces "
                          "this text; without one, the attempt failed and the head has no classifier result.")
 
         skill = (ROOT / ".claude/skills/verifier-classifier/SKILL.md").read_text()
@@ -467,9 +527,10 @@ class Gate:
         conclusion = "success" if risk < 4 else "neutral"
         self.records.append(Record(CLASSIFIER, conclusion, f"Verifier classifier: risk-{risk}",
                                    f"{model_text(answer['reasoning'])}\n\nRisk: risk-{risk}\n\n" +
+                                   f"<details>\n<summary>Per-path ratings ({len(answer['risks'])} files)</summary>\n\n" +
                                    "\n".join(f"- {model_text(item['path'])}: risk-{item['level']} — {model_text(item['reasoning'])}"
                                              for item in answer["risks"]) +
-                                   f"\n\n_{MODEL}, reasoning effort {EFFORT}_", risk))
+                                   f"\n\n</details>\n\n_{MODEL}, reasoning effort {EFFORT}_", risk))
 
     def attester(self, pull: dict) -> str | None:
         """Who attests, in the comments `decide` read, a clean review of the current head."""
@@ -848,6 +909,14 @@ def main(argv: list[str]) -> int:
             model = Classifier(Path(env["CLASSIFIER_DIRECTORY"]))
             Gate(github, model, env["DEFAULT_BRANCH"], env.get("AI_MERGE_GATE_MAINTAINERS", ""),
                  env["GITHUB_RUN_ID"]).evaluate(int(argv[2]))
+            return 0
+        if (len(argv) == 3 and argv[1] == "refresh") or argv[1:] == ["refresh-all"]:
+            github = GitHub(http, env["GH_TOKEN"], env["GITHUB_REPOSITORY"])
+            gate = Gate(github, None, env["DEFAULT_BRANCH"], "", env["GITHUB_RUN_ID"])
+            if argv[1] == "refresh":
+                gate.refresh_many([int(argv[2])])
+            else:
+                gate.refresh_all()
             return 0
     except Exception as error:
         message = f"{type(error).__name__}: {error}"

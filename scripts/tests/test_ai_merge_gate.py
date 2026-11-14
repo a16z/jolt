@@ -12,7 +12,9 @@ import tempfile
 import tomllib
 import unittest
 from unittest import mock
+from urllib.error import HTTPError
 from urllib.parse import parse_qs, urlsplit
+from urllib.request import Request, urlopen
 
 # The gate imports its sibling diff_classifier the way it runs in CI, from scripts/ci.
 sys.path.insert(0, str(Path(__file__).parents[1] / "ci"))
@@ -136,16 +138,19 @@ class FakeApis:
                  records=(), heads=(HEAD,), diff=PLAIN_DIFF, files=("crates/jolt-prover/src/lib.rs",),
                  counts=(1, 1, 1), risk=2, risks=None, answer_text=None,
                  served_model="gpt-6.1-sol", trees=None,
-                 reviewers=(), teams=(), assignees=(), state="open", base="main", merged_at=None) -> None:
+                 reviewers=(), teams=(), assignees=(), state="open", base="main", merged_at=None,
+                 mergeability=(True,)) -> None:
         # The pull request's file list, which follows its branch; the commits' trees do not move.
         self.files = [entry if isinstance(entry, dict) else {"filename": entry} for entry in files]
         self.author, self.comments, self.reviews = author, list(comments), list(reviews)
         self.labels, self.draft, self.heads, self.diff, self.counts = list(labels), draft, list(heads), diff, counts
         self.reviewers, self.teams, self.assignees = list(reviewers), list(teams), list(assignees)
         self.state, self.base, self.merged_at = state, base, merged_at
+        self.mergeability = list(mergeability)
         self.head_repo_id = 2
         # The pull requests branch forker:fix heads, most recently updated first; 7 stands for this one.
         self.branch_pulls = [{"number": 9, "state": "open", "base": {"ref": "release"}}, 7]
+        self.other_pulls = {}
         self.answer_text = answer_text
         self.risk, self.risks = risk, risks
         self.served_model = served_model
@@ -153,7 +158,7 @@ class FakeApis:
         self.exported, self.during_model, self.truncated = dict(self.trees), None, False
         self.during_recheck, self.pr_reads = None, 0
         self.writers = {"core-a", "core-b", "maintainer", "ci-bot"}
-        self.label_definitions = set(GATE.MANAGED_LABELS)
+        self.label_definitions = set(GATE.MANAGED_LABELS) | {"merge-conflict"}
         self.label_writes, self.during_label_write = [], None
         self.review_writes, self.during_approve = [], None
         gate_run = {"path": f"{GATE.WORKFLOW}@main", "event": "workflow_run", "head_repository": {"full_name": REPO}}
@@ -175,12 +180,16 @@ class FakeApis:
         parts = urlsplit(url)
         data = json.loads(body) if body else None
         path, query = parts.path, parse_qs(parts.query)
+        if method == "GET" and path in self.other_pulls:
+            return self.ok(self.other_pulls[path])
         if (method, path) == ("GET", f"/repos/{REPO}/pulls/7"):
             self.pr_reads += 1
             if self.pr_reads == 2 and self.during_recheck:
                 self.during_recheck(self)
             head = self.heads.pop(0) if len(self.heads) > 1 else self.heads[0]
+            mergeable = self.mergeability.pop(0) if len(self.mergeability) > 1 else self.mergeability[0]
             return self.ok({"number": 7, "state": self.state, "merged_at": self.merged_at, "draft": self.draft,
+                            "mergeable": mergeable,
                             "base": {"ref": self.base, "repo": {"id": 1}},
                             "head": {"sha": head, "ref": "fix", "repo": {"id": self.head_repo_id}}, "user": {"login": self.author},
                             "labels": [{"name": name} for name in self.labels],
@@ -274,6 +283,8 @@ class FakeApis:
             pulls = [{"number": 7, "state": self.state, "base": {"ref": self.base}} if pull == 7 else pull
                      for pull in self.branch_pulls]
             listed = [pull for pull in pulls if query["state"] in (["all"], [pull["state"]])]
+            if "base" in query:
+                return self.ok([pull for pull in listed if query["base"] == [pull["base"]["ref"]]])
             return self.ok(listed if query["head"] == ["forker:fix"] else [])
         raise AssertionError(f"unexpected request {method} {url}")
 
@@ -483,6 +494,82 @@ class AiMergeGateTests(unittest.TestCase):
                                              ("DELETE", "no-reviewer-assigned"), ("DELETE", "risk-4")])
         self.assertEqual(apis.model_requests, [])
 
+    def test_refresh_clears_managed_labels_without_a_trusted_gate_check_on_this_head(self) -> None:
+        cases = [
+            (None, False),
+            (record(GATE.GATE, OLD), False),
+            (record(GATE.CLASSIFIER, NEW_HEAD), False),
+            (record(GATE.GATE, NEW_HEAD, app={"id": 1}), False),
+            (record(GATE.GATE, NEW_HEAD, external_id=OTHER_RUN), False),
+            (record(GATE.GATE, NEW_HEAD, external_id=PR_RUN), False),
+            (record(GATE.GATE, NEW_HEAD, status="queued", conclusion=None), True),
+            (record(GATE.GATE, NEW_HEAD, status="in_progress", conclusion=None), True),
+            (record(GATE.GATE, NEW_HEAD, conclusion="failure"), True),
+        ]
+        for command in (("refresh", "7"), ("refresh-all",)):
+            for check, evaluated in cases:
+                with self.subTest(command=command, check=check):
+                    kept = {"merge-conflict", "keep-healed"}
+                    labels = GATE.MANAGED_LABELS | kept
+                    apis = FakeApis(heads=[NEW_HEAD], labels=labels, records=[check] if check else [],
+                                    mergeability=[False])
+                    self.assertEqual(run_main(apis, *command), 0)
+                    self.assertEqual(set(apis.labels), labels if evaluated else kept)
+                    self.assertEqual((apis.created, apis.review_writes, apis.model_requests), ([], [], []))
+
+    def test_merge_conflicts_follow_mergeability_including_base_pushes_and_unknown_state(self) -> None:
+        for command in (("refresh", "7"), ("refresh-all",)):
+            for mergeability, present, expected, retries in [
+                ([False], False, True, 0),
+                ([True], True, False, 0),
+                ([None, False], False, True, 1),
+                ([None] * 5 + [False], False, True, 5),
+                ([None], True, True, 30),
+                ([None], False, False, 30),
+            ]:
+                with self.subTest(command=command, mergeability=mergeability, present=present):
+                    labels = {"keep-healed"} | ({"merge-conflict"} if present else set())
+                    reads = [None, *mergeability]
+                    apis = FakeApis(labels=labels, mergeability=reads, draft=True)
+                    with mock.patch("time.monotonic", return_value=0.0) as clock:
+                        def advance(seconds):
+                            clock.return_value += seconds
+
+                        with mock.patch("time.sleep", side_effect=advance) as delay:
+                            self.assertEqual(run_main(apis, *command), 0)
+                    self.assertEqual(set(apis.labels), {"keep-healed"} | ({"merge-conflict"} if expected else set()))
+                    self.assertEqual(delay.call_count, retries)
+                    self.assertEqual((apis.created, apis.review_writes, apis.model_requests), ([], [], []))
+        for change in ({"state": "closed"}, {"base": "release"}):
+            apis = FakeApis(labels=["merge-conflict"], mergeability=[True], **change)
+            self.assertEqual(run_main(apis, "refresh-all"), 0)
+            self.assertEqual(apis.labels, ["merge-conflict"])
+            self.assertEqual(run_main(apis, "refresh", "7"), 0)
+            self.assertIn("merge-conflict", apis.labels)
+        missing = FakeApis(mergeability=[False])
+        missing.label_definitions.remove("merge-conflict")
+        self.assertEqual(run_main(missing, "refresh-all"), 1)
+        self.assertEqual(missing.label_writes, [])
+
+        apis = FakeApis(mergeability=[None] * 4 + [False])
+        settled_path = f"/repos/{REPO}/pulls/8"
+        apis.branch_pulls.append({"number": 8, "state": "open", "base": {"ref": "main"}})
+        apis.other_pulls[settled_path] = {"number": 8, "state": "open", "base": {"ref": "main"},
+                                         "head": {"sha": HEAD}, "labels": [], "mergeable": True}
+        first_pass_reads = []
+        with mock.patch("time.monotonic", return_value=0.0) as clock:
+            def advance(seconds):
+                reads = sum(urlsplit(url).path == settled_path for method, url in apis.requests)
+                self.assertGreater(reads, 0, "every PR must be read before the first retry delay")
+                if not first_pass_reads:
+                    first_pass_reads.append(reads)
+                self.assertEqual(reads, first_pass_reads[0], "settled PRs must not be retried")
+                clock.return_value += seconds
+
+            with mock.patch("time.sleep", side_effect=advance):
+                self.assertEqual(run_main(apis, "refresh-all"), 0)
+        self.assertIn("merge-conflict", apis.labels)
+
     def test_risk_cache_reuse_is_head_bound_and_already_correct_labels_are_not_rewritten(self) -> None:
         for cached_head in (HEAD, OLD):
             with self.subTest(cached_head=cached_head):
@@ -583,7 +670,8 @@ class AiMergeGateTests(unittest.TestCase):
             (f"Review complete.\r\n{valid}\r\n", "success"),
             *((attestation(skill="Independent security review", model=model, effort=effort), "success")
               for model, effort in [("GPT-6 Astra", "max"), ("GPT-6 Astra", "xhigh"),
-                                    ("Claude Opus 5.5", "max"), ("Claude Opus 5.5", "xhigh")]),
+                                    ("Claude Opus 5.5", "max"), ("Claude Opus 5.5", "xhigh"),
+                                    ("Claude Fable 5.2", "max"), ("Claude Fable 5.2", "xhigh")]),
             # Only those exact model and effort spellings count: no aliases, API IDs or case variants.
             (attestation(model="Astra"), "neutral"),
             (attestation(model="gpt-6-astra"), "neutral"),
@@ -857,6 +945,42 @@ class AiMergeGateTests(unittest.TestCase):
         self.assertEqual(set(apis.labels), {"keep"})
         self.assertEqual(apis.gate()[0], "neutral")
 
+    def test_classifier_per_path_ratings_are_collapsed(self) -> None:
+        answer = {"reasoning": "Summary </details>.", "risks": [
+            {"path": "docs/</details>.md", "level": 1, "reasoning": "Docs </details>."},
+            {"path": "src/a.rs", "level": 2, "reasoning": "Prover only."},
+        ]}
+        apis = evaluate(FakeApis(files=[item["path"] for item in answer["risks"]],
+                                 answer_text=json.dumps(answer)))
+        expected = (
+            "Summary &lt;/details&gt;\\.\n\nRisk: risk-2\n\n"
+            "<details>\n<summary>Per-path ratings (2 files)</summary>\n\n"
+            "- docs/&lt;/details&gt;\\.md: risk-1 — Docs &lt;/details&gt;\\.\n"
+            "- src/a\\.rs: risk-2 — Prover only\\.\n\n</details>\n\n"
+            "_gpt-6.1-sol, reasoning effort xhigh_"
+        )
+        [classification] = [run for run in apis.created if run["name"] == GATE.CLASSIFIER]
+        self.assertEqual(classification["output"]["summary"], expected)
+        self.assertEqual(apis.posted[-1],
+                         "<!-- ai-merge-gate/classifier -->\n### Verifier classifier: risk-2\n\n"
+                         f"Head `{HEAD}`\n\n{expected}\n\n"
+                         f'<!-- ai-merge-gate/attempts {{"{HEAD}": 1}} -->')
+
+        answer = {"reasoning": "Classified changed files.", "risks": [
+            {"path": f"docs/file{i}.md", "level": 1, "reasoning": "Text <code> & API. " * 90}
+            for i in range(30)
+        ]}
+        apis = evaluate(FakeApis(files=[item["path"] for item in answer["risks"]],
+                                 answer_text=json.dumps(answer)))
+        [classification] = [run for run in apis.created if run["name"] == GATE.CLASSIFIER]
+        for body in (classification["output"]["summary"], apis.posted[-1]):
+            self.assertIn("[display clipped:", body)
+            self.assertEqual(body.count("<details>"), 1)
+            self.assertEqual(body.count("</details>"), 1)
+            self.assertIn("\n\n</details>\n\n_gpt-6.1-sol, reasoning effort xhigh_", body)
+        self.assertEqual(json.loads(GATE.LEDGER.fullmatch(apis.posted[-1].splitlines()[-1]).group(1)),
+                         {HEAD: 1})
+
     def test_maintainer_pr_content_stays_data(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             sentinel = Path(directory) / "executed"
@@ -1012,11 +1136,12 @@ class AiMergeGateTests(unittest.TestCase):
         self.assertLess(len(apis.model_requests[0]["input"]), 1000)
         self.assertIn("risk-1", apis.labels)
 
-    def test_classifier_attempts_are_capped_per_head_and_per_pull_request(self) -> None:
+    def test_classifier_attempts_are_capped_only_per_head(self) -> None:
         attested = comment("core-a", attestation())
         # A malformed answer fails the attempt without caching a result, as a timeout would.
         for case, comments, paid in [("two per head", [attested], 2),
-                                     ("three per pull request, across heads", [ledger({OLD: 2}), attested], 1)]:
+                                     ("other heads do not spend this head's attempts",
+                                      [ledger({OLD: 2, NEW_HEAD: 1}), attested], 2)]:
             with self.subTest(case=case):
                 apis = FakeApis(comments=comments, answer_text="SAFE")
                 counted = []
@@ -1253,24 +1378,117 @@ class AiMergeGateTests(unittest.TestCase):
 
 
 class ClassifierAgentTests(unittest.TestCase):
+    def test_upstream_failures_keep_safe_bounded_diagnostics(self):
+        key = "fixture-secret-key"
+        for phase, status, body, details in (
+            ("preflight", 401, {"error": {"type": "invalid_request_error", "code": "invalid_api_key",
+                                         "message": key}}, ("invalid_request_error", "invalid_api_key")),
+            ("request", 429, {"error": {"type": "insufficient_quota", "code": "insufficient_quota",
+                                       "message": key}}, ("insufficient_quota",)),
+            ("preflight", 502, b"not JSON: " + key.encode(), ()),
+            ("request", 503, {"error": {"type": key + "x" * 5000, "code": "code_" + key}},
+             ("[REDACTED]", "code_[REDACTED]")),
+            ("request", None, key + "x" * 5000, ("[REDACTED]",)),
+        ):
+            with self.subTest(phase=phase, status=status):
+                payload = body if isinstance(body, bytes) else json.dumps(body).encode()
+                def upstream(request, **_kwargs):
+                    if phase == "request" and request.full_url.endswith("input_tokens"):
+                        response = io.BytesIO(b'{"input_tokens": 100}')
+                        response.status = 200
+                        return response
+                    if status is None:
+                        raise RuntimeError(body)
+                    raise HTTPError(request.full_url, status, "upstream refused", None, io.BytesIO(payload))
+                broker = AGENT.ModelBroker(key)
+                with mock.patch.object(AGENT.urllib.request, "urlopen", side_effect=upstream), broker.serve() as endpoint:
+                    with self.assertRaises(HTTPError) as stopped:
+                        urlopen(Request(endpoint + "/v1/responses", json.dumps({"model": AGENT.MODEL}).encode(),
+                                        {"Content-Type": "application/json"}), timeout=5)
+                    with stopped.exception as response:
+                        self.assertEqual(json.load(response)["error"]["message"], "classifier stopped")
+                if status is not None:
+                    self.assertIn(f"HTTP {status}", broker.failure)
+                self.assertNotIn(key, broker.failure)
+                self.assertLessEqual(len(broker.failure), 512)
+                for detail in details:
+                    self.assertIn(detail, broker.failure)
+                self.assertEqual(broker.usage, [])
+
+    def test_cached_context_can_repeat_within_spend_budget(self):
+        usage = {"input_tokens": 100_000, "output_tokens": 4000,
+                 "input_tokens_details": {"cached_tokens": 100_000}}
+        response = {"type": "response.completed", "response": {
+            "model": AGENT.MODEL, "status": "completed", "usage": usage}}
+        payload = json.dumps(response).encode()
+        def request(endpoint, _body, _headers):
+            return 200, (json.dumps({"input_tokens": 100_000}).encode()
+                         if endpoint.endswith("input_tokens") else payload)
+        broker = AGENT.ModelBroker("fake", request=request)
+        for _ in range(40):
+            self.assertEqual(broker.forward({"model": AGENT.MODEL}, {}), (200, payload))
+        self.assertEqual((broker.input_tokens, broker.output_tokens), (4_000_000, 160_000))
+        self.assertAlmostEqual(broker.cost_usd, 2)
+
+    def test_long_context_prices_the_entire_request_at_the_surcharge(self):
+        for count, expected in ((272_000, .199), (272_001, .393004)):
+            with self.subTest(input_tokens=count):
+                self.assertAlmostEqual(AGENT.request_cost(count, 1000, cached=200_000, written=50_000), expected)
+
+    def test_compaction_request_uses_the_budgeted_broker(self):
+        calls = []
+        def request(endpoint, body, _headers):
+            calls.append(endpoint)
+            if endpoint.endswith("input_tokens"):
+                return 200, json.dumps({"input_tokens": 100_000}).encode()
+            self.assertEqual(body["max_output_tokens"], 128_000)
+            response = {"type": "response.completed", "response": {"model": AGENT.MODEL,
+                "status": "completed", "usage": {"input_tokens": 100_000, "output_tokens": 200,
+                    "input_tokens_details": {"cached_tokens": 90_000, "cache_write_tokens": 10_000}}}}
+            return 200, b"data: " + json.dumps(response).encode() + b"\n\n"
+        broker = AGENT.ModelBroker("fake", request=request)
+        with tempfile.TemporaryDirectory() as directory, broker.serve() as endpoint:
+            root = Path(directory)
+            (root / "agent-state").mkdir()
+            AGENT.configure_codex(endpoint, root)
+            config = tomllib.loads((root / "agent-state/config.toml").read_text())
+            self.assertEqual(config["model_context_window"], 1_050_000)
+            self.assertEqual(config["model_providers"]["gate"]["stream_idle_timeout_ms"], 18_000_000)
+            body = {"model": AGENT.MODEL, "stream": True,
+                    "input": [{"role": "user", "content": [{"type": "input_text",
+                        "text": "Summarize the conversation so it can continue."}]}]}
+            def compact():
+                return urlopen(Request(endpoint + "/v1/responses", json.dumps(body).encode(),
+                                       {"Content-Type": "application/json"}), timeout=5)
+            with compact() as response:
+                self.assertEqual(response.status, 200)
+            self.assertEqual(broker.input_tokens, 100_000)
+            self.assertAlmostEqual(broker.cost_usd, .036)
+            broker.cost_usd = AGENT.MAX_SPEND_USD
+            with self.assertRaises(HTTPError) as error:
+                compact()
+            self.assertEqual(error.exception.code, 429)
+            self.assertEqual(broker.failure, "classifier spend cap")
+        self.assertEqual(calls.count("/v1/responses"), 1)
+
     def test_budget_preflight_blocks_payment_and_incomplete_usage_is_retained(self):
-        for limit in ("request", "input", "output", "spend", "turns"):
-            with self.subTest(limit=limit):
+        for count, cost, model, error in (
+            (AGENT.MAX_INPUT_TOKENS + 1, 0, AGENT.MODEL, "per-request input cap"),
+            (AGENT.MAX_INPUT_TOKENS, AGENT.MAX_SPEND_USD, AGENT.MODEL, "spend cap"),
+            (300_000, 47, AGENT.MODEL, "spend cap"),
+            (272_000, 48.04, AGENT.MODEL, "spend cap"),
+            (None, 0, AGENT.MODEL, "input token count"),
+            (100, 0, "other-model", "unexpected requested model"),
+        ):
+            with self.subTest(count=count, cost=cost, model=model):
                 calls = []
                 def request(endpoint, _body, _headers):
                     calls.append(endpoint)
-                    return 200, json.dumps({"input_tokens": AGENT.MAX_INPUT_TOKENS + (limit == "request")}).encode()
+                    return 200, json.dumps({"input_tokens": count}).encode()
                 broker = AGENT.ModelBroker("fake", request=request)
-                if limit == "input":
-                    broker.input_tokens = AGENT.MAX_RUN_INPUT_TOKENS
-                if limit == "output":
-                    broker.output_tokens = AGENT.MAX_RUN_OUTPUT_TOKENS
-                if limit == "spend":
-                    broker.cost_usd = AGENT.MAX_SPEND_USD
-                if limit == "turns":
-                    broker.usage = [{}] * AGENT.MAX_TURNS
-                with self.assertRaises(AGENT.AgentFailure):
-                    broker.forward({"model": AGENT.MODEL}, {})
+                broker.cost_usd = cost
+                with self.assertRaisesRegex(AGENT.AgentFailure, error):
+                    broker.forward({"model": model}, {})
                 self.assertNotIn("/v1/responses", calls)
         def incomplete(endpoint, _body, _headers):
             response = {"type": "response.incomplete", "response": {"model": AGENT.MODEL,

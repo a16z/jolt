@@ -129,14 +129,14 @@ fn glv_four_scalar_mul_zero_scalar() {
 #[test]
 fn glv_four_scalar_mul_empty() {
     let results = glv::glv_four_scalar_mul(Fr::from_u64(42), &[]);
-    assert!(results.is_empty());
+    assert_eq!(results, []);
 }
 
 #[test]
 fn glv_fixed_base_vector_msm_g1_empty() {
     let base = Bn254::g1_generator();
     let results = glv::fixed_base_vector_msm_g1(&base, &[]);
-    assert!(results.is_empty());
+    assert_eq!(results, []);
 }
 
 #[test]

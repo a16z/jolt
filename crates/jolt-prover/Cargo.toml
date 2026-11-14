@@ -14,6 +14,10 @@ workspace = true
 [features]
 default = ["parallel"]
 parallel = [
+  "jolt-claims/parallel",
+  "jolt-openings/parallel",
+  "jolt-poly/parallel",
+  "jolt-zk?/parallel",
   "jolt-program/parallel",
   "jolt-crypto/parallel",
   "jolt-kernels/parallel",
@@ -61,7 +65,9 @@ akita = [
 zk = [
   "jolt-verifier/zk",
   "jolt-kernels/zk",
-  "dep:jolt-blindfold",
+  "dep:jolt-zk",
+  "jolt-zk/blindfold",
+  "jolt-zk/parallel",
   "dep:rand_core",
   "jolt-sumcheck/committed",
 ]
@@ -76,12 +82,15 @@ profiling = [
   "jolt-inlines-keccak256/host",
   "dep:jolt-inlines-sha2",
   "jolt-inlines-sha2/host",
+  "dep:jolt-inlines-secp256k1",
+  "jolt-inlines-secp256k1/host",
   "dep:jolt-profiling",
   "jolt-profiling/monitor",
   "jolt-profiling/summary",
   "dep:jolt-host",
   "dep:postcard",
   "postcard/use-std",
+  "dep:serde_json",
   "dep:tracer",
 ]
 # Per-batch heap snapshots from the profile harness: emitted inside
@@ -100,11 +109,11 @@ allocative = [
 common.workspace = true
 jolt-akita = { workspace = true, optional = true }
 akita-params = { workspace = true, optional = true }
-jolt-blindfold = { workspace = true, optional = true, features = ["prover"] }
-jolt-claims.workspace = true
+jolt-zk = { workspace = true, optional = true, features = ["prover"] }
+jolt-claims = { workspace = true, features = ["bn254"] }
 jolt-crypto.workspace = true
 jolt-dory.workspace = true
-jolt-field.workspace = true
+jolt-field = { workspace = true, features = ["bn254"] }
 jolt-kernels = { workspace = true, default-features = false }
 jolt-lookup-tables.workspace = true
 jolt-openings.workspace = true
@@ -115,6 +124,8 @@ jolt-sumcheck = { workspace = true, features = ["prover"] }
 jolt-transcript = { workspace = true, features = [
   "bn254",
   "prover-grinding",
+  "prover-entropy",
+  "prover-coins",
   "transcript-keccak",
 ] }
 jolt-verifier.workspace = true
@@ -131,12 +142,14 @@ chrono = { workspace = true, optional = true }
 clap = { workspace = true, optional = true }
 jolt-inlines-keccak256 = { workspace = true, optional = true }
 jolt-inlines-sha2 = { workspace = true, optional = true }
+jolt-inlines-secp256k1 = { workspace = true, optional = true }
 jolt-host = { workspace = true, optional = true }
 # default-features = false: the `profiling` feature adds `summary`
 # explicitly; `allocative` needs only the flamegraph hooks.
 jolt-profiling = { workspace = true, optional = true, default-features = false }
 postcard = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true, features = ["std"], optional = true }
 tracer = { workspace = true, optional = true }
 
 [dev-dependencies]

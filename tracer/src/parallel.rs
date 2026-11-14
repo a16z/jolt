@@ -128,8 +128,8 @@ impl SnapshotPool {
 }
 
 /// A resident chunk-replay worker: one CPU reused across chunks, running in
-/// [`HostIo::Replay`] (no duplicate prints/markers/advice-appends, no call
-/// tracking) for its whole lifetime.
+/// [`HostIo::Replay`] (no duplicate prints/markers, no call tracking) for its
+/// whole lifetime.
 pub struct ChunkWorker {
     cpu: Cpu,
     /// Empty-entry decode cache covering the program text, cloned per chunk:
@@ -327,8 +327,9 @@ fn demote_worker_thread() {
 pub const DEFAULT_CHUNK_ROWS: usize = 1 << 20;
 
 /// Default output capacity in rows (matches the serial path's reserve).
-/// Chunks beyond this fall back to a copy-assembled suffix (correct, just
-/// slower) — see `run_two_pass`; `JOLT_TRACER_CAPACITY_ROWS` overrides.
+/// Chunks beyond this use separate allocations; `run_two_pass` flattens
+/// them, while the execution backend converts them directly to proof rows.
+/// `JOLT_TRACER_CAPACITY_ROWS` overrides this reservation.
 pub const DEFAULT_CAPACITY_ROWS: usize = 1 << 24;
 
 #[derive(Clone, Copy, Debug)]
@@ -338,7 +339,7 @@ pub struct TwoPassConfig {
     pub chunk_rows: usize,
     /// Output vec capacity reserved up front. Workers write their rows
     /// directly into disjoint windows of it; if the trace outgrows it, the
-    /// remaining chunks are assembled by copy instead.
+    /// remaining chunks use separate allocations.
     pub capacity_rows: usize,
 }
 
@@ -361,7 +362,7 @@ struct ChunkJob<'trace> {
     rows: usize,
     /// Destination window inside the output vec's spare capacity (disjoint
     /// across chunks, in chunk order). `None` = capacity exhausted; the
-    /// worker ships its rows back for copy assembly instead.
+    /// worker returns an owned chunk instead.
     window: Option<&'trace mut [core::mem::MaybeUninit<Cycle>]>,
 }
 
@@ -408,8 +409,33 @@ pub(crate) static TEST_CORRUPT_BOUNDARY_STATE: std::sync::atomic::AtomicBool =
 ///
 /// In-flight memory is bounded by the job-queue depth: at most
 /// `2*workers (queued) + workers (executing) + 1 (capturing)` full images.
-#[expect(clippy::expect_used)]
 pub fn run_two_pass(emulator: Emulator, config: &TwoPassConfig) -> (Vec<Cycle>, Emulator) {
+    let (chunks, emulator) = run_two_pass_chunks(emulator, config);
+    (chunks.into_flat(), emulator)
+}
+
+pub(crate) struct TraceChunks {
+    pub(crate) prefix: Vec<Cycle>,
+    pub(crate) suffix: Vec<Vec<Cycle>>,
+}
+
+impl TraceChunks {
+    fn into_flat(self) -> Vec<Cycle> {
+        let mut trace = self.prefix;
+        let total_overflow: usize = self.suffix.iter().map(Vec::len).sum();
+        trace.reserve(total_overflow);
+        for rows in self.suffix {
+            trace.extend(rows);
+        }
+        trace
+    }
+}
+
+#[expect(clippy::expect_used)]
+pub(crate) fn run_two_pass_chunks(
+    emulator: Emulator,
+    config: &TwoPassConfig,
+) -> (TraceChunks, Emulator) {
     use core::mem::MaybeUninit;
     use std::sync::mpsc;
     use std::sync::Mutex;
@@ -656,10 +682,11 @@ pub fn run_two_pass(emulator: Emulator, config: &TwoPassConfig) -> (Vec<Cycle>, 
         .iter()
         .zip(overflow.iter().skip(1))
         .all(|((a, _), (b, _))| a + 1 == *b));
-    let total_overflow: usize = overflow.iter().map(|(_, rows)| rows.len()).sum();
-    trace.reserve(total_overflow);
-    for (_, rows) in overflow {
-        trace.extend(rows);
-    }
-    (trace, pass1.into_emulator())
+    (
+        TraceChunks {
+            prefix: trace,
+            suffix: overflow.into_iter().map(|(_, rows)| rows).collect(),
+        },
+        pass1.into_emulator(),
+    )
 }

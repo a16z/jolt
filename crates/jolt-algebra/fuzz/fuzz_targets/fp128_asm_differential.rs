@@ -3,7 +3,7 @@
 use libfuzzer_sys::fuzz_target;
 
 #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
-use jolt_algebra::{CanonicalEncoding, Fp128, Prime128Offset275, Prime128OffsetA7F7};
+use jolt_algebra::{CanonicalEncoding, Fp128, Prime128Offset275, Prime128Offset6A23801F};
 
 #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 type GenericOffset173 = Fp128<{ u128::MAX - 172 }>;
@@ -27,7 +27,7 @@ fuzz_target!(|data: [u8; 96]| {
         // register-parameterized kernels cannot become unreachable unnoticed.
         exercise!(GenericOffset173);
         exercise!(Prime128Offset275);
-        exercise!(Prime128OffsetA7F7);
+        exercise!(Prime128Offset6A23801F);
     }
 
     #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]

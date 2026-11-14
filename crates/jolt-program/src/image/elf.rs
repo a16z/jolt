@@ -1,12 +1,13 @@
 use common::constants::RAM_START_ADDRESS;
 use jolt_riscv::{uncompress_rv64_instruction, JoltInstructionProfile, SourceInstruction};
-use object::{Object, ObjectSection, ObjectSymbol, SectionKind, SymbolKind};
+use object::elf::SHF_WRITE;
+use object::{Object, ObjectSection, ObjectSymbol, SectionFlags, SectionKind, SymbolKind};
 use std::{
     collections::{BTreeMap, HashMap},
     ops::Range,
 };
 
-use crate::ProgramError;
+use crate::{preprocess::PreprocessingError, ProgramError};
 
 /// Contents decoded directly from an RV64 ELF program image.
 ///
@@ -75,6 +76,7 @@ pub fn decode_elf(
             .push((symbol.address(), kind));
     }
     let mut data_ranges = Vec::new();
+    let mut writable_ranges = Vec::new();
 
     for section in obj
         .sections()
@@ -92,6 +94,11 @@ pub fn decode_elf(
             .data()
             .map_err(|_| ProgramError::MalformedImage("section data is not readable"))?;
 
+        if matches!(section.flags(), SectionFlags::Elf { sh_flags, .. } if sh_flags.contains(SHF_WRITE))
+            && start < end
+        {
+            writable_ranges.push((start, end));
+        }
         if section.kind() == SectionKind::Text {
             text_ranges.push((start, end));
             if let Some(symbols) = mapping_symbols.get_mut(&section.index()) {
@@ -143,6 +150,27 @@ pub fn decode_elf(
         decode(cursor..end)?;
     }
 
+    for instruction in &instructions {
+        let row = instruction.row();
+        let address = row.address as u64;
+        let end = address
+            .checked_add(if row.is_compressed { 2 } else { 4 })
+            .ok_or(ProgramError::MalformedImage(
+                "invalid source instruction extent",
+            ))?;
+        let code_start = address / 8;
+        let code_end = end.div_ceil(8);
+        for &(start, end) in &writable_ranges {
+            let first_word = start / 8;
+            let end_word = end.div_ceil(8);
+            if code_start < end_word && first_word < code_end {
+                return Err(ProgramError::MalformedImage(
+                    "writable section shares a protected code doubleword",
+                ));
+            }
+        }
+    }
+
     Ok(Rv64ProgramImage {
         instructions,
         memory_init,
@@ -175,6 +203,9 @@ fn decode_text_section(
     let mut offset = 0;
     while offset < raw_data.len() {
         let address = section_address + offset as u64;
+        if !address.is_multiple_of(2) {
+            return Err(PreprocessingError::InvalidBytecodeAddress(address as usize).into());
+        }
         let Some(&[b0, b1]) = raw_data.get(offset..offset + 2) else {
             return Err(ProgramError::MalformedImage(
                 "truncated instruction halfword",
@@ -215,7 +246,7 @@ fn decode_text_section(
 )]
 mod tests {
     use super::{decode_elf, merge_ranges};
-    use crate::{ProgramError, RV64I};
+    use crate::{preprocess::PreprocessingError, ProgramError, RV64I};
     use common::constants::RAM_START_ADDRESS;
     use jolt_riscv::{SourceInstructionKind, RV64IMAC_JOLT, RV64IM_JOLT};
 
@@ -490,6 +521,21 @@ mod tests {
     }
 
     #[test]
+    fn decode_elf_requires_even_instruction_addresses_in_all_profiles() {
+        let nop = 0x0000_0013u32;
+        for profile in [RV64I, RV64IM_JOLT, RV64IMAC_JOLT] {
+            let even = build_elf64(&[text_section(RAM_START_ADDRESS, &nop.to_le_bytes())]);
+            assert!(decode_elf(&even, profile).is_ok());
+            let address = RAM_START_ADDRESS + 1;
+            let odd = build_elf64(&[text_section(address, &nop.to_le_bytes())]);
+            assert!(matches!(
+                decode_elf(&odd, profile),
+                Err(ProgramError::Preprocessing(PreprocessingError::InvalidBytecodeAddress(got))) if got == address as usize
+            ));
+        }
+    }
+
+    #[test]
     fn decode_elf_rejects_odd_length_text_section() {
         // c.nop followed by a dangling byte
         let elf = build_elf64(&[text_section(RAM_START_ADDRESS, &[0x01, 0x00, 0x13])]);
@@ -572,11 +618,49 @@ mod tests {
     }
 
     #[test]
+    fn decode_elf_rejects_writable_bytes_sharing_a_code_word() {
+        let text = text_section(RAM_START_ADDRESS, &[0x01, 0x00]);
+        let data = data_section(RAM_START_ADDRESS + 4, &[0xaa]);
+        let mut bss = data_section(RAM_START_ADDRESS + 6, &[]);
+        bss.section_type = SHT_NOBITS;
+        bss.size_override = Some(2);
+        for writable in [data, bss] {
+            let elf = build_elf64(&[text_section(text.address, &text.data), writable]);
+            assert!(matches!(
+                decode_elf(&elf, RV64IMAC_JOLT),
+                Err(ProgramError::MalformedImage(
+                    "writable section shares a protected code doubleword"
+                ))
+            ));
+        }
+    }
+
+    #[test]
+    fn decode_elf_allows_writable_words_containing_only_text_padding() {
+        let elf = build_elf64(&[
+            text_section(RAM_START_ADDRESS, &[0x01, 0x00, 0, 0, 0, 0, 0, 0, 0, 0]),
+            data_section(RAM_START_ADDRESS + 10, &[0xaa, 0xbb]),
+        ]);
+        let image = decode_elf(&elf, RV64IMAC_JOLT).expect("padding word remains writable");
+        assert_eq!(image.instructions.len(), 1);
+    }
+
+    #[test]
+    fn decode_elf_allows_read_only_data_sharing_a_code_word() {
+        let mut rodata = data_section(RAM_START_ADDRESS + 2, &[0xaa, 0xbb]);
+        rodata.flags = SHF_ALLOC;
+        let elf = build_elf64(&[text_section(RAM_START_ADDRESS, &[0x01, 0x00]), rodata]);
+        let image =
+            decode_elf(&elf, RV64IMAC_JOLT).expect("read-only neighboring bytes may freeze");
+        assert_eq!(image.instructions.len(), 1);
+    }
+
+    #[test]
     fn decode_elf_ignores_sections_below_ram_start() {
         let elf = build_elf64(&[text_section(0x1000, &[0x01, 0x45])]);
         let image = decode_elf(&elf, RV64IMAC_JOLT).expect("image must decode");
-        assert!(image.instructions.is_empty());
-        assert!(image.memory_init.is_empty());
+        assert_eq!(image.instructions, []);
+        assert_eq!(image.memory_init, []);
         assert_eq!(image.program_end, RAM_START_ADDRESS);
     }
 

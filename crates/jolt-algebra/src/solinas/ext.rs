@@ -12,7 +12,7 @@
 //!
 //! Which of these are fields depends on the base prime. `Ext2` (non-residue
 //! 2), `FpExt4` and `FpExt8` are fields exactly when `p ≡ ±3 (mod 8)`, which
-//! holds for every registered prime and not for `Prime128OffsetA7F7`. Over
+//! holds for every registered prime and not for `Prime128Offset6A23801F`. Over
 //! any other prime the types are still rings, and the differential tests use
 //! them as such.
 //!
@@ -26,9 +26,10 @@
 )]
 
 use crate::solinas::pseudo_mersenne_modulus;
-use crate::{CanonicalBytes, Ext2Config, ExtField, Field, FieldError, PseudoMersenne, Ring};
+use crate::{AlgebraError, CanonicalBytes, Ext2Config, ExtField, Field, PseudoMersenne, Ring};
 #[cfg(feature = "bytemuck")]
 use bytemuck::{CheckedBitPattern, NoUninit, Pod, Zeroable};
+use jolt_utils::alloc::ZeroBytesValid;
 use num_traits::Zero;
 use rand_core::RngCore;
 use std::marker::PhantomData;
@@ -178,6 +179,8 @@ impl<F: PseudoMersenne, C: Ext2Config<F>> Ring for FpExt2<F, C> {
 }
 
 impl<F: PseudoMersenne, C: Ext2Config<F>> Field for FpExt2<F, C> {
+    zeroed_field_vec!();
+
     /// Inversion via the norm: `x^{-1} = conjugate(x) / norm(x)`.
     fn inverse(&self) -> Option<Self> {
         if self.is_zero() {
@@ -371,6 +374,8 @@ impl<F: PseudoMersenne> Ring for FpExt4<F> {
 }
 
 impl<F: PseudoMersenne> Field for FpExt4<F> {
+    zeroed_field_vec!();
+
     /// Inversion via the subfield tower: write `self = a + b·e1` over the
     /// e2-subfield, invert the norm `a² − e1²·b²` there, then one base
     /// inversion.
@@ -497,6 +502,8 @@ impl<F: PseudoMersenne> Ring for FpExt8<F> {
 }
 
 impl<F: PseudoMersenne> Field for FpExt8<F> {
+    zeroed_field_vec!();
+
     /// Inversion by dense Gaussian elimination on the 8×8 multiplication
     /// matrix — explicit and auditable; octic inversion is not a hot path.
     fn inverse(&self) -> Option<Self> {
@@ -741,13 +748,13 @@ impl<F: PseudoMersenne> ExtField<F> for FpExt8<F> {
 /// # Errors
 ///
 /// Returns an error if `width > E::DEGREE`.
-pub fn canonical_extension_basis<F, E>(width: usize) -> Result<Vec<E>, FieldError>
+pub fn canonical_extension_basis<F, E>(width: usize) -> Result<Vec<E>, AlgebraError>
 where
     F: Field,
     E: ExtField<F>,
 {
     if width > E::DEGREE {
-        return Err(FieldError::InvalidInput(format!(
+        return Err(AlgebraError::InvalidInput(format!(
             "Frobenius theta width {width} exceeds extension degree {}",
             E::DEGREE
         )));
@@ -769,14 +776,14 @@ where
 /// # Errors
 ///
 /// Returns an error on a dimension mismatch or a singular Moore-type matrix.
-pub fn solve_frobenius_moore<F, E>(thetas: &[E], rhs: &[E]) -> Result<Vec<E>, FieldError>
+pub fn solve_frobenius_moore<F, E>(thetas: &[E], rhs: &[E]) -> Result<Vec<E>, AlgebraError>
 where
     F: PseudoMersenne,
     E: ExtField<F>,
 {
     let n = thetas.len();
     if rhs.len() != n {
-        return Err(FieldError::InvalidSize {
+        return Err(AlgebraError::InvalidSize {
             expected: n,
             actual: rhs.len(),
         });
@@ -795,14 +802,14 @@ where
         let pivot = (col..n)
             .find(|&row| !matrix[row][col].is_zero())
             .ok_or_else(|| {
-                FieldError::InvalidInput("singular Frobenius Moore-type matrix".to_string())
+                AlgebraError::InvalidInput("singular Frobenius Moore-type matrix".to_string())
             })?;
         if pivot != col {
             matrix.swap(col, pivot);
             values.swap(col, pivot);
         }
         let inv = matrix[col][col].inverse().ok_or_else(|| {
-            FieldError::InvalidInput("singular Frobenius Moore-type matrix".to_string())
+            AlgebraError::InvalidInput("singular Frobenius Moore-type matrix".to_string())
         })?;
         for entry in &mut matrix[col][col..] {
             *entry *= inv;
@@ -834,7 +841,7 @@ where
 /// # Errors
 ///
 /// Returns an error if theta construction fails or the Moore solve rejects.
-pub fn validate_canonical_frobenius_thetas<F, E>(width: usize) -> Result<(), FieldError>
+pub fn validate_canonical_frobenius_thetas<F, E>(width: usize) -> Result<(), AlgebraError>
 where
     F: PseudoMersenne,
     E: ExtField<F>,
@@ -874,5 +881,48 @@ mod bytemuck_tests {
             checked::try_cast::<[[u64; 2]; 2], E128>([[0, 0], top]).err(),
             Some(CheckedCastError::InvalidBitPattern),
         );
+    }
+}
+
+// SAFETY: all coefficients are zero-byte-valid; the extension zero has all
+// zero coefficients. The quadratic config marker occupies no storage.
+unsafe impl<F: PseudoMersenne, C: Ext2Config<F>> ZeroBytesValid for FpExt2<F, C> {}
+
+// SAFETY: `FpExt4` is a transparent array of four coefficients, each
+// zero-byte-valid through the `PseudoMersenne: ZeroBytesValid` supertrait; the
+// extension zero is `[F::zero(); 4]`, all zero coefficients.
+unsafe impl<F: PseudoMersenne> ZeroBytesValid for FpExt4<F> {}
+
+// SAFETY: `FpExt8` is a transparent array of eight coefficients, each
+// zero-byte-valid through the `PseudoMersenne: ZeroBytesValid` supertrait; the
+// extension zero is `[F::zero(); 8]`, all zero coefficients.
+unsafe impl<F: PseudoMersenne> ZeroBytesValid for FpExt8<F> {}
+
+#[cfg(test)]
+#[expect(clippy::unwrap_used)]
+mod tests {
+    use super::{Ext2, FpExt4, FpExt8};
+    use crate::solinas::{Prime128Offset6A23801F, Prime32Offset99, Prime64Offset59};
+    use crate::Field;
+
+    fn assert_zeroed_vectors<F: Field>() {
+        for len in [0, 1, 17, 1024] {
+            let expected = vec![F::zero(); len];
+            assert_eq!(F::zeroed_vec(len), expected);
+            assert_eq!(F::try_zeroed_vec(len).unwrap(), expected);
+        }
+    }
+
+    #[test]
+    fn extension_zeroed_vectors_are_zero() {
+        assert_zeroed_vectors::<Ext2<Prime32Offset99>>();
+        assert_zeroed_vectors::<FpExt4<Prime32Offset99>>();
+        assert_zeroed_vectors::<FpExt8<Prime32Offset99>>();
+        assert_zeroed_vectors::<Ext2<Prime64Offset59>>();
+        assert_zeroed_vectors::<FpExt4<Prime64Offset59>>();
+        assert_zeroed_vectors::<FpExt8<Prime64Offset59>>();
+        assert_zeroed_vectors::<Ext2<Prime128Offset6A23801F>>();
+        assert_zeroed_vectors::<FpExt4<Prime128Offset6A23801F>>();
+        assert_zeroed_vectors::<FpExt8<Prime128Offset6A23801F>>();
     }
 }

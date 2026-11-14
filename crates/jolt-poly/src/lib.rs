@@ -76,10 +76,11 @@ mod split_eq;
 mod univariate;
 
 pub use binding::BindingOrder;
-pub use compressed_univariate::CompressedPoly;
+pub use compressed_univariate::{eval_round_wire, CompressedPoly, WireFormat};
 pub use dense::{bind_prefix_in_place, bind_prefix_rows_in_place, Polynomial};
 pub use eq::{
-    boolean_bits_msb, boolean_index_msb, boolean_point_msb, eq_index_msb, try_eq_mle, EqPolynomial,
+    boolean_bits_msb, boolean_index_msb, boolean_point_msb, eq_index, eq_index_msb, try_eq_mle,
+    EqPolynomial,
 };
 pub use eq_plus_one::{EqPlusOnePolynomial, EqPlusOnePrefixSuffix};
 pub use evaluation_claim::EvaluationClaim;
@@ -91,6 +92,10 @@ pub use mle::{
 pub use multilinear::{MultilinearBinding, MultilinearEvaluation, MultilinearPoly, RlcSource};
 pub use omitted_constant::OmittedConstantPoly;
 pub use one_hot::{OneHotIndexOrder, OneHotPolynomial};
-pub use point::{Endianness, Point, HIGH_TO_LOW, LOW_TO_HIGH};
-pub use split_eq::{GruenSplitEqPolynomial, TensorEqTable};
+pub use point::{Endianness, Point, PointLike, PointRef, HIGH_TO_LOW, LOW_TO_HIGH};
+pub use split_eq::{
+    GruenRound, GruenRoundMut, GruenSplitEqPolynomial, PreparedLinearRecovery, TensorEqTable,
+};
 pub use univariate::{UnivariatePoly, UnivariatePolynomial};
+
+pub use eq::alloc::{AllocationCause, Budget, EqAlloc, EqTableError, Global};

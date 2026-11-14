@@ -1,11 +1,10 @@
 use jolt_claims::protocols::jolt::lattice::increments::FusedIncLayout;
 use jolt_field::JoltField;
 use jolt_openings::{CommitmentScheme, TransparentObjectSetup};
-use jolt_poly::Polynomial;
+#[cfg(feature = "parallel")]
+use jolt_utils::par_collect_windows;
 use jolt_witness::witnesses::FusedInc;
 use jolt_witness::{collect_bundles, JoltWitnessPlane, WitnessBundle, WitnessError};
-#[cfg(feature = "parallel")]
-use rayon::prelude::*;
 
 use crate::akita::commitment::FusedIncObject;
 use crate::KernelError;
@@ -29,8 +28,7 @@ where
 {
     let layout = FusedIncLayout::new(log_t);
     let cycles = 1usize << log_t;
-    let mut values = if let Some(access) = witness.random_access().filter(|a| cycles <= a.cycles())
-    {
+    let values = if let Some(access) = witness.random_access().filter(|a| cycles <= a.cycles()) {
         let extract = |cycle| -> Result<F, WitnessError> {
             Ok(F::from_i128(
                 access.window::<IncrementRow>(cycle)?.increment.0,
@@ -38,10 +36,7 @@ where
         };
         let physical = access.physical_cycles().min(cycles);
         #[cfg(feature = "parallel")]
-        let values = (0..physical)
-            .into_par_iter()
-            .map(extract)
-            .collect::<Result<Vec<_>, _>>()?;
+        let values = par_collect_windows(physical, extract)?;
         #[cfg(not(feature = "parallel"))]
         let values = (0..physical).map(extract).collect::<Result<Vec<_>, _>>()?;
         values
@@ -51,12 +46,7 @@ where
             .map(|row| F::from_i128(row.increment.0))
             .collect()
     };
-    values.resize(1usize << layout.num_vars(), F::zero());
-    let (object_setup, _) = PCS::transparent_object_setup(
-        PCS::transparent_setup_context(setup),
-        layout.num_vars(),
-        layout.layout_digest(),
-    )?;
-    let (commitment, hint) = PCS::commit(&Polynomial::new(values), &object_setup)?;
+    let (commitment, hint) =
+        PCS::commit_bounded_object(setup, layout.num_vars(), values, layout.layout_digest())?;
     Ok(FusedIncObject { commitment, hint })
 }

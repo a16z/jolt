@@ -359,6 +359,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cdd35008169921d80bc60d3d0ab416eecb028c4cd653352907921d95084790be"
 dependencies = [
  "hybrid-array",
+ "zeroize",
 ]
 
 [[package]]
@@ -698,6 +699,7 @@ dependencies = [
  "const-oid",
  "crypto-common 0.2.1",
  "ctutils",
+ "zeroize",
 ]
 
 [[package]]
@@ -1131,6 +1133,7 @@ dependencies = [
  "ark-ff",
  "ark-serialize",
  "cc",
+ "jolt-utils",
  "num-traits",
  "rand_core",
  "rayon",
@@ -1140,18 +1143,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "jolt-blindfold"
+name = "jolt-claim-expr"
 version = "0.1.0"
 dependencies = [
- "jolt-claims",
- "jolt-crypto",
- "jolt-field",
- "jolt-poly",
- "jolt-r1cs",
- "jolt-sumcheck",
- "jolt-transcript",
- "jolt-utils",
- "rand_core",
+ "jolt-algebra",
  "serde",
  "thiserror 2.0.18",
 ]
@@ -1161,6 +1156,7 @@ name = "jolt-claims"
 version = "0.1.0"
 dependencies = [
  "derive_more",
+ "jolt-claim-expr",
  "jolt-claims-derive",
  "jolt-field",
  "jolt-lookup-tables",
@@ -1470,6 +1466,7 @@ dependencies = [
  "jolt-transcript",
  "jolt-verifier",
  "jolt-witness",
+ "jolt-zk",
  "rayon",
  "serde",
  "thiserror 2.0.18",
@@ -1558,6 +1555,7 @@ dependencies = [
  "jolt-riscv",
  "libc",
  "tracer",
+ "tracing",
 ]
 
 [[package]]
@@ -1570,9 +1568,11 @@ dependencies = [
  "getrandom 0.4.2",
  "jolt-field",
  "light-poseidon",
+ "rand_core",
  "sha3",
  "shake",
  "spongefish",
+ "zeroize",
 ]
 
 [[package]]
@@ -1590,7 +1590,6 @@ dependencies = [
  "ark-serialize",
  "bincode 2.0.1",
  "common",
- "jolt-blindfold",
  "jolt-claims",
  "jolt-claims-derive",
  "jolt-crypto",
@@ -1603,6 +1602,7 @@ dependencies = [
  "jolt-sumcheck",
  "jolt-transcript",
  "jolt-verifier-derive",
+ "jolt-zk",
  "num-traits",
  "serde",
  "sha3",
@@ -1642,6 +1642,24 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.3",
+]
+
+[[package]]
+name = "jolt-zk"
+version = "0.1.0"
+dependencies = [
+ "jolt-claims",
+ "jolt-crypto",
+ "jolt-field",
+ "jolt-poly",
+ "jolt-r1cs",
+ "jolt-sumcheck",
+ "jolt-transcript",
+ "jolt-utils",
+ "rand_core",
+ "rayon",
+ "serde",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -2206,9 +2224,9 @@ dependencies = [
 
 [[package]]
 name = "rustix"
-version = "1.1.4"
+version = "1.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b6fe4565b9518b83ef4f91bb47ce29620ca828bd32cb7e408f0062e9930ba190"
+checksum = "e5e76742e5294153d4dde1207dbec5bdd81eef6fabdc0d2118babadabfd858aa"
 dependencies = [
  "bitflags",
  "errno",
@@ -2406,6 +2424,9 @@ name = "sponge-cursor"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3a0219bd7d979d58245a4f41f695e1ac9f8befdffadd7f61f1bae9e39abc6620"
+dependencies = [
+ "zeroize",
+]
 
 [[package]]
 name = "spongefish"

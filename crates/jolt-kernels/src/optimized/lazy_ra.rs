@@ -56,7 +56,7 @@ pub(crate) use paired::PairedBranchTables;
 use paired::{PairedLoHi, PAIR_ADDRESSES};
 
 /// The default widest lazy branch set: the fourth bind materializes `T/16`.
-const DEFAULT_MAX_WIDTH: usize = 8;
+pub(super) const DEFAULT_MAX_WIDTH: usize = 8;
 
 /// Per-cycle hot indices of `N` point-mass columns (one per committed
 /// one-hot selector, or `factors` per factored polynomial) over a shared
@@ -166,6 +166,46 @@ pub(super) fn gather_pairs_by_index<F: JoltField, S: ChunkIndexSource>(
             gather(table, width, source, i, 2 * row),
             gather(table, width, source, i, 2 * row + 1),
         );
+    }
+}
+
+/// How [`LazyFoldedRa::bind`] proceeds from `width` branches.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum LazyBind {
+    /// Double the branch tables and stay lazy.
+    Double,
+    /// Double the branch tables, then materialize at twice the width.
+    DoubleThenMaterialize,
+    /// Materialize at the current width, binding each gathered pair, because
+    /// the doubled branch tables would hold at least as many field elements as
+    /// the dense tables.
+    FusedMaterialize,
+}
+
+impl LazyBind {
+    /// The step for branch tables of `table_lens` entries, in polynomial
+    /// order with `factors` tables per polynomial (only each polynomial's
+    /// first table doubles), over `cycles` cycles at `width` of at most
+    /// `max_width` branches.
+    pub(super) fn new(
+        width: usize,
+        max_width: usize,
+        factors: usize,
+        cycles: usize,
+        table_lens: impl ExactSizeIterator<Item = usize>,
+    ) -> Self {
+        let dense_elements = cycles / (2 * width) * (table_lens.len() / factors);
+        let branch_elements = table_lens
+            .enumerate()
+            .map(|(column, len)| len * if column.is_multiple_of(factors) { 2 } else { 1 })
+            .sum::<usize>();
+        if branch_elements >= dense_elements {
+            Self::FusedMaterialize
+        } else if width < max_width {
+            Self::Double
+        } else {
+            Self::DoubleThenMaterialize
+        }
     }
 }
 
@@ -404,15 +444,14 @@ impl<F: JoltField, S: ChunkIndexSource> LazyFoldedRa<F, S> {
                 source,
             } => {
                 let next_width = width * 2;
-                let dense_elements = source.cycles() / next_width * (tables.len() / factors);
-                let branch_elements = tables
-                    .iter()
-                    .enumerate()
-                    .map(|(column, table)| {
-                        table.len() * if column.is_multiple_of(factors) { 2 } else { 1 }
-                    })
-                    .sum::<usize>();
-                if width < max_width && branch_elements < dense_elements {
+                let step = LazyBind::new(
+                    width,
+                    max_width,
+                    factors,
+                    source.cycles(),
+                    tables.iter().map(Vec::len),
+                );
+                if step == LazyBind::Double {
                     Self::Lazy {
                         tables: double_branches(tables, factors, challenge),
                         width: next_width,
@@ -425,7 +464,7 @@ impl<F: JoltField, S: ChunkIndexSource> LazyFoldedRa<F, S> {
                 } else {
                     let log_t = source.cycles().ilog2() as usize;
                     // Gather and bind directly before a wide address table would expand.
-                    let (tables, branches, bind) = if branch_elements >= dense_elements {
+                    let (tables, branches, bind) = if step == LazyBind::FusedMaterialize {
                         (tables, width, Some(challenge))
                     } else {
                         (
@@ -829,7 +868,7 @@ fn materialize_paired_rows<F: JoltField, S: ChunkIndexSource>(
 mod prefix_tests {
     use super::{ChunkIndexSource, LazyFoldedRa};
     #[cfg(feature = "akita")]
-    use jolt_field::Prime128OffsetA7F7;
+    use jolt_field::Prime128Offset6A23801F;
     use jolt_field::{Fr, JoltField};
 
     struct Source {
@@ -915,7 +954,9 @@ mod prefix_tests {
                 let challenge = F::from_u64([0, 1, 13, 29, 41, 53, 67][round % 7]);
                 for values in &mut dense {
                     *values = values
-                        .chunks_exact(2)
+                        .as_chunks::<2>()
+                        .0
+                        .iter()
                         .map(|p| p[0] + challenge * (p[1] - p[0]))
                         .collect();
                 }
@@ -930,7 +971,7 @@ mod prefix_tests {
     #[cfg(feature = "akita")]
     #[test]
     fn constant_tail_binds_match_dense_multilinears_fp128() {
-        check::<Prime128OffsetA7F7>();
+        check::<Prime128Offset6A23801F>();
     }
 }
 

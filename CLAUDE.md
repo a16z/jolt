@@ -33,6 +33,40 @@ A push voids the line. After opening a pull request and after every push, review
 
 ## Essential Commands
 
+### Opt-in prover benchmarks
+
+When the Pika App dispatcher and forced-command target are configured and the
+`JOLT_E2E_ENABLED` repository variable is `true` (setup in
+`scripts/bench/README.md`), a maintainer or administrator can add the `benchmark` label to a same-repository PR. The label
+persists across pushes: each admitted run builds base and candidate locally with
+release/znver4, then runs the PR suite in `scripts/bench/suites.json`. Forks
+and labels applied by write-only contributors are not admitted. While the label
+remains, any later push to the branch, by anyone who can push to it, runs its code
+(including `build.rs`) on the benchmark machine's persistent account without new
+approval. Only `runner` on `jolt-bench` executes PR code; no Pika agent runs there.
+The App rechecks admission before dispatch and publishes an **End-to-end benchmark**
+check. Results are in the **End-to-end benchmark ingest** run's `jolt-e2e-*`
+artifact and the dashboard's **Pull requests** view at
+`https://a16z.github.io/jolt/dev/prover-history/`. Main commits and nightly runs
+need no label: their builds run on GitHub-hosted runners and only verified
+artifacts run on the benchmark machine. Main/nightly jobs attempt calibration
+before history unless a main-push tip is already superseded. PR ingest
+authenticates exact-base external references with 48-hour expiry. Before
+ordinary enablement, run main-only `tier=calibration` bootstrap and the README
+`publication.py verify-calibration` acceptance steps. Bootstrap alone is allowed
+while ordinary tiers are disabled.
+
+### Prover benchmark history
+
+The history publisher collects the Pika App's successful **End-to-end benchmark ingest**
+runs, not the planning workflow. Its canonical artifact is
+`jolt-e2e-INGEST_RUN_ID-ATTEMPT`; `ingest.json` binds it to the original plan and
+measured revisions. PR code runs only as `runner` on `jolt-bench`, never on the
+daemon host. Publication appends only
+under `dev/prover-history/` on the existing `gh-pages` source and leaves `dev/bench/`
+unchanged. See `book/src/usage/profiling/benchmark_history.md` and the producer's
+`scripts/bench/README.md` for setup and admission.
+
 ### Linting and Formatting
 
 ```bash
@@ -53,7 +87,8 @@ cargo nextest run -p [package_name] [test_name] --cargo-quiet
 
 # Guest x mode acceptance matrix (crates/jolt-prover/tests/e2e_matrix.rs): one
 # table per instruction profile, proven in clear, ZK, and Akita modes in CI.
-# Ordinary profile: ten guest cases.
+# Ordinary profile: thirteen guest cases. Akita builds of both profiles also prove
+# fibonacci_ring_512, which asserts a ring-dimension-512 trace commitment.
 cargo nextest run -p jolt-prover --features prover-fixtures -E 'binary(e2e_matrix)' --cargo-quiet
 cargo nextest run -p jolt-prover --features prover-fixtures,zk -E 'binary(e2e_matrix)' --cargo-quiet
 cargo nextest run -p jolt-prover --features akita,prover-fixtures -E 'binary(e2e_matrix)' --cargo-quiet
@@ -156,7 +191,7 @@ T: Transcript<Challenge = PCS::Field>
 3. **Commit**: stage 0 commits the trace objects. Dory streams individual polynomials; Akita commits the one-hot columns as one native group and auxiliary objects separately.
 4. **Reduce**: `jolt-prover/src/stages/` proves stages 1–7 from the symbolic relations in `jolt-claims`.
 5. **Open**: stage 8 reduces the remaining claims and dispatches the joint PCS opening.
-6. **BlindFold**: ZK builds prove the committed sumcheck transcript with `jolt-blindfold`.
+6. **BlindFold**: ZK builds prove the committed sumcheck transcript with `jolt-zk`.
 
 ### Protocol Ownership
 
@@ -165,7 +200,7 @@ T: Transcript<Challenge = PCS::Field>
 - `jolt-prover` owns proving orchestration and backend-specific stage 0/stage 8 integration; it consumes the shared claims rather than restating verifier formulas.
 - `jolt-witness` owns trace-backed witness construction. `jolt-kernels` owns reference and optimized evaluation kernels.
 - `jolt-poly`, `jolt-sumcheck`, `jolt-openings`, `jolt-dory`, and `jolt-akita` own the reusable polynomial, sumcheck, and PCS layers.
-- `jolt-claims` owns the RV64 and field-inline constraint tables and variable layout under `protocols::composed::r1cs`; `jolt-r1cs` owns the generic builder and matrix layer. `jolt-blindfold` owns the generic zero-knowledge proof over recorded sumchecks.
+- `jolt-claims` owns the RV64 and field-inline constraint tables and variable layout under `protocols::composed::r1cs`; `jolt-r1cs` owns the generic builder and matrix layer. `jolt-zk` owns the generic zero-knowledge proof over recorded sumchecks.
 
 Committed trace polynomials are identified by `JoltCommittedPolynomial`; virtual
 polynomials by `JoltVirtualPolynomial`. Do not recreate their ordering or opening

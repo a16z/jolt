@@ -364,29 +364,9 @@ pub fn create_emulator(
         emulator.set_advice_tape(tape);
     }
 
-    assert!(
-        trusted_advice.len() as u64 <= memory_config.max_trusted_advice_size,
-        "Trusted advice too long: got {} bytes, max is {} bytes (set by MemoryConfig.max_trusted_advice_size).",
-        trusted_advice.len(),
-        memory_config.max_trusted_advice_size,
-    );
-    assert!(
-        untrusted_advice.len() as u64 <= memory_config.max_untrusted_advice_size,
-        "Untrusted advice too long: got {} bytes, max is {} bytes (set by MemoryConfig.max_untrusted_advice_size).",
-        untrusted_advice.len(),
-        memory_config.max_untrusted_advice_size,
-    );
-    assert!(
-        inputs.len() as u64 <= memory_config.max_input_size,
-        "Input too long: got {} bytes, max is {} bytes (set by MemoryConfig.max_input_size).",
-        inputs.len(),
-        memory_config.max_input_size,
-    );
-
-    let mut jolt_device = JoltDevice::new(memory_config);
-    jolt_device.inputs = inputs.to_vec();
-    jolt_device.trusted_advice = trusted_advice.to_vec();
-    jolt_device.untrusted_advice = untrusted_advice.to_vec();
+    let jolt_device =
+        JoltDevice::try_with_io(memory_config, inputs, trusted_advice, untrusted_advice)
+            .unwrap_or_else(|error| panic!("{error}"));
     emulator.get_mut_cpu().get_mut_mmu().jolt_device = Some(jolt_device);
     if let Some(elf_path) = elf_path {
         emulator.set_elf_path(elf_path);
@@ -1122,6 +1102,46 @@ mod tests {
             );
             assert_eq!(finished.get_cpu().trace_len, serial_rows.len());
         }
+    }
+
+    /// Replay workers must apply a chunk's advice-tape appends: every
+    /// chunk-boundary state check compares the worker's tape with pass-1's.
+    #[test]
+    fn test_run_two_pass_replays_advice_writes() {
+        use crate::parallel::{run_two_pass, TwoPassConfig};
+
+        // a0 = JOLT_ADVICE_WRITE_CALL_ID (lui + addi), a1 = auipc's own pc,
+        // a2 = 4, VirtualHostIO, j . — appends the auipc word, never reads.
+        let elf = build_elf64(
+            &[
+                0x00ad_c537,
+                0xabe5_0513,
+                0x0000_0597,
+                0x0040_0613,
+                0x0000_205b,
+                0x0000_006f,
+            ],
+            &[],
+            StrtabOrder::GnuLd,
+        );
+        let memory_config = tiny_guest_config(&elf);
+        let (serial_rows, _) = serial_reference(&elf, &memory_config);
+
+        // One tick per chunk: the write's chunk ends mid-trace and every later
+        // chunk starts from the appended bytes.
+        let (rows, mut finished) = run_two_pass(
+            setup_emulator(&elf, &INPUTS, &[], &[], &memory_config),
+            &TwoPassConfig {
+                workers: 2,
+                chunk_rows: 1,
+                capacity_rows: 1 << 24,
+            },
+        );
+        assert_eq!(rows, serial_rows);
+        assert_eq!(
+            finished.take_advice_tape().into_bytes(),
+            0x0000_0597u32.to_le_bytes()
+        );
     }
 
     #[test]

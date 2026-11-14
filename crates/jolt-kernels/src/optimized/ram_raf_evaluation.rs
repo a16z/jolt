@@ -13,10 +13,11 @@ use std::collections::BTreeMap;
 use jolt_claims::protocols::jolt::geometry::ram::ram_ra_raf_evaluation;
 use jolt_claims::protocols::jolt::{JoltDerivedId, RamRafEvaluationPublic};
 use jolt_field::JoltField;
-use jolt_poly::{BindingOrder, Polynomial};
+use jolt_poly::{BindingOrder, Polynomial, TensorEqTable};
 use jolt_verifier::stages::stage2::ram_raf_evaluation::RamRafEvaluation;
 use jolt_witness::JoltWitnessPlane;
 
+use super::ram_events::RamEventLog;
 use super::ram_trace::SharedRamAddresses;
 use super::read_write::RamAddressKernel;
 use super::OptimizedBackend;
@@ -31,41 +32,81 @@ impl<F: JoltField> PrepareKernel<F, RamRafEvaluation<F>> for OptimizedBackend {
         witness: &dyn JoltWitnessPlane<F>,
         inputs: ProverInputs<'_, F, RamRafEvaluation<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = RamRafEvaluation<F>>>, KernelError<F>> {
-        let relation = inputs.relation;
-        let dimensions = relation.read_write_dimensions();
-        let ram_log_k = relation.ram_log_k();
-        let lowest_address = relation.lowest_address();
-        let tau_low = relation.tau_low();
-        if tau_low.len() != dimensions.log_t() || ram_log_k != dimensions.log_k() {
-            return Err(KernelError::InvariantViolation {
-                reason: "RAM RAF evaluation inputs disagree with the trace/address geometry",
-            });
-        }
-
-        let addresses = 1usize << ram_log_k;
-        let address_column = SharedRamAddresses::shared(session, witness, dimensions.log_t())?;
-        super::ram_trace::validate_addresses(&address_column, addresses)?;
-        let ra_folded = super::ram_trace::fold_cycles(&address_column, tau_low, addresses);
-        let unmap: Vec<F> = (0..addresses as u64)
-            .map(|k| F::from_u64(8 * k + lowest_address))
-            .collect();
-
-        let opening_tables =
-            BTreeMap::from([(ram_ra_raf_evaluation(), Polynomial::new(ra_folded))]);
-        let derived_tables = BTreeMap::from([(
-            JoltDerivedId::from(RamRafEvaluationPublic::UnmapAddress),
-            Polynomial::new(unmap),
-        )]);
-
-        let kernel = Box::new(NaiveSumcheckProver::new_with_table_rounds(
-            &inputs,
-            opening_tables,
-            derived_tables,
-            BindingOrder::LowToHigh,
-            ram_log_k,
-        )?);
-        RamAddressKernel::wrap(kernel, dimensions, relation)
+        prepare_folded(inputs, |log_t, tau_low, addresses| {
+            let address_column = SharedRamAddresses::shared(session, witness, log_t)?;
+            super::ram_trace::validate_addresses(&address_column, addresses)?;
+            Ok(super::ram_trace::fold_cycles(
+                &address_column,
+                tau_low,
+                addresses,
+            ))
+        })
     }
+}
+
+/// The streaming stage-2 RAF slot: `ra_folded` sums over the session's
+/// [`RamEventLog`], each access's weight one split-eq product, in
+/// `O(events + √T + K)`.
+pub struct StreamingRamRafEvaluation;
+
+impl<F: JoltField> PrepareKernel<F, RamRafEvaluation<F>> for StreamingRamRafEvaluation {
+    fn prepare(
+        &self,
+        session: &mut ProofSession,
+        witness: &dyn JoltWitnessPlane<F>,
+        inputs: ProverInputs<'_, F, RamRafEvaluation<F>>,
+    ) -> Result<Box<dyn SumcheckKernel<F, Relation = RamRafEvaluation<F>>>, KernelError<F>> {
+        prepare_folded(inputs, |log_t, tau_low, addresses| {
+            let log = RamEventLog::shared(session, witness, log_t, addresses)?;
+            let eq_cycle = TensorEqTable::new(tau_low);
+            let mut ra_folded = vec![F::zero(); addresses];
+            for event in log.events() {
+                if let Some(address) = event.address {
+                    ra_folded[address as usize] += eq_cycle.evaluate_index(event.cycle as usize);
+                }
+            }
+            Ok(ra_folded)
+        })
+    }
+}
+
+/// The RAF kernel over `fold(log_T, τ_low, K)`'s cycle-folded `ra`, after the
+/// relation's geometry checks.
+fn prepare_folded<F: JoltField>(
+    inputs: ProverInputs<'_, F, RamRafEvaluation<F>>,
+    fold: impl FnOnce(usize, &[F], usize) -> Result<Vec<F>, KernelError<F>>,
+) -> Result<Box<dyn SumcheckKernel<F, Relation = RamRafEvaluation<F>>>, KernelError<F>> {
+    let relation = inputs.relation;
+    let dimensions = relation.read_write_dimensions();
+    let ram_log_k = relation.ram_log_k();
+    let lowest_address = relation.lowest_address();
+    let tau_low = relation.tau_low();
+    if tau_low.len() != dimensions.log_t() || ram_log_k != dimensions.log_k() {
+        return Err(KernelError::InvariantViolation {
+            reason: "RAM RAF evaluation inputs disagree with the trace/address geometry",
+        });
+    }
+
+    let addresses = 1usize << ram_log_k;
+    let ra_folded = fold(dimensions.log_t(), tau_low, addresses)?;
+    let unmap: Vec<F> = (0..addresses as u64)
+        .map(|k| F::from_u64(8 * k + lowest_address))
+        .collect();
+
+    let opening_tables = BTreeMap::from([(ram_ra_raf_evaluation(), Polynomial::new(ra_folded))]);
+    let derived_tables = BTreeMap::from([(
+        JoltDerivedId::from(RamRafEvaluationPublic::UnmapAddress),
+        Polynomial::new(unmap),
+    )]);
+
+    let kernel = Box::new(NaiveSumcheckProver::new_with_table_rounds(
+        &inputs,
+        opening_tables,
+        derived_tables,
+        BindingOrder::LowToHigh,
+        ram_log_k,
+    )?);
+    RamAddressKernel::wrap(kernel, dimensions, relation)
 }
 
 #[cfg(test)]
@@ -76,9 +117,11 @@ mod tests {
     use jolt_claims::protocols::jolt::relations::ram::RamRafEvaluationInputClaims;
     use jolt_claims::NoChallenges;
     use jolt_field::{Fr, Ring};
+    use jolt_witness::TraceBackend;
 
     use super::super::testing::{
-        assert_parity, random_scalars, with_ram_fixture, FixtureShape, RamOp,
+        assert_parity, ram_fixture, random_scalars, silent_ram_fixture, with_ram_fixture,
+        FixtureShape, RamOp,
     };
     use super::*;
     use crate::reference::views::cycle_fold;
@@ -92,81 +135,80 @@ mod tests {
             RamOp::Read { word: 6 },
             RamOp::None,
             RamOp::Write { word: 3, post: 9 },
+            RamOp::UnmappedWrite { pre: 4, post: 1 },
             RamOp::Read { word: 3 },
             RamOp::Read { word: 6 },
         ];
-        with_ram_fixture(shape, ops, |witness| {
-            let tau_low = random_scalars(shape.log_t, 83);
-            for (phase1, phase2) in [
-                (shape.log_t, shape.log_k()),
-                (0, shape.log_k()),
-                (shape.log_t - 1, 1),
-                (0, 0),
-            ] {
-                let read_write_dimensions =
-                    ReadWriteDimensions::new(shape.log_t, shape.log_k(), phase1, phase2);
-                let relation = RamRafEvaluation::<Fr>::new(
-                    read_write_dimensions,
-                    RamRafEvaluationDimensions::try_from(read_write_dimensions).unwrap(),
-                    shape.log_k(),
-                    super::super::testing::fixture_lowest_address(),
-                    tau_low.clone(),
-                );
-                let claims = RamRafEvaluationInputClaims {
-                    ram_address: Fr::from_u64(0),
-                };
-                let points = RamRafEvaluationInputClaims::<Vec<Fr>>::default();
-                let challenges = NoChallenges::default();
+        run_parity(&ram_fixture(shape, Vec::new(), ops), shape);
+    }
 
-                let mut reference_session = ProofSession::default();
+    #[test]
+    fn matches_reference_without_ram_events() {
+        let shape = FixtureShape { log_t: 4, ram_k: 8 };
+        run_parity(&silent_ram_fixture(shape), shape);
+    }
+
+    /// The default and streaming slots against the reference tier at every
+    /// supported phase split.
+    fn run_parity(witness: &TraceBackend, shape: FixtureShape) {
+        let tau_low = random_scalars(shape.log_t, 83);
+        for (phase1, phase2) in [
+            (shape.log_t, shape.log_k()),
+            (0, shape.log_k()),
+            (shape.log_t - 1, 1),
+            (0, 0),
+        ] {
+            let read_write_dimensions =
+                ReadWriteDimensions::new(shape.log_t, shape.log_k(), phase1, phase2);
+            let relation = RamRafEvaluation::<Fr>::new(
+                read_write_dimensions,
+                RamRafEvaluationDimensions::try_from(read_write_dimensions).unwrap(),
+                shape.log_k(),
+                super::super::testing::fixture_lowest_address(),
+                tau_low.clone(),
+            );
+            let claims = RamRafEvaluationInputClaims {
+                ram_address: Fr::from_u64(0),
+            };
+            let points = RamRafEvaluationInputClaims::<Vec<Fr>>::default();
+            let challenges = NoChallenges::default();
+            let inputs = || ProverInputs {
+                relation: &relation,
+                claims: &claims,
+                points: &points,
+                challenges: &challenges,
+            };
+
+            let ra_folded =
+                cycle_fold::<Fr>(witness, ram_ra_raf_evaluation(), shape.log_k(), &tau_low)
+                    .unwrap();
+            let lowest = super::super::testing::fixture_lowest_address();
+            let input_claim: Fr = (0..shape.ram_k as u64)
+                .map(|k| Fr::from_u64(8 * k + lowest) * ra_folded[k as usize])
+                .sum();
+
+            let slots: [&dyn PrepareKernel<Fr, RamRafEvaluation<Fr>>; 2] =
+                [&OptimizedBackend, &StreamingRamRafEvaluation];
+            for slot in slots {
                 let reference = PrepareKernel::<Fr, _>::prepare(
                     &ReferenceBackend,
-                    &mut reference_session,
+                    &mut ProofSession::default(),
                     witness,
-                    ProverInputs {
-                        relation: &relation,
-                        claims: &claims,
-                        points: &points,
-                        challenges: &challenges,
-                    },
+                    inputs(),
                 )
                 .unwrap();
-                let mut session = ProofSession::default();
-                let optimized = PrepareKernel::<Fr, _>::prepare(
-                    &OptimizedBackend,
-                    &mut session,
-                    witness,
-                    ProverInputs {
-                        relation: &relation,
-                        claims: &claims,
-                        points: &points,
-                        challenges: &challenges,
-                    },
-                )
-                .unwrap();
-
-                let ra_folded =
-                    cycle_fold::<Fr>(witness, ram_ra_raf_evaluation(), shape.log_k(), &tau_low)
-                        .unwrap();
-                let lowest = super::super::testing::fixture_lowest_address();
-                let input_claim: Fr = (0..shape.ram_k as u64)
-                    .map(|k| Fr::from_u64(8 * k + lowest) * ra_folded[k as usize])
-                    .sum();
-
+                let optimized = slot
+                    .prepare(&mut ProofSession::default(), witness, inputs())
+                    .unwrap();
                 assert_parity(
                     reference,
                     optimized,
                     input_claim * Fr::pow2(shape.log_t - phase1),
-                    &ProverInputs {
-                        relation: &relation,
-                        claims: &claims,
-                        points: &points,
-                        challenges: &challenges,
-                    },
+                    &inputs(),
                     89,
                 );
             }
-        });
+        }
     }
 
     #[test]

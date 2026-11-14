@@ -219,6 +219,8 @@ fn build_command(args: JoltBuildArgs) -> Result<()> {
     if args.base.mode == StdMode::Std {
         // Rust 1.95 gates generated target specs behind this flag; zeroos-build sets RUSTC_BOOTSTRAP.
         jolt_rustflags.push("-Zunstable-options");
+        // The ELF decoder requires instruction-only text; LLVM's large model puts pools there.
+        jolt_rustflags.push("-Ccode-model=medium");
     }
 
     if args

@@ -241,14 +241,18 @@ impl<const D: usize> NttCommitScratch<D> {
                 );
                 continue;
             }
-            for (slot, shifts) in shifts.iter().enumerate().take(self.buffered) {
-                if shifts.is_empty() {
+            for (slot, slot_shifts) in shifts.iter().enumerate().take(self.buffered) {
+                if slot_shifts.is_empty() {
                     self.transformed[tile_len][slot] = NttRing::zero();
+                } else if slot > 0 && *slot_shifts == shifts[slot - 1] {
+                    // Equal coefficient positions have the same transform, even
+                    // though the dot product uses a different key for each slot.
+                    self.transformed[tile_len][slot] = self.transformed[tile_len][slot - 1].clone();
                 } else if let Some(one_hot) = &prepared.one_hot {
-                    one_hot.transform(shifts, &mut self.transformed[tile_len][slot].limbs[0]);
+                    one_hot.transform(slot_shifts, &mut self.transformed[tile_len][slot].limbs[0]);
                 } else {
                     let mut coefficients = [0i8; D];
-                    for &shift in *shifts {
+                    for &shift in *slot_shifts {
                         coefficients[shift] = 1;
                     }
                     self.transformed[tile_len][slot].assign_i8_with_lut(
