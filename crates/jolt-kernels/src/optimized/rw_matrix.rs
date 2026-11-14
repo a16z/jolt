@@ -565,15 +565,13 @@ fn round0_pair_quadratic<F: JoltField>(
             );
             [lone_even[0] + lone_odd[0], lone_even[1] + lone_odd[1]]
         }
-        _ => {
-            let col = even.or(odd).map_or(0, |entry| entry.col);
-            CycleMajorEntry::quadratic_evals(
-                even,
-                odd,
-                inc_evals,
-                batch.unbound(mask.contains_unbound(col as usize)),
-            )
-        }
+        (Some(entry), _) | (None, Some(entry)) => CycleMajorEntry::quadratic_evals(
+            even,
+            odd,
+            inc_evals,
+            batch.unbound(mask.contains_unbound(entry.col as usize)),
+        ),
+        (None, None) => unreachable!("a merged pair has at least one side"),
     }
 }
 
