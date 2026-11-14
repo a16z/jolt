@@ -213,7 +213,6 @@ macro_rules! for_each_instruction_kind {
                 VirtualStoreB => StoreB => "jolt.virtual.storeb",
                 VirtualStoreH => StoreH => "jolt.virtual.storeh",
                 VirtualStoreW => StoreW => "jolt.virtual.storew",
-                VirtualExtractByteUnsigned => ExtractByteUnsigned => "jolt.virtual.extractbyteunsigned",
                 #[cfg(feature = "field-inline")]
                 FIELD_ADD => FieldAdd => "field.add",
                 #[cfg(feature = "field-inline")]
@@ -242,6 +241,7 @@ macro_rules! for_each_instruction_kind {
                 CSRRCI => Csrrci => "rv64.csrrci",
                 VirtualXORROT2 => VirtualXorRot2 => "jolt.virtual.xorrot2",
                 VirtualXORROT61 => VirtualXorRot61 => "jolt.virtual.xorrot61",
+                VirtualExtractByteUnsigned => ExtractByteUnsigned => "jolt.virtual.extractbyteunsigned",
             ]
         }
     };
