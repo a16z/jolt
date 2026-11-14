@@ -566,6 +566,14 @@ impl<F: JoltField> RoundChallenges<F> {
         &self.challenges
     }
 
+    /// The bound-round progress these challenges record.
+    pub(crate) fn progress(&self) -> RoundProgress {
+        RoundProgress {
+            bound: self.challenges.len(),
+            total: self.total,
+        }
+    }
+
     /// Gate for every output-claim / derived-table entry point.
     pub(crate) fn require_complete(&self) -> Result<(), SumcheckKernelError<F>> {
         if self.challenges.len() == self.total {
@@ -802,6 +810,23 @@ pub(crate) fn merge_evals<F: JoltField>(mut left: Vec<F>, right: Vec<F>) -> Vec<
     left
 }
 
+/// Adds one low-to-high pair of the cubic `a(t) · b(t) · c(t)`, each factor
+/// given by its `(lo, hi)` values, to the deferred-reduction lanes of
+/// `t = 0, 2, 3`.
+#[inline]
+pub(crate) fn accumulate_triple_product<F: JoltField>(
+    acc: &mut [F::Accumulator; 3],
+    (a_0, a_1): (F, F),
+    (b_0, b_1): (F, F),
+    (c_0, c_1): (F, F),
+) {
+    let (a_m, b_m, c_m) = (a_1 - a_0, b_1 - b_0, c_1 - c_0);
+    let (a_2, b_2, c_2) = (a_1 + a_m, b_1 + b_m, c_1 + c_m);
+    acc[0].fmadd(a_0 * b_0, c_0);
+    acc[1].fmadd(a_2 * b_2, c_2);
+    acc[2].fmadd((a_2 + a_m) * (b_2 + b_m), c_2 + c_m);
+}
+
 /// `s(t)` samples at `t ∈ {0, 2, 3}` of the cubic triple-product summand
 /// `Σ_y a(y) · b(y) · c(y)` over the remaining low-to-high `(lo, hi)` pairs,
 /// through the deferred-reduction accumulator; `s(1)` comes from the engine's
@@ -813,14 +838,7 @@ pub(crate) fn triple_product_round_evals<F: JoltField>(
     c: impl Fn(usize) -> (F, F) + Send + Sync,
 ) -> [F; 3] {
     let accumulate = |y: usize, acc: &mut [F::Accumulator; 3]| {
-        let (a_0, a_1) = a(y);
-        let (b_0, b_1) = b(y);
-        let (c_0, c_1) = c(y);
-        let (a_m, b_m, c_m) = (a_1 - a_0, b_1 - b_0, c_1 - c_0);
-        let (a_2, b_2, c_2) = (a_1 + a_m, b_1 + b_m, c_1 + c_m);
-        acc[0].fmadd(a_0 * b_0, c_0);
-        acc[1].fmadd(a_2 * b_2, c_2);
-        acc[2].fmadd((a_2 + a_m) * (b_2 + b_m), c_2 + c_m);
+        accumulate_triple_product(acc, a(y), b(y), c(y));
     };
 
     #[cfg(feature = "parallel")]
@@ -1100,6 +1118,28 @@ pub(crate) enum BundleStore<B> {
 }
 
 impl<B: WitnessBundle + Copy + Send + Sync> BundleStore<B> {
+    /// Resident rows spanning exactly the stage's `2^log_t` cycle domain.
+    /// Sources without that view fail instead of materializing a row vector.
+    pub(crate) fn resident<F: JoltField>(
+        witness: &dyn JoltWitnessPlane<F>,
+        log_t: usize,
+        label: &'static str,
+    ) -> Result<Self, WitnessError> {
+        let rows = witness
+            .random_access()
+            .ok_or(WitnessError::UnavailableView { label })?;
+        let cycles = u32::try_from(log_t)
+            .ok()
+            .and_then(|shift| 1usize.checked_shl(shift));
+        if cycles != Some(rows.cycles()) {
+            return Err(WitnessError::InvalidDimensions {
+                label,
+                reason: format!("{} rows for a 2^{log_t}-cycle stage", rows.cycles()),
+            });
+        }
+        Ok(Self::Owned(rows))
+    }
+
     /// Resolve for a witness plane: the owning handle when the source is
     /// slice-backed (and covers the cycle domain), a materialized collect
     /// otherwise.
@@ -1118,6 +1158,35 @@ impl<B: WitnessBundle + Copy + Send + Sync> BundleStore<B> {
             Self::Owned(rows) => BundleAccess::View(rows),
             Self::Retained(rows) => BundleAccess::Retained(rows),
         }
+    }
+
+    /// One serial visit of `range` in callbacks of at most `chunk` rows, each
+    /// receiving its first cycle and the bundles [`BundleAccess::row`] gives.
+    /// Callers pairing within each callback must align the range and chunk to pairs.
+    pub(crate) fn visit(
+        &self,
+        range: Range<usize>,
+        chunk: usize,
+        mut visit: impl FnMut(usize, &[B]) -> Result<(), WitnessError>,
+    ) -> Result<(), WitnessError> {
+        let rows = match self {
+            Self::Owned(rows) => return rows.visit_bundles(range, chunk, visit),
+            Self::Retained(rows) => rows,
+        };
+        let invalid = |reason: String| WitnessError::InvalidDimensions {
+            label: "kernel row store",
+            reason,
+        };
+        if chunk == 0 {
+            return Err(invalid("visit chunk size must be nonzero".to_owned()));
+        }
+        let visited = rows
+            .get(range.clone())
+            .ok_or_else(|| invalid(format!("cycle range {range:?} exceeds {} rows", rows.len())))?;
+        for (index, bundles) in visited.chunks(chunk).enumerate() {
+            visit(range.start + index * chunk, bundles)?;
+        }
+        Ok(())
     }
 }
 

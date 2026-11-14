@@ -157,14 +157,7 @@ impl SharedRamAddresses {
         log_t: usize,
     ) -> Result<Arc<RamAddresses>, KernelError<F>> {
         if session.state::<Self>().is_none() {
-            let cycles = 1usize << log_t;
-            let [addresses] = collect_split_columns::<F, RamAddressBundle, u32, 1>(
-                witness,
-                cycles,
-                [NO_ACCESS],
-                |bundle| encode_address(bundle.address.0).map(|address| [address]),
-            )?;
-            session.park(Self(Arc::new(RamAddresses::new(addresses, cycles))));
+            session.park(Self(collect_addresses(witness, log_t)?));
         }
         let addresses = Arc::clone(
             &session
@@ -182,6 +175,21 @@ impl SharedRamAddresses {
         }
         Ok(addresses)
     }
+}
+
+/// Remapped addresses with the trace's implicit no-access suffix.
+pub(crate) fn collect_addresses<F: JoltField>(
+    witness: &dyn JoltWitnessPlane<F>,
+    log_t: usize,
+) -> Result<Arc<RamAddresses>, KernelError<F>> {
+    let cycles = 1usize << log_t;
+    let [addresses] = collect_split_columns::<F, RamAddressBundle, u32, 1>(
+        witness,
+        cycles,
+        [NO_ACCESS],
+        |bundle| encode_address(bundle.address.0).map(|address| [address]),
+    )?;
+    Ok(Arc::new(RamAddresses::new(addresses, cycles)))
 }
 
 fn collect_split_columns<F: JoltField, B, T, const N: usize>(
@@ -385,25 +393,36 @@ impl RamAccessColumns {
         self.pre_values.len().max(self.post_values.len())
     }
 
-    /// Recover initial values from each address's first access; untouched
-    /// addresses retain their final value.
-    ///
-    /// WARNING: RAM sumchecks enforce the assumed trace/final-image agreement.
     pub fn reconstruct_val_init<F: JoltField>(&self, val_final: Vec<F>) -> Vec<F> {
-        let mut val_init = val_final;
-        let mut seen = vec![false; val_init.len()];
-        for (cycle, &address) in self.addresses.prefix().iter().enumerate() {
-            if address == NO_ACCESS {
-                continue;
-            }
-            let address = address as usize;
-            if !seen[address] {
-                seen[address] = true;
-                val_init[address] = F::from_u64(self.pre_value(cycle));
-            }
-        }
-        val_init
+        val_init_from_first_accesses(
+            val_final,
+            self.addresses
+                .prefix()
+                .iter()
+                .enumerate()
+                .filter(|(_, address)| **address != NO_ACCESS)
+                .map(|(cycle, &address)| (address as usize, self.pre_value(cycle))),
+        )
     }
+}
+
+/// Recover initial values from cycle-ordered accesses; untouched addresses
+/// retain their final value.
+///
+/// WARNING: RAM sumchecks enforce the assumed trace/final-image agreement.
+pub(crate) fn val_init_from_first_accesses<F: JoltField>(
+    val_final: Vec<F>,
+    accesses: impl Iterator<Item = (usize, u64)>,
+) -> Vec<F> {
+    let mut val_init = val_final;
+    let mut seen = vec![false; val_init.len()];
+    for (address, pre_value) in accesses {
+        if !seen[address] {
+            seen[address] = true;
+            val_init[address] = F::from_u64(pre_value);
+        }
+    }
+    val_init
 }
 
 pub(crate) fn validate_addresses<F: JoltField>(
@@ -420,23 +439,6 @@ pub(crate) fn validate_addresses<F: JoltField>(
         });
     }
     Ok(())
-}
-
-/// Address fold: `out[j] = eq_address[addresses[j]]`, or zero without access.
-pub(crate) fn fold_addresses<F: JoltField>(addresses: &RamAddresses, eq_address: &[F]) -> Vec<F> {
-    let mut values: Vec<F> = addresses
-        .prefix()
-        .iter()
-        .map(|&address| {
-            if address == NO_ACCESS {
-                F::zero()
-            } else {
-                eq_address[address as usize]
-            }
-        })
-        .collect();
-    values.resize(addresses.len(), F::zero());
-    values
 }
 
 const FOLD_CYCLES_CHUNK: usize = 1 << 20;

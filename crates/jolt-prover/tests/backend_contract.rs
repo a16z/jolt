@@ -26,6 +26,7 @@ mod tests {
     use jolt_crypto::{Bn254G1, Pedersen};
     use jolt_dory::DoryScheme;
     use jolt_field::Fr;
+    use jolt_kernels::optimized::StreamingFamilies;
     use jolt_kernels::{
         CommitWitness, CommitmentGrid, KernelContext, KernelError, ProofSession, WitnessCommitment,
     };
@@ -34,7 +35,7 @@ mod tests {
         dory, JoltBackend, JoltProverPreprocessing, JoltSharedPreprocessing, ProverConfig,
         ProverError,
     };
-    use jolt_transcript::{Keccak, ProverState};
+    use jolt_transcript::{Keccak, ProverState, VerifierState};
     use jolt_witness::{
         ChunkVisitor, JoltVmWitnessConfig, JoltVmWitnessInputs, JoltWitnessOracle,
         JoltWitnessPlane, ProgramSource, RowSource, Shape, TraceBackend, WitnessError,
@@ -244,5 +245,50 @@ mod tests {
             assert_eq!(calls.load(Ordering::SeqCst), expected_calls);
             assert_eq!(releases.load(Ordering::SeqCst), index + 1);
         }
+    }
+
+    /// Every streaming family is selected. On a trace this small the
+    /// instruction-input kernel reads the rows in rounds 0 and 1 and fills its
+    /// dense tables in round 1, and the Spartan outer and product remainders
+    /// fill their tables in the passes that yield round 0's endpoints; the
+    /// parity tests in `jolt-kernels` cover later crossovers. The RAM kernels
+    /// have no crossover: stages 2–5 read the event log and stage 6b its own
+    /// address column at every trace size.
+    #[test]
+    fn streaming_kernels_reproduce_the_default_proof() {
+        let Fixture {
+            config,
+            preprocessing,
+            public_io,
+            witness,
+        } = fixture();
+        let prove = |backend: JoltBackend<Fr, DoryScheme>| {
+            dory::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, ProverState<Keccak>>(
+                backend.with_witness(&witness),
+                &preprocessing,
+                &config,
+                None,
+                &public_io,
+            )
+            .expect("Dory proof")
+        };
+        let streamed = prove(JoltBackend::optimized().with_streaming(StreamingFamilies {
+            spartan: true,
+            instruction_input: true,
+            ram: true,
+        }));
+        jolt_verifier::verify::<Fr, DoryScheme, Pedersen<Bn254G1>, VerifierState<'_, Keccak>>(
+            &preprocessing.verifier,
+            &public_io,
+            &streamed,
+            None,
+        )
+        .expect("the streamed proof must verify");
+        let default = prove(JoltBackend::optimized());
+        assert!(
+            postcard::to_stdvec(&streamed).expect("encode the streamed proof")
+                == postcard::to_stdvec(&default).expect("encode the default proof"),
+            "the streaming kernels must reproduce the default proof bytes",
+        );
     }
 }

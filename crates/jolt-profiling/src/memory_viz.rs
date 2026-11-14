@@ -146,6 +146,7 @@ mod tests {
             workload: "fibonacci".to_string(),
             scale_log2: 13,
             backend: "reference".to_string(),
+            streaming_families: Vec::new(),
         };
         let summary = build_summary(
             &events,

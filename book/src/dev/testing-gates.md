@@ -3,15 +3,18 @@
 ## Guest × mode acceptance matrix
 
 `crates/jolt-prover/tests/e2e_matrix.rs` holds one guest table per instruction
-profile. The ordinary profile has twelve cases: muldiv, fibonacci, memory-ops,
-stdlib, memory-copy, memory-compare, sha2, sha3 through both its unaligned and
-aligned entry points, advice-consumer, btreemap, and muldiv-full-domain. The
-last one extends muldiv's execution with its own terminal stall until it fills
-its padded trace domain, and bakes that domain in as the maximum, so the proof
-has no padding row. Enabling `field-inline` selects `field_ops`, `field_limbs`,
-and `muldiv`, covering active field operations, the SDK's checked limb
-conversions, and an ordinary guest proved under the field-inline protocol
-with no field activity.
+profile. The ordinary profile has fourteen cases: muldiv, fibonacci, memory-ops,
+heap-top, stdlib, memory-copy, memory-compare, sha2, sha3 through both its
+unaligned and aligned entry points, advice-consumer, rounded-advice, btreemap,
+and muldiv-full-domain.
+Heap-top stores the last byte below the linker's `__heap_end`.
+Rounded-advice, a second memory-ops entry point, configures 12 bytes of
+untrusted advice and supplies 16, the rounded capacity the verifier admits. Muldiv-full-domain extends
+muldiv's execution with its own terminal stall until it fills its padded trace
+domain, and bakes that domain in as the maximum, so the proof has no padding
+row. Enabling `field-inline` selects `field_ops`, `field_limbs`, and `muldiv`,
+covering active field operations, the SDK's checked limb conversions, and an
+ordinary guest proved under the field-inline protocol with no field activity.
 
 The shared runner checks each guest's output against a natively computed
 value, its panic status, trace bound, and field activity, then proves it with

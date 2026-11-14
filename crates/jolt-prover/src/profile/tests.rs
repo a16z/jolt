@@ -3,8 +3,98 @@ use clap::Parser;
 use jolt_akita::AkitaChunkProfile;
 
 #[cfg(feature = "akita")]
-use super::{parse_akita_chunk_profile, BackendKind, OutputFormat, Workload};
-use super::{MemoryBudget, ProfileArgs};
+use super::{parse_akita_chunk_profile, OutputFormat, Workload};
+use super::{BackendKind, MemoryBudget, ProfileArgs};
+
+#[test]
+fn streaming_option_selects_the_requested_families() {
+    use jolt_kernels::optimized::StreamingFamilies;
+
+    #[derive(Parser)]
+    struct Cli {
+        #[command(flatten)]
+        args: ProfileArgs,
+    }
+    for (selection, expected) in [
+        (
+            "instruction-input",
+            StreamingFamilies {
+                instruction_input: true,
+                spartan: false,
+                ram: false,
+            },
+        ),
+        (
+            "spartan",
+            StreamingFamilies {
+                instruction_input: false,
+                spartan: true,
+                ram: false,
+            },
+        ),
+        (
+            "ram",
+            StreamingFamilies {
+                instruction_input: false,
+                spartan: false,
+                ram: true,
+            },
+        ),
+        (
+            "instruction-input,spartan,ram",
+            StreamingFamilies {
+                instruction_input: true,
+                spartan: true,
+                ram: true,
+            },
+        ),
+    ] {
+        let cli = Cli::try_parse_from([
+            "jolt-prover",
+            "--name",
+            "fibonacci",
+            "--backend",
+            "optimized",
+            "--streaming",
+            selection,
+        ])
+        .unwrap();
+        assert_eq!(cli.args.streaming, Some(expected));
+    }
+}
+
+#[test]
+fn streaming_rejects_a_memory_budget_or_reference_backend() {
+    use super::run;
+
+    #[derive(Parser)]
+    struct Cli {
+        #[command(flatten)]
+        args: ProfileArgs,
+    }
+    let options = [
+        "jolt-prover",
+        "--name",
+        "fibonacci",
+        "--backend",
+        "optimized",
+        "--streaming",
+        "instruction-input",
+    ];
+    assert!(Cli::try_parse_from(options.into_iter().chain(["--memory-budget", "32GiB"])).is_err());
+    let mut args = Cli::try_parse_from(options).unwrap().args;
+    args.memory_budget = Some(MemoryBudget::from_bytes(usize::MAX));
+    assert!(run(&args)
+        .unwrap_err()
+        .to_string()
+        .contains("cannot be combined with --memory-budget"));
+    args.memory_budget = None;
+    args.backend = BackendKind::Reference;
+    assert!(run(&args)
+        .unwrap_err()
+        .to_string()
+        .contains("requires --backend optimized"));
+}
 
 #[test]
 fn profile_owners_reserve_capacities_and_the_public_io_request_once() {
@@ -87,6 +177,65 @@ fn memory_budget_parses_bytes_and_binary_suffixes() {
     }
 }
 
+#[test]
+fn streaming_profiles_have_distinct_artifact_and_csv_names() {
+    use super::PROTOCOL_SUFFIX;
+
+    #[derive(Parser)]
+    struct Cli {
+        #[command(flatten)]
+        args: ProfileArgs,
+    }
+    for (selection, suffix) in [
+        (None, ""),
+        (Some("instruction-input"), "_streaming_instruction_input"),
+        (Some("spartan"), "_streaming_spartan"),
+        (
+            Some("instruction-input,spartan"),
+            "_streaming_instruction_input_spartan",
+        ),
+        (
+            Some("spartan,instruction-input"),
+            "_streaming_instruction_input_spartan",
+        ),
+        (Some("ram"), "_streaming_ram"),
+        (
+            Some("ram,instruction-input"),
+            "_streaming_instruction_input_ram",
+        ),
+        (Some("ram,spartan"), "_streaming_spartan_ram"),
+        (
+            Some("instruction-input,spartan,ram"),
+            "_streaming_instruction_input_spartan_ram",
+        ),
+        (
+            Some("ram,spartan,instruction-input"),
+            "_streaming_instruction_input_spartan_ram",
+        ),
+    ] {
+        let mut options = vec![
+            "jolt-prover",
+            "--name",
+            "fibonacci",
+            "--backend",
+            "optimized",
+        ];
+        if let Some(selection) = selection {
+            options.extend(["--streaming", selection]);
+        }
+        let args = Cli::try_parse_from(options).unwrap().args;
+        assert_eq!(args.workload_name(), format!("fibonacci{suffix}"));
+        assert_eq!(
+            args.benchmark_name(),
+            format!("fibonacci{PROTOCOL_SUFFIX}{suffix}")
+        );
+        assert_eq!(
+            args.trace_name(20),
+            format!("modular_fibonacci{PROTOCOL_SUFFIX}_20_optimized{suffix}")
+        );
+    }
+}
+
 #[cfg(feature = "akita")]
 #[test]
 fn chunk_profiles_have_distinct_artifact_and_csv_names() {
@@ -131,6 +280,7 @@ fn chunk_profiles_have_distinct_artifact_and_csv_names() {
             scale: Some(20),
             format: OutputFormat::None,
             backend: BackendKind::Optimized,
+            streaming: None,
             guest_elf: None,
             input_file: None,
             result_json: None,
