@@ -111,8 +111,9 @@ limits cannot be read: off Linux, under a cgroup v1 memory controller, or
 when the directory at the process's cgroup path under `/sys/fs/cgroup` is
 missing, unreadable, or does not list the process in its `cgroup.threads`. A
 sandbox that unshares the cgroup namespace and keeps the host's `/sys`
-(`bwrap --unshare-cgroup`) gets the last of these errors, whether or not a
-limit is set. The reading is a point-in-time observation, and `auto` selects
+(`bwrap --unshare-cgroup`), started in a cgroup other than the hierarchy's
+root, gets the last of these errors, whether or not a limit is set. The
+reading is a point-in-time observation, and `auto` selects
 no kernel: it sizes the same checks an explicit budget runs, which can refuse
 a proof the host would hold and pass one it would not, as the end of this
 section describes. The profile reserves bytes against the budget in this
