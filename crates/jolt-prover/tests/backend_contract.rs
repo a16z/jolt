@@ -254,21 +254,24 @@ mod tests {
     /// parity tests in `jolt-kernels` cover later crossovers. The RAM kernels
     /// have no crossover: stages 2–5 read the event log and stage 6b its own
     /// address column at every trace size. The register value evaluation
-    /// reads the rows in rounds 0 and 1 and fills its two tables in round 1.
-    /// The derived config binds the register read-write check cycle-first,
-    /// so its streaming kernel runs: round 0's pass counts level 1's entries,
-    /// round 1's pass fills them, and the operand openings come from one more
-    /// row walk. The address-first route, which keeps the default kernel, is
-    /// the one `e2e_matrix`'s all-families case takes. Stage 5's instruction
-    /// read-RAF check scans the rows in each of its sixteen address phases
-    /// and sums its first cycle round from them; its virtual RA polynomials
-    /// turn dense at the first cycle bind, where the default kernel's do on
-    /// a trace this small, and the parity tests cover the later binds. The
-    /// booleanity address phase (stage 6a) accumulates its masses from the
-    /// rows. Stage 6b's booleanity cycle phase and instruction RA
-    /// virtualization read the rows in rounds 0–3 and hold their tables dense
-    /// from the fourth bind, the earliest at any budget; the parity tests
-    /// cover later ones.
+    /// reads the trace's rows in rounds 0 and 1 and fills its two tables in
+    /// round 1; the trace does not fill its domain, so those passes stop at
+    /// the pair that holds its last row, and later rounds read the padded
+    /// suffix as the tables' tail value. The derived config binds the
+    /// register read-write check cycle-first, so its streaming kernel runs:
+    /// round 0's pass counts level 1's entries, round 1's pass fills them,
+    /// and the operand openings come from one more row walk, each ending
+    /// with the group of rows that holds the trace's last. The address-first
+    /// route, which keeps the default kernel, is the one `e2e_matrix`'s
+    /// all-families case takes. Stage 5's instruction read-RAF check scans the
+    /// rows in each of its sixteen address phases and sums its first cycle
+    /// round from them; its virtual RA polynomials turn dense at the first
+    /// cycle bind, where the default kernel's do on a trace this small, and
+    /// the parity tests cover the later binds. The booleanity address phase
+    /// (stage 6a) accumulates its masses from the rows. Stage 6b's booleanity
+    /// cycle phase and instruction RA virtualization read the rows in rounds
+    /// 0–3 and hold their tables dense from the fourth bind, the earliest at
+    /// any budget; the parity tests cover later ones.
     #[test]
     fn streaming_kernels_reproduce_the_default_proof() {
         let Fixture {
