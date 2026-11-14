@@ -47,3 +47,28 @@ fn memory_copy(n: u32) -> Vec<u8> {
     result[1..n + 1].copy_from_slice(&data[..n]);
     result
 }
+
+#[jolt::provable]
+fn memory_compare(left: [u8; 32], right: [u8; 32], len: u32) -> (i32, i32) {
+    use core::ffi::c_void;
+
+    unsafe extern "C" {
+        fn memcmp(left: *const c_void, right: *const c_void, len: usize) -> i32;
+        fn bcmp(left: *const c_void, right: *const c_void, len: usize) -> i32;
+    }
+    assert!(len <= 32);
+    // SAFETY: both arrays contain at least len readable bytes. The opaque
+    // function pointers keep these calls in the external runtime under test.
+    unsafe {
+        (
+            core::hint::black_box(memcmp)(
+                left.as_ptr().cast(),
+                right.as_ptr().cast(),
+                len as usize,
+            )
+            .signum(),
+            (core::hint::black_box(bcmp)(left.as_ptr().cast(), right.as_ptr().cast(), len as usize)
+                != 0) as i32,
+        )
+    }
+}

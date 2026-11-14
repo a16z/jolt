@@ -252,7 +252,12 @@ fn build_command(args: JoltBuildArgs) -> Result<()> {
         .as_deref()
         .is_none_or(|target| target.starts_with("riscv64"))
     {
-        jolt_rustflags.extend(["-Clink-arg=--wrap=memcpy", "-Clink-arg=--wrap=memmove"]);
+        jolt_rustflags.extend([
+            "-Clink-arg=--wrap=memcpy",
+            "-Clink-arg=--wrap=memmove",
+            "-Clink-arg=--wrap=memcmp",
+            "-Clink-arg=--wrap=bcmp",
+        ]);
     }
 
     // Also set medany for C code (cc crate reads CFLAGS_{target}).
