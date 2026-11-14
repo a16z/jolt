@@ -3,6 +3,8 @@
 //! each task visits its rows once, serially
 //! ([`BundleStore::visit`](crate::optimized::support::BundleStore::visit)).
 
+use core::mem::MaybeUninit;
+use core::slice::IterMut;
 use std::ops::Range;
 
 use jolt_field::JoltField;
@@ -24,22 +26,201 @@ pub(crate) const DENSE_TABLE_CAP: usize = 4usize.saturating_mul(1 << 30);
 #[cfg(feature = "parallel")]
 const TASKS_PER_THREAD: usize = 8;
 
+/// Tasks for a pass over `units` indivisible units: `min(TASKS_PER_THREAD ·
+/// pool threads, units)`, at least one.
+fn task_count(units: usize) -> usize {
+    #[cfg(feature = "parallel")]
+    return (TASKS_PER_THREAD * rayon::current_num_threads()).clamp(1, units.max(1));
+    #[cfg(not(feature = "parallel"))]
+    {
+        let _ = units;
+        1
+    }
+}
+
 /// The task partition of one pass over the cycle domain `0..cycles`: units of
-/// `group` cycles and `min(TASKS_PER_THREAD · pool threads, cycles / group)`
-/// tasks, task `i` holding units `⌊i·n/tasks⌋..⌊(i+1)·n/tasks⌋` of the
+/// `group` cycles and [`task_count`] tasks, task `i` holding units
+/// `⌊i·n/tasks⌋..⌊(i+1)·n/tasks⌋` of the
 /// `n = cycles / group`. Both sizes are powers of two, with `group ≤ cycles`,
 /// so every task covers whole `group`-cycle kernel groups. Per-task state
 /// allocated before the pass is held `tasks` times at once.
 pub(crate) fn task_ranges(cycles: usize, group: usize) -> Vec<Range<usize>> {
     let unit = group;
     let units = cycles / unit;
-    #[cfg(feature = "parallel")]
-    let tasks = (TASKS_PER_THREAD * rayon::current_num_threads()).min(units);
-    #[cfg(not(feature = "parallel"))]
-    let tasks = 1;
+    let tasks = task_count(units);
+    // `⌊task·units/tasks⌋` without the product `task·units`, which exceeds
+    // `usize` for a pass over single cycles of a large enough domain (on a
+    // 32-bit target, `2^32 / tasks` cycles).
+    let start = |task: usize| (task * (units / tasks) + task * (units % tasks) / tasks) * unit;
     (0..tasks)
-        .map(|task| task * units / tasks * unit..(task + 1) * units / tasks * unit)
+        .map(|task| start(task)..start(task + 1))
         .collect()
+}
+
+/// Splits `items`, sorted by `key`, into at most [`task_count`] contiguous
+/// runs of about equal length, each holding every item of its keys.
+pub(crate) fn key_runs<T>(items: &[T], key: impl Fn(&T) -> usize) -> Vec<&[T]> {
+    let tasks = task_count(items.len());
+    let mut runs = Vec::with_capacity(tasks);
+    let mut rest = items;
+    for task in 0..tasks {
+        if rest.is_empty() {
+            break;
+        }
+        let target = rest.len().div_ceil(tasks - task);
+        let cut = match rest.get(target - 1) {
+            Some(last) if target < rest.len() => {
+                let boundary = key(last);
+                target + rest[target..].partition_point(|item| key(item) == boundary)
+            }
+            _ => rest.len(),
+        };
+        let (run, tail) = rest.split_at(cut);
+        runs.push(run);
+        rest = tail;
+    }
+    runs
+}
+
+/// A task wrote a different number of items than its count pass reported.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct FillMismatch;
+
+/// One task's exactly sized slots of an [`exact_task_fill`] destination.
+pub(crate) struct TaskSlots<'a, T> {
+    slots: IterMut<'a, MaybeUninit<T>>,
+    overflow: bool,
+}
+
+impl<T> TaskSlots<'_, T> {
+    /// Writes the task's next item; an item past its counted slots is dropped
+    /// and fails the fill.
+    pub(crate) fn push(&mut self, item: T) {
+        match self.slots.next() {
+            Some(slot) => {
+                let _ = slot.write(item);
+            }
+            None => self.overflow = true,
+        }
+    }
+}
+
+/// Collects `tasks`' items in task order into one allocation of exactly their
+/// total: a parallel pass counts each task's items, and a second writes each
+/// task's items into its own slots, so no task holds a vector of its own and
+/// the destination never grows. Either pass's error ends the fill; a task
+/// that writes more or fewer items than it counted fails with
+/// `mismatch(FillMismatch)`.
+pub(crate) fn exact_task_fill<I, T, E>(
+    tasks: &[I],
+    count: impl Fn(&I) -> Result<usize, E> + Sync,
+    fill: impl Fn(&I, &mut TaskSlots<'_, T>) -> Result<(), E> + Sync,
+    mismatch: impl Fn(FillMismatch) -> E + Sync,
+) -> Result<Vec<T>, E>
+where
+    I: Sync,
+    T: Copy + Send,
+    E: Send,
+{
+    #[cfg(feature = "parallel")]
+    let counts: Vec<usize> = tasks.par_iter().map(&count).collect::<Result<_, E>>()?;
+    #[cfg(not(feature = "parallel"))]
+    let counts: Vec<usize> = tasks.iter().map(&count).collect::<Result<_, E>>()?;
+    let total = counts.iter().sum();
+    let mut items = Vec::with_capacity(total);
+    let mut spare = &mut items.spare_capacity_mut()[..total];
+    let task_slots: Vec<&mut [MaybeUninit<T>]> = counts
+        .iter()
+        .map(|&count| {
+            let (head, tail) = core::mem::take(&mut spare).split_at_mut(count);
+            spare = tail;
+            head
+        })
+        .collect();
+    let write = |(task, slots): (&I, &mut [MaybeUninit<T>])| -> Result<(), E> {
+        let mut slots = TaskSlots {
+            slots: slots.iter_mut(),
+            overflow: false,
+        };
+        fill(task, &mut slots)?;
+        if slots.overflow || slots.slots.next().is_some() {
+            return Err(mismatch(FillMismatch));
+        }
+        Ok(())
+    };
+    #[cfg(feature = "parallel")]
+    tasks.par_iter().zip(task_slots).try_for_each(write)?;
+    #[cfg(not(feature = "parallel"))]
+    tasks.iter().zip(task_slots).try_for_each(write)?;
+    // SAFETY: the task slots tile the first `total` spare elements, and every
+    // task wrote each of its slots before returning `Ok`.
+    unsafe { items.set_len(total) };
+    Ok(items)
+}
+
+/// Binds `items`, sorted by `key`, in place one key group at a time:
+/// `bind(group, emit)` emits the group's bound items, never more than it
+/// holds. Runs of whole groups ([`key_runs`]) bind in parallel, each writing
+/// from its own start and reading the group being bound from a copy; the
+/// runs' outputs then move down in order and `items` truncates to them,
+/// keeping its capacity. A group that emits more items than it holds fails
+/// with [`FillMismatch`] and leaves `items` partly bound.
+pub(crate) fn bind_groups_in_place<T: Copy + Send + Sync>(
+    items: &mut Vec<T>,
+    key: impl Fn(&T) -> usize + Sync,
+    bind: impl Fn(&[T], &mut dyn FnMut(T)) + Sync,
+) -> Result<(), FillMismatch> {
+    let lens: Vec<usize> = key_runs(items, &key).iter().map(|run| run.len()).collect();
+    let mut runs: Vec<&mut [T]> = Vec::with_capacity(lens.len());
+    let mut rest = items.as_mut_slice();
+    for &len in &lens {
+        let (run, tail) = core::mem::take(&mut rest).split_at_mut(len);
+        runs.push(run);
+        rest = tail;
+    }
+    let compact = |run: &mut [T]| -> Result<usize, FillMismatch> {
+        let mut group = Vec::new();
+        let (mut read, mut write, mut overflow) = (0, 0, false);
+        while read < run.len() {
+            let first = key(&run[read]);
+            let end = read
+                + run[read..]
+                    .iter()
+                    .take_while(|item| key(item) == first)
+                    .count();
+            group.clear();
+            group.extend_from_slice(&run[read..end]);
+            let start = write;
+            bind(&group, &mut |item| {
+                if write - start < group.len() {
+                    run[write] = item;
+                    write += 1;
+                } else {
+                    overflow = true;
+                }
+            });
+            if overflow {
+                return Err(FillMismatch);
+            }
+            read = end;
+        }
+        Ok(write)
+    };
+    #[cfg(feature = "parallel")]
+    let written: Vec<usize> = runs
+        .into_par_iter()
+        .map(compact)
+        .collect::<Result<_, _>>()?;
+    #[cfg(not(feature = "parallel"))]
+    let written: Vec<usize> = runs.into_iter().map(compact).collect::<Result<_, _>>()?;
+    let (mut start, mut end) = (0, 0);
+    for (len, written) in lens.into_iter().zip(written) {
+        items.copy_within(start..start + written, end);
+        end += written;
+        start += len;
+    }
+    items.truncate(end);
+    Ok(())
 }
 
 /// Splits every table at the task boundaries of `ranges`, where `entry(cycle)`
@@ -242,8 +423,51 @@ pub(crate) fn product_endpoint_terms<F: JoltField>([a, b]: [[F; 2]; 2]) -> [F; 2
 }
 
 #[cfg(test)]
+#[cfg_attr(
+    feature = "parallel",
+    expect(clippy::unwrap_used, reason = "test module")
+)]
 mod tests {
-    use super::task_ranges;
+    #[cfg(feature = "parallel")]
+    use rayon::ThreadPoolBuilder;
+
+    use super::{bind_groups_in_place, task_ranges, FillMismatch};
+
+    #[test]
+    fn group_overemit_fails_after_an_earlier_group_shrinks() {
+        let check = || {
+            let mut items = vec![0, 0, 1, 1];
+            items.extend([2; 36]);
+            let result = bind_groups_in_place(
+                &mut items,
+                |&item| item,
+                |group, emit| match group[0] {
+                    0 => emit(0),
+                    1 => {
+                        for _ in 0..3 {
+                            emit(1);
+                        }
+                    }
+                    _ => {
+                        for &item in group {
+                            emit(item);
+                        }
+                    }
+                },
+            );
+            assert_eq!(result, Err(FillMismatch));
+        };
+        #[cfg(feature = "parallel")]
+        for threads in [1, 3] {
+            ThreadPoolBuilder::new()
+                .num_threads(threads)
+                .build()
+                .unwrap()
+                .install(check);
+        }
+        #[cfg(not(feature = "parallel"))]
+        check();
+    }
 
     /// Tasks tile the domain in order, each a positive whole number of
     /// aligned groups.
@@ -255,6 +479,7 @@ mod tests {
             (1 << 12, 1 << 12),
             (1 << 20, 1),
             (1, 1),
+            (1 << (usize::BITS - 1), 1),
         ] {
             let ranges = task_ranges(cycles, group);
             let mut next = 0;
