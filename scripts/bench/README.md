@@ -277,7 +277,7 @@ raw KiB value; stdout/stderr remain in `process.log`. Nonzero command exits stay
 nonzero; signal termination uses GNU time's `128 + signal` exit status.
 `proof_bytes` is the serialized proof length. `trace_rows` is the modular trace's `proof_len()` before
 padding, not a raw RISC-V instruction count. `padded_trace_rows` is the actual
-`ProverConfig.trace_length`, including the required final no-op and minimum size.
+`ProverConfig.trace_length`, including the minimum size.
 
 All times are full-resolution numeric seconds. Build time is separate from the
 proof metrics. `ci.py prepare` records its hosted interval in `builds.json`.

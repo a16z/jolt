@@ -12,21 +12,24 @@ There are no S-mode or U-mode privilege levels, no timer, no CLINT, no PLIC, and
 
 This model has the following consequences for privileged instructions:
 
-- **ECALL** writes `mepc`, `mcause`, `mtval`, and `mstatus` to their virtual registers, then jumps to `mtvec`.
-  `mstatus` is set to `0x1800` (MPP = M-mode, MIE = 0, MPIE = 0) unconditionally rather than via read-modify-write.
-  This is correct because the privilege mode is always M-mode, and interrupt-enable bits are unused —
-  the MIE CSR (0x304) is not in the supported CSR whitelist and cannot be accessed by guest code.
+- **`mstatus`** has only two writable bits on such a hart, MIE and MPIE; MPP can hold only M, and every other field is read-only 0.
+  Its virtual register holds just MIE and MPIE, and reads add MPP = M, so `mstatus` reads `0x1800` after reset.
 
-- **MRET** jumps to `mepc` and does not modify `mstatus`.
-  The full RISC-V spec requires restoring `MIE` from `MPIE` and resetting `MPP`,
-  but these fields are inert in the M-mode-only model.
-  The ZeroOS trap trampoline restores `mstatus` via `csrw` before executing `mret`,
-  so the virtual register always holds the correct value.
+- **ECALL** writes `mepc`, `mcause` (11) and `mtval` (0) to their virtual registers,
+  moves MIE into MPIE and clears MIE, then jumps to `mtvec`.
+
+- **MRET** moves MPIE into MIE, sets MPIE, and jumps to `mepc`.
 
 - **CSR access** is restricted to a fixed whitelist: `mstatus` (0x300), `mtvec` (0x305),
   `mscratch` (0x340), `mepc` (0x341), `mcause` (0x342), `mtval` (0x343).
-  Accessing any other CSR panics the tracer. Only `CSRRW` and `CSRRS` are implemented;
-  `CSRRC` and the immediate CSR variants are not supported.
+  Accessing any other CSR panics the tracer. All six Zicsr instructions are implemented
+  (`CSRRW`, `CSRRS`, `CSRRC` and the immediate forms `CSRRWI`, `CSRRSI`, `CSRRCI`).
+  Writes are legalized as the privileged specification requires: `mstatus` keeps only MIE and MPIE,
+  `mepc` clears bit 0, and an `mtvec` write with a reserved MODE (2 or 3) keeps the previous MODE.
+  `mscratch`, `mcause` and `mtval` store the written value.
+  See `specs/m-mode-trap-csr-semantics.md` for the argument and the exact sequences.
+
+- **EBREAK** halts the hart, as M-mode `ebreak` does under a debugger that has set `dcsr.ebreakm`.
 
 - **The R1CS constraint system has no privilege-mode or interrupt semantics.**
   CSR virtual registers (vr34–vr39) are treated as ordinary registers by the memory-checking circuit.
@@ -73,18 +76,22 @@ The RISC-V "A" extension's Load-Reserved/Store-Conditional (LR/SC) instructions 
 - **`reservation_w`** (virtual register 32): Set by `LR.W`, checked by `SC.W`
 - **`reservation_d`** (virtual register 33): Set by `LR.D`, checked by `SC.D`
 
-When `LR.W` executes, it writes the reservation address into `reservation_w` (vr32) and **clears** `reservation_d` (vr33). Conversely, `LR.D` writes into `reservation_d` (vr33) and clears `reservation_w` (vr32). This cross-clear mechanism prevents mixed-width LR/SC pairing: an `SC.W` after `LR.D` will always fail because the word-width reservation register was cleared by the `LR.D`.
+`LR.W` writes the reserved address into `reservation_w` (vr32) and **clears** `reservation_d` (vr33).
+`LR.D` writes the reserved address into **both** registers, because a doubleword reservation set also contains the word at the same address.
+So an `SC.W` succeeds after an `LR.W` or `LR.D` to the same address, and an `SC.D` succeeds only after an `LR.D` to the same address; an `SC.D` after an `LR.W` fails, because its bytes are not all in the reservation set.
+An `SC` elsewhere inside a doubleword reservation set fails; the RISC-V specification allows such spurious failures.
+Both `LR` and `SC` first assert that the address is at least `RAM_START`: only ordinary RAM is reservable, which also keeps a cleared reservation (0) from matching.
 
-##### SC failure path
+##### SC success and failure
 
-`SC.W` and `SC.D` must handle both success and failure within the zkVM's constraint system. This is accomplished using `VirtualAdvice`:
+The `SC` sequences are straight-line, so success is computed rather than branched on:
 
-1. The prover supplies a success/failure bit via `VirtualAdvice`, constrained to $\{0, 1\}$ using `VirtualAssertLTE`.
-2. A derived `v_success` flag ($1 - \text{v\_result}$) gates the reservation check: $\text{v\_success} \cdot (\text{reservation} - \text{rs1}) = 0$. On success ($\text{v\_success} = 1$), this forces the reservation to match the target address. On failure ($\text{v\_success} = 0$), the constraint is trivially satisfied.
-3. The store is conditional: $\text{store\_val} = \text{mem} + (\text{rs2} - \text{mem}) \cdot \text{v\_success}$. On success this writes `rs2`; on failure it writes back the original memory value (a no-op).
-4. The destination register is set to 0 on success, 1 on failure.
+1. `success = (reservation == rs1)`, computed with `XOR` and `SLTIU`, using the reservation register for the SC's width.
+2. The sequence loads the current memory value `mem` and stores $\text{mem} + \text{success} \cdot (\text{rs2} - \text{mem})$: `rs2` on success, the unchanged value on failure.
+3. `rd` is set to 0 on success and 1 on failure.
 
-**Soundness**: A malicious prover cannot claim success without a valid reservation, because the constraint $\text{v\_success} \cdot (\text{reservation} - \text{rs1}) = 0$ would be violated. However, the prover *can* claim spurious failure even with a valid reservation, which is permitted by the RISC-V specification (SC is allowed to fail spuriously).
+Success is fully determined by the reservation registers, so the prover cannot choose it.
+On a single hart the failed-SC store writes back the value already in memory, so memory is unchanged, as the specification requires.
 
 Per the RISC-V specification, SC always invalidates all reservations regardless of whether the store succeeded or failed. Both `reservation_w` and `reservation_d` are cleared to zero at the end of any SC instruction.
 

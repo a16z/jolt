@@ -42,7 +42,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install taplo
-        uses: taiki-e/install-action@682ce6c3c696a4cd5168a05f98e51aa02b877941 # v2
+        uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2
         with:
           tool: taplo-cli
       - name: taplo fmt --check
@@ -78,7 +78,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: actions-rust-lang/setup-rust-toolchain@a188e68d0fd2bd36ad51dccb2b07ba6e75105f30 # v2
       - name: Install nextest
-        uses: taiki-e/install-action@682ce6c3c696a4cd5168a05f98e51aa02b877941 # v2
+        uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2
         with:
           tool: nextest
       - name: Require one jolt-algebra and one jolt-field identity (no akita-field)
@@ -245,7 +245,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: bnjbvr/cargo-machete@22eb7be1d0a498d00a4e5954fbf71ebfbd266a0c # main
+      - uses: bnjbvr/cargo-machete@99f843249f0c292f558d3cee4d06661851cbd2c9 # main
       - name: cargo machete
         run: cargo machete --with-metadata
 
@@ -304,7 +304,7 @@ jobs:
       - name: Build and install jolt CLI
         run: cargo install --path . --locked --force --profile ci --target-dir target
       - name: Install nextest
-        uses: taiki-e/install-action@682ce6c3c696a4cd5168a05f98e51aa02b877941 # v2
+        uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2
         with:
           tool: nextest
       - name: Run jolt-prover tests
@@ -359,7 +359,7 @@ jobs:
           shared-key: release-tests
           save-if: false
       - name: Install nextest
-        uses: taiki-e/install-action@682ce6c3c696a4cd5168a05f98e51aa02b877941 # v2
+        uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2
         with:
           tool: nextest
       # Guest ELFs link ZeroOS, so building them needs its musl toolchain.
@@ -413,7 +413,7 @@ jobs:
       - name: Build and install jolt CLI
         run: cargo install --path . --locked --force --profile ci --target-dir target
       - name: Install nextest
-        uses: taiki-e/install-action@682ce6c3c696a4cd5168a05f98e51aa02b877941 # v2
+        uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2
         with:
           tool: nextest
       - name: Run jolt-prover tests with zk feature
@@ -460,7 +460,7 @@ jobs:
       - name: Build and install jolt CLI
         run: cargo install --path . --locked --force --profile ci --target-dir target
       - name: Install nextest
-        uses: taiki-e/install-action@682ce6c3c696a4cd5168a05f98e51aa02b877941 # v2
+        uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2
         with:
           tool: nextest
       # The Akita arm of the guest x mode matrix plus the Akita prover
@@ -507,11 +507,11 @@ jobs:
       - name: Build and install jolt CLI
         run: cargo install --path . --locked --force --profile ci --target-dir target
       - name: Install nextest
-        uses: taiki-e/install-action@682ce6c3c696a4cd5168a05f98e51aa02b877941 # v2
+        uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2
         with:
           tool: nextest
-      # e2e_matrix selects field_ops, field_limbs, and muldiv for the
-      # field-inline profile. Run the full package to retain its specialized
+      # e2e_matrix selects field_ops, field_ops_full_domain, field_limbs, and
+      # muldiv for the field-inline profile. Run the full package to retain its specialized
       # parity, tamper, and limb-conversion suites alongside matrix acceptance
       # in both Dory modes.
       - name: Run field-inline matrix and specialized suites (clear)
@@ -556,7 +556,7 @@ jobs:
       - name: Build and install jolt CLI
         run: cargo install --path . --locked --force --profile ci --target-dir target
       - name: Install nextest
-        uses: taiki-e/install-action@682ce6c3c696a4cd5168a05f98e51aa02b877941 # v2
+        uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2
         with:
           tool: nextest
       # The same field_ops, field_limbs, and muldiv matrix table runs over fp128.
@@ -591,7 +591,7 @@ jobs:
           shared-key: release-tests
           save-if: false
       - name: Install nextest
-        uses: taiki-e/install-action@682ce6c3c696a4cd5168a05f98e51aa02b877941 # v2
+        uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2
         with:
           tool: nextest
       - name: Run jolt-akita with field-inline
@@ -626,7 +626,7 @@ jobs:
       - name: Build and install jolt CLI
         run: cargo install --path . --locked --force --profile ci --target-dir target
       - name: Install nextest
-        uses: taiki-e/install-action@682ce6c3c696a4cd5168a05f98e51aa02b877941 # v2
+        uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2
         with:
           tool: nextest
       # The fixture-driven field-inline suites: valid-fixture acceptance
@@ -665,7 +665,7 @@ jobs:
       - name: Build and install jolt CLI
         run: cargo install --path . --locked --force --profile ci --target-dir target
       - name: Install nextest
-        uses: taiki-e/install-action@682ce6c3c696a4cd5168a05f98e51aa02b877941 # v2
+        uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2
         with:
           tool: nextest
       # The fixture-driven akita suites: valid-fixture acceptance
@@ -679,7 +679,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: crate-ci/typos@4c8b7f51ca60df14e3c5ca82770dfbbe6c3dae85 # v1.52.0
+      - uses: crate-ci/typos@2611abd15acb0c2e317fb9e45855aabb8b35a414 # v1.52.1
         with:
           files: .
 
@@ -793,7 +793,7 @@ jobs:
           shared-key: dev-tests-${{ matrix.shard }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Install nextest
-        uses: taiki-e/install-action@682ce6c3c696a4cd5168a05f98e51aa02b877941 # v2
+        uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2
         with:
           tool: nextest
       - name: Discover modular crates
@@ -935,7 +935,7 @@ jobs:
       - name: Build and install jolt CLI
         run: cargo install --path . --locked --force --profile ci --target-dir target
       - name: Install nextest
-        uses: taiki-e/install-action@682ce6c3c696a4cd5168a05f98e51aa02b877941 # v2
+        uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2
         with:
           tool: nextest
       - name: Run verifier fixtures
@@ -954,7 +954,7 @@ jobs:
           shared-key: dev-inlines
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Install nextest
-        uses: taiki-e/install-action@682ce6c3c696a4cd5168a05f98e51aa02b877941 # v2
+        uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2
         with:
           tool: nextest
       - name: Discover inline crates
@@ -992,7 +992,7 @@ jobs:
       - name: Build and install jolt CLI
         run: cargo install --path . --locked --force --profile ci --target-dir target
       - name: Install nextest
-        uses: taiki-e/install-action@682ce6c3c696a4cd5168a05f98e51aa02b877941 # v2
+        uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2
         with:
           tool: nextest
       - name: Generate test fixtures
@@ -1016,7 +1016,7 @@ jobs:
       - name: Build and install jolt CLI
         run: cargo install --path . --locked --force --profile ci --target-dir target
       - name: Install nextest
-        uses: taiki-e/install-action@682ce6c3c696a4cd5168a05f98e51aa02b877941 # v2
+        uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2
         with:
           tool: nextest
       - name: Run tracer tests
@@ -1039,7 +1039,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install nextest
-        uses: taiki-e/install-action@682ce6c3c696a4cd5168a05f98e51aa02b877941 # v2
+        uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2
         with:
           tool: nextest
       - name: Run extractor tests

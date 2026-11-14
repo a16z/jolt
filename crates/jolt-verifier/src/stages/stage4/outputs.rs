@@ -1,6 +1,6 @@
 use jolt_field::JoltField;
 use jolt_sumcheck::BatchedCommittedSumcheckConsistency;
-use jolt_transcript::FieldTranscript;
+use jolt_transcript::{FieldTranscript, PrivateChannel};
 
 use crate::stages::relations::{OutputClaims, SumcheckBatch};
 use crate::stages::zk::outputs::CommittedOutputClaimOutput;
@@ -106,9 +106,7 @@ impl<F: JoltField> Stage4OutputClaims<F> {
     /// Append every produced opening to the transcript in canonical order,
     /// matching the prover's commitment order.
     pub fn append_to_transcript<T: FieldTranscript<F>>(&self, transcript: &mut T) {
-        for value in self.opening_values() {
-            transcript.append(&value);
-        }
+        transcript.append_private(&self.opening_values());
     }
 }
 
