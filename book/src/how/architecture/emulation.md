@@ -22,8 +22,8 @@ This model has the following consequences for privileged instructions:
 
 - **CSR access** is restricted to a fixed whitelist: `mstatus` (0x300), `mtvec` (0x305),
   `mscratch` (0x340), `mepc` (0x341), `mcause` (0x342), `mtval` (0x343).
-  Accessing any other CSR panics the tracer. Only `CSRRW` and `CSRRS` are implemented;
-  `CSRRC` and the immediate CSR variants are not supported.
+  Accessing any other CSR panics the tracer. All six Zicsr instructions are implemented
+  (`CSRRW`, `CSRRS`, `CSRRC` and the immediate forms `CSRRWI`, `CSRRSI`, `CSRRCI`).
   Writes are legalized as the privileged specification requires: `mstatus` keeps only MIE and MPIE,
   `mepc` clears bit 0, and an `mtvec` write with a reserved MODE (2 or 3) keeps the previous MODE.
   `mscratch`, `mcause` and `mtval` store the written value.

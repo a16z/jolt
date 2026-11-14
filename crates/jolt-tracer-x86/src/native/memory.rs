@@ -1,7 +1,8 @@
 //! Guest RAM plane: one anonymous mmap covering `[RAM_START_ADDRESS,
-//! RAM_START_ADDRESS + size)`, addressed by generated code as
-//! `mem_base + (guest_addr - RAM_START_ADDRESS)` after an explicit bounds
-//! check. Untouched pages cost no physical memory (`MAP_NORESERVE`).
+//! RAM_START_ADDRESS + size)`. `MemoryPlane::new` enforces doubleword-aligned
+//! sizes, so generated code can admit an aligned start below `size` and access
+//! the whole doubleword at `mem_base + (guest_addr - RAM_START_ADDRESS)`.
+//! Untouched pages cost no physical memory (`MAP_NORESERVE`).
 //!
 //! Addresses below `RAM_START_ADDRESS` (the `JoltDevice` I/O region) never
 //! reach this plane; generated code routes them to `extern "C"` helpers.
@@ -19,8 +20,13 @@ pub struct MemoryPlane {
 unsafe impl Send for MemoryPlane {}
 
 impl MemoryPlane {
-    /// Map a zeroed plane of `size` bytes.
+    /// Map a zeroed plane of a nonzero, doubleword-aligned size.
     pub fn new(size: usize) -> Result<Self, TraceError> {
+        if size == 0 || !size.is_multiple_of(8) {
+            return Err(TraceError::Backend(
+                "guest memory plane size must be a nonzero multiple of eight",
+            ));
+        }
         // SAFETY: anonymous private mapping with no file backing; length is
         // nonzero and page-rounded by the kernel. The pointer is checked
         // before use.
@@ -68,7 +74,7 @@ impl MemoryPlane {
 
     /// Copy the whole plane out, for a chunk checkpoint.
     pub fn to_vec(&self) -> Vec<u8> {
-        // SAFETY: the whole range [base, base+size) is mapped and readable.
+        // SAFETY: new maps size bytes, all readable.
         unsafe { core::slice::from_raw_parts(self.base, self.size) }.to_vec()
     }
 
@@ -84,7 +90,7 @@ impl MemoryPlane {
     /// `TraceOutput::final_memory`.
     pub fn materialized_nonzero_bytes(&self) -> Vec<(u64, u8)> {
         let mut bytes = Vec::new();
-        // SAFETY: the whole range [base, base+size) is mapped and readable.
+        // SAFETY: new maps size bytes, all readable.
         let slice = unsafe { core::slice::from_raw_parts(self.base, self.size) };
         for (offset, &byte) in slice.iter().enumerate() {
             if byte != 0 {
@@ -99,5 +105,15 @@ impl Drop for MemoryPlane {
     fn drop(&mut self) {
         // SAFETY: base/size describe the mapping created in `new`.
         let _ = unsafe { libc::munmap(self.base.cast(), self.size) };
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::MemoryPlane;
+
+    #[test]
+    fn rejects_unaligned_size() {
+        assert!(MemoryPlane::new(9).is_err());
     }
 }
