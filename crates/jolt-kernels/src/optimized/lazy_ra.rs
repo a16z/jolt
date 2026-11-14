@@ -985,19 +985,7 @@ mod tests {
     use jolt_field::{Fr, Ring};
     use jolt_poly::EqPolynomial;
 
-    use super::{ChunkIndexSource, LazyBind, LazyFoldedRa};
-
-    /// The fused switch is exact where the doubled branch tables reach the
-    /// dense tables' element count, and a domain whose dense tables exceed
-    /// `usize` elements (2^61 rows of 16 polynomials) keeps doubling instead
-    /// of wrapping into the switch.
-    #[test]
-    fn fused_switch_is_exact_at_the_crossover_and_past_usize_elements() {
-        let step = |cycles, len| LazyBind::new(2, 8, 1, cycles, [len; 16].into_iter());
-        assert_eq!(step(1 << 10, 128), LazyBind::FusedMaterialize);
-        assert_eq!(step(1 << 10, 127), LazyBind::Double);
-        assert_eq!(step(1 << (usize::BITS - 1), 128), LazyBind::Double);
-    }
+    use super::{ChunkIndexSource, LazyFoldedRa};
 
     struct SelectorRows {
         columns: usize,

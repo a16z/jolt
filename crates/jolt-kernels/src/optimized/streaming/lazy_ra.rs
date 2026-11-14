@@ -630,6 +630,18 @@ mod tests {
         }
     }
 
+    /// The default schedule's fused switch is exact where the doubled branch
+    /// tables reach the dense tables' element count, and a domain whose dense
+    /// tables exceed `usize` elements (2^61 rows of 16 polynomials) keeps
+    /// doubling instead of wrapping into the switch.
+    #[test]
+    fn fused_switch_is_exact_at_the_crossover_and_past_usize_elements() {
+        let step = |cycles, len| LazyBind::new(2, 8, 1, cycles, [len; 16].into_iter());
+        assert_eq!(step(1 << 10, 128), LazyBind::FusedMaterialize);
+        assert_eq!(step(1 << 10, 127), LazyBind::Double);
+        assert_eq!(step(1 << (usize::BITS - 1), 128), LazyBind::Double);
+    }
+
     /// The materializing bind is exact at the budget's boundary, never
     /// earlier than the default family's fourth, the last bind where no
     /// earlier one fits or the domain is shorter, and does not wrap when the
