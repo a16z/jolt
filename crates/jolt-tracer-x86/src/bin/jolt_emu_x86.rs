@@ -96,7 +96,7 @@ mod native {
         let inputs = TraceInputs::new(Vec::new(), Vec::new(), Vec::new(), memory_config);
 
         let mut backend = X86TracerBackend::new();
-        let output = match backend.fast_run(&program, inputs) {
+        let output = match backend.run_machine(&program, inputs) {
             Ok(output) => output,
             Err(error) => {
                 // Compile-time rejection and runtime faults both surface as

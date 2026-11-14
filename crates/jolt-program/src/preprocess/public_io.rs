@@ -47,7 +47,7 @@ impl PublicIoMemory {
         // A witness may end after any jump: at the last cycle the end-of-trace
         // boundary zeroes ShouldJump, so the jump target goes unchecked. For a
         // non-panic claim this word is what rules out a truncated execution;
-        // the SDK writes it last, just before the exit stall.
+        // the SDK writes it last, just before `jolt.success`.
         if !public_io.panic {
             segments.push(PublicMemorySegment {
                 start_index: layout.remapped_word_address(layout.termination)? as u128,

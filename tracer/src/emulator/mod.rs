@@ -29,17 +29,16 @@ pub mod memory;
 pub mod mmu;
 pub mod terminal;
 
-use self::cpu::Cpu;
+use self::cpu::{Cpu, HaltKind};
 use self::elf_analyzer::ElfAnalyzer;
 use self::terminal::Terminal;
 
 use common::constants::{DEFAULT_HEAP_SIZE, RAM_START_ADDRESS};
+use jolt_program::execution::TraceError;
 use std::io::Write;
 use std::path::Path;
 
-/// The endcode [`Emulator::run_test`] returns when a test guest stalls after
-/// writing a value to `tohost` that is not an HTIF exit command.
-const UNRECOGNIZED_TOHOST_ENDCODE: u64 = 1;
+const FAILURE_ENDCODE: u64 = 1;
 
 /// Returns `payload >> 1` only for an HTIF syscall-proxy exit command:
 /// device (bits 63..56) and command (bits 55..48) must both be zero, and
@@ -109,14 +108,18 @@ impl Emulator {
 
     /// Method for running [`riscv-tests`](https://github.com/riscv/riscv-tests) program.
     ///
-    /// Returns the HTIF termination code:
+    /// Returns the termination code:
+    /// * `0` for a Jolt guest that ends at `jolt.success`;
+    /// * `1` for a guest that halts at `ebreak`, Jolt's failure halt;
     /// * `payload >> 1` for an HTIF exit command (device 0, command 0,
     ///   payload bit 0 set): `0` for RVMODEL_HALT_PASS, `1` for ACT4's
     ///   RVMODEL_HALT_FAIL, the failing test number for riscv-tests;
-    /// * `0` for a PC stall with `tohost` untouched (Jolt guests that call
-    ///   `platform_exit()`);
-    /// * `UNRECOGNIZED_TOHOST_ENDCODE` (1) for a PC stall after any other
-    ///   non-zero `tohost` write, such as a non-zero command or device byte.
+    /// * `0` for a PC stall in a test ELF (one that defines `tohost`) with
+    ///   `tohost` untouched;
+    /// * `1` for a PC stall after any other non-zero `tohost` write, such as a
+    ///   non-zero command or device byte;
+    /// * `1` for a PC stall in an ELF without a `tohost` symbol: such an ELF
+    ///   is a Jolt guest, whose run must end at a halt (`TraceError::EndedWithoutHalt`).
     ///
     /// Callers typically collapse this to 0/1 for the OS exit status; see
     /// `tracer/src/main.rs`.
@@ -125,28 +128,48 @@ impl Emulator {
         tracing::info!("This elf file seems like a riscv-tests elf file. Running in test mode.");
         let mut cycle_count = 0;
         loop {
+            if let Some(halt) = self.cpu.halted() {
+                return match halt {
+                    HaltKind::Success => {
+                        tracing::info!(
+                            "Program exited successfully (code 0) after {cycle_count} cycles"
+                        );
+                        0
+                    }
+                    HaltKind::Panic => {
+                        tracing::error!(
+                            "Program halted at ebreak (abnormal end) after {cycle_count} cycles"
+                        );
+                        FAILURE_ENDCODE
+                    }
+                };
+            }
+
             if disassemble {
                 let disas = self.cpu.disassemble_next_instruction();
                 println!("core   0: {disas}");
             }
 
-            // Jolt guests terminate via `j .`: jolt-platform's platform_exit()
-            // enters this loop for clean termination. A test ELF halts instead
-            // by writing an HTIF exit command to `tohost`, which the check
-            // after each tick below catches. A guest that spins after writing
-            // any other non-zero value there tried to halt with a command this
+            // A test ELF halts by writing an HTIF exit command to `tohost`,
+            // which the check after each tick below catches; it may also spin
+            // with `tohost` untouched. A test ELF that spins after writing any
+            // other non-zero value there tried to halt with a command this
             // emulator does not recognize, so its outcome is unknown and must
-            // not read as a pass.
+            // not read as a pass. An ELF without `tohost` is a Jolt guest,
+            // which must end at a halt instead.
             if self.cpu.has_stalled() {
-                if self.tohost_addr != 0 {
-                    let tohost_value = self.cpu.get_mut_mmu().load_doubleword_raw(self.tohost_addr);
-                    if tohost_value != 0 {
-                        tracing::error!(
-                            "Program stalled after writing {tohost_value:#x} to tohost, \
-                             which is not an HTIF exit command"
-                        );
-                        return UNRECOGNIZED_TOHOST_ENDCODE;
-                    }
+                if self.tohost_addr == 0 {
+                    let pc = self.cpu.read_pc();
+                    tracing::error!("{}", TraceError::EndedWithoutHalt { pc });
+                    return FAILURE_ENDCODE;
+                }
+                let tohost_value = self.cpu.get_mut_mmu().load_doubleword_raw(self.tohost_addr);
+                if tohost_value != 0 {
+                    tracing::error!(
+                        "Program stalled after writing {tohost_value:#x} to tohost, \
+                         which is not an HTIF exit command"
+                    );
+                    return FAILURE_ENDCODE;
                 }
                 tracing::info!("Program exited successfully (code 0) after {cycle_count} cycles");
                 return 0;
@@ -156,13 +179,15 @@ impl Emulator {
             self.tick(traces.as_mut());
             cycle_count += 1;
 
-            let tohost_value = self.cpu.get_mut_mmu().load_doubleword_raw(self.tohost_addr);
-            if let Some(endcode) = decode_htif_exit(tohost_value) {
-                match endcode {
-                    0 => tracing::info!("Test Passed with {endcode:X}\n"),
-                    _ => tracing::error!("Test Failed with {endcode:X}\n"),
-                };
-                return endcode;
+            if self.tohost_addr != 0 {
+                let tohost_value = self.cpu.get_mut_mmu().load_doubleword_raw(self.tohost_addr);
+                if let Some(endcode) = decode_htif_exit(tohost_value) {
+                    match endcode {
+                        0 => tracing::info!("Test Passed with {endcode:X}\n"),
+                        _ => tracing::error!("Test Failed with {endcode:X}\n"),
+                    };
+                    return endcode;
+                }
             }
         }
     }
@@ -354,6 +379,7 @@ mod tests {
     use super::elf_analyzer::test_elf::{build_elf64, StrtabOrder, TestSymbol};
     use super::*;
     use crate::emulator::default_terminal::DefaultTerminal;
+    use jolt_riscv::JOLT_SUCCESS_WORD;
 
     const TOHOST_ADDR: u64 = 0x8000_3000;
 
@@ -447,6 +473,22 @@ mod tests {
         assert_eq!(run(&[0x0000_006f], 0), (0, 0)); // jal x0, 0
     }
 
+    #[test]
+    fn run_test_reports_halts() {
+        assert_eq!(run(&[JOLT_SUCCESS_WORD], 0), (0, 0));
+        assert_eq!(run(&[0x0010_0073], 0), (1, 0)); // ebreak
+    }
+
+    /// An ELF without `tohost` is a Jolt guest: a spin is not a valid end.
+    #[test]
+    fn run_test_fails_a_stall_in_an_elf_without_tohost() {
+        let symbols = tohost_symbols();
+        let without_tohost = &symbols[..1];
+        let mut emulator = emulator_with(&[0x0000_006f], without_tohost, StrtabOrder::GnuLd); // j .
+        assert_eq!(emulator.tohost_addr, 0);
+        assert_eq!(emulator.run_test(false, false), 1);
+    }
+
     /// Encoding `(gp << 1) | 1` with gp = 0x1cadd5ae9e2ac9c5 sets the HTIF
     /// device byte; with gp = 2^47 it sets command 1 with payload 1. Neither
     /// is an exit command, and a subsequent spin must fail.
@@ -463,13 +505,12 @@ mod tests {
         ];
         assert_eq!(
             run(&halt_with_wide_code, 0x1cad_d5ae_9e2a_c9c5),
-            (UNRECOGNIZED_TOHOST_ENDCODE, 0x395b_ab5d_3c55_938b)
+            (1, 0x395b_ab5d_3c55_938b)
         );
         assert_eq!(
             run(&halt_with_wide_code, 1 << 47),
-            (UNRECOGNIZED_TOHOST_ENDCODE, 0x0001_0000_0000_0001)
+            (1, 0x0001_0000_0000_0001)
         );
-        assert_ne!(UNRECOGNIZED_TOHOST_ENDCODE, 0);
     }
 
     #[test]

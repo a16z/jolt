@@ -52,6 +52,10 @@ use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
 
+mod streaming;
+
+pub use streaming::StreamingRegistersValEvaluation;
+
 /// The write-address column: hot indices plus the address eq table until the first
 /// bind, an explicit bound prefix with an implicit zero suffix afterwards. The `K × T` grid never exists. Shared with
 /// the field-register value-evaluation kernel, whose write column has the same

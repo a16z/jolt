@@ -25,6 +25,8 @@ use jolt_host::Program;
 use jolt_program::execution::{
     ChunkedExecutionBackend, ExecutionBackend, JoltProgram, MemoryImage, TraceInputs,
 };
+#[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+use jolt_tracer_x86::{RunOutput, X86TracerBackend};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use tracer::TracerBackend;
@@ -252,9 +254,10 @@ impl Invariant for TracerBackendEquivalenceInvariant {
 
         #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
         {
-            let mut native = jolt_tracer_x86::X86TracerBackend::new();
+            let mut native = X86TracerBackend::new();
             let fast = native
-                .fast_run(&entry.program, inputs)
+                .run_machine(&entry.program, inputs)
+                .and_then(RunOutput::require_halt)
                 .map_err(|e| CheckError::InvalidInput(format!("x86 fast run failed: {e:?}")))?;
             let native_fast = Observation {
                 rows: fast.trace_len,

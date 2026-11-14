@@ -110,6 +110,7 @@ pub use virt::LoadW;
 pub use virt::MovSign;
 pub use virt::MulI;
 pub use virt::MulIW;
+pub use virt::Panic;
 pub use virt::Pext;
 pub use virt::PextSigned;
 pub use virt::Pow2;
@@ -122,6 +123,7 @@ pub use virt::ShiftDataW;
 pub use virt::StoreB;
 pub use virt::StoreH;
 pub use virt::StoreW;
+pub use virt::Success;
 pub use virt::VirtualAdvice;
 pub use virt::VirtualAdviceLoad;
 pub use virt::VirtualHostIO;
@@ -456,6 +458,8 @@ pub enum JoltInstruction<T = JoltInstructionRow> {
     VirtualHostIO(VirtualHostIO<T>),
     VirtualXorRot2(VirtualXorRot2<T>),
     VirtualXorRot61(VirtualXorRot61<T>),
+    Success(Success<T>),
+    Panic(Panic<T>),
     VirtualXorRot3(VirtualXorRot3<T>),
     VirtualXorRot8(VirtualXorRot8<T>),
     VirtualXorRot9(VirtualXorRot9<T>),
@@ -696,6 +700,8 @@ impl_jolt_instructions_flags! {
     VirtualAdvice => VirtualAdvice,
     VirtualAdviceLoad => VirtualAdviceLoad,
     VirtualHostIO => VirtualHostIO,
+    Success => JoltSuccess,
+    Panic => JoltPanic,
     #[cfg(feature = "field-inline")]
     FieldAdd => FIELD_ADD,
     #[cfg(feature = "field-inline")]
