@@ -103,10 +103,32 @@ selection, and a resumed sweep ignores streaming profile artifacts.
 The option cannot be combined with `--memory-budget`: the budget checks
 price only eager kernels, not a streaming selection.
 
-`--memory-budget` (optimized backend only) is an explicit budget in bytes,
-with an optional binary suffix (`KiB`, `MiB`, `GiB` or `TiB`, e.g. `32GiB`).
-The profile reserves bytes against it in this order and exits with an error
-at the first reservation that does not fit:
+`--memory-budget` (optimized backend only) is a budget in bytes, with an
+optional binary suffix (`KiB`, `MiB`, `GiB` or `TiB`, e.g. `32GiB`), or
+`auto`. `auto` reads the host once, after tracing (`jolt_host::memory`): the
+smaller of `/proc/meminfo`'s `MemAvailable` and, for each cgroup v2 on the
+process's path that sets a `memory.max`, that limit less the cgroup's
+`memory.current` net of its file cache on the kernel's reclaim lists
+(`inactive_file` and `active_file` in its `memory.stat`). The reading counts
+that cache as evictable. The kernel does not evict the part of it that a
+`memory.min` on another cgroup under the limited one protects, so the
+reading is too large by that part, while cache under a `memory.low` is
+still evicted before an allocation fails. Everything else the cgroup holds
+counts as used, including tmpfs, shared memory and kernel memory. The budget
+is that reading plus the input, trace output, program and program
+preprocessing buffers the run already holds, which steps 1 and 2 reserve; the
+run prints it. An `auto` run exits with an error before PCS setup when the
+limits cannot be read: off Linux, under a cgroup v1 memory controller, or
+when the directory at the process's cgroup path under `/sys/fs/cgroup` is
+missing, unreadable, or does not list the process in its `cgroup.threads`. A
+sandbox that unshares the cgroup namespace and keeps the host's `/sys`
+(`bwrap --unshare-cgroup`), started in a cgroup other than the hierarchy's
+root, gets the last of these errors, whether or not a limit is set. The
+reading is a point-in-time observation, and `auto` selects
+no kernel: it sizes the same checks an explicit budget runs, which can refuse
+a proof the host would hold and pass one it would not, as the end of this
+section describes. The profile reserves bytes against the budget in this
+order and exits with an error at the first reservation that does not fit:
 
 1. After tracing, before PCS setup: the input, the trace output's buffers
    other than the trace buffers that step 2 reserves, the program and program
