@@ -1120,30 +1120,9 @@ impl<F: JoltField> AddressMajorMatrix<F> {
     /// Bind one address variable low-to-high: merge every adjacent column
     /// pair against the `val_init` checkpoints, then bind `val_init` itself.
     pub fn bind(&mut self, r: F, val_init: &mut Polynomial<F>) {
-        #[cfg(feature = "parallel")]
-        let bound: Vec<AddressMajorEntry<F>> = par_concat(
-            &self
-                .entries
-                .par_chunk_by(|a, b| a.col / 2 == b.col / 2)
-                .fold(Vec::new, |mut out, group| {
-                    let (even, odd) = split_col_pair(group);
-                    let even_col = 2 * (group[0].col / 2) as usize;
-                    merge_bind_cols(
-                        even,
-                        odd,
-                        val_init.evals()[even_col],
-                        val_init.evals()[even_col + 1],
-                        r,
-                        &mut out,
-                    );
-                    out
-                })
-                .collect::<Vec<_>>(),
-        );
-        #[cfg(not(feature = "parallel"))]
-        let bound: Vec<AddressMajorEntry<F>> = {
-            let mut out = Vec::with_capacity(self.entries.len());
-            for group in self.entries.chunk_by(|a, b| a.col / 2 == b.col / 2) {
+        let bind_run = |run: &[AddressMajorEntry<F>]| {
+            let mut out = Vec::with_capacity(run.len());
+            for group in run.chunk_by(|a, b| a.col / 2 == b.col / 2) {
                 let (even, odd) = split_col_pair(group);
                 let even_col = 2 * (group[0].col / 2) as usize;
                 merge_bind_cols(
@@ -1157,8 +1136,40 @@ impl<F: JoltField> AddressMajorMatrix<F> {
             }
             out
         };
+        // The runs are cut here, at column pairs, and not by
+        // `par_chunk_by`: on the one-entry-per-column matrix a device
+        // handoff produces, its splitter left the whole bind on two cores.
+        #[cfg(feature = "parallel")]
+        let bound: Vec<AddressMajorEntry<F>> = par_concat(
+            &self
+                .col_pair_runs(4 * rayon::current_num_threads())
+                .into_par_iter()
+                .map(bind_run)
+                .collect::<Vec<_>>(),
+        );
+        #[cfg(not(feature = "parallel"))]
+        let bound = bind_run(&self.entries);
         self.entries = bound;
         val_init.bind_with_order(r, BindingOrder::LowToHigh);
+    }
+
+    /// The entries as at most about `count` consecutive runs, none of
+    /// which ends between the two columns of a pair.
+    #[cfg(feature = "parallel")]
+    fn col_pair_runs(&self, count: usize) -> Vec<&[AddressMajorEntry<F>]> {
+        let target = self.entries.len().div_ceil(count.max(1)).max(1);
+        let mut runs = Vec::with_capacity(count);
+        let mut rest = self.entries.as_slice();
+        while !rest.is_empty() {
+            let mut end = target.min(rest.len());
+            while end < rest.len() && rest[end].col / 2 == rest[end - 1].col / 2 {
+                end += 1;
+            }
+            let (run, tail) = rest.split_at(end);
+            runs.push(run);
+            rest = tail;
+        }
+        runs
     }
 
     /// The `[s(0), s(2)]` evaluations of the phase-2 round message over all
