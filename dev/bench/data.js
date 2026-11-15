@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794675948119,
+  "lastUpdate": 1794787155525,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -253858,6 +253858,270 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 891188,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "atretyakov@a16z.com",
+            "name": "Andrew Tretyakov",
+            "username": "0xAndoroid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "0537900e578e8e8c74581a7b3ecbdcbd8752da86",
+          "message": "feat(jolt-prover): add --memory-budget auto, which reads the profiler's budget from the host (#2452)\n\n* feat(jolt-prover,jolt-host): add --memory-budget auto, sized from the host's allocatable memory\n\n`--memory-budget auto` sizes the profiler's existing budget checks from the\nmachine instead of from a number. After tracing, `jolt_host::memory` reads\nwhat the host can still give the process: the smaller of `MemAvailable` and,\nfor each cgroup v2 on the process's path that sets a `memory.max`, that limit\nless `memory.current`. The budget is that reading plus the input, trace\noutput, program and preprocessing buffers the run already holds, which the\nchecks reserve, so they are charged once.\n\nThe reading fails closed: a cgroup v1 memory controller, a process cgroup\nthat is missing or unreadable under /sys/fs/cgroup, and a host without\n/proc/meminfo are typed errors, raised before PCS setup. `auto` selects no\nkernel and stays opt-in: a run without the flag is unchanged, and\n`--streaming` still cannot be combined with a budget.\n\n* fix(jolt-host): read the process's own cgroup, net of its file cache\n\nTwo defects of the reading behind `--memory-budget auto`, found in review.\n\nA process whose cgroup namespace was unshared under a cgroup v2 mount made\noutside it (`bwrap --unshare-cgroup` with the host's `/sys`) has the\nmembership `0::/`, which under that mount names the host hierarchy's root.\nThe reader took any directory holding `cgroup.controllers` for the\nprocess's cgroup, found no `memory.max` there, and returned `MemAvailable`:\n186.6 GB inside a 2 GiB cgroup, which then killed an allocation the reading\nadmitted. The directory is now read only once its `cgroup.threads` lists\nthis process, and discovery fails with the new `NotListed` error otherwise,\nwhether or not a limit is set. The thread list is read instead of\n`cgroup.procs` because the kernel refuses to read the latter in a threaded\ncgroup, where the reader worked before. The thread list in turn omits a\nmain thread that has exited, so a process without one fails the reading.\n\n`memory.max` less `memory.current` counted a cgroup's file cache as used,\nalthough the kernel evicts it before it refuses the cgroup an allocation\nand `MemAvailable` counts the host's as available. A 2 GiB cgroup that had\nwritten 1,500 MiB of files read 528 MB, and 1.3 MB once its cache reached\nthe limit, and then held a 2,059 MB allocation. The usage is now\n`memory.current` less `inactive_file` and `active_file` of `memory.stat`,\nand a finite `memory.max` without those counters fails the reading. Both\nlists are subtracted: a file read through a memory map lands on the active\nlist, where `inactive_file` alone would still have read 567 MB of the\n2 GiB.\n\nThe module documentation no longer says that every limit that cannot be\nread fails the reading: a missing `/proc/self/cgroup` is still read as no\ncgroup.\n\n* docs(jolt-host): state the memory.min exception to the cgroup reading\n\nThe cgroup reading counts a cgroup's file cache on the two reclaim lists\nas evictable. The re-review measured the case where that is false: in a\n2 GiB cgroup, 1,000 MiB of file cache under a sibling cgroup's `memory.min`\nof 1 GiB stayed on those lists and was not evicted. The reading there was\n2,112,495,616 bytes, and the allocation it admitted was OOM-killed. The\nsame cache with no protection, under a `memory.low`, or under a\n`memory.min` on the process's own cgroup was evicted, and the allocation\nheld.\n\nThe module doc and the book said that the kernel evicts that cache. They\nnow say what the reading counts as evictable and name the exception. No\ncode changes: the case is rare and stays as recorded debt.\n\n* fix(jolt-eval): record jolt-host's thiserror in the fuzz lock file\n\n`jolt-eval/fuzz` is a workspace of its own whose lock file holds\n`jolt-host`. The lock was not updated when `jolt-host` gained its\n`thiserror` dependency, so the fuzz workflow's locked resolution\n(`cargo metadata --locked` in that directory) failed with \"cannot update\nthe lock file\" and the Fuzz jolt-eval check went red. `cargo update -p\njolt-host --offline` there adds the one missing edge, to the\n`thiserror 2.0.18` that lock already holds. No other tracked lock file has\na `jolt-host` entry besides the root one, which was updated with the\ndependency.\n\nThe book's sandbox sentence said that every sandbox that unshares the\ncgroup namespace under the host's `/sys` gets the membership error. A\nprocess started in the hierarchy's root cgroup keeps the root as its\nnamespace root, so its path still names its own cgroup. The sentence now\ncovers only a sandbox started in another cgroup, which is what was run.",
+          "timestamp": "2026-11-15T17:42:36-05:00",
+          "tree_id": "e813473ba4fed08eedb20247b34679be230eea6c",
+          "url": "https://github.com/a16z/jolt/commit/0537900e578e8e8c74581a7b3ecbdcbd8752da86"
+        },
+        "date": 1794787146601,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 4.0923,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 888280,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.5164,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 463684,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 464188,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 463912,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.8538,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 464060,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-mem",
+            "value": 888892,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 1.8717,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 464244,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 4.8247,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 463928,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 4.8132,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 136504,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.9786,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 888744,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.6496,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 464092,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.4818,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 463908,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 26.0381,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 463384,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 5.5863,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 463612,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 37.1519,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 700940,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 18.0117,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 625108,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 74.9817,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 636848,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.8508,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 463728,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 2.1446,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 464052,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 19.8192,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 888540,
             "unit": "KB",
             "extra": ""
           }
