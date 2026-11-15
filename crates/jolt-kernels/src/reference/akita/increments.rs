@@ -2,12 +2,16 @@ use jolt_claims::protocols::jolt::lattice::increments::FusedIncLayout;
 use jolt_field::JoltField;
 use jolt_openings::{CommitmentScheme, TransparentObjectSetup};
 #[cfg(feature = "parallel")]
-use jolt_utils::par_collect_windows;
+use jolt_utils::par_collect_windows_with_room;
 use jolt_witness::witnesses::FusedInc;
 use jolt_witness::{collect_bundles, JoltWitnessPlane, WitnessBundle, WitnessError};
 
 use crate::akita::commitment::FusedIncObject;
 use crate::KernelError;
+
+/// Values a bounded commitment may append to reach its block boundary.
+#[cfg(feature = "parallel")]
+const PADDING_ROOM: usize = 1 << 12;
 
 #[derive(Clone, Copy, WitnessBundle)]
 struct IncrementRow {
@@ -35,8 +39,15 @@ where
             ))
         };
         let physical = access.physical_cycles().min(cycles);
+        // The commitment pads the values to a block boundary of the domain.
+        // A trace that ends short of one would otherwise be reallocated
+        // there, and at 2^27 cycles that copies two gigabytes on one thread.
         #[cfg(feature = "parallel")]
-        let values = par_collect_windows(physical, extract)?;
+        let values = par_collect_windows_with_room(
+            physical,
+            (cycles - physical).min(PADDING_ROOM),
+            extract,
+        )?;
         #[cfg(not(feature = "parallel"))]
         let values = (0..physical).map(extract).collect::<Result<Vec<_>, _>>()?;
         values
