@@ -469,6 +469,7 @@ mod matrix {
                 spartan: true,
                 ram: true,
                 registers: true,
+                instruction_rows: true,
             },
         );
     }

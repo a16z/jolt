@@ -257,8 +257,34 @@ mod tests {
     /// reads the trace's rows in rounds 0 and 1 and fills its two tables in
     /// round 1; the trace does not fill its domain, so those passes stop at
     /// the pair that holds its last row, and later rounds read the padded
-    /// suffix as the tables' tail value. Stage 4 runs the default read-write
-    /// kernel without parking `rd` indices for it.
+    /// suffix as the tables' tail value. The derived config binds the
+    /// register read-write check cycle-first, so its streaming kernel runs:
+    /// round 0's pass counts level 1's entries, round 1's pass fills them,
+    /// and the operand openings come from one more row walk, each ending
+    /// with the group of rows that holds the trace's last. The address-first
+    /// route, which keeps the default kernel, is the one `e2e_matrix`'s
+    /// all-families case takes. Stage 5's instruction read-RAF check scans the
+    /// rows in each of its sixteen address phases and sums its first cycle
+    /// round from them; its virtual RA polynomials turn dense at the first
+    /// cycle bind, where the default kernel's do on a trace this small, and
+    /// the parity tests cover the later binds. The booleanity address phase
+    /// (stage 6a) accumulates its masses from the rows, and the bytecode
+    /// read-RAF address phase its stage pushforwards: the guest's bytecode
+    /// table is small enough for the walk's direct path, and the unit tests
+    /// in `jolt-kernels` cover the routed one. Stage 6b's booleanity
+    /// cycle phase and instruction RA virtualization read the rows in rounds
+    /// 0–3 and hold their tables dense from the fourth bind, the earliest at
+    /// any budget; the parity tests cover later ones. Its bytecode read-RAF
+    /// cycle phase gathers its three RA factors from the rows in rounds 0–2
+    /// and holds them dense from the third bind, where the default kernel's
+    /// turn dense on a trace this small; the parity tests cover the fourth
+    /// bind, which a long trace reaches. The trace ends inside its padded
+    /// domain, so stage 5's streamed cycle round, stage 6a's walks and stage
+    /// 6b's streamed rounds each weigh a constant suffix once, and the tables
+    /// those kernels turn dense hold it as their tail.
+    /// Stage 8's joint opening collects no columns: every fold of a trace
+    /// view reads the rows before the constant suffix and weighs the suffix
+    /// by its one row.
     #[test]
     fn streaming_kernels_reproduce_the_default_proof() {
         let Fixture {
@@ -267,6 +293,11 @@ mod tests {
             public_io,
             witness,
         } = fixture();
+        let rows = witness.random_access().expect("resident rows");
+        assert!(
+            rows.physical_cycles() < rows.cycles(),
+            "the instruction-rows kernels must meet a constant suffix",
+        );
         let prove = |backend: JoltBackend<Fr, DoryScheme>| {
             dory::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, ProverState<Keccak>>(
                 backend.with_witness(&witness),
@@ -282,6 +313,7 @@ mod tests {
             instruction_input: true,
             ram: true,
             registers: true,
+            instruction_rows: true,
         }));
         jolt_verifier::verify::<Fr, DoryScheme, Pedersen<Bn254G1>, VerifierState<'_, Keccak>>(
             &preprocessing.verifier,

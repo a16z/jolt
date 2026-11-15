@@ -4,18 +4,26 @@
 //! immediately. [`JoltBackend::optimized`] keeps the eager kernels;
 //! [`JoltBackend::with_streaming`] installs a selection.
 
+mod lazy_ra;
 mod pass;
 
+pub(crate) use lazy_ra::{RowIndexSource, StreamedFoldedRa, MATERIALIZE_BYTES};
 pub(crate) use pass::{
     bind_groups_in_place, dense_crossover, exact_task_fill, gruen_pair_pass, key_runs,
-    product_endpoint_terms, split_at_tasks, task_ranges, FillMismatch, PairHalves, TaskSlots,
-    DENSE_TABLE_CAP, VISIT_ROWS,
+    product_endpoint_terms, split_at_tasks, task_ranges, FillMismatch, GruenSums, PairHalves,
+    TaskSlots, DENSE_TABLE_CAP, VISIT_ROWS,
 };
 
 use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
 
+use super::booleanity::{StreamingBooleanityAddress, StreamingBooleanityCycle};
+use super::bytecode_read_raf::{StreamingBytecodeReadRafAddress, StreamingBytecodeReadRafCycle};
 use super::instruction_input::StreamingInstructionInput;
+use super::instruction_ra_virtualization::StreamingInstructionRaVirtualization;
+use super::instruction_read_raf::StreamingInstructionReadRaf;
+#[cfg(not(feature = "akita"))]
+use super::opening::StreamingJointOpening;
 use super::ram_ra_claim_reduction::StreamingRamRaClaimReduction;
 use super::ram_ra_virtualization::StreamingRamRaVirtualization;
 use super::ram_raf_evaluation::StreamingRamRafEvaluation;
@@ -44,10 +52,24 @@ pub struct StreamingFamilies {
     /// stage 2 through stage 5, and stage 6b collects its own column.
     pub ram: bool,
     /// The register read-write check (stage 4) and value evaluation
-    /// (stage 5): stage 5 reads each cycle's increment and written register
-    /// from the rows, so stage 4, which keeps the default kernel, parks no
-    /// `rd` index column for it.
+    /// (stage 5): both read the rows, so no `rd` index column carries from
+    /// stage 4 to stage 5, and under cycle-first binding stage 4 keeps no
+    /// per-cycle columns. An address-first stage 4 keeps the default kernel.
     pub registers: bool,
+    /// Readers of the per-cycle instruction rows, which the default kernels
+    /// share from stage 5 on as a packed row cache: the instruction read-RAF
+    /// check (stage 5), the booleanity and bytecode read-RAF address phases
+    /// (stage 6a), and their cycle phases and the instruction RA
+    /// virtualization (stage 6b) read the witness's resident rows in their
+    /// own passes, which stop at the rows' constant suffix as the default
+    /// kernels' tables do. No kernel of the selection collects the cache.
+    /// Stage 7's Hamming-weight claim reduction has no streaming kernel: its
+    /// default kernel reads the resident rows whenever no cache is live, as
+    /// under this selection.
+    /// Outside `akita` builds, stage 8's joint opening reads the rows too:
+    /// its trace views take each cycle's committed values from them, where
+    /// the default opening's share packed columns collected from them.
+    pub instruction_rows: bool,
 }
 
 impl<F, PCS> JoltBackend<F, PCS>
@@ -64,6 +86,7 @@ where
             instruction_input,
             ram,
             registers,
+            instruction_rows,
         } = families;
         if spartan {
             self.spartan_outer_remainder = Box::new(StreamingOuterRemainder);
@@ -82,6 +105,18 @@ where
         if registers {
             self.registers_read_write = Box::new(StreamingRegistersReadWrite);
             self.registers_val_evaluation = Box::new(StreamingRegistersValEvaluation);
+        }
+        if instruction_rows {
+            self.instruction_read_raf = Box::new(StreamingInstructionReadRaf);
+            self.booleanity_address = Box::new(StreamingBooleanityAddress);
+            self.bytecode_read_raf_address = Box::new(StreamingBytecodeReadRafAddress);
+            self.instruction_ra_virtualization = Box::new(StreamingInstructionRaVirtualization);
+            self.booleanity_cycle = Box::new(StreamingBooleanityCycle);
+            self.bytecode_read_raf_cycle = Box::new(StreamingBytecodeReadRafCycle);
+            #[cfg(not(feature = "akita"))]
+            {
+                self.joint_opening = Box::new(StreamingJointOpening);
+            }
         }
         self
     }

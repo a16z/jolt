@@ -328,7 +328,7 @@ pub(super) fn bind_indexed_to_direct<F: JoltField>(
     bound
 }
 
-fn accumulate_pair_group<F, E>(
+pub(super) fn accumulate_pair_group<F, E>(
     evens: &[E],
     odds: &[E],
     inc_evals: [F; 2],

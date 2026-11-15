@@ -498,10 +498,10 @@ fn missing_or_mismatched_rows_are_typed() {
 
 /// `with_streaming` puts the family's kernels in the backend's slots.
 /// Streamed and default proofs are byte-equal, so only the kernels' behavior
-/// shows which ones are installed: the stage-5 slot refuses a witness without
-/// resident rows, which the default kernel collects, and the stage-4 slot
-/// parks no `rd` indices for stage 5. Dory stands in for the commitment
-/// scheme; the akita build's `optimized` takes another.
+/// shows which ones are installed: the stage-5 slot and the stage-4 slot,
+/// cycle-first here, refuse a witness without resident rows, which the
+/// default kernels collect. Dory stands in for the commitment scheme; the
+/// akita build's `optimized` takes another.
 #[cfg(not(feature = "akita"))]
 #[test]
 fn with_streaming_installs_the_register_kernels() {
@@ -511,11 +511,10 @@ fn with_streaming_installs_the_register_kernels() {
         RegistersReadWriteChallenges, RegistersReadWriteChecking, RegistersReadWriteInputClaims,
     };
 
-    use crate::optimized::registers_read_write::SharedRdIndices;
     use crate::optimized::streaming::StreamingFamilies;
     use crate::JoltBackend;
 
-    let log_t = 1;
+    let log_t = 2;
     let streaming = || {
         JoltBackend::<Fr, DoryScheme>::optimized().with_streaming(StreamingFamilies {
             registers: true,
@@ -557,12 +556,11 @@ fn with_streaming_installs_the_register_kernels() {
         let challenges = RegistersReadWriteChallenges {
             gamma: Fr::from_u64(3),
         };
-        let parks_rd = |backend: JoltBackend<Fr, DoryScheme>| {
-            let mut session = ProofSession::default();
-            let _ = backend
+        let read_write = |backend: JoltBackend<Fr, DoryScheme>| {
+            backend
                 .registers_read_write
                 .prepare(
-                    &mut session,
+                    &mut ProofSession::default(),
                     chunk_only,
                     ProverInputs {
                         relation: &relation,
@@ -571,10 +569,12 @@ fn with_streaming_installs_the_register_kernels() {
                         challenges: &challenges,
                     },
                 )
-                .unwrap();
-            session.take::<SharedRdIndices>().is_some()
+                .map(|_| ())
         };
-        assert!(parks_rd(JoltBackend::optimized()));
-        assert!(!parks_rd(streaming()));
+        read_write(JoltBackend::optimized()).unwrap();
+        assert!(matches!(
+            read_write(streaming()),
+            Err(KernelError::Witness(WitnessError::UnavailableView { .. }))
+        ));
     });
 }

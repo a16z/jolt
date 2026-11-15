@@ -186,7 +186,8 @@ impl LazyBind {
     /// The step for branch tables of `table_lens` entries, in polynomial
     /// order with `factors` tables per polynomial (only each polynomial's
     /// first table doubles), over `cycles` cycles at `width` of at most
-    /// `max_width` branches.
+    /// `max_width` branches. A dense element count past `usize` saturates:
+    /// it exceeds every branch table that fits in memory.
     pub(super) fn new(
         width: usize,
         max_width: usize,
@@ -194,7 +195,7 @@ impl LazyBind {
         cycles: usize,
         table_lens: impl ExactSizeIterator<Item = usize>,
     ) -> Self {
-        let dense_elements = cycles / (2 * width) * (table_lens.len() / factors);
+        let dense_elements = (cycles / (2 * width)).saturating_mul(table_lens.len() / factors);
         let branch_elements = table_lens
             .enumerate()
             .map(|(column, len)| len * if column.is_multiple_of(factors) { 2 } else { 1 })
@@ -622,7 +623,11 @@ fn gather_product<F: JoltField, S: ChunkIndexSource>(
 /// second half by `challenge` (bit 1) — offset layout
 /// `b0 + 2·b1 + 4·b2`, matching the low bits of the original cycle index.
 /// Only lead columns carry branches; trailing columns pass through.
-fn double_branches<F: JoltField>(tables: Vec<Vec<F>>, factors: usize, challenge: F) -> Vec<Vec<F>> {
+pub(super) fn double_branches<F: JoltField>(
+    tables: Vec<Vec<F>>,
+    factors: usize,
+    challenge: F,
+) -> Vec<Vec<F>> {
     let one_minus = F::one() - challenge;
     let double = |(column, table): (usize, Vec<F>)| -> Vec<F> {
         if !column.is_multiple_of(factors) {
