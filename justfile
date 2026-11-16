@@ -31,19 +31,15 @@ machete:
     cargo-machete
     cargo machete --with-metadata
 
-# rust.yml denies warnings through RUSTFLAGS. The Clippy recipes pass -D warnings to Clippy instead:
-# it denies the same lints while every path package is a workspace member, and it leaves dependency
-# artifacts shared with plain cargo runs.
-
 # Workspace Clippy under the three feature sets the rust.yml clippy job starts with
 clippy:
-    cargo clippy --all --all-targets --features allocative,host -q --message-format=short -- -D warnings
-    cargo clippy --all --all-targets --features allocative,host,zk -q --message-format=short -- -D warnings
-    cargo clippy --all --all-targets --no-default-features -q --message-format=short -- -D warnings
+    RUSTFLAGS='-D warnings' cargo clippy --all --all-targets --features allocative,host -q --message-format=short
+    RUSTFLAGS='-D warnings' cargo clippy --all --all-targets --features allocative,host,zk -q --message-format=short
+    RUSTFLAGS='-D warnings' cargo clippy --all --all-targets --no-default-features -q --message-format=short
 
 # Clippy on one selection with warnings denied, e.g. -p jolt-prover --all-targets --features akita
 clippy-with *args:
-    cargo clippy "$@" -q --message-format=short -- -D warnings
+    RUSTFLAGS='-D warnings' cargo clippy "$@" -q --message-format=short
 
 # cargo nextest on a selection, e.g. -p jolt-poly -E 'test(/bind/)'; no arguments tests only the root jolt package
 test *args:
