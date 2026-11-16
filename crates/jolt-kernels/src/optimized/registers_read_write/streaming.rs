@@ -3,8 +3,8 @@
 //! Cycle-first binding keeps no per-cycle state: the default kernel runs over
 //! a streamed source ([`CycleSource::Streamed`]), whose cycle rounds read the
 //! witness's resident rows in task-partitioned passes
-//! ([`StreamedCycleState`]) until a level fits [`DENSE_TABLE_CAP`], and whose
-//! two read-operand openings come from one more row walk
+//! ([`StreamedCycleState`]) until a level fits the kernel's [`DenseCap`], and
+//! whose two read-operand openings come from one more row walk
 //! ([`operand_claims`]). Address-first binding keeps the default kernel's
 //! collected state. Either way no `rd` indices carry to stage 5, whose value
 //! evaluation
@@ -22,7 +22,7 @@ use super::{
     read_write_order, CycleSource, OptimizedRegistersReadWrite, ReadWriteKernel, RegisterCycleRow,
 };
 use crate::optimized::read_write::ReadWriteOrder;
-use crate::optimized::streaming::{task_ranges, DENSE_TABLE_CAP, VISIT_ROWS};
+use crate::optimized::streaming::{task_ranges, DenseCap, DENSE_CAP, VISIT_ROWS};
 use crate::optimized::support::{try_par_sum_vecs, BundleStore};
 use crate::{KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel};
 
@@ -49,21 +49,19 @@ impl<F: JoltField> PrepareKernel<F, RegistersReadWriteChecking<F>> for Streaming
         }
         let rows = BundleStore::resident(witness, log_t, "register read/write trace rows")?;
         Ok(Box::new(ReadWriteKernel::streamed(
-            rows,
-            &inputs,
-            DENSE_TABLE_CAP,
+            rows, &inputs, DENSE_CAP,
         )?))
     }
 }
 
 impl<F: JoltField> ReadWriteKernel<F> {
     /// The cycle-first kernel over `rows`, whose inputs passed
-    /// [`read_write_order`]; `cap` bounds the bytes of the filled level's
-    /// entries and increments, production passing [`DENSE_TABLE_CAP`].
+    /// [`read_write_order`]; `cap` bounds the filled level's entries and
+    /// increments, production passing [`DENSE_CAP`].
     fn streamed(
         rows: BundleStore<RegisterCycleRow>,
         inputs: &ProverInputs<'_, F, RegistersReadWriteChecking<F>>,
-        cap: usize,
+        cap: DenseCap,
     ) -> Result<Self, KernelError<F>> {
         let cycles = u32::try_from(inputs.relation.register_dimensions().log_t())
             .ok()

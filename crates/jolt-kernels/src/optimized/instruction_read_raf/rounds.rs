@@ -130,22 +130,13 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
             let bind_dense = |table: &mut Polynomial<F>| {
                 table.bind_with_order(challenge, BindingOrder::HighToLow);
             };
-            #[cfg(feature = "parallel")]
-            let ((), ()) = rayon::join(
-                || self.prefix_tables.par_iter_mut().for_each(bind_dense),
-                || {
-                    self.suffix_tables.par_iter_mut().for_each(|(_, suffixes)| {
-                        suffixes.iter_mut().for_each(bind_dense);
-                    });
-                },
-            );
-            #[cfg(not(feature = "parallel"))]
-            {
-                self.prefix_tables.iter_mut().for_each(bind_dense);
-                self.suffix_tables
-                    .iter_mut()
-                    .for_each(|(_, suffixes)| suffixes.iter_mut().for_each(bind_dense));
-            }
+            // A phase's tables start at 256 entries and halve every round:
+            // binding all of them takes about a tenth of a millisecond, less
+            // than a parallel region costs.
+            self.prefix_tables.iter_mut().for_each(bind_dense);
+            self.suffix_tables
+                .iter_mut()
+                .for_each(|(_, suffixes)| suffixes.iter_mut().for_each(bind_dense));
             self.raf_left.bind(challenge);
             self.raf_right.bind(challenge);
             self.raf_identity.bind(challenge);
