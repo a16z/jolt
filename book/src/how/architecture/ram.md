@@ -63,9 +63,9 @@ and word stores into a protected doubleword.
 
 The interpreter, replay tracer and native tracer reject a changed protected
 word before writing it, and reject loads below `lowest_address`. Host calls
-(prints, cycle markers and advice writes) never stop the run: a call whose
-buffer has a byte below `lowest_address`, or any other byte a guest load would
-reject, is logged and ignored.
+(prints, cycle markers and advice writes) are logged and ignored when their
+buffer contains a byte below `lowest_address` or any other byte a guest load
+would reject.
 
 ## Deviations from the Twist algorithm as described in the paper
 
