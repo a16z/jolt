@@ -51,9 +51,9 @@ mainnet block 26429593:
 The file is the RLP list `[header, parent_header, transaction, public_key,
 preimages]`: 67486 bytes, of which 93 trie nodes take 32578 and four contract
 codes 33012. `fetch.py` read the block's `debug_executionWitness` and raw
-header, transaction and receipt from `https://api.zan.top/eth-mainnet`
-(reth v2.5.1) on 2026-11-16. The generator kept the preimages the transaction
-resolves and checked that the guest's receipt hashes to the chain's.
+header, transaction and receipt from `https://api.zan.top/eth-mainnet` on
+2026-11-16. The generator kept the preimages the transaction resolves and
+checked that the guest's receipt hashes to the chain's.
 
 To build a fixture for another block:
 
