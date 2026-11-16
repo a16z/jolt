@@ -38,11 +38,18 @@ SECTIONS {
     *(.text)
   } > program
 
-  /* ACT4's RVMODEL_HALT_PASS / RVMODEL_HALT_FAIL expansion lives in
-   * .text.rvmodel. */
-  .text.rvmodel : {
+  /* ACT4's RVMODEL_* routines live in .text.rvmodel. The Sail signature build
+   * expands them from sail_macros.h and the self-checking build from
+   * rvmodel_macros.h, so the section's size differs between the two builds,
+   * while the expected values baked into the second assume .data sits where it
+   * did in the first. Upstream places .text.rvmodel after .data; Jolt keeps all
+   * code ahead of the writable sections, so the section instead fills a fixed
+   * 4 KiB slot that pins every later address. */
+  .text.rvmodel : ALIGN(0x1000) {
     *(.text.rvmodel)
+    . = ALIGN(0x1000);
   } > program
+  ASSERT(SIZEOF(.text.rvmodel) <= 0x1000, ".text.rvmodel outgrew its 4 KiB slot")
 
   /* tohost/fromhost live in .tohost (see RVMODEL_DATA_SECTION). The emulator
    * locates the `tohost` symbol via the ELF symbol table, so the section name
