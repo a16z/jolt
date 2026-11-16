@@ -314,7 +314,8 @@ No benchmark-target governor, SMT, boost, swap, RAID, or other setting is change
 `host.microcode` comes from `/proc/cpuinfo`. `host.control_plane` records the
 readable `/opt/pika/bin/pika-cli` and `pika-node` SHA256s and the node's `--version`
 output. Unavailable observations are null, never an assumed match. These are
-runtime observations; they are not part of native bundle cache identity.
+runtime observations; they are not part of native bundle cache identity, and
+`host.control_plane` is not part of a calibration key.
 
 The disposable GitHub-hosted builder checks for 40 GB of free disk space, then
 adds a 24 GB swap file, reserving 16 GB of disk space for the build. It uses one
@@ -327,8 +328,10 @@ These are failure limits, not duration estimates.
 ## Manual commands
 
 Run-only execution needs Linux, Python 3.11+ through `uv`, Git for the pinned harness
-checkout, GNU `/usr/bin/time` (Debian/Ubuntu package `time`), `taskset` and `lscpu`. The target also builds opted-in PRs, so it needs the pinned Rust toolchain,
-its `rust-src` component and configured RISC-V targets. The five
+checkout, GNU `/usr/bin/time` (Debian/Ubuntu package `time`), `taskset` and `lscpu`. The target also builds opted-in PRs, so it needs rustup, which installs the
+toolchain, components and RISC-V targets that `rust-toolchain.toml` pins. Add no
+component to that toolchain, `rust-src` in particular: it changes the prover's
+bytes ("One toolchain definition for both builders" below). The five
 prepared guests use `riscv64imac-unknown-none-elf`. The build produces its own
 `jolt` CLI; a stale globally installed CLI is not used.
 
@@ -621,19 +624,48 @@ denominators are unavailable. The envelope is `0.5 * ceil(max(floor, 1.5 * max(d
 at half-percentage-point boundaries. Method: `null-median3-symmetric-envelope-v2`.
 These are observed informational bands, not confidence intervals or verdicts.
 
-Each schema-1 cell key is SHA256 of compact, sorted JSON with no nonfinite
-numbers. Matching requires the exact base revision, metric contract, collector,
-calibration helper and committed suite hashes; Rust/Cargo versions, target ISA,
-flags, profile/config, effective lockfile, native harness hashes and schedules;
-cell/input/guest identities, ordered physical CPU IDs, and every measured base
-sample's trace and padded-row counts. Host identity includes machine ID, kernel,
-microcode, Pika management version and CLI/node hashes, boost, SMT, the complete
-governor map, THP and total swap. These must agree before and after both
-measurements. The host's management node is not a benchmark agent; a Pika update
-invalidates existing references. Missing or unreadable identity evidence makes
-references unavailable. Construction hostname, compiler/linker labels,
-transient free swap, random URS hashes and harness Git SHA alone do not bind;
-the initially empty suite-local Dory cache policy does.
+Each schema-2 cell key is SHA256 of compact, sorted JSON with no nonfinite
+numbers. A reference applies to a PR cell only when the two keys are equal, so
+its band is a null with equal recorded host fields, the same workload and a
+prover equal to the PR's base up to the two sections named below. Every key
+field binds; a field outside the key only describes a run.
+
+| Key fields | Why they bind |
+|---|---|
+| Base prover (`elf-no-build-id-comment-v1` hash, below), guest ELF, input bytes, Akita schedules | What the build gives a measured process to execute and read. |
+| Case ID, workload, PCS, backend, core count, ordered physical CPU IDs, scale, the initially empty suite-local Dory cache policy, and every measured base sample's trace and padded-row counts | The work done and the CPUs it ran on. |
+| Machine ID, kernel release, microcode, boost, SMT, the complete governor map, THP and total swap | Recorded hardware and kernel state that changes the time or RSS of an unchanged binary. |
+| Metric contract, method, normalization, and the hashes of the collector (`run.py`), calibration helper and suite at the harness revision that ran | They define what a sample and a band mean. |
+| Exact base revision | A reference belongs to one main commit, even when another commit builds the same prover. |
+| Rust/Cargo versions, target ISA, flags, profile/config, effective lockfile, native harness hashes | Build inputs. The prover and guest hashes already depend on them; equal hashes with different recorded inputs are inconsistent evidence. |
+
+The host fields must also agree between the start and end snapshots of each run.
+Missing or unreadable evidence for a key field makes references unavailable.
+
+Outside the key: the host's management node (`host.control_plane`), construction
+hostname, compiler/linker labels, installed toolchain components, Cargo job
+count, target-directory reuse, transient free swap, random URS hashes and harness
+Git SHA alone. Any of these that changes the prover is bound through the prover
+hash. The shared libraries that the target loads into the dynamically linked
+prover (libc, libm, libgcc_s and the dynamic loader) are neither keyed nor
+recorded.
+
+The management node is recorded and never compared. No measured process executes
+it, its version and file hashes do not say what it was doing, and no other host
+daemon is keyed, so a Pika update between two runs does not invalidate
+references. An update during a run is not detected, like any other background
+activity on the target. Of the 52 nulls measured from November 6 to 16, five had
+such an update between their snapshots and no other reason to be refused. Against
+the published nulls of the same cases started within 36 hours, three of the five
+were no noisier in mean and maximum time window delta, cells above the 3% floor
+and mean RSS window delta; the other two exceeded the neighbours' maximum on two
+of those four, the largest excess being a maximum time window delta of 5.11%
+against 3.97%.
+
+A reference published under schema 1, which keyed the management node, applies
+to no schema-2 key: the catalog lists the digests of its schema-1 keys, and PR
+ingest requires the reference it recomputes with the current helper to equal the
+published bytes.
 
 An RSS collector change alters the committed runner hash, so references from the
 direct Python `wait4` collector do not match and must be regenerated, even when
@@ -645,6 +677,18 @@ or executable. Hash that copy; execute and byte-verify the untouched originals.
 Normalization failure makes the reference unavailable. This admits metadata
 differences, not RSS equivalence; the measured one-core secp256k1 discrepancy
 above remains unresolved.
+
+`.comment` is not loaded. `.note.gnu.build-id` is: it lies in a read-only
+`PT_LOAD` segment. Two provers with equal normalized hashes can therefore differ
+in loaded bytes, namely the note's 20-byte hash, which covers the whole file
+including `.comment`; every other loaded byte is equal. For base `0537900e` a
+hosted build (cc 13.3.0, ld 2.42, glibc 2.39, one Cargo job) and a local build with
+the same toolchain components (cc 15.2.0, ld 2.46, glibc 2.43, 64 CPUs) differed
+only in these two sections, and objcopy 2.42 and 2.46 produced the same
+normalized bytes. The workspace's Rust sources never refer to the build ID, and
+in the Rust 1.99.1 standard library only the backtrace symbolizer does, to find
+separate debug files. Third-party dependencies, the dynamic loader and the kernel
+were not checked, and no run-time read tracing was done.
 
 Ingest stores recomputed `calibration/reference.json` with full keys, envelopes,
 raw hash, measurement times, producer/ingest identities and plan/build digests.
@@ -666,6 +710,30 @@ unchanged; `comparison.json` archives the validated summary, reference SHA/sourc
 catalog revision and availability reasons. Missing, expired, mismatched or
 unauthenticated references preserve medians and signed deltas, with an explicit
 unavailable reason. Target-supplied calibration overrides remain rejected.
+
+#### One toolchain definition for both builders
+
+A reference is measured on a GitHub-hosted build of main, and a PR's base is
+built on the target. They match only if both builds produce the same prover up
+to the build-ID note and `.comment`, so both builders must use the same toolchain
+and the same home directory, `/home/runner`: the prover embeds source paths
+under Cargo's home. `rust-toolchain.toml` is the only toolchain definition:
+rustup on the target installs exactly what it lists at every toolchain change,
+and the hosted `prepare` job passes no `components` to `setup-rust-toolchain`,
+which then installs from the same file.
+
+An extra component can change the prover. With `rust-src` installed, rustc 1.99.1
+writes that component's path into the panic locations of generic standard-library
+code (`/home/runner/.rustup/toolchains/<toolchain>/lib/rustlib/src/rust/library/…`
+where a toolchain without it writes `/rustc/<commit>/library/…`). For base
+`0537900e` this changed `.rodata`, `.data.rel.ro` and their relocations, and
+shifted the addresses used throughout `.text`.
+
+Nothing checks that the two builders are provisioned alike. A builder with a
+different toolchain or path layout yields a prover with a different hash and the
+PR check reports an unavailable reference; it never applies a band measured on
+another prover. Run the bootstrap acceptance below to compare the two builds
+directly.
 
 ### Bootstrap acceptance before ordinary enablement
 
@@ -715,8 +783,9 @@ threshold and observed maximum.
 References apply only to three measured repetitions. Match each cell against the
 base leg's revision, binary, guest, input, trace rows, compiler settings and
 effective lockfile, plus its workload, PCS, core count, ordered CPU mask and scale.
-The collector hash, metric contract, host identity, kernel, microcode, control-plane
-identity, boost, SMT, governor map, huge-page setting and total swap must also match.
+The collector hash, metric contract, host identity, kernel, microcode, boost, SMT,
+governor map, huge-page setting and total swap must also match; the host's
+management node does not bind.
 Missing evidence or a mismatch leaves the real medians and signed deltas visible,
 with an unavailable reference and its reason. Candidate binary, guest and trace
 changes are shown, not rejected. A harness Git revision difference alone is not
