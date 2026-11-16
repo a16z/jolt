@@ -648,7 +648,8 @@ impl<T: ?Sized> MaybeEncoding for T {}
 
 /// Everything Jolt's protocol stack requires of a scalar field: field
 /// algebra, a canonical encoding, an accumulator, serde wire serialization
-/// (canonical-checked, via [`impl_serde_bytes!`]), the transcript encoding
+/// (canonical-checked, via [`impl_serde_bytes!`] or, for `Fp128`, the same
+/// wire format decoded a word at a time), the transcript encoding
 /// under the `spongefish` feature, and heap visitation under the `allocative`
 /// feature.
 ///

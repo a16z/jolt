@@ -258,6 +258,11 @@ mod emit {
     pub fn mul_out_out_a() {
         fixed!(r_word(FUNCT3_MUL, REG_OUT, REG_OUT, REG_A));
     }
+    /// `OUT = OUT + A`.
+    #[inline(always)]
+    pub fn out_add_a() {
+        fixed!(r_word(FUNCT3_ADD, REG_OUT, REG_OUT, REG_A));
+    }
     #[inline(always)]
     pub fn acc_add_out() {
         fixed!(r_word(FUNCT3_ADD, REG_ACC, REG_ACC, REG_OUT));
@@ -417,6 +422,19 @@ mod guest {
             ensure_montgomery_constants();
             emit::mul_out_rinv();
         }
+        finish()
+    }
+
+    /// Canonical multiply-add without exposing the intermediate product as advice.
+    /// Uses no accumulator register and runs no caller code while operands are live.
+    /// Canonical (non-Montgomery) limbs only.
+    #[inline(always)]
+    pub fn mul_add<const N: usize>(a: &[u64; N], b: &[u64; N], addend: &[u64; N]) -> [u64; N] {
+        load(REG_A, a);
+        load(REG_B, b);
+        emit::mul_out();
+        load(REG_A, addend);
+        emit::out_add_a();
         finish()
     }
     /// `Σ a[i]·b[i]` with the running sum resident in the field register file:
@@ -649,6 +667,6 @@ mod guest {
 }
 
 pub use guest::{
-    accumulators_free, add, bind_modulus, dot, dot_rows, inv, mul, neg, signed_sum, sub,
+    accumulators_free, add, bind_modulus, dot, dot_rows, inv, mul, mul_add, neg, signed_sum, sub,
     sum_of_products, weighted_dot_rows,
 };

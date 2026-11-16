@@ -90,7 +90,8 @@ guest under the same tracer. Native software folds supply the expected results
 for deterministic full-width values and zero, one, and minus one. It covers
 row counts 1 through 10 and vector lengths 0 through 11, including every
 five-row block tail and four-element tail, product arities 0 through 4, nested
-signed-sum iterators, and zero/nonzero inverses. The Akita build requires the
+signed-sum iterators, zero/nonzero inverses, and multiply-add against multiply
+then add. The Akita build requires the
 Fp128 row kernels to dispatch; the Dory build checks the BN254 arithmetic
 wrappers. CI runs both. The `kernel-tests` guest feature is used only for this
 entry point.

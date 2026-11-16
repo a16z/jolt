@@ -288,7 +288,8 @@ Final per-file actuals are recorded in the file-structure table below
    `akita-field` type is foreign, so the orphan rule forbids giving it serde
    impls here, and it must satisfy `JoltField` for the akita lanes to build.
    This matches the old umbrella (`Field` never carried serde bounds); every
-   first-party type keeps its `impl_serde_bytes!` impls. Restore the bounds
+   first-party type keeps its serde impls (`impl_serde_bytes!`, or the same
+   wire format written by hand for `Fp128`). Restore the bounds
    at the akita cutover when the bootstrap edge is deleted.
    **Discharged by the shared-field cutover chain:** Jolt #1810 lands the
    rebuilt field, Akita #447 rebinds Akita to it, and Jolt #1796 completes

@@ -9,6 +9,7 @@
 
 use jolt_algebra as two;
 
+use bincode::error::DecodeError;
 use rand::{Rng, RngCore, SeedableRng};
 use rand_chacha::ChaCha20Rng;
 use two::{CanonicalBytes, CanonicalEncoding, Field as _, PseudoMersenne, Ring};
@@ -413,4 +414,47 @@ fn five_limb_reduction_extreme_offsets_match_long_division() {
     check::<{ u128::MAX }>();
     check::<{ u128::MAX - 2 }>();
     check::<{ u128::MAX - (u32::MAX as u128 - 1) }>();
+}
+
+#[test]
+fn fp128_serde_decodes_canonical_byte_tuples_only() {
+    type F = two::Prime128Offset6A23801F;
+    const MODULUS: u128 = u128::MAX - (0x6a23_801f - 1);
+    let config = bincode::config::standard();
+    let decode = |bytes: &[u8]| {
+        bincode::serde::decode_from_slice::<F, _>(bytes, config)
+            .map(|(value, read)| (value.to_u128_checked(), read))
+            .map_err(|error| error.to_string())
+    };
+    let mut rng = rng();
+    let limb_boundaries = [0, 1, (1u128 << 64) - 1, 1u128 << 64, MODULUS - 1];
+    let single_bits = (0..128).map(|bit| 1u128 << bit);
+    let random = (0..1000).map(|_| rng.gen::<u128>() % MODULUS);
+    for value in limb_boundaries.into_iter().chain(single_bits).chain(random) {
+        // Trailing bytes stay unread: the element is a fixed 16-byte tuple.
+        let mut input = value.to_le_bytes().to_vec();
+        input.extend_from_slice(&[0xaa, 0xbb]);
+        assert_eq!(decode(&input), Ok((Some(value), 16)), "{value:#x}");
+        let element = F::from_u128_checked(value);
+        assert_eq!(
+            element.and_then(|element| bincode::serde::encode_to_vec(element, config).ok()),
+            Some(value.to_le_bytes().to_vec()),
+            "{value:#x}"
+        );
+    }
+    let message = "non-canonical field element encoding".to_owned();
+    let non_canonical = DecodeError::OtherString(message).to_string();
+    for value in [MODULUS, MODULUS + 1, u128::MAX] {
+        let rejected = Err(non_canonical.clone());
+        assert_eq!(decode(&value.to_le_bytes()), rejected, "{value:#x}");
+    }
+    for length in 0..16 {
+        // A short input fails exactly as the 16-byte array it replaces does.
+        let short = &[0u8; 16][..length];
+        let as_bytes = bincode::serde::decode_from_slice::<[u8; 16], _>(short, config)
+            .err()
+            .map(|error| error.to_string());
+        assert!(as_bytes.is_some(), "{length} bytes");
+        assert_eq!(decode(short).err(), as_bytes, "{length} bytes");
+    }
 }
