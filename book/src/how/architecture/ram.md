@@ -57,10 +57,10 @@ An access misaligned for its width, such as an `LH` at an odd address or any mis
 
 Protected doublewords hold program input, trusted advice, untrusted advice or
 the stack canary `[stack_end, stack_end + STACK_CANARY_SIZE)`, or lie in the
-code range: the doubleword holding the first source instruction through the one
-holding the last. The tracers round these extents outward to doublewords.
+code region: the doubleword holding the first source instruction through the
+one holding the last. The tracers round these extents outward to doublewords.
 Padding and read-only data between instructions are protected with the code,
-and ELF admission rejects a writable section that overlaps the code range.
+and ELF admission rejects a writable section that overlaps the code region.
 Same-value stores remain valid, including byte, halfword and word stores into a
 protected doubleword.
 

@@ -425,7 +425,7 @@ pub fn create_emulator(
         emulator.set_elf_path(elf_path);
     }
     emulator.setup_program(elf_contents);
-    emulator.protect_code_words(elf_contents);
+    emulator.protect_code_region(elf_contents);
     emulator
 }
 
@@ -945,7 +945,7 @@ mod tests {
         use crate::parallel::{ChunkCheckpoint, ChunkWorker, SnapshotPool};
         use std::panic::{catch_unwind, AssertUnwindSafe};
 
-        // Preserve the old code word in x2, try to zero it, then restore it.
+        // Preserve the old code doubleword in x2, try to zero it, then restore it.
         let elf = build_elf64(
             &[
                 0x0000_0097,

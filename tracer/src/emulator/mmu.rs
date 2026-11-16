@@ -24,7 +24,7 @@ pub struct Mmu {
     /// invalidate it directly when the executable range is written.
     pub decode_cache: DecodeCache,
 
-    pub(crate) code_words: Range<usize>,
+    pub(crate) code_region: Range<usize>,
 
     pub jolt_device: Option<JoltDevice>,
 
@@ -208,7 +208,7 @@ impl Mmu {
             privilege_mode: PrivilegeMode::Machine,
             memory: MemoryWrapper::new(),
             decode_cache: DecodeCache::empty(),
-            code_words: 0..0,
+            code_region: 0..0,
             jolt_device: None,
             mstatus: 0,
         }
@@ -727,7 +727,7 @@ impl Mmu {
             let index = ((word - layout.get_lowest_address()) >> 3) as usize;
             let canary =
                 word + 7 >= layout.stack_end && word < layout.stack_end + STACK_CANARY_SIZE;
-            if !self.code_words.contains(&index)
+            if !self.code_region.contains(&index)
                 && !device.is_input(word)
                 && !device.is_trusted_advice(word)
                 && !device.is_untrusted_advice(word)
@@ -997,7 +997,7 @@ impl Mmu {
                 memory: Memory::empty(),
             },
             decode_cache: self.decode_cache.snapshot_with_empty_entries(),
-            code_words: self.code_words.clone(),
+            code_region: self.code_region.clone(),
             jolt_device: self.jolt_device.clone(),
             mstatus: self.mstatus,
         }
@@ -1014,7 +1014,7 @@ impl Mmu {
             // Snapshotted separately (pooled image / checkpoint layer).
             memory: _,
             decode_cache: _,
-            code_words: _,
+            code_region: _,
             jolt_device: _,
             mstatus,
         } = self;
@@ -1538,8 +1538,8 @@ mod test_mmu {
                     .unwrap()
                     .memory_layout
                     .get_lowest_address();
-                mmu.code_words =
-                    jolt_program::preprocess::ram::code_words([(address + 6, true)], lowest)
+                mmu.code_region =
+                    jolt_program::preprocess::ram::code_region([(address + 6, true)], lowest)
                         .unwrap();
                 let lane = OLD >> (8 * offset);
                 let store = |mmu: &mut Mmu, value: u64| match width {
@@ -1667,7 +1667,7 @@ mod test_mmu {
                             DRAM_BASE + 0x40
                         };
                         if !canary {
-                            cpu.mmu.code_words = jolt_program::preprocess::ram::code_words(
+                            cpu.mmu.code_region = jolt_program::preprocess::ram::code_region(
                                 [(address, false)],
                                 layout.get_lowest_address(),
                             )
@@ -1719,8 +1719,8 @@ mod test_mmu {
                 .unwrap()
                 .memory_layout
                 .get_lowest_address();
-            mmu.code_words =
-                jolt_program::preprocess::ram::code_words([(DRAM_BASE, false)], lowest).unwrap();
+            mmu.code_region =
+                jolt_program::preprocess::ram::code_region([(DRAM_BASE, false)], lowest).unwrap();
             assert!(catch_unwind(AssertUnwindSafe(|| match width {
                 1 => mmu.store_raw(DRAM_BASE, 1),
                 2 => mmu.store_halfword_raw(DRAM_BASE, 1),
@@ -1750,8 +1750,8 @@ mod test_mmu {
                     .unwrap()
                     .memory_layout
                     .get_lowest_address();
-                cpu.mmu.code_words =
-                    jolt_program::preprocess::ram::code_words([(address, false)], lowest).unwrap();
+                cpu.mmu.code_region =
+                    jolt_program::preprocess::ram::code_region([(address, false)], lowest).unwrap();
                 cpu.x[1] = address as i64;
                 cpu.x[2] = if conditional { 11 } else { 0 };
                 let instruction = Instruction::decode(

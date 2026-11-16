@@ -5,7 +5,7 @@ use object::{Object, ObjectSection, SectionFlags, SectionKind};
 use std::collections::BTreeMap;
 
 use crate::{
-    preprocess::{ram::code_words, PreprocessingError},
+    preprocess::{ram::code_region, PreprocessingError},
     ProgramError,
 };
 
@@ -95,7 +95,7 @@ pub fn decode_elf(
         decode_text_section(start, &raw_data, &mut instructions, profile)?;
     }
 
-    let code = code_words(
+    let code = code_region(
         instructions.iter().map(|instruction| {
             let row = instruction.row();
             (row.address as u64, row.is_compressed)
@@ -105,14 +105,14 @@ pub fn decode_elf(
     .map_err(|_| ProgramError::MalformedImage("invalid source instruction extent"))?;
     // Protection freezes every doubleword from the first source instruction
     // through the last, including read-only bytes and zero padding among them.
-    // Zero text padding outside that range protects nothing.
+    // Zero text padding outside that region protects nothing.
     for (start, end) in writable_ranges {
         let first_word = start / 8;
         let end_word = end.div_ceil(8);
         if (code.start as u128) < u128::from(end_word) && u128::from(first_word) < code.end as u128
         {
             return Err(ProgramError::MalformedImage(
-                "writable section overlaps the protected code range",
+                "writable section overlaps the protected code region",
             ));
         }
     }
@@ -527,7 +527,7 @@ mod tests {
             assert!(matches!(
                 decode_elf(&elf, RV64IMAC_JOLT),
                 Err(ProgramError::MalformedImage(
-                    "writable section overlaps the protected code range"
+                    "writable section overlaps the protected code region"
                 ))
             ));
         }
@@ -548,7 +548,7 @@ mod tests {
             assert!(matches!(
                 decode_elf(&elf, RV64IMAC_JOLT),
                 Err(ProgramError::MalformedImage(
-                    "writable section overlaps the protected code range"
+                    "writable section overlaps the protected code region"
                 ))
             ));
         }
@@ -565,7 +565,7 @@ mod tests {
     }
 
     #[test]
-    fn decode_elf_allows_read_only_data_in_the_code_range() {
+    fn decode_elf_allows_read_only_data_in_the_code_region() {
         let mut rodata = data_section(RAM_START_ADDRESS + 2, &[0xaa; 14]);
         rodata.flags = SHF_ALLOC;
         let elf = build_elf64(&[
@@ -574,7 +574,7 @@ mod tests {
             text_section(RAM_START_ADDRESS + 16, &[0x01, 0x00]),
         ]);
         let image =
-            decode_elf(&elf, RV64IMAC_JOLT).expect("read-only bytes in the range may freeze");
+            decode_elf(&elf, RV64IMAC_JOLT).expect("read-only bytes in the region may freeze");
         assert_eq!(image.instructions.len(), 2);
     }
 

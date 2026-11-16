@@ -18,7 +18,7 @@ use common::constants::RAM_START_ADDRESS;
 use dynasmrt::{x64::Assembler, AssemblyOffset, DynamicLabel, DynasmApi, DynasmLabelApi};
 use jolt_program::{
     execution::{JoltProgram, TraceError},
-    preprocess::{ram::bytecode_code_words, BytecodePCMapper},
+    preprocess::{ram::bytecode_code_region, BytecodePCMapper},
 };
 use jolt_riscv::SourceInstructionKind;
 
@@ -204,7 +204,7 @@ pub struct Emitter {
     group_offsets: Vec<(u64, AssemblyOffset)>,
     pub text_base: u64,
     pub text_span: u64,
-    code_words: Range<usize>,
+    code_region: Range<usize>,
 }
 
 impl Emitter {
@@ -274,8 +274,8 @@ impl CompiledBody {
             ));
         }
 
-        let code_words = bytecode_code_words(rows, RAM_START_ADDRESS)
-            .map_err(|_| TraceError::Backend("invalid source code words"))?;
+        let code_region = bytecode_code_region(rows, RAM_START_ADDRESS)
+            .map_err(|_| TraceError::Backend("invalid source code region"))?;
         let mut emitter = Emitter {
             mode,
             pausable,
@@ -290,7 +290,7 @@ impl CompiledBody {
             group_offsets: Vec::new(),
             text_base,
             text_span,
-            code_words,
+            code_region,
         };
 
         let entry = emitter.emit_prologue();

@@ -47,9 +47,9 @@ SECTIONS {
   /* tohost/fromhost live in .tohost (see RVMODEL_DATA_SECTION). The emulator
    * locates the `tohost` symbol via the ELF symbol table, so the section name
    * itself is not load-bearing — but we keep it separate so it's easy to
-   * inspect in objdump. It follows the last code section: Jolt protects every
-   * doubleword from the first instruction through the last, and ELF admission
-   * rejects a writable section inside that range. */
+   * inspect in objdump. It follows the last code section: Jolt protects the
+   * code region, every doubleword from the first instruction through the last,
+   * and ELF admission rejects a writable section inside it. */
   .tohost : {
     KEEP(*(.tohost))
   } > program

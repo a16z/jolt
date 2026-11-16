@@ -102,13 +102,14 @@ impl RAMPreprocessing {
     }
 }
 
-/// RAM word indices, from `lowest_address`, of the code range: the doubleword
+/// RAM word indices, from `lowest_address`, of the code region: the doubleword
 /// holding the first source instruction through the one holding the last.
 /// Padding and read-only data between instructions are protected with the
-/// code, so `decode_elf` rejects a writable section inside the range. Expansion
-/// rows must be reduced to their source anchors before calling; address-zero
-/// padding is not source code. Without source instructions the range is empty.
-pub fn code_words(
+/// code, so `decode_elf` rejects a writable section inside the region.
+/// Expansion rows must be reduced to their source anchors before calling;
+/// address-zero padding is not source code. Without source instructions the
+/// region is empty.
+pub fn code_region(
     source_extents: impl IntoIterator<Item = (u64, bool)>,
     lowest_address: u64,
 ) -> Result<Range<usize>, PreprocessingError> {
@@ -128,7 +129,7 @@ fn source_word_intervals(
     lowest_address: u64,
 ) -> Result<impl Iterator<Item = Result<(usize, usize), PreprocessingError>>, PreprocessingError> {
     if !lowest_address.is_multiple_of(8) {
-        return Err(PreprocessingError::InvalidCodeWords(
+        return Err(PreprocessingError::InvalidCodeRegion(
             "lowest RAM address is not doubleword aligned",
         ));
     }
@@ -138,25 +139,22 @@ fn source_word_intervals(
         .map(move |(address, is_compressed)| {
             let end = address
                 .checked_add(if is_compressed { 2 } else { 4 })
-                .ok_or(PreprocessingError::InvalidCodeWords(
+                .ok_or(PreprocessingError::InvalidCodeRegion(
                     "source instruction extent overflows",
                 ))?;
-            let offset =
-                address
-                    .checked_sub(lowest_address)
-                    .ok_or(PreprocessingError::InvalidCodeWords(
-                        "source instruction is below RAM",
-                    ))?;
+            let offset = address.checked_sub(lowest_address).ok_or(
+                PreprocessingError::InvalidCodeRegion("source instruction is below RAM"),
+            )?;
             if !address.is_multiple_of(2) {
-                return Err(PreprocessingError::InvalidCodeWords(
+                return Err(PreprocessingError::InvalidCodeRegion(
                     "source instruction address is not halfword aligned",
                 ));
             }
             let start = usize::try_from(offset / 8).map_err(|_| {
-                PreprocessingError::InvalidCodeWords("source word exceeds usize range")
+                PreprocessingError::InvalidCodeRegion("source word exceeds usize range")
             })?;
             let end = usize::try_from((end - lowest_address).div_ceil(8)).map_err(|_| {
-                PreprocessingError::InvalidCodeWords("source word exceeds usize range")
+                PreprocessingError::InvalidCodeRegion("source word exceeds usize range")
             })?;
             Ok((start, end))
         }))
@@ -164,11 +162,11 @@ fn source_word_intervals(
 
 /// Expansion metadata retains the source length on the final row only.
 /// Taking each anchor avoids treating a compressed expansion as four bytes.
-pub fn bytecode_code_words(
+pub fn bytecode_code_region(
     bytecode: &[JoltInstructionRow],
     lowest_address: u64,
 ) -> Result<Range<usize>, PreprocessingError> {
-    code_words(bytecode_source_extents(bytecode), lowest_address)
+    code_region(bytecode_source_extents(bytecode), lowest_address)
 }
 
 fn bytecode_source_extents(
@@ -292,10 +290,10 @@ mod tests {
     }
 
     #[test]
-    fn code_words_round_outward_and_span_gaps_between_instructions() {
+    fn code_region_rounds_outward_and_spans_gaps_between_instructions() {
         let lowest = 0x8000_0000;
         assert_eq!(
-            super::code_words(
+            super::code_region(
                 [
                     (lowest + 38, false),
                     (lowest + 6, true),
@@ -307,15 +305,15 @@ mod tests {
             ),
             Ok(0..6)
         );
-        assert_eq!(super::code_words([(0, true)], lowest), Ok(0..0));
+        assert_eq!(super::code_region([(0, true)], lowest), Ok(0..0));
     }
 
     #[test]
     fn source_code_extents_reject_overflow_low_and_unaligned_addresses() {
-        assert!(super::code_words([(u64::MAX - 1, true)], 0).is_err());
-        assert!(super::code_words([(8, false)], 16).is_err());
-        assert!(super::code_words([(17, true)], 16).is_err());
-        assert!(super::code_words([(16, false)], 1).is_err());
+        assert!(super::code_region([(u64::MAX - 1, true)], 0).is_err());
+        assert!(super::code_region([(8, false)], 16).is_err());
+        assert!(super::code_region([(17, true)], 16).is_err());
+        assert!(super::code_region([(16, false)], 1).is_err());
     }
 
     #[test]

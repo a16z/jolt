@@ -149,7 +149,7 @@ impl ChunkWorker {
         Self::from_seed(
             src.mmu.jolt_device.clone(),
             src.mmu.decode_cache.snapshot_with_empty_entries(),
-            src.mmu.code_words.clone(),
+            src.mmu.code_region.clone(),
         )
     }
 
@@ -159,13 +159,13 @@ impl ChunkWorker {
     pub fn from_seed(
         jolt_device: Option<common::jolt_device::JoltDevice>,
         decode_template: DecodeCache,
-        code_words: Range<usize>,
+        code_region: Range<usize>,
     ) -> Self {
         let mut cpu = Cpu::new(Box::new(DummyTerminal {}));
         cpu.set_host_io(HostIo::Replay);
         cpu.mmu.jolt_device = jolt_device;
         cpu.mmu.decode_cache = decode_template.clone();
-        cpu.mmu.code_words = code_words;
+        cpu.mmu.code_region = code_region;
         ChunkWorker {
             cpu,
             decode_template,
@@ -470,7 +470,7 @@ pub(crate) fn run_two_pass_chunks(
     let (out_tx, out_rx) = mpsc::channel::<(usize, Vec<Cycle>)>();
     let worker_panicked = std::sync::atomic::AtomicBool::new(false);
 
-    let seed_code = emulator.get_cpu().mmu.code_words.clone();
+    let seed_code = emulator.get_cpu().mmu.code_region.clone();
     let mut pass1 = PassOne::new(emulator);
 
     let windowed_rows = std::thread::scope(|scope| {

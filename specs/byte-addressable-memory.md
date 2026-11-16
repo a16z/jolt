@@ -45,8 +45,8 @@ with the bytecode admission error. These checks run at admission and add no
 per-cycle proof work.
 
 ELF admission rejects any writable section, including `.bss`, that overlaps the
-code range: the doublewords from the first decoded source instruction through
-the last. Read-only data may lie in the code range, and writable words outside
+code region: the doublewords from the first decoded source instruction through
+the last. Read-only data may lie in the code region, and writable words outside
 it that contain only text padding remain admissible.
 
 ### Why now

@@ -476,11 +476,11 @@ impl DynasmEmitter {
             ; cmp rsi, (STACK_CANARY_SIZE + 7) as i32
             ; jb >protected_word
         );
-        // The code range compiles to one two-bound comparison in the existing
+        // The code region compiles to one two-bound comparison in the existing
         // store path; only a protected-word hit calls Rust.
-        if !e.code_words.is_empty() {
-            let length = (e.code_words.len() as u64 * 8) as i64;
-            let start = (e.code_words.start as u64 * 8) as i64;
+        if !e.code_region.is_empty() {
+            let length = (e.code_region.len() as u64 * 8) as i64;
+            let start = (e.code_region.start as u64 * 8) as i64;
             dynasm!(e.ops
                 ; .arch x64
                 ; mov rsi, rcx

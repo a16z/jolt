@@ -288,7 +288,7 @@ pub struct TracerChunkCheckpoint {
 struct WorkerSeed {
     device: Option<JoltDevice>,
     decode: DecodeCache,
-    code_words: Range<usize>,
+    code_region: Range<usize>,
     bytecode: BytecodePreprocessing,
 }
 
@@ -339,7 +339,7 @@ impl TracerBackend {
                 .mmu
                 .decode_cache
                 .snapshot_with_empty_entries(),
-            code_words: emulator.get_cpu().mmu.code_words.clone(),
+            code_region: emulator.get_cpu().mmu.code_region.clone(),
             bytecode,
         });
 
@@ -420,7 +420,7 @@ impl ChunkedExecutionBackend for TracerBackend {
         let mut worker = ChunkWorker::from_seed(
             checkpoint.seed.device.clone(),
             checkpoint.seed.decode.clone(),
-            checkpoint.seed.code_words.clone(),
+            checkpoint.seed.code_region.clone(),
         );
         let _previous =
             worker.install_chunk(&checkpoint.boundary, checkpoint.image.as_ref().clone());
