@@ -235,6 +235,7 @@ clear, ZK, and verifier-fixture tests.
 - Use `#[inline]` judiciously in hot paths
 - Pre-allocate vectors unsafely when size is known; avoid clones in hot paths
 - Hot trace paths get one pass and one owner of trace-sized storage. Produce or share derived rows during the existing pass instead of walking or materializing the trace again.
+- A PR that adds a prover or verifier optimization states in its body, per optimization, whether it applies to the other implementations of the same work: the eager and streaming kernels of `jolt-kernels`' optimized tier, the Dory and Akita paths, the Metal runtime and field arithmetic in `jolt-metal`, and the `tracer` and `jolt-tracer-x86` execution backends. Where it applies, port it in the same PR, link an open issue that tracks the port, or state why it is not ported. A missing answer is a review finding.
 
 ### Prover Hot Paths
 
