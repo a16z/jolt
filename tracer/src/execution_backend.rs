@@ -1,4 +1,5 @@
 use std::mem::MaybeUninit;
+use std::ops::Range;
 use std::{path::PathBuf, sync::Arc};
 
 use jolt_program::execution::{
@@ -287,7 +288,7 @@ pub struct TracerChunkCheckpoint {
 struct WorkerSeed {
     device: Option<JoltDevice>,
     decode: DecodeCache,
-    code_word_intervals: Arc<[(usize, usize)]>,
+    code_words: Range<usize>,
     bytecode: BytecodePreprocessing,
 }
 
@@ -338,7 +339,7 @@ impl TracerBackend {
                 .mmu
                 .decode_cache
                 .snapshot_with_empty_entries(),
-            code_word_intervals: Arc::clone(&emulator.get_cpu().mmu.code_word_intervals),
+            code_words: emulator.get_cpu().mmu.code_words.clone(),
             bytecode,
         });
 
@@ -419,7 +420,7 @@ impl ChunkedExecutionBackend for TracerBackend {
         let mut worker = ChunkWorker::from_seed(
             checkpoint.seed.device.clone(),
             checkpoint.seed.decode.clone(),
-            Arc::clone(&checkpoint.seed.code_word_intervals),
+            checkpoint.seed.code_words.clone(),
         );
         let _previous =
             worker.install_chunk(&checkpoint.boundary, checkpoint.image.as_ref().clone());

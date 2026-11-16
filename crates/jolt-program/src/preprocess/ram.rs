@@ -3,6 +3,7 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::{BYTES_PER_INSTRUCTION, RAM_START_ADDRESS};
 use common::jolt_device::{JoltDevice, MemoryLayout, MemoryLayoutError};
 use jolt_riscv::JoltInstructionRow;
+use std::ops::Range;
 
 use super::{public_io::PublicMemorySegment, PreprocessingError};
 
@@ -101,32 +102,25 @@ impl RAMPreprocessing {
     }
 }
 
-/// Round real source-instruction extents outward to RAM doublewords and merge
-/// overlaps and neighbors. Expansion rows must be reduced to their source
-/// anchors before calling; address-zero padding is not source code.
-pub fn code_word_intervals(
+/// RAM word indices, from `lowest_address`, of the code range: the doubleword
+/// holding the first source instruction through the one holding the last.
+/// Padding and read-only data between instructions are protected with the
+/// code, so `decode_elf` rejects a writable section inside the range. Expansion
+/// rows must be reduced to their source anchors before calling; address-zero
+/// padding is not source code. Without source instructions the range is empty.
+pub fn code_words(
     source_extents: impl IntoIterator<Item = (u64, bool)>,
     lowest_address: u64,
-) -> Result<Vec<(usize, usize)>, PreprocessingError> {
-    let intervals =
-        source_word_intervals(source_extents, lowest_address)?.collect::<Result<Vec<_>, _>>()?;
-    Ok(merge_word_intervals(intervals))
-}
-
-fn merge_word_intervals(mut intervals: Vec<(usize, usize)>) -> Vec<(usize, usize)> {
-    intervals.sort_unstable();
-    let mut merged: Vec<(usize, usize)> = Vec::new();
-    for (start, end) in intervals {
-        if let Some((_, previous_end)) = merged.last_mut() {
-            if start <= *previous_end {
-                *previous_end = (*previous_end).max(end);
-                continue;
-            }
-        }
-        merged.push((start, end));
+) -> Result<Range<usize>, PreprocessingError> {
+    let mut words: Option<Range<usize>> = None;
+    for extent in source_word_intervals(source_extents, lowest_address)? {
+        let (start, end) = extent?;
+        words = Some(match words {
+            Some(words) => words.start.min(start)..words.end.max(end),
+            None => start..end,
+        });
     }
-    merged.shrink_to_fit();
-    merged
+    Ok(words.unwrap_or_default())
 }
 
 fn source_word_intervals(
@@ -134,7 +128,7 @@ fn source_word_intervals(
     lowest_address: u64,
 ) -> Result<impl Iterator<Item = Result<(usize, usize), PreprocessingError>>, PreprocessingError> {
     if !lowest_address.is_multiple_of(8) {
-        return Err(PreprocessingError::InvalidCodeWordIntervals(
+        return Err(PreprocessingError::InvalidCodeWords(
             "lowest RAM address is not doubleword aligned",
         ));
     }
@@ -144,22 +138,25 @@ fn source_word_intervals(
         .map(move |(address, is_compressed)| {
             let end = address
                 .checked_add(if is_compressed { 2 } else { 4 })
-                .ok_or(PreprocessingError::InvalidCodeWordIntervals(
+                .ok_or(PreprocessingError::InvalidCodeWords(
                     "source instruction extent overflows",
                 ))?;
-            let offset = address.checked_sub(lowest_address).ok_or(
-                PreprocessingError::InvalidCodeWordIntervals("source instruction is below RAM"),
-            )?;
+            let offset =
+                address
+                    .checked_sub(lowest_address)
+                    .ok_or(PreprocessingError::InvalidCodeWords(
+                        "source instruction is below RAM",
+                    ))?;
             if !address.is_multiple_of(2) {
-                return Err(PreprocessingError::InvalidCodeWordIntervals(
+                return Err(PreprocessingError::InvalidCodeWords(
                     "source instruction address is not halfword aligned",
                 ));
             }
             let start = usize::try_from(offset / 8).map_err(|_| {
-                PreprocessingError::InvalidCodeWordIntervals("source word exceeds usize range")
+                PreprocessingError::InvalidCodeWords("source word exceeds usize range")
             })?;
             let end = usize::try_from((end - lowest_address).div_ceil(8)).map_err(|_| {
-                PreprocessingError::InvalidCodeWordIntervals("source word exceeds usize range")
+                PreprocessingError::InvalidCodeWords("source word exceeds usize range")
             })?;
             Ok((start, end))
         }))
@@ -167,11 +164,11 @@ fn source_word_intervals(
 
 /// Expansion metadata retains the source length on the final row only.
 /// Taking each anchor avoids treating a compressed expansion as four bytes.
-pub fn bytecode_code_word_intervals(
+pub fn bytecode_code_words(
     bytecode: &[JoltInstructionRow],
     lowest_address: u64,
-) -> Result<Vec<(usize, usize)>, PreprocessingError> {
-    code_word_intervals(bytecode_source_extents(bytecode), lowest_address)
+) -> Result<Range<usize>, PreprocessingError> {
+    code_words(bytecode_source_extents(bytecode), lowest_address)
 }
 
 fn bytecode_source_extents(
@@ -181,14 +178,6 @@ fn bytecode_source_extents(
         .iter()
         .filter(|row| row.virtual_sequence_remaining.unwrap_or(0) == 0)
         .map(|row| (row.address as u64, row.is_compressed))
-}
-
-/// Membership in an admitted canonical interval list, without a RAM-sized mask.
-pub fn is_code_word(intervals: &[(usize, usize)], word_index: usize) -> bool {
-    let next = intervals.partition_point(|&(start, _)| start <= word_index);
-    next.checked_sub(1)
-        .and_then(|index| intervals.get(index))
-        .is_some_and(|&(_, end)| word_index < end)
 }
 
 pub fn compute_min_ram_k(
@@ -303,10 +292,10 @@ mod tests {
     }
 
     #[test]
-    fn source_code_extents_round_and_merge_without_freezing_gaps() {
+    fn code_words_round_outward_and_span_gaps_between_instructions() {
         let lowest = 0x8000_0000;
         assert_eq!(
-            super::code_word_intervals(
+            super::code_words(
                 [
                     (lowest + 38, false),
                     (lowest + 6, true),
@@ -316,23 +305,17 @@ mod tests {
                 ],
                 lowest
             ),
-            Ok(vec![(0, 2), (4, 6)])
+            Ok(0..6)
         );
-        let intervals = [(0, 2), (4, 6)];
-        for word in 0..8 {
-            assert_eq!(
-                super::is_code_word(&intervals, word),
-                matches!(word, 0 | 1 | 4 | 5)
-            );
-        }
+        assert_eq!(super::code_words([(0, true)], lowest), Ok(0..0));
     }
 
     #[test]
     fn source_code_extents_reject_overflow_low_and_unaligned_addresses() {
-        assert!(super::code_word_intervals([(u64::MAX - 1, true)], 0).is_err());
-        assert!(super::code_word_intervals([(8, false)], 16).is_err());
-        assert!(super::code_word_intervals([(17, true)], 16).is_err());
-        assert!(super::code_word_intervals([(16, false)], 1).is_err());
+        assert!(super::code_words([(u64::MAX - 1, true)], 0).is_err());
+        assert!(super::code_words([(8, false)], 16).is_err());
+        assert!(super::code_words([(17, true)], 16).is_err());
+        assert!(super::code_words([(16, false)], 1).is_err());
     }
 
     #[test]

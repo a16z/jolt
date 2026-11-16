@@ -55,11 +55,14 @@ An access misaligned for its width, such as an `LH` at an odd address or any mis
 
 ## Tracer memory guards
 
-Protected doublewords contain real source instructions, program input, trusted
-advice, untrusted advice or the stack canary
-`[stack_end, stack_end + STACK_CANARY_SIZE)`. The tracers round these extents
-outward to doublewords. Same-value stores remain valid, including byte, halfword
-and word stores into a protected doubleword.
+Protected doublewords hold program input, trusted advice, untrusted advice or
+the stack canary `[stack_end, stack_end + STACK_CANARY_SIZE)`, or lie in the
+code range: the doubleword holding the first source instruction through the one
+holding the last. The tracers round these extents outward to doublewords.
+Padding and read-only data between instructions are protected with the code,
+and ELF admission rejects a writable section that overlaps the code range.
+Same-value stores remain valid, including byte, halfword and word stores into a
+protected doubleword.
 
 The interpreter, replay tracer and native tracer reject a changed protected
 word before writing it, and reject loads below `lowest_address`. Host calls

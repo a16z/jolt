@@ -35,7 +35,7 @@ use self::terminal::Terminal;
 
 use common::constants::{DEFAULT_HEAP_SIZE, RAM_START_ADDRESS};
 use jolt_program::execution::TraceError;
-use jolt_program::preprocess::ram::code_word_intervals;
+use jolt_program::preprocess::ram::code_words;
 #[cfg(not(feature = "field-inline"))]
 use jolt_riscv::RV64IMAC_JOLT_ALL_INLINES;
 #[cfg(feature = "field-inline")]
@@ -310,9 +310,10 @@ impl Emulator {
         self.cpu.update_pc(header.e_entry);
     }
 
-    /// Write-protects every doubleword holding a source instruction of
-    /// `elf_contents`: a store that changes one faults. Install the
-    /// `JoltDevice` first, since its `lowest_address` anchors the word indices.
+    /// Write-protects the code range of `elf_contents`, every doubleword from
+    /// its first source instruction through its last: a store that changes one
+    /// faults. Install the `JoltDevice` first, since its `lowest_address`
+    /// anchors the word indices.
     #[expect(
         clippy::expect_used,
         reason = "no error path, like create_emulator on over-long I/O: it panics without a JoltDevice or on a program image jolt-program rejects"
@@ -326,15 +327,14 @@ impl Emulator {
             .expect("program ELF decoding failed");
         let mmu = self.cpu.get_mut_mmu();
         let jolt_device = mmu.jolt_device.as_ref().expect("JoltDevice not set");
-        mmu.code_word_intervals = code_word_intervals(
+        mmu.code_words = code_words(
             image.instructions.iter().map(|instruction| {
                 let row = instruction.row();
                 (row.address as u64, row.is_compressed)
             }),
             jolt_device.memory_layout.get_lowest_address(),
         )
-        .expect("decoded code-word intervals are valid")
-        .into();
+        .expect("decoded code words are valid");
     }
 
     pub fn get_cpu(&self) -> &Cpu {

@@ -48,7 +48,7 @@ pub enum PreprocessingError {
         length: usize,
     },
     #[error("invalid code-word protection metadata: {0}")]
-    InvalidCodeWordIntervals(&'static str),
+    InvalidCodeWords(&'static str),
     #[error("bytecode length overflows the packed PC index (u32)")]
     BytecodeTooLarge,
     #[cfg(feature = "field-inline")]

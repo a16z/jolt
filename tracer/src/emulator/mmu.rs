@@ -6,9 +6,8 @@ use crate::emulator::decode_cache::DecodeCache;
 use crate::emulator::memory::Memory;
 use common::constants::{RAM_START_ADDRESS, STACK_CANARY_SIZE};
 use common::jolt_device::{JoltDevice, MemoryLayout};
-use jolt_program::preprocess::ram::is_code_word;
 use jolt_riscv::{RamRead, RamWrite};
-use std::sync::Arc;
+use std::ops::Range;
 
 use super::cpu::{PrivilegeMode, Trap, TrapType};
 use super::host_io::HostMemory;
@@ -25,7 +24,7 @@ pub struct Mmu {
     /// invalidate it directly when the executable range is written.
     pub decode_cache: DecodeCache,
 
-    pub(crate) code_word_intervals: Arc<[(usize, usize)]>,
+    pub(crate) code_words: Range<usize>,
 
     pub jolt_device: Option<JoltDevice>,
 
@@ -209,7 +208,7 @@ impl Mmu {
             privilege_mode: PrivilegeMode::Machine,
             memory: MemoryWrapper::new(),
             decode_cache: DecodeCache::empty(),
-            code_word_intervals: Arc::from([]),
+            code_words: 0..0,
             jolt_device: None,
             mstatus: 0,
         }
@@ -713,7 +712,7 @@ impl Mmu {
     }
 
     fn assert_write_protected_store(&mut self, address: u64, value: u64, width: u64) {
-        // One interval lookup per touched word, fused into the existing write; only
+        // One range check per touched word, fused into the existing write; only
         // protected words need another read. Naturally aligned stores touch one word.
         let first = address & !7;
         let last = (address + width - 1) & !7;
@@ -728,7 +727,7 @@ impl Mmu {
             let index = ((word - layout.get_lowest_address()) >> 3) as usize;
             let canary =
                 word + 7 >= layout.stack_end && word < layout.stack_end + STACK_CANARY_SIZE;
-            if !is_code_word(&self.code_word_intervals, index)
+            if !self.code_words.contains(&index)
                 && !device.is_input(word)
                 && !device.is_trusted_advice(word)
                 && !device.is_untrusted_advice(word)
@@ -998,7 +997,7 @@ impl Mmu {
                 memory: Memory::empty(),
             },
             decode_cache: self.decode_cache.snapshot_with_empty_entries(),
-            code_word_intervals: Arc::clone(&self.code_word_intervals),
+            code_words: self.code_words.clone(),
             jolt_device: self.jolt_device.clone(),
             mstatus: self.mstatus,
         }
@@ -1015,7 +1014,7 @@ impl Mmu {
             // Snapshotted separately (pooled image / checkpoint layer).
             memory: _,
             decode_cache: _,
-            code_word_intervals: _,
+            code_words: _,
             jolt_device: _,
             mstatus,
         } = self;
@@ -1539,12 +1538,9 @@ mod test_mmu {
                     .unwrap()
                     .memory_layout
                     .get_lowest_address();
-                mmu.code_word_intervals = jolt_program::preprocess::ram::code_word_intervals(
-                    [(address + 6, true)],
-                    lowest,
-                )
-                .unwrap()
-                .into();
+                mmu.code_words =
+                    jolt_program::preprocess::ram::code_words([(address + 6, true)], lowest)
+                        .unwrap();
                 let lane = OLD >> (8 * offset);
                 let store = |mmu: &mut Mmu, value: u64| match width {
                     1 => mmu.store(address + offset, value as u8),
@@ -1671,13 +1667,11 @@ mod test_mmu {
                             DRAM_BASE + 0x40
                         };
                         if !canary {
-                            cpu.mmu.code_word_intervals =
-                                jolt_program::preprocess::ram::code_word_intervals(
-                                    [(address, false)],
-                                    layout.get_lowest_address(),
-                                )
-                                .unwrap()
-                                .into();
+                            cpu.mmu.code_words = jolt_program::preprocess::ram::code_words(
+                                [(address, false)],
+                                layout.get_lowest_address(),
+                            )
+                            .unwrap();
                         }
                         cpu.mmu.memory.write_doubleword(address, OLD);
                         cpu.x[1] = address as i64;
@@ -1725,10 +1719,8 @@ mod test_mmu {
                 .unwrap()
                 .memory_layout
                 .get_lowest_address();
-            mmu.code_word_intervals =
-                jolt_program::preprocess::ram::code_word_intervals([(DRAM_BASE, false)], lowest)
-                    .unwrap()
-                    .into();
+            mmu.code_words =
+                jolt_program::preprocess::ram::code_words([(DRAM_BASE, false)], lowest).unwrap();
             assert!(catch_unwind(AssertUnwindSafe(|| match width {
                 1 => mmu.store_raw(DRAM_BASE, 1),
                 2 => mmu.store_halfword_raw(DRAM_BASE, 1),
@@ -1758,10 +1750,8 @@ mod test_mmu {
                     .unwrap()
                     .memory_layout
                     .get_lowest_address();
-                cpu.mmu.code_word_intervals =
-                    jolt_program::preprocess::ram::code_word_intervals([(address, false)], lowest)
-                        .unwrap()
-                        .into();
+                cpu.mmu.code_words =
+                    jolt_program::preprocess::ram::code_words([(address, false)], lowest).unwrap();
                 cpu.x[1] = address as i64;
                 cpu.x[2] = if conditional { 11 } else { 0 };
                 let instruction = Instruction::decode(

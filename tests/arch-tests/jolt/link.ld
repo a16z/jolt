@@ -38,18 +38,20 @@ SECTIONS {
     *(.text)
   } > program
 
-  /* tohost/fromhost live in .tohost (see RVMODEL_DATA_SECTION). The emulator
-   * locates the `tohost` symbol via the ELF symbol table, so the section name
-   * itself is not load-bearing — but we keep it separate so it's easy to
-   * inspect in objdump. */
-  .tohost : {
-    KEEP(*(.tohost))
-  } > program
-
   /* ACT4's RVMODEL_HALT_PASS / RVMODEL_HALT_FAIL expansion lives in
    * .text.rvmodel. */
   .text.rvmodel : {
     *(.text.rvmodel)
+  } > program
+
+  /* tohost/fromhost live in .tohost (see RVMODEL_DATA_SECTION). The emulator
+   * locates the `tohost` symbol via the ELF symbol table, so the section name
+   * itself is not load-bearing — but we keep it separate so it's easy to
+   * inspect in objdump. It follows the last code section: Jolt protects every
+   * doubleword from the first instruction through the last, and ELF admission
+   * rejects a writable section inside that range. */
+  .tohost : {
+    KEEP(*(.tohost))
   } > program
 
   .data : {
