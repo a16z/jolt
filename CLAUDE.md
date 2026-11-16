@@ -23,6 +23,8 @@ A pull request into `main` merges with an approving review from a person with wr
 
 The gate never approves `risk-4`; there the policy asks for a current-head approval from a maintainer other than the author.
 
+Every review checks the diff for comment bloat and test bloat. A pull request adds no comment that the [Comments](#comments) rules would delete and no test that the [Tests](#tests) rules exclude; each instance is a review finding, fixed before merge.
+
 A reviewer who finds no issues in the exact current head, posting as the Pika App bot or a maintainer, attests it with a PR comment containing this standalone line. Fill in the PR number, the full 40-character head SHA, and the skill, model and reasoning effort actually used; the model and effort must be a pair the gate guide accepts.
 
 ```text
