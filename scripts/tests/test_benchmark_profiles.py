@@ -1,3 +1,5 @@
+import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -5,7 +7,21 @@ import tempfile
 import unittest
 
 
-SUMMARY_SCRIPT = Path(__file__).parents[1] / "benchmark_summary.py"
+SCRIPTS = Path(__file__).parents[1]
+SUMMARY_SCRIPT = SCRIPTS / "benchmark_summary.py"
+PLOT_SCRIPT = SCRIPTS / "plot_benchmarks.py"
+MEMORY_PLOT_SCRIPT = SCRIPTS / "plot_memory_usage.py"
+PLOTLY_STUB = Path(__file__).parent / "fixtures" / "plotly_stub"
+CSV_HEADER = ("benchmark_name,scale,prover_time_s,trace_length,proving_hz,"
+              "proof_size,proof_size_compressed,backend\n")
+
+
+def run_report_script(script: Path, *options: str) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        [sys.executable, str(script), *options],
+        env={**os.environ, "PYTHONPATH": str(PLOTLY_STUB)},
+        capture_output=True, text=True,
+    )
 
 
 class BenchmarkProfileTests(unittest.TestCase):
@@ -101,6 +117,74 @@ class BenchmarkProfileTests(unittest.TestCase):
                     if line.strip().startswith("2^20")]
             self.assertEqual(len(rows), 1)
             self.assertEqual(rows[0][1].strip(), "4.00s")
+
+    def test_reports_select_any_backend_named_in_csv(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            csv_path = Path(directory) / "timings.csv"
+            csv_path.write_text(
+                CSV_HEADER
+                + "fibonacci,20,100,1048576,10485.76,1000,900,reference\n"
+                + "fibonacci,21,1,2097152,2097152,1000,900,metal\n"
+            )
+            summary = run_report_script(
+                SUMMARY_SCRIPT, "--csv", str(csv_path), "--backend", "metal")
+            self.assertEqual(summary.returncode, 0, summary.stderr)
+            self.assertEqual(
+                [line.split("|")[0].strip() for line in summary.stdout.splitlines()
+                 if line.strip().startswith("2^")],
+                ["2^21"],
+            )
+
+            plot = run_report_script(
+                PLOT_SCRIPT, "--csv", str(csv_path), "--backend", "metal",
+                "--plot-type", "speed", "--output-dir", directory)
+            self.assertEqual(plot.returncode, 0, plot.stderr)
+            traces = json.loads((Path(directory) / "benchmark_plot.html").read_text())
+            self.assertEqual([trace["x"] for trace in traces], [[21]])
+
+    def test_reports_reject_backend_absent_from_csv(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            csv_path = Path(directory) / "timings.csv"
+            csv_path.write_text(
+                CSV_HEADER
+                + "fibonacci,20,1,1048576,1048576,1000,900,optimized\n"
+                + "fibonacci,20,2,1048576,524288,1000,900,metal\n"
+            )
+            for script, options in [
+                (SUMMARY_SCRIPT, []),
+                (PLOT_SCRIPT, ["--output-dir", directory]),
+            ]:
+                with self.subTest(script=script.name):
+                    result = run_report_script(
+                        script, "--csv", str(csv_path), *options)
+                    self.assertEqual(result.returncode, 1)
+                    for expected in ["'reference'", str(csv_path), "metal, optimized"]:
+                        self.assertIn(expected, result.stderr)
+
+    def test_memory_plot_keeps_kernel_backends_in_separate_series(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            for run, backend, peak in [
+                ("latest_modular_fibonacci_20", "reference", 18.5),
+                ("latest_modular_fibonacci_20_optimized", "optimized", 2.25),
+            ]:
+                run_dir = Path(directory) / run
+                run_dir.mkdir()
+                (run_dir / "summary.json").write_text(json.dumps({
+                    "run": {"workload": "fibonacci", "scale_log2": 20,
+                            "backend": backend},
+                    "peak_rss_gib": peak,
+                }))
+            result = run_report_script(
+                MEMORY_PLOT_SCRIPT, "--traces-dir", directory,
+                "--output-dir", directory)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            traces = json.loads(
+                (Path(directory) / "memory_usage_plot.html").read_text())
+            self.assertEqual(
+                {trace["name"]: (trace["x"], trace["y"]) for trace in traces},
+                {"Fibonacci (reference)": ([20], [18.5]),
+                 "Fibonacci (optimized)": ([20], [2.25])},
+            )
 
     def test_chunked_profile_requires_akita_protocol(self) -> None:
         result = subprocess.run(

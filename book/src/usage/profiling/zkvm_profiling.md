@@ -250,12 +250,17 @@ python3 scripts/plot_memory_usage.py     # peak memory per run (from summary.jso
 ```
 
 The CSV summary and plots select `--backend reference` by default; pass
-`--backend optimized` for optimized kernel measurements. Both label the
-selected backend and exclude rows from the other kernel implementation.
+`--backend optimized` for optimized kernel measurements. `--backend` accepts
+any value in the CSV's backend column; when the CSV has rows but none for the
+selected backend, the command exits with an error that lists the backends
+present. Both label the selected backend and exclude rows from every other
+kernel implementation.
 CSV rows without a backend column or with an empty backend value are treated
 as reference measurements. For repeated measurements of the same workload,
 scale, and backend, the summary keeps the last non-empty metric value;
-the plots retain all samples.
+the plots retain all samples. The memory plot reads the newest `summary.json`
+of each run (the `latest_*` links) and draws one series per workload and
+backend.
 
 Mind the machine: the reference backend retains ~18 GiB regardless of scale
 and grows steeply with it — large-scale sweeps on the reference backend are
