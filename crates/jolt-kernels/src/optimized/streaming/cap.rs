@@ -11,13 +11,15 @@ pub(crate) struct DenseCap {
     pub(crate) per_rows: usize,
 }
 
-/// The cap every streaming kernel runs under: 4 bytes per trace row, a
-/// sixteenth of a resident row. Being a density, it has a kernel fill at the
-/// same round at every trace length, and each round before that costs one
-/// pass over the rows before the padding. It bounds one kernel, not a stage:
-/// an in-place bind keeps a table's storage for three rounds, so a stage
-/// holds together the fills of its kernels that fill within three rounds of
-/// each other.
+/// The cap of every streaming kernel that takes one: 4 bytes per trace row,
+/// a sixteenth of a resident row. Being a density, it has a kernel fill at
+/// the same round at every trace length, and each round before that costs
+/// one pass over the rows before the padding. It bounds one kernel, not a
+/// stage: an in-place bind keeps a table's storage for three rounds, so a
+/// stage holds together the fills of its kernels that fill within three
+/// rounds of each other. The instruction read-RAF kernel and the bytecode
+/// read-RAF cycle kernel take no cap: their tables turn dense on the default
+/// kernels' schedule.
 pub(crate) const DENSE_CAP: DenseCap = DenseCap {
     bytes: 4,
     per_rows: 1,

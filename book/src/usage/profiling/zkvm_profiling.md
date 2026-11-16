@@ -91,16 +91,19 @@ families with `--streaming instruction-input,spartan,ram,registers`.
 Instruction-input, Spartan and register
 early rounds recompute from the resident trace until the dense tables, or for
 the register read-write check one level of sparse entries, fit the same cap.
-The cap is one density for every streaming kernel: 4 bytes of dense state
-per trace row before the padding suffix, a sixteenth of what a resident row
-takes. Dense tables halve with every bind, so the round at which a kernel's
-tables fit depends on how many field elements they hold per cycle and on the
-element's size (16 bytes under Akita, 32 under Dory), not on the trace
-length, and every round before it costs one pass over the resident rows. The
-Spartan and instruction-input tables stop at the padding suffix, as the eager
-kernels' do. The full trace remains resident, and the cap bounds each
-kernel's dense state, not the process: stages whose tables no streaming
-kernel replaces keep their size.
+The cap is one density for these kernels and for the two stage-6b selector
+kernels: 4 bytes of dense state per trace row before the padding suffix, a
+sixteenth of what a resident row takes. Dense tables halve with every bind,
+so the round at which a kernel's tables fit depends on how many field
+elements they hold per cycle and on the element's size (16 bytes under
+Akita, 32 under Dory), not on the trace length, and every round before it
+costs one pass over the resident rows. The Spartan and instruction-input
+tables stop at the padding suffix, as the eager kernels' do. The full trace
+remains resident, and the cap bounds the dense state of each kernel that
+takes it, not the process. The stage-5 instruction read-RAF kernel and the
+stage-6b bytecode read-RAF cycle phase take no cap: their tables turn dense
+where the eager kernels' do and are sized by the trace. Stages whose tables
+no streaming kernel replaces keep their size.
 Streaming workload, CSV and trace names append `_streaming_<families>` in
 canonical order (`instruction_input`, `spartan`, `ram`, `registers`,
 `instruction_rows`), so their run directories and `latest_` links stay separate

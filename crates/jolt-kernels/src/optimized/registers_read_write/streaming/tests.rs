@@ -275,9 +275,7 @@ fn streamed_passes_over_trace_rows_match_reference() {
 
 /// Caps that fill the frontier at each LUT level (1 to 3), at the first field
 /// levels (4 and 6) and at the last cycle round, which fills whatever the
-/// cap; a cap one byte below round 2's level fills round 3; and the
-/// production cap fills the first level whose bytes it admits over the
-/// trace's rows.
+/// cap; a cap one byte below round 2's level fills round 3.
 #[test]
 fn streamed_frontier_matches_reference_at_every_crossover() {
     fn case<F: JoltField>(resident: &TraceBackend) {
@@ -293,15 +291,31 @@ fn streamed_frontier_matches_reference_at_every_crossover() {
         let below = level_bytes::<F>(resident, &structure, 2) - 1;
         assert_eq!(parity(byte_cap(resident, below)), 3);
         assert_eq!(parity(byte_cap(resident, 0)), 7);
-        let admitted = (1..7)
-            .find(|&depth| {
-                let bytes = level_bytes::<F>(resident, &structure, depth);
-                DENSE_CAP.admits(bytes, trace_len(resident))
-            })
-            .unwrap_or(7);
-        assert_eq!(parity(DENSE_CAP), admitted);
     }
     x0_fixture(253).with_plane(8, |resident| {
+        case::<Fr>(resident);
+        #[cfg(feature = "akita")]
+        case::<AkitaField>(resident);
+    });
+}
+
+/// The production cap fills the first level whose bytes it admits over the
+/// trace's rows. The trace is long enough for the cap to admit a level
+/// before the last cycle round, which fills whatever the cap.
+#[test]
+fn production_cap_fills_the_first_level_it_admits() {
+    const LOG_T: usize = 10;
+    fn case<F: JoltField>(resident: &TraceBackend) {
+        let structure = structural_counts::<F>(resident, LOG_T);
+        let admitted = (1..LOG_T - 1).find(|&depth| {
+            let bytes = level_bytes::<F>(resident, &structure, depth);
+            DENSE_CAP.admits(bytes, trace_len(resident))
+        });
+        assert!(admitted.is_some(), "no level before the last cycle round");
+        let filled = assert_rows_parity::<F>(resident, LOG_T, 97, &[], None, DENSE_CAP);
+        assert_eq!(Some(filled), admitted);
+    }
+    structured_fixture(1 << LOG_T).with_plane(LOG_T, |resident| {
         case::<Fr>(resident);
         #[cfg(feature = "akita")]
         case::<AkitaField>(resident);
