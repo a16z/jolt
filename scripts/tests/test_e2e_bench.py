@@ -321,6 +321,7 @@ path.write_text(json.dumps(dict(workload='fibonacci', pcs='dory', backend='optim
                           ('sha3-chain', 'akita', 'optimized', 24, 22, 768),
                           ('btreemap', 'akita', 'optimized', 24, 22, 2048),
                           ('secp256k1-batch', 'akita', 'optimized', 24, 22, 16),
+                          ('ethereum-transaction', 'akita', 'optimized', 24, 23, 1),
                           ('fibonacci', 'akita', 'optimized', 24, 24, 1000000),
                           ('sha2-chain', 'akita', 'optimized', 24, 24, 4096),
                           ('sha3-chain', 'akita', 'optimized', 24, 24, 3072),
@@ -333,11 +334,15 @@ path.write_text(json.dumps(dict(workload='fibonacci', pcs='dory', backend='optim
         self.assertEqual([case['id'] for case in baseline], [
             'fibonacci-akita-c1-s18-n16000-v1', 'sha2-chain-akita-c8-s20-n256-v1',
             'btreemap-akita-c24-s22-n2048-v1'])
-        expected = {'fibonacci', 'sha2-chain', 'sha3-chain', 'btreemap', 'secp256k1-batch'}
+        expected = {'fibonacci', 'sha2-chain', 'sha3-chain', 'btreemap', 'secp256k1-batch',
+                    'ethereum-transaction'}
         for tier in ('main', 'nightly'):
             _, cases = bench.config_cases(bench.DEFAULT_CONFIG, tier)
             supported = [case for case in cases if not case.get('unsupported_reason')]
             self.assertEqual({case['workload'] for case in supported}, expected)
+            self.assertEqual([(case['pcs'], case['physical_cores'], case['scale_log2'])
+                              for case in cases if case['workload'] == 'ethereum-transaction'],
+                             [('dory', 24, 23), ('akita', 24, 23)])
             self.assertEqual({case['physical_cores'] for case in supported}, {1, 8, 24})
             self.assertEqual({case['pcs'] for case in supported}, {'dory', 'akita'})
         self.assertGreater(config['tiers']['nightly']['repetitions'], config['tiers']['main']['repetitions'])

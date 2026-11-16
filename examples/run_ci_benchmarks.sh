@@ -22,7 +22,9 @@ export RUST_LOG=info
 # Define the exclude list
 # field-ops is feature-gated (field-inline) and exits non-zero without it;
 # its smoke run lives in the field-inline CI lane instead.
-exclusion_list=("advice-consumer" "akita-recursion" "collatz" "overflow" "sha3-chain" "verifier" "recursion" "malloc" "hash-bench" "sig-recovery" "field-ops" "field-limbs")
+# ethereum-transaction's host binary generates its fixture from a capture file
+# and proves nothing; scripts/bench measures its guest.
+exclusion_list=("advice-consumer" "akita-recursion" "collatz" "overflow" "sha3-chain" "verifier" "recursion" "malloc" "hash-bench" "sig-recovery" "field-ops" "field-limbs" "ethereum-transaction")
 # JSON file to store results
 output_file="benchmark_results.json"
 
