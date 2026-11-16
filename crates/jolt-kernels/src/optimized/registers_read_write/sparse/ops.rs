@@ -120,15 +120,69 @@ pub(crate) fn bind_sparse_entries_in_place<E>(
     };
 
     // Each compacted run stays within its original block.
-    let mut total = counts[0];
-    for block in 1..blocks {
-        let src = bounds[block];
-        if src != total {
-            entries.copy_within(src..src + counts[block], total);
-        }
-        total += counts[block];
-    }
+    let total = close_block_gaps(entries, &bounds, &counts);
     entries.truncate(total);
+}
+
+#[cfg(feature = "parallel")]
+const PARALLEL_MOVE_BYTES: usize = 4 << 20;
+
+/// Moves every block's live run down to follow the run before it and returns
+/// the live total: block `b` holds `counts[b]` live values from `bounds[b]`.
+///
+/// A run lands on storage that earlier runs occupied, so runs move in block
+/// order. But all the runs whose destinations end at or before the first
+/// unmoved run's start can move at once.
+pub(super) fn close_block_gaps<T: Copy + Send + Sync>(
+    values: &mut [T],
+    bounds: &[usize],
+    counts: &[usize],
+) -> usize {
+    let blocks = counts.len();
+    let mut total = counts.first().copied().unwrap_or(0);
+    let mut block = 1;
+    while block < blocks {
+        let src = bounds[block];
+        if src == total {
+            total += counts[block];
+            block += 1;
+            continue;
+        }
+        let mut end = block;
+        let mut batch_total = total;
+        while end < blocks && batch_total + counts[end] <= src {
+            batch_total += counts[end];
+            end += 1;
+        }
+        if end == block {
+            // The run overlaps its own destination.
+            values.copy_within(src..src + counts[block], total);
+            total += counts[block];
+            block += 1;
+            continue;
+        }
+        let (head, tail) = values.split_at_mut(src);
+        let mut rest = &mut head[total..batch_total];
+        let moves = (block..end).map(|moved| {
+            let (to, remaining) = core::mem::take(&mut rest).split_at_mut(counts[moved]);
+            rest = remaining;
+            (to, &tail[bounds[moved] - src..][..counts[moved]])
+        });
+        #[cfg(feature = "parallel")]
+        if (batch_total - total) * size_of::<T>() >= PARALLEL_MOVE_BYTES {
+            moves
+                .collect::<Vec<_>>()
+                .into_par_iter()
+                .for_each(|(to, run)| to.copy_from_slice(run));
+        } else {
+            moves.for_each(|(to, run)| to.copy_from_slice(run));
+        }
+        #[cfg(not(feature = "parallel"))]
+        moves.for_each(|(to, run)| to.copy_from_slice(run));
+        total = batch_total;
+        block = end;
+    }
+    total
 }
 
 /// [`bind_sparse_entries_in_place`] for index-parallel SoA columns.
@@ -236,15 +290,9 @@ pub(super) fn bind_indexed_in_place_soa<F: JoltField>(
             .collect()
     };
 
-    let mut total = counts[0];
-    for block in 1..blocks {
-        let src = bounds[block];
-        if src != total {
-            vals.copy_within(src..src + counts[block], total);
-            metas.copy_within(src..src + counts[block], total);
-        }
-        total += counts[block];
-    }
+    let total = close_block_gaps(vals, &bounds, &counts);
+    let metas_total = close_block_gaps(metas, &bounds, &counts);
+    debug_assert_eq!(total, metas_total);
     vals.truncate(total);
     metas.truncate(total);
 }
@@ -701,4 +749,43 @@ pub(super) fn bind_seed_entries_fused<F: JoltField>(
         metas.set_len(bound_length);
     }
     (vals, metas)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::close_block_gaps;
+
+    fn assert_gaps_close(block_len: usize, live_len: impl Fn(usize) -> usize, blocks: usize) {
+        let bounds: Vec<usize> = (0..=blocks).map(|index| index * block_len).collect();
+        let counts: Vec<usize> = (0..blocks)
+            .map(|index| live_len(index).min(block_len))
+            .collect();
+        let mut values: Vec<u64> = (0..(blocks * block_len) as u64).collect();
+        let expected: Vec<u64> = (0..blocks)
+            .flat_map(|index| {
+                (0..counts[index]).map(move |offset| (index * block_len + offset) as u64)
+            })
+            .collect();
+        let total = close_block_gaps(&mut values, &bounds, &counts);
+        assert_eq!(total, expected.len());
+        assert_eq!(&values[..total], expected.as_slice());
+    }
+
+    #[test]
+    fn closing_block_gaps_keeps_the_live_runs_in_order() {
+        assert_gaps_close(1 << 12, |index| (1 << 12) - index % 5 * 300, 600);
+        assert_gaps_close(
+            1 << 12,
+            |index| if index % 7 == 0 { 0 } else { 1 << 12 },
+            600,
+        );
+        // The one case whose batches reach `PARALLEL_MOVE_BYTES`; a smaller table
+        // leaves the pool branch untested.
+        assert_gaps_close(1 << 12, |index| (index * 37) % (1 << 12), 600);
+        // A first block with one hole makes every later run overlap its destination.
+        assert_gaps_close(64, |index| if index == 0 { 63 } else { 64 }, 50);
+        assert_gaps_close(64, |_| 64, 9);
+        assert_gaps_close(64, |_| 0, 9);
+        assert_gaps_close(64, |_| 17, 1);
+    }
 }
