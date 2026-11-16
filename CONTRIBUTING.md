@@ -99,6 +99,8 @@ approval policy, limits, admin setup and turning the gate off.
 
 ### Key Commands
 
+The root [`justfile`](justfile) wraps the lint, format and test commands, and CI's other lint checks, as [just](https://github.com/casey/just) recipes; `just` lists them.
+
 ```bash
 # Lint (must pass in both modes)
 cargo clippy -p jolt-prover --features prover-fixtures --message-format=short -q --all-targets -- -D warnings
