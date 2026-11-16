@@ -4,6 +4,8 @@
 
 use core::marker::PhantomData;
 use std::ops::{Index, Range};
+#[cfg(feature = "parallel")]
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 
 use jolt_field::JoltField;
@@ -27,6 +29,10 @@ const PAR_CHUNK: usize = 1 << 14;
 
 /// `addresses` sentinel for cycles with no (remappable) RAM access.
 pub(crate) const NO_ACCESS: u32 = u32::MAX;
+
+/// Fewest cycles per task of the first-access search.
+#[cfg(feature = "parallel")]
+const FIRST_ACCESS_CYCLES: usize = 1 << 16;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, WitnessBundle)]
 struct RamValueBundle {
@@ -394,6 +400,42 @@ impl RamAccessColumns {
     }
 
     pub fn reconstruct_val_init<F: JoltField>(&self, val_final: Vec<F>) -> Vec<F> {
+        // An address's first access is its least cycle, which tasks over
+        // ranges of cycles settle in any order; the walk below visits every
+        // cycle on the calling thread. Cycle `u32::MAX` would read as "no
+        // access", so a trace that long takes the walk.
+        #[cfg(feature = "parallel")]
+        if self.addresses.prefix().len() < u32::MAX as usize {
+            let first_cycle: Vec<AtomicU32> = (0..val_final.len())
+                .into_par_iter()
+                .map(|_| AtomicU32::new(u32::MAX))
+                .collect();
+            self.addresses
+                .prefix()
+                .par_iter()
+                .enumerate()
+                .with_min_len(FIRST_ACCESS_CYCLES)
+                .for_each(|(cycle, &address)| {
+                    if address == NO_ACCESS {
+                        return;
+                    }
+                    // Most accesses are not their address's first, and a load
+                    // leaves the slot shared between cores.
+                    let first = &first_cycle[address as usize];
+                    if (cycle as u32) < first.load(Ordering::Relaxed) {
+                        let _ = first.fetch_min(cycle as u32, Ordering::Relaxed);
+                    }
+                });
+            let mut val_init = val_final;
+            val_init
+                .par_iter_mut()
+                .zip(first_cycle)
+                .for_each(|(value, cycle)| match cycle.into_inner() {
+                    u32::MAX => {}
+                    cycle => *value = F::from_u64(self.pre_value(cycle as usize)),
+                });
+            return val_init;
+        }
         val_init_from_first_accesses(
             val_final,
             self.addresses
@@ -489,7 +531,7 @@ pub(crate) fn fold_cycles<F: JoltField>(
 #[cfg(test)]
 #[expect(clippy::panic, clippy::unwrap_used, reason = "test module")]
 mod tests {
-    use jolt_field::Fr;
+    use jolt_field::{Fr, Ring};
     use jolt_witness::testing::with_sample_backend;
 
     use super::*;
@@ -542,6 +584,41 @@ mod tests {
                 ram_access_columns_bytes(prefix_cycles, 2).unwrap()
             );
         });
+    }
+
+    /// Enough cycles for several search tasks, with addresses that recur
+    /// across them and some never accessed; checked against the cycle-order
+    /// walk.
+    #[test]
+    fn val_init_takes_each_address_from_its_first_access_across_tasks() {
+        let (cycles, ram_k) = (1usize << 18, 64);
+        let values: Vec<u32> = (0..cycles)
+            .map(|j| {
+                if j % 7 == 0 {
+                    NO_ACCESS
+                } else {
+                    (j.wrapping_mul(2_654_435_761) >> 7) as u32 % 48
+                }
+            })
+            .collect();
+        let pre_values: Vec<u64> = (0..cycles as u64).map(|j| j + 1).collect();
+        let val_final: Vec<Fr> = (0..ram_k as u64)
+            .map(|k| Fr::from_u64(1_000_000 + k))
+            .collect();
+        let expected = val_init_from_first_accesses(
+            val_final.clone(),
+            values
+                .iter()
+                .zip(&pre_values)
+                .filter(|(address, _)| **address != NO_ACCESS)
+                .map(|(&address, &pre)| (address as usize, pre)),
+        );
+        let columns = RamAccessColumns {
+            addresses: Arc::new(RamAddresses::new(values, cycles)),
+            post_values: pre_values.clone(),
+            pre_values,
+        };
+        assert_eq!(columns.reconstruct_val_init(val_final), expected);
     }
 
     #[test]
