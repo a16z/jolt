@@ -626,10 +626,10 @@ trace ceiling uses the largest value of each column.
 
 Each value starts from the sensitivity requested for its row and is raised,
 where needed, to the next 0.5 percentage points above the largest null of its
-statistic within the row's range of sizes. The nulls are those of November 15
-and 16, 2026: the windows of the six calibration references published on those
-dates (main `8a928741`, `0537900e`, `11f6519d`, `40dedcdd`, `47b8cba4` and
-`27c56e54`), and the differences between the base legs of PR runs that shared a
+statistic within the row's range of sizes. The nulls are the windows of the six
+calibration references published on November 15 and 16, 2026 (main `8a928741`,
+`0537900e`, `11f6519d`, `40dedcdd`, `47b8cba4` and `27c56e54`), and the
+differences between the base legs of PR runs of November 14 to 16 that shared a
 base binary. No null raised the group-mean time column or the peak-RSS column,
 which hold the requested sensitivities. The one-case time column was raised in
 four rows, by nulls of 4.22% at 8-core 2^20, 2.48% at 2^22, 1.53% at 2^24 and
@@ -717,8 +717,8 @@ references. An update during a run is not detected, like any other background
 activity on the target. Of the 52 nulls measured from November 6 to 16, five had
 such an update between their snapshots and no other reason to be refused. Against
 the published nulls of the same cases started within 36 hours, three of the five
-were no noisier in mean and maximum time window delta, cells with a time window
-delta above 3% and mean RSS window delta; the other two exceeded the neighbours' maximum on two
+were no noisier in mean and maximum time window delta, cells whose time envelope
+exceeds 3% and mean RSS window delta; the other two exceeded the neighbours' maximum on two
 of those four, the largest excess being a maximum time window delta of 5.11%
 against 3.97%.
 
