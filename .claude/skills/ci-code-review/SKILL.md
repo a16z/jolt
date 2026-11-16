@@ -103,6 +103,12 @@ body, docs, comments and tests are unverified until source or a run settles them
 6. **Judge the tests:** name the test that fails if each invariant breaks. A test asserting wrong
    behavior pins the bug and is a finding; each necessary finding names the test that should have
    caught it, or states none can.
+7. **List comment and test bloat:** read every comment and test the diff adds or changes against
+   CLAUDE.md's Comments and Tests sections; `comment-policy` and `test-policy` hold the keep
+   lists. A comment that carries nothing the code cannot (narration, restated behavior, change
+   history) and a test with no independent failure signal are findings: list each with its
+   `file:line`, to fix before merge. The check is the same on a fork pull request, where each
+   instance is a finding in the review for the contributor to fix.
 
 ## Probe Jolt's attack surfaces
 
