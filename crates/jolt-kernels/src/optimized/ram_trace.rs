@@ -448,13 +448,6 @@ const FOLD_CYCLES_PART_BYTES: usize = 256 << 20;
 
 /// Cycle fold of the one-hot `ra` grid:
 /// `out[k] = Σ_j eq(r_cycle, j) · ra(k, j) = Σ_{j : addresses[j] = k} eq_cycle[j]`.
-/// Eq values come from `e_hi ⊗ e_lo`, for the cycles with an access only.
-///
-/// The sum scatters by address, so the cycles split into as many parts as
-/// the pool has threads, each with a `ram_k`-entry sum of its own, added at
-/// the end. The parts beside the result stay within
-/// [`FOLD_CYCLES_PART_BYTES`]; a larger address space takes fewer parts,
-/// down to the one walk a build without `parallel` makes.
 pub(crate) fn fold_cycles<F: JoltField>(
     addresses: &RamAddresses,
     r_cycle: &[F],
@@ -560,8 +553,6 @@ mod tests {
         });
     }
 
-    /// Many more cycles than addresses, so the fold splits into one part per
-    /// pool thread; the sum is checked against the unsplit eq table.
     #[test]
     fn cycle_fold_matches_the_eq_table_across_parts() {
         let (log_t, ram_k) = (12, 4);
