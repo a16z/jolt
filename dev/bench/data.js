@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794867998923,
+  "lastUpdate": 1794868591463,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -258346,6 +258346,270 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 890628,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "39494992+GUJustin@users.noreply.github.com",
+            "name": "Justin Thaler",
+            "username": "GUJustin"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "3892213e4b3c80f9a2200a6c962bddbebe282075",
+          "message": "perf(kernels): close in-place bind block gaps on the pool (#2457)\n\n* Close the in-place binds' block gaps and release dense tables on the pool\n\nTwo copies ran on the calling thread while the pool idled, about 0.4 s\nof a 26 s CPU-only proof at 2^27 cycles.\n\nThe in-place sparse binds compact 16K-entry blocks in parallel and then\nclosed the gaps between them with one copy_within per block, in order,\nover nearly the whole table every round. A run lands on storage earlier\nruns occupied, so the order matters, but every run whose destination\nends before the first unmoved run starts can move at once; the gap ahead\nof a run grows with the runs behind it, so close_block_gaps moves the\nruns in batches that grow geometrically and copies each large batch\nacross the pool.\n\nbind_prefix_waves shrinks a dense table once its capacity is eight times\nits length. The allocator moves such a table by copying it, on the\ncalling thread; tables of 2^18 values or more are now copied into a\nfitted allocation across the pool.\n\nCPU-only Fibonacci, chrome profile: stage 4 1.86 -> 1.77 s, stage 6b\n5.74 -> 5.66 s, proof 25.93 -> 25.59 s.\n\nCo-Authored-By: Claude Fable 5.2 <noreply@anthropic.com>\n\n* fix(jolt-poly): release dense tables with shrink_to_fit again\n\nThe review of #2457 tested the premise of release_capacity: that an\nallocator moves a table shrunk to an eighth of its allocation and copies\nit on the calling thread. A probe of 24 cases (three element layouts,\n2^18 to 2^24 values, main thread and pool thread) found that\nshrink_to_fit moved the table in 0 of 24 on Linux glibc 2.43 and in 0 of\n24 on macOS 27.0.1 system malloc. The pool release therefore replaced no\ncopy: it added a copy of the live table and a second buffer.\n\ndense.rs is back to main's version. The gap closing in the sparse binds\nis unchanged in code.\n\nThe review's comment pass over ops.rs is applied: five comment lines\nthat restated a name or a helper body, or gave a performance rationale\nthat does not hold for small tables, are cut, and the test comment that\nclaimed pool batches for three cases now sits on the one case that forms\none. The test helper's parameters are renamed to block_len and live_len\nin place of its doc comment.\n\n---------\n\nCo-authored-by: Claude Code <noreply@anthropic.com>\nCo-authored-by: Andrew Tretyakov <42178850+0xAndoroid@users.noreply.github.com>",
+          "timestamp": "2026-11-16T16:23:02-05:00",
+          "tree_id": "d2df18f6eb1114d8f9beb50f49dc9299939ec51a",
+          "url": "https://github.com/a16z/jolt/commit/3892213e4b3c80f9a2200a6c962bddbebe282075"
+        },
+        "date": 1794868583264,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 3.6563,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 888724,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.4774,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 463664,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 464080,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 464140,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.8428,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 463756,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-mem",
+            "value": 888556,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 1.8682,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 464068,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 4.8358,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 463720,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 4.7469,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 132056,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.9013,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 888412,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.641,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 463988,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.4784,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 463836,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 24.8953,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 463360,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 5.6936,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 464060,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 37.0861,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 714088,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 17.8705,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 612012,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 74.1298,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 631436,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.84,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 463728,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 2.132,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 463988,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 19.765,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 888432,
             "unit": "KB",
             "extra": ""
           }
