@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794862306122,
+  "lastUpdate": 1794864016080,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -257290,6 +257290,270 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 905264,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "atretyakov@a16z.com",
+            "name": "Andrew Tretyakov",
+            "username": "0xAndoroid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "35a8bddd76085468618af9a7cbef44565f1ef15c",
+          "message": "feat(bench): scale end-to-end benchmark reporting thresholds with trace size (#2473)\n\n* feat(bench): scale end-to-end benchmark reporting thresholds with trace size\n\nThe sticky PR comment listed a case when its time or peak-RSS change\nexceeded the larger of a fixed 3% and the observed envelope, whose own\nfloors were 3% (time) and 2% (RSS). Small-trace memory noise filled the\ncomment while a consistent 1-3% time change at 2^24 showed nothing.\n\ncalibration.SIZE_THRESHOLDS now defines thresholds by trace ceiling:\n3% time and 15% RSS below 2^20, down to 1% time and 3% RSS at 2^27. A\ncase must clear the larger of its table value and its observed envelope.\nA size group (cases sharing PCS, cores and ceiling) of two or more cases\nis listed when the geometric mean of its head/base ratios exceeds the\ngroup column. The comment and check summary render their numbers from\nthe table.\n\nThe envelope no longer embeds a floor and its stored field is renamed\nenvelope_pct, so the method becomes null-median3-symmetric-envelope-v3.\nReferences published under v2 match no v3 cell key; a PR measured\nagainst such a base reports its reference as unavailable and uses the\ntable alone.\n\n* fix(bench): derive size thresholds from all six references and state where nulls exceed them\n\nReview round 1 of the size-threshold change.\n\nThe README claimed every threshold was above the largest same-binary\nnull, citing four of the six calibration references of November 15 and\n16. With all six, the 2^27 case reaches 1.07%, so the single-case time\nvalue at 2^27 and above becomes 1.5% under the stated rule (requested\nsensitivity raised to the next 0.5 percentage points above the largest\nnull). No other entry moves. The README now gives that rule and the\nrates at which the 51 published references of November 6 to 16 hold a\nsingle-case null at or above a table value.\n\nThe book page links to the README table instead of restating it, and\nthe threshold test compares the README table with SIZE_THRESHOLDS. The\nsize-group test now has groups that differ only by PCS and only by core\ncount, with different outcomes.\n\n* docs(bench): reword the null statistic that named the removed 3% envelope floor\n\nThe paragraph merged with #2465 counted \"cells above the 3% floor\". The envelope no longer has a floor, so the statistic is named by what it counts: cells whose time window delta exceeds 3%.\n\n* docs(bench): count the reworded null statistic by envelope and date the session nulls\n\n#2465 counted cases whose time band exceeded the 3% floor, which is a largest window delta above 2%, not above 3%. The count is the cases whose time envelope exceeds 3%. The session nulls behind the table include PR runs of November 14, so the derivation paragraph dates them November 14 to 16.",
+          "timestamp": "2026-11-16T15:06:11-05:00",
+          "tree_id": "cb8faecef96f408a92c1be4d405aa51a825e23c4",
+          "url": "https://github.com/a16z/jolt/commit/35a8bddd76085468618af9a7cbef44565f1ef15c"
+        },
+        "date": 1794864006871,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 3.7049,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 888900,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.4785,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 463960,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 463832,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 464004,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.8495,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 463816,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-mem",
+            "value": 886436,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 1.8613,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 463748,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 5.5125,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 463808,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 5.0686,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 131980,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.9406,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 888264,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.6549,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 463924,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.4822,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 464348,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 25.7779,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 463440,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 5.5072,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 463068,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 37.0107,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 712016,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 17.9952,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 606668,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 74.0473,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 632596,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.9032,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 463672,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 2.1326,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 464652,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 19.8178,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 888632,
             "unit": "KB",
             "extra": ""
           }
