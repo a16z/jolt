@@ -322,12 +322,15 @@ pub struct ProfileArgs {
     pub backend: BackendKind,
 
     /// Comma-separated streaming kernel families: instruction-input, spartan, ram,
-    /// registers, instruction-rows.
+    /// registers, instruction-rows. An `akita` build also accepts ring-switch: the
+    /// Akita opening transforms the setup-matrix rows of its ring-switch relations
+    /// as it reads them instead of caching their NTT form, which lowers the
+    /// opening's memory and costs time on large traces.
     /// Requires --backend optimized. Uses row recomputation or sparse RAM events,
     /// not a process-memory limit. Cannot be combined with --memory-budget:
     /// its reservations price only eager kernels.
-    #[clap(long, value_parser = parse_streaming_families, conflicts_with = "memory_budget")]
-    pub streaming: Option<StreamingFamilies>,
+    #[clap(long, value_parser = parse_streaming_selection, conflicts_with = "memory_budget")]
+    pub streaming: Option<StreamingSelection>,
 
     /// Prebuilt guest ELF; bypasses guest compilation in this process.
     #[clap(long)]
@@ -396,8 +399,20 @@ fn parse_memory_budget(value: &str) -> StdResult<MemoryBudgetArg, String> {
         })
 }
 
-fn parse_streaming_families(value: &str) -> StdResult<StreamingFamilies, String> {
-    let mut families = StreamingFamilies::default();
+/// `--streaming`'s value.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct StreamingSelection {
+    /// The kernel families the backend installs.
+    pub families: StreamingFamilies,
+    /// Whether the Akita prover setup streams its openings' ring-switch NTT
+    /// operations ([`jolt_akita::AkitaProverSetup::with_streamed_ring_switch`]).
+    #[cfg(feature = "akita")]
+    pub ring_switch: bool,
+}
+
+fn parse_streaming_selection(value: &str) -> StdResult<StreamingSelection, String> {
+    let mut selection = StreamingSelection::default();
+    let families = &mut selection.families;
     for family in value.split(',') {
         match family {
             "instruction-input" => families.instruction_input = true,
@@ -405,34 +420,43 @@ fn parse_streaming_families(value: &str) -> StdResult<StreamingFamilies, String>
             "ram" => families.ram = true,
             "registers" => families.registers = true,
             "instruction-rows" => families.instruction_rows = true,
+            #[cfg(feature = "akita")]
+            "ring-switch" => selection.ring_switch = true,
             _ => {
-                return Err(format!(
-                    "unknown family {family:?}; expected instruction-input, spartan, ram, \
-                     registers or instruction-rows"
-                ))
+                let expected = if cfg!(feature = "akita") {
+                    "instruction-input, spartan, ram, registers, instruction-rows or ring-switch"
+                } else {
+                    "instruction-input, spartan, ram, registers or instruction-rows"
+                };
+                return Err(format!("unknown family {family:?}; expected {expected}"));
             }
         }
     }
-    Ok(families)
+    Ok(selection)
 }
 
 impl ProfileArgs {
     fn streaming_families(&self) -> Vec<String> {
+        let selection = self.streaming.unwrap_or_default();
         let mut names = Vec::new();
-        if self.streaming.unwrap_or_default().instruction_input {
+        if selection.families.instruction_input {
             names.push("instruction-input".to_string());
         }
-        if self.streaming.unwrap_or_default().spartan {
+        if selection.families.spartan {
             names.push("spartan".to_string());
         }
-        if self.streaming.unwrap_or_default().ram {
+        if selection.families.ram {
             names.push("ram".to_string());
         }
-        if self.streaming.unwrap_or_default().registers {
+        if selection.families.registers {
             names.push("registers".to_string());
         }
-        if self.streaming.unwrap_or_default().instruction_rows {
+        if selection.families.instruction_rows {
             names.push("instruction-rows".to_string());
+        }
+        #[cfg(feature = "akita")]
+        if selection.ring_switch {
+            names.push("ring-switch".to_string());
         }
         names
     }
@@ -1164,7 +1188,7 @@ fn prove_workload(
     let backend = match args.backend {
         BackendKind::Reference => JoltBackend::<Fr, DoryScheme>::reference(),
         BackendKind::Optimized => JoltBackend::<Fr, DoryScheme>::optimized()
-            .with_streaming(args.streaming.unwrap_or_default()),
+            .with_streaming(args.streaming.unwrap_or_default().families),
     };
 
     // --- The measured window: the full modular prove (witness
@@ -1243,7 +1267,7 @@ fn prove_workload(
     let backend = match args.backend {
         BackendKind::Reference => JoltBackend::reference(),
         BackendKind::Optimized => {
-            JoltBackend::optimized().with_streaming(args.streaming.unwrap_or_default())
+            JoltBackend::optimized().with_streaming(args.streaming.unwrap_or_default().families)
         }
     };
 
@@ -1298,6 +1322,11 @@ fn prove_workload(
             }
         }
         None => AkitaScheme::setup(params)?,
+    };
+    let pcs_setup = if args.streaming.unwrap_or_default().ring_switch {
+        pcs_setup.with_streamed_ring_switch()?
+    } else {
+        pcs_setup
     };
     let setup_duration = setup_now.elapsed();
     drop(setup_guard);

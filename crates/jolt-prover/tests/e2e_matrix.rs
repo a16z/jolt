@@ -617,7 +617,7 @@ mod matrix {
             configure(&mut config);
             let untrusted_advice = !case.untrusted_advice.is_empty();
             let trusted_advice = !case.trusted_advice.is_empty();
-            let preprocessing = preprocessing::preprocess_full_with_advice(
+            let mut preprocessing = preprocessing::preprocess_full_with_advice(
                 &AkitaScheduleArtifacts::shared_from_default_directory(AkitaChunkProfile::new(
                     8, 2,
                 )),
@@ -627,6 +627,15 @@ mod matrix {
                 trusted_advice,
             )
             .expect("Akita preprocessing");
+            // A streaming selection also streams the opening's ring-switch NTT
+            // operations; the eager proof below opens on the default backends.
+            let eager_setup = preprocessing.pcs_setup.clone();
+            if families != StreamingFamilies::default() {
+                preprocessing.pcs_setup = preprocessing
+                    .pcs_setup
+                    .with_streamed_ring_switch()
+                    .expect("streamed ring-switch setup");
+            }
             let trusted = trusted_advice.then(|| {
                 preprocessing::commit_trusted_advice(&preprocessing, &case.trusted_advice)
                     .expect("trusted advice commitment")
@@ -663,6 +672,7 @@ mod matrix {
             )
             .expect("Akita proof must verify");
             if families != StreamingFamilies::default() {
+                preprocessing.pcs_setup = eager_setup;
                 let eager = akita::prove::<AkitaField, AkitaScheme, AkitaVc, ProverState<Keccak>>(
                     JoltBackend::optimized().with_witness(&witness),
                     &preprocessing,
