@@ -9,7 +9,9 @@ use jolt_witness::{collect_bundles, JoltWitnessPlane, WitnessBundle, WitnessErro
 use crate::akita::commitment::FusedIncObject;
 use crate::KernelError;
 
-/// Values a bounded commitment may append to reach its block boundary.
+/// Room for the padding Akita's `DensePoly::from_field_prefix` appends, to a
+/// multiple of the largest `akita_params::SUPPORTED_COMMITMENT_RING_DIMS`
+/// entry; without it that padding reallocates the values to grow them.
 #[cfg(feature = "parallel")]
 const PADDING_ROOM: usize = 1 << 12;
 
@@ -39,9 +41,6 @@ where
             ))
         };
         let physical = access.physical_cycles().min(cycles);
-        // The commitment pads the values to a block boundary of the domain.
-        // A trace that ends short of one would otherwise be reallocated
-        // there, and at 2^27 cycles that copies two gigabytes on one thread.
         #[cfg(feature = "parallel")]
         let values = par_collect_windows_with_room(
             physical,
