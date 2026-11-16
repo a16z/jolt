@@ -1470,4 +1470,62 @@ mod test_mmu {
         let mut mmu = setup_mmu();
         mmu.setup_bytecode(DRAM_BASE - 1, 0x77);
     }
+
+    #[test]
+    #[should_panic(expected = "I/O overflow")]
+    fn loads_reject_the_padding_between_io_end_and_ram() {
+        let mut mmu = setup_mmu();
+        let config = MemoryConfig {
+            max_input_size: 24,
+            max_output_size: 0,
+            max_trusted_advice_size: 0,
+            max_untrusted_advice_size: 0,
+            program_size: Some(1024),
+            ..Default::default()
+        };
+        let device = JoltDevice::new(&config);
+        let io_end = device.memory_layout.io_end;
+        assert_eq!(io_end, RAM_START_ADDRESS - 24);
+        mmu.jolt_device = Some(device);
+        assert_eq!(mmu.load_doubleword(io_end - 8).unwrap().0, 0);
+        let _ = mmu.load_doubleword(io_end + 8);
+    }
+
+    /// A program size that is not a multiple of eight leaves the heap's end
+    /// unaligned before rounding. The layout rounds `heap_end` up to a
+    /// doubleword, so the whole last word is heap.
+    #[test]
+    fn last_heap_word_accepts_stores_when_program_size_is_unaligned() {
+        use std::panic::{catch_unwind, AssertUnwindSafe};
+
+        let config = MemoryConfig {
+            program_size: Some(1025),
+            stack_size: 0,
+            heap_size: 8,
+            ..Default::default()
+        };
+        let device = JoltDevice::new(&config);
+        assert_eq!(device.memory_layout.heap_end, RAM_START_ADDRESS + 1168);
+        let mut mmu = Mmu::new(Box::new(DummyTerminal::default()));
+        mmu.init_memory(device.memory_layout.get_total_memory_size());
+        mmu.jolt_device = Some(device);
+        let address = RAM_START_ADDRESS + 1160;
+        let write = mmu.store_doubleword(address, 0).unwrap();
+        assert_eq!((write.pre_value, write.post_value), (0, 0));
+        for value in [1, 256] {
+            let write = mmu.store_doubleword(address, value).unwrap();
+            assert_eq!(write.post_value, value);
+            assert_eq!(mmu.load_doubleword(address).unwrap().0, value);
+        }
+        for offset in [1168, 1176] {
+            assert!(catch_unwind(AssertUnwindSafe(|| {
+                mmu.store_doubleword(RAM_START_ADDRESS + offset, 0)
+            }))
+            .is_err());
+            assert!(catch_unwind(AssertUnwindSafe(|| {
+                mmu.load_doubleword(RAM_START_ADDRESS + offset)
+            }))
+            .is_err());
+        }
+    }
 }

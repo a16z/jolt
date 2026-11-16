@@ -87,13 +87,13 @@ cargo nextest run -p [package_name] [test_name] --cargo-quiet
 
 # Guest x mode acceptance matrix (crates/jolt-prover/tests/e2e_matrix.rs): one
 # table per instruction profile, proven in clear, ZK, and Akita modes in CI.
-# Ordinary profile: eleven guest cases. Akita builds of both profiles also prove
+# Ordinary profile: fourteen guest cases. Akita builds of both profiles also prove
 # fibonacci_ring_512, which asserts a ring-dimension-512 trace commitment.
 cargo nextest run -p jolt-prover --features prover-fixtures -E 'binary(e2e_matrix)' --cargo-quiet
 cargo nextest run -p jolt-prover --features prover-fixtures,zk -E 'binary(e2e_matrix)' --cargo-quiet
 cargo nextest run -p jolt-prover --features akita,prover-fixtures -E 'binary(e2e_matrix)' --cargo-quiet
 
-# Field-inline profile: field_ops, field_limbs, and muldiv.
+# Field-inline profile: field_ops, field_limbs, muldiv, exact_domain, and panic_halt.
 cargo nextest run -p jolt-prover --features prover-fixtures,field-inline -E 'binary(e2e_matrix)' --cargo-quiet
 cargo nextest run -p jolt-prover --features prover-fixtures,field-inline,zk -E 'binary(e2e_matrix)' --cargo-quiet
 cargo nextest run -p jolt-prover --features prover-fixtures,field-inline,akita -E 'binary(e2e_matrix)' --cargo-quiet
@@ -235,6 +235,7 @@ clear, ZK, and verifier-fixture tests.
 - Use `#[inline]` judiciously in hot paths
 - Pre-allocate vectors unsafely when size is known; avoid clones in hot paths
 - Hot trace paths get one pass and one owner of trace-sized storage. Produce or share derived rows during the existing pass instead of walking or materializing the trace again.
+- A PR that adds a prover or verifier optimization states in its body, per optimization, whether it applies to the other implementations of the same work, such as the eager and streaming kernels of `jolt-kernels`' optimized tier, the Dory and Akita paths, the per-architecture field arithmetic in `jolt-algebra` (assembly, NEON, AVX-512, AVX2), the Metal runtime and field arithmetic in `jolt-metal`, and the `tracer` and `jolt-tracer-x86` execution backends. Where it applies, port it in the same PR, link an open issue that tracks the port, or state why it is not ported. A missing answer is a review finding.
 
 ### Prover Hot Paths
 

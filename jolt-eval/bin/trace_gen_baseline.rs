@@ -82,10 +82,12 @@ fn measure<G: GuestConfig>(guest: &G, runs: usize) -> serde_json::Value {
         wall_times.push(start.elapsed().as_secs_f64());
         rows = output.trace.rows().len();
     }
-    // Raw tracing, timed separately so the table decomposes the seam into
-    // "produce cycles" and "convert them to rows". Run after the seam loop so
-    // the reported peak RSS still reflects the seam's peak (raw tracing holds
-    // only Vec<Cycle>, so it cannot raise the high-water mark).
+    // Read before the raw runs: they keep the whole run's `Vec<Cycle>`
+    // (96 B/row), which on a long trace is more than the seam's rows
+    // (64 B/row) plus its rotating buffers of cycles.
+    let peak_rss_bytes = peak_rss_bytes();
+    // Raw tracing, timed separately: the same emulator run with every cycle
+    // kept and none converted to a row.
     let mut raw_times = Vec::with_capacity(runs);
     for _ in 0..runs.max(1) {
         let start = std::time::Instant::now();
@@ -106,7 +108,7 @@ fn measure<G: GuestConfig>(guest: &G, runs: usize) -> serde_json::Value {
         "median_raw_s": median_raw_s,
         "raw_mhz": rows as f64 / median_raw_s / 1e6,
         "conversion_share": (median_wall_s - median_raw_s) / median_wall_s,
-        "peak_rss_bytes": peak_rss_bytes(),
+        "peak_rss_bytes": peak_rss_bytes,
         "runs": wall_times.len(),
     })
 }
@@ -152,15 +154,17 @@ fn orchestrate(runs: usize) {
     }
     println!(
         "\nReference backend, serial (`TRACER_PARALLEL` unset); median of {runs} runs per guest.\n\
-         `seam` is `ExecutionBackend::trace` (raw tracing + the `Cycle` to `JoltTraceRow` \
-         conversion); `raw trace` is `tracer::trace` alone. A backend that emits `JoltTraceRow` \
-         directly skips the conversion, so its speedup over `seam` includes that share and \
-         only its gain over `raw trace` is attributable to codegen. Report both when \
-         grading AC8/AC9.\n\
-         Peak RSS is the seam's: during conversion `Vec<Cycle>` (96 B/row) and \
-         `Vec<JoltTraceRow>` (64 B/row) coexist, so it sits above the 64 B/row row-storage floor a \
-         direct-emit backend would have. AC10 comparisons should account for that rather \
-         than read the difference as an allocation win.\n\
+         `seam` is `ExecutionBackend::trace`: the emulator run, with each buffer of `Cycle`s \
+         converted to `JoltTraceRow`s while the emulator fills the next; `raw trace` is `tracer::trace` alone, \
+         the same run with every `Cycle` kept and none converted. A backend that emits \
+         `JoltTraceRow` directly skips the conversion, so its speedup over `seam` includes that \
+         share and only its gain over `raw trace` is attributable to codegen. Report both when \
+         grading AC8/AC9. `conversion share` is (seam - raw trace) / seam, which is not the \
+         conversion's cost alone: the seam converts while the emulator runs, and raw tracing \
+         first-touches a cycle buffer the size of the run, where the seam reuses its buffers.\n\
+         Peak RSS is the seam's, read before the raw runs: `Vec<JoltTraceRow>` (64 B/row) plus \
+         the buffers of `Cycle`s (96 B each) the tracer rotates through, so on a long trace it \
+         sits those buffers above the 64 B/row row-storage floor a direct-emit backend would have.\n\
          Memory config is `GuestConfig`'s (stack 4 KiB, heap 32 KiB), not the 32 MiB heap \
          `Program::new` defaults to; this tracks `e2e_profiling.rs` and does not move the \
          numbers, but the denominator should say what it ran.\n\

@@ -2,7 +2,7 @@ use common::jolt_device::MemoryLayout;
 use jolt_claims::protocols::jolt::{JoltRelationId, TracePolynomialOrder};
 use jolt_crypto::VectorCommitment;
 use jolt_openings::CommitmentScheme;
-use jolt_program::preprocess::{JoltProgramPreprocessing, ProgramMetadata};
+use jolt_program::preprocess::{compute_max_ram_k, JoltProgramPreprocessing, ProgramMetadata};
 use jolt_transcript::DigestHasher;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -212,6 +212,14 @@ where
     pub vc_setup: Option<VC::Setup>,
 }
 
+fn validate_memory_layout_admission(memory_layout: &MemoryLayout) -> Result<(), VerifierError> {
+    compute_max_ram_k(memory_layout)
+        .map(|_| ())
+        .map_err(|error| VerifierError::InvalidMemoryLayout {
+            reason: error.to_string(),
+        })
+}
+
 impl<PCS, VC> JoltVerifierPreprocessing<PCS, VC>
 where
     PCS: CommitmentScheme,
@@ -222,6 +230,7 @@ where
         pcs_setup: PCS::VerifierSetup,
         vc_setup: Option<VC::Setup>,
     ) -> Result<Self, VerifierError> {
+        validate_memory_layout_admission(program.memory_layout())?;
         let preprocessing_digest = program.digest()?;
         Ok(Self {
             program,
@@ -294,7 +303,14 @@ mod tests {
     use jolt_program::preprocess::JoltProgramPreprocessing;
     use jolt_riscv::RV64IMAC_JOLT;
 
-    use super::{CommittedProgramPreprocessing, ProgramPreprocessing};
+    use super::{
+        CommittedProgramPreprocessing, JoltVerifierPreprocessing, ProgramPreprocessing,
+        VerifierPreprocessingWire,
+    };
+    use crate::VerifierError;
+    use jolt_crypto::{Bn254G1, Pedersen};
+    use jolt_dory::{DoryCommitment, DoryScheme};
+    use jolt_openings::CommitmentScheme;
 
     /// Golden digests. A change here is a Fiat-Shamir break for every
     /// deployed verifier: bump `PROGRAM_PREPROCESSING_DIGEST_DOMAIN` and say so
@@ -374,6 +390,62 @@ mod tests {
             program_image_commitment: Commitment::default(),
             bytecode_commitment: Commitment::default(),
             trace_order: TracePolynomialOrder::CycleMajor,
+        }
+    }
+
+    #[test]
+    fn verifier_key_admission_rejects_invalid_full_and_committed_layouts() {
+        type Key = JoltVerifierPreprocessing<DoryScheme, Pedersen<Bn254G1>>;
+        let (_, pcs_setup) = DoryScheme::setup(1).unwrap();
+        let full = program();
+        let committed = CommittedProgramPreprocessing {
+            meta: full.metadata().unwrap(),
+            memory_layout: full.memory_layout.clone(),
+            max_padded_trace_length: full.max_padded_trace_length,
+            program_image_commitment: DoryCommitment::default(),
+            bytecode_commitment: DoryCommitment::default(),
+            trace_order: TracePolynomialOrder::CycleMajor,
+        };
+        for valid in [
+            ProgramPreprocessing::Full(Arc::new(full)),
+            ProgramPreprocessing::Committed(committed),
+        ] {
+            let key = Key::new(valid.clone(), pcs_setup.clone(), None).unwrap();
+            let encoded = bincode::serde::encode_to_vec(&key, bincode::config::standard()).unwrap();
+            assert!(bincode::serde::decode_from_slice::<Key, _>(
+                &encoded,
+                bincode::config::standard()
+            )
+            .is_ok());
+
+            for invalid_heap_end in [
+                u64::MAX - 6,
+                (1u64 << 63) + valid.memory_layout().get_lowest_address() + 8,
+                valid.memory_layout().heap_end + 4,
+            ] {
+                let mut invalid = valid.clone();
+                let layout = match &mut invalid {
+                    ProgramPreprocessing::Full(full) => &mut Arc::make_mut(full).memory_layout,
+                    ProgramPreprocessing::Committed(committed) => &mut committed.memory_layout,
+                };
+                layout.heap_end = invalid_heap_end;
+                assert!(matches!(
+                    Key::new(invalid.clone(), pcs_setup.clone(), None),
+                    Err(VerifierError::InvalidMemoryLayout { .. })
+                ));
+                let wire = VerifierPreprocessingWire::<DoryScheme, Pedersen<Bn254G1>> {
+                    program: invalid,
+                    pcs_setup: pcs_setup.clone(),
+                    vc_setup: None,
+                };
+                let encoded =
+                    bincode::serde::encode_to_vec(&wire, bincode::config::standard()).unwrap();
+                assert!(bincode::serde::decode_from_slice::<Key, _>(
+                    &encoded,
+                    bincode::config::standard()
+                )
+                .is_err());
+            }
         }
     }
 

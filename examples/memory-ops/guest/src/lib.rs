@@ -1,18 +1,22 @@
 #![cfg_attr(feature = "guest", no_std)]
 
-#[cfg(feature = "guest")]
-use core::arch::asm;
+use jolt::UntrustedAdvice;
 
 /// Three doublewords whose bytes all have the high bit set, so signed loads
 /// sign-extend. The access base points at the middle doubleword, so
 /// immediates from -8 to 15 reach every byte.
+///
+/// Public because a guest build compiles only the entry point named by
+/// `JOLT_FUNC_NAME` among the `guest_only` ones: a private helper is dead code
+/// in the builds of `heap_top`, `rounded_advice`, `exact_rows` and
+/// `panic_halt`, which do not use it.
 #[cfg(feature = "guest")]
 #[repr(align(8))]
-struct Scratch([u8; 24]);
+pub struct Scratch([u8; 24]);
 
 #[cfg(feature = "guest")]
 impl Scratch {
-    fn new() -> Self {
+    pub fn new() -> Self {
         let mut bytes = [0; 24];
         for (i, byte) in bytes.iter_mut().enumerate() {
             *byte = 0x80 | (i as u8).wrapping_mul(37);
@@ -20,11 +24,11 @@ impl Scratch {
         Self(bytes)
     }
 
-    fn base(&mut self) -> *mut u8 {
+    pub fn base(&mut self) -> *mut u8 {
         self.0.as_mut_ptr().wrapping_add(8)
     }
 
-    fn words(&self) -> [u64; 3] {
+    pub fn words(&self) -> [u64; 3] {
         let mut words = [0; 3];
         for (word, bytes) in words.iter_mut().zip(self.0.chunks_exact(8)) {
             let mut le = [0; 8];
@@ -40,6 +44,8 @@ impl Scratch {
 /// loaded value and the final scratch doublewords.
 #[jolt::provable(guest_only, heap_size = 65536, max_trace_length = 65536)]
 fn memory_ops() -> (u64, [u64; 3]) {
+    use core::arch::asm;
+
     /// Folds the value `op` loads at each offset into `hash`.
     macro_rules! load {
         ($hash:ident, $base:ident, $op:literal: $($offset:literal),+) => {$(
@@ -94,6 +100,8 @@ fn memory_ops() -> (u64, [u64; 3]) {
 /// trace them with misalignment allowed and check that the proof fails.
 #[jolt::provable(guest_only, heap_size = 65536, max_trace_length = 65536)]
 fn misaligned_access(kind: u8) -> u64 {
+    use core::arch::asm;
+
     let mut scratch = Scratch::new();
     let base = scratch.base();
     let mut value = 0x0123_4567_89ab_cdef_u64;
@@ -108,4 +116,83 @@ fn misaligned_access(kind: u8) -> u64 {
         }
     }
     value ^ scratch.words()[1]
+}
+
+/// Stores into the heap's last doubleword and then its last byte, both ending
+/// at the linker's `__heap_end`, and reloads the doubleword. The memory layout
+/// rounds `heap_end` up to a doubleword so that it matches `__heap_end` even
+/// when the program size is not a multiple of eight.
+#[jolt::provable(guest_only, heap_size = 65536, max_trace_length = 65536)]
+fn heap_top() -> u64 {
+    extern "C" {
+        /// Global pointer, stack top, heap start and heap end, written by the
+        /// linker script (`src/linker.ld.template`).
+        static __jolt_memory_layout: [usize; 4];
+    }
+
+    // SAFETY: the linker reserves `[__heap_start, __heap_end)` for this guest,
+    // and the allocator has not handed out the heap's last doubleword in a
+    // guest that allocates nothing.
+    unsafe {
+        let heap_end = __jolt_memory_layout[3];
+        let last_word = (heap_end - 8) as *mut u64;
+        core::ptr::write_volatile(last_word, 0x0123_4567_89ab_cdef);
+        core::ptr::write_volatile((heap_end - 1) as *mut u8, 0xa5);
+        core::ptr::read_volatile(last_word)
+    }
+}
+
+/// Configured for 12 bytes of untrusted advice, which the layout rounds up to
+/// 16. Returns the advice's high doubleword, so bytes 12..16 reach the output.
+/// It compiles on the host, so it is not `guest_only` and every build emits it.
+#[jolt::provable(
+    heap_size = 65536,
+    max_trace_length = 65536,
+    max_untrusted_advice_size = 12
+)]
+fn rounded_advice(untrusted: UntrustedAdvice<[u8; 16]>) -> u64 {
+    let bytes = *untrusted;
+    let mut high = [0u8; 8];
+    high.copy_from_slice(&bytes[8..]);
+    u64::from_le_bytes(high)
+}
+
+/// Runs `pad` single-row no-ops (`pad <= 4096`) between a fixed prologue and
+/// epilogue, so the trace length is affine in `pad` with slope one. The e2e
+/// harness solves for the `pad` whose execution fills a power-of-two domain
+/// exactly.
+#[jolt::provable(guest_only, heap_size = 65536, max_trace_length = 65536)]
+fn exact_rows(pad: [u8; 2]) -> [u8; 2] {
+    use core::arch::asm;
+
+    let rows = usize::from(u16::from_le_bytes(pad));
+    assert!(rows <= 4096, "the no-op sled holds 4096 rows");
+    // SAFETY: jumps `rows` 4-byte no-ops before the end of a sled that falls
+    // through to `2:`.
+    unsafe {
+        asm!(
+            "lla {target}, 2f",
+            "slli {rows}, {rows}, 2",
+            "sub {target}, {target}, {rows}",
+            "jr {target}",
+            ".rept 4096",
+            // `.insn`, not a data directive: the assembler maps data directives
+            // as `$d`, and jolt-program's `decode_elf` decodes no `$d` bytes.
+            ".insn 4, 0x00000013", // addi x0, x0, 0: one ADDI row each
+            ".endr",
+            "2:",
+            target = out(reg) _,
+            rows = inout(reg) rows => _,
+            options(nostack, nomem),
+        );
+    }
+    pad
+}
+
+/// Panics when `trigger` is set: the SDK's panic path writes the panic byte
+/// and halts at `ebreak`, so the run proves with `panic = true`.
+#[jolt::provable(guest_only, heap_size = 65536, max_trace_length = 65536)]
+fn panic_halt(trigger: bool) -> u8 {
+    assert!(!trigger, "panic_halt was asked to panic");
+    7
 }

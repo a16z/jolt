@@ -777,10 +777,13 @@ impl MacroBuilder {
         let output_start = memory_layout.output_start;
         let untrusted_advice_start = memory_layout.untrusted_advice_start;
         let trusted_advice_start = memory_layout.trusted_advice_start;
-        let max_input_len = attributes.max_input_size as usize;
-        let max_output_len = attributes.max_output_size as usize;
-        let max_untrusted_advice_len = attributes.max_untrusted_advice_size as usize;
-        let max_trusted_advice_len = attributes.max_trusted_advice_size as usize;
+        // The layout rounds each size up to a multiple of eight. The rounded size
+        // is the effective maximum: the tracer admits and the verifier's region
+        // covers exactly that many bytes, so the guest reads and writes all of it.
+        let max_input_len = memory_layout.max_input_size as usize;
+        let max_output_len = memory_layout.max_output_size as usize;
+        let max_untrusted_advice_len = memory_layout.max_untrusted_advice_size as usize;
+        let max_trusted_advice_len = memory_layout.max_trusted_advice_size as usize;
         let termination_bit = memory_layout.termination as usize;
 
         let get_input_slice = quote! {
@@ -935,26 +938,24 @@ impl MacroBuilder {
                 unsafe {
                     ::core::ptr::write_volatile(#termination_bit as *mut u8, 1);
                 }
-                // Never return - loop forever for clean termination
-                // The emulator detects termination via PC stall
-                loop {
-                    unsafe { ::core::arch::asm!("j .", options(noreturn)); }
-                }
+                // `jolt.success` (custom-2, funct3 3) ends the run; the epilogue is its only emitter.
+                unsafe { ::core::arch::asm!(".insn i 0x5B, 3, x0, x0, 0", options(noreturn)); }
             }
 
             #panic_fn
         }
     }
 
-    /// Generate `jolt_panic()` function that writes to the panic address.
-    /// This is called by the runtime's `#[panic_handler]` to signal panics to the prover.
+    /// Generate `jolt_panic()`: writes 1 to the panic byte, then halts at `ebreak`, Jolt's
+    /// failure halt. The runtime's abort path (`__platform_abort`) calls it.
     fn make_panic(&self, panic_address: u64) -> TokenStream2 {
         quote! {
             #[cfg(feature = "guest")]
             #[no_mangle]
-            pub extern "C" fn jolt_panic() {
+            pub extern "C" fn jolt_panic() -> ! {
                 unsafe {
                     ::core::ptr::write_volatile(#panic_address as *mut u8, 1);
+                    ::core::arch::asm!("ebreak", options(noreturn));
                 }
             }
         }

@@ -334,6 +334,29 @@ fn decodes_system_instructions_exactly() {
         i128::from(0xffff_ffff_ffff_fc00u64)
     );
 
+    // The other Zicsr forms (funct3 from the Zicsr encoding table); the rs1
+    // field of the immediate forms holds the 5-bit immediate.
+    for (funct3, kind) in [
+        (0b011, SourceInstructionKind::CSRRC),
+        (0b101, SourceInstructionKind::CSRRWI),
+        (0b110, SourceInstructionKind::CSRRSI),
+        (0b111, SourceInstructionKind::CSRRCI),
+    ] {
+        let word = (0x300 << 20) | (8 << 15) | (funct3 << 12) | (5 << 7) | 0x73; // t0, mstatus, 8
+        let instruction = decode_ok(word, 0x8000_0000, false);
+        assert_eq!(instruction.kind(), kind);
+        assert_eq!(instruction.row().operands.rd, Some(5));
+        assert_eq!(instruction.row().operands.rs1, Some(8));
+        assert_eq!(instruction.row().operands.imm, 0x300);
+    }
+
+    // funct3 = 100 is reserved in the SYSTEM opcode.
+    assert!(matches!(
+        decode_instruction(0x3000_42f3, 0x8000_0000, false, RV64IMAC_JOLT),
+        Err(ProgramError::MalformedImage(
+            "unsupported system instruction"
+        ))
+    ));
     assert!(matches!(
         decode_instruction(0x0000_00f3, 0x8000_0000, false, RV64IMAC_JOLT),
         Err(ProgramError::MalformedImage(
@@ -351,6 +374,38 @@ fn decodes_host_io_without_operands() {
         SourceInstructionKind::VirtualHostIO(_)
     ));
     assert_eq!(instruction.row().operands, NormalizedOperands::default());
+}
+
+#[test]
+fn decodes_jolt_success_and_rejects_its_reserved_fields() {
+    let instruction = decode_ok(JOLT_SUCCESS_WORD, 0x8000_0000, false);
+    assert_eq!(instruction.kind(), SourceInstructionKind::JoltSuccess);
+    assert_eq!(
+        instruction.row().operands,
+        NormalizedOperands {
+            rd: Some(0),
+            rs1: Some(0),
+            rs2: None,
+            imm: 0,
+        }
+    );
+
+    for word in [
+        JOLT_SUCCESS_WORD | (1 << 7),
+        JOLT_SUCCESS_WORD | (1 << 15),
+        JOLT_SUCCESS_WORD | (1 << 20),
+        JOLT_SUCCESS_WORD | (0xfff << 20),
+    ] {
+        assert!(
+            matches!(
+                decode_instruction(word, 0x8000_0000, false, RV64IMAC_JOLT),
+                Err(ProgramError::MalformedImage(
+                    "invalid jolt.success operands"
+                ))
+            ),
+            "word {word:#010x}"
+        );
+    }
 }
 
 #[test]
@@ -407,6 +462,7 @@ fn rejects_invalid_encodings_with_exact_messages() {
         ),
         (0x0800_00db, "invalid custom instruction"),
         ((0x3f << 25) | 0x5b, "invalid custom instruction"),
+        ((0b100 << 12) | 0x5b, "invalid custom instruction"),
         (0x0f | (0b001 << 12), "invalid MISC-MEM funct3"),
         (0x0f | (0b010 << 12), "invalid MISC-MEM funct3"),
         (0x0f | (0b011 << 12), "invalid MISC-MEM funct3"),

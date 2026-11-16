@@ -69,6 +69,7 @@ mod one_hot_histograms;
 pub mod opening;
 pub mod precommitted_reduction;
 mod prefix_product;
+mod ram_events;
 pub mod ram_hamming_booleanity;
 pub mod ram_output_check;
 pub mod ram_ra_claim_reduction;
@@ -207,6 +208,8 @@ where
 
 #[cfg(all(test, feature = "field-inline"))]
 pub(crate) mod field_registers_testing;
+#[cfg(test)]
+pub(crate) mod heap_peak;
 #[cfg(test)]
 pub(crate) mod parity;
 #[cfg(test)]

@@ -5,7 +5,7 @@
 //! three field multiplications without expanding any cycle-indexed table.
 
 use super::super::lazy_ra::ChunkIndexSource;
-use super::{LazyFoldedRa, OptimizedInstructionRaVirtualizationKernel};
+use super::{LazyFoldedRa, OptimizedInstructionRaVirtualizationKernel, Selectors};
 use jolt_field::{Accumulator, JoltField};
 
 struct Quartet<F> {
@@ -37,13 +37,15 @@ impl<F: JoltField> OptimizedInstructionRaVirtualizationKernel<F> {
         if self.num_committed_per_virtual != 4 {
             return None;
         }
-        let LazyFoldedRa::Lazy {
-            tables,
-            width: 1,
-            factors: 1,
-            source,
-            ..
-        } = &self.folded_ra
+        let Selectors::Lazy(
+            folded_ra @ LazyFoldedRa::Lazy {
+                tables,
+                width: 1,
+                factors: 1,
+                source,
+                ..
+            },
+        ) = &self.folded_ra
         else {
             return None;
         };
@@ -72,7 +74,7 @@ impl<F: JoltField> OptimizedInstructionRaVirtualizationKernel<F> {
                             .collect()
                     }),
                     tail_index: ((tail_index >> shift) & group_mask) as usize,
-                    tail_value: self.folded_ra.tail_values()[4 * g..4 * g + 4]
+                    tail_value: folded_ra.tail_values()[4 * g..4 * g + 4]
                         .iter()
                         .copied()
                         .product(),

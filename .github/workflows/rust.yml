@@ -510,7 +510,7 @@ jobs:
         uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2
         with:
           tool: nextest
-      # e2e_matrix selects field_ops, field_ops_full_domain, field_limbs, and
+      # e2e_matrix selects field_ops, exact_domain, panic_halt, field_limbs, and
       # muldiv for the field-inline profile. Run the full package to retain its specialized
       # parity, tamper, and limb-conversion suites alongside matrix acceptance
       # in both Dory modes.
@@ -701,6 +701,9 @@ jobs:
 
       - name: Guest function selection invalidates cached builds
         run: python3 jolt-sdk/tests/guest_function_cache.py
+
+      - name: Guest memory layout invalidates cached builds
+        run: python3 jolt-sdk/tests/guest_layout_cache.py
 
       - name: Use the `jolt` binary to generate code
         run: jolt new sample_project

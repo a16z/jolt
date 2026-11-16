@@ -171,6 +171,13 @@ pub extern "sysv64" fn slow_load_doubleword(state: *mut GuestState, address: u64
     }
     let mut value = 0u64;
     for i in 0..8 {
+        if address + i > host.device.memory_layout.io_end {
+            return fail(
+                state,
+                host,
+                format!("I/O overflow: Attempted to read from {:#X}", address + i),
+            );
+        }
         value |= (host.device.load(address + i) as u64) << (i * 8);
     }
     value
@@ -260,7 +267,7 @@ pub extern "sysv64" fn assert_failed(state: *mut GuestState, code: u64, value: u
 /// plane instead of the interpreter's `Cpu`.
 struct GuestAdviceContext<'a> {
     state: &'a mut GuestState,
-    host: &'a HostContext,
+    host: &'a mut HostContext,
 }
 
 impl tracer::InlineAdviceContext for GuestAdviceContext<'_> {
@@ -274,13 +281,12 @@ impl tracer::InlineAdviceContext for GuestAdviceContext<'_> {
         }
         if address >= RAM_START_ADDRESS {
             let offset = address - RAM_START_ADDRESS;
-            if offset + 8 > self.state.mem_size {
+            if offset >= self.state.mem_size {
                 return None;
             }
-            // SAFETY: offset + 8 is within the mapped plane.
             let mut bytes = [0u8; 8];
-            // SAFETY: offset + 8 <= mem_size, so the read stays inside the
-            // mapped guest-memory plane.
+            // SAFETY: MemoryPlane::new enforces an 8-aligned mem_size, so an
+            // aligned start below it leaves a whole doubleword mapped.
             unsafe {
                 (self.state.mem_base as *const u8)
                     .add(offset as usize)
@@ -290,6 +296,14 @@ impl tracer::InlineAdviceContext for GuestAdviceContext<'_> {
         }
         let mut value = 0u64;
         for i in 0..8 {
+            if address + i > self.host.device.memory_layout.io_end {
+                let _ = fail(
+                    self.state,
+                    self.host,
+                    format!("I/O overflow: Attempted to read from {:#X}", address + i),
+                );
+                return None;
+            }
             value |= (self.host.device.load(address + i) as u64) << (i * 8);
         }
         Some(value)
@@ -378,6 +392,9 @@ pub extern "sysv64" fn advice_compute(state: *mut GuestState, job_index: u64) ->
                 let mut context = GuestAdviceContext { state, host };
                 build(operands, &mut context)
             };
+            if state.exit != ExitReason::Running as u64 {
+                return 0;
+            }
             // Advice faults (invalid guest pointer in an operand register) are
             // surfaced as helper errors here — this backend has an error
             // channel, unlike the reference tracer, which panics.

@@ -1,6 +1,8 @@
 use common::constants::RAM_START_ADDRESS;
 use jolt_host::Program;
 use jolt_program::execution::{JoltProgram, TraceInputs};
+#[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+use jolt_tracer_x86::{RunOutput, X86TracerBackend};
 use tracer::TracerBackend;
 
 use crate::guests::GuestConfig;
@@ -63,11 +65,7 @@ impl<G: GuestConfig> TraceGenObjective<G> {
     /// small guests is on the order of the fast pass itself. Callers warm
     /// the cache with one un-timed run (the phase3_baseline pattern).
     #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
-    pub fn run_x86(
-        &self,
-        backend: &mut jolt_tracer_x86::X86TracerBackend,
-        setup: &TraceGenSetup,
-    ) -> usize {
+    pub fn run_x86(&self, backend: &mut X86TracerBackend, setup: &TraceGenSetup) -> usize {
         let output = setup
             .program
             .trace_with(backend, setup.inputs.clone())
@@ -78,13 +76,10 @@ impl<G: GuestConfig> TraceGenObjective<G> {
     /// One fast (non-recording) pass with the AOT x86-64 backend. See
     /// [`Self::run_x86`] for why the backend is a parameter.
     #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
-    pub fn run_x86_fast(
-        &self,
-        backend: &mut jolt_tracer_x86::X86TracerBackend,
-        setup: &TraceGenSetup,
-    ) -> usize {
+    pub fn run_x86_fast(&self, backend: &mut X86TracerBackend, setup: &TraceGenSetup) -> usize {
         let output = backend
-            .fast_run(&setup.program, setup.inputs.clone())
+            .run_machine(&setup.program, setup.inputs.clone())
+            .and_then(RunOutput::require_halt)
             .expect("x86 fast run failed");
         std::hint::black_box(output.trace_len)
     }
@@ -99,23 +94,25 @@ impl<G: GuestConfig> TraceGenObjective<G> {
         std::hint::black_box(output.trace.rows().len())
     }
 
-    /// The same trace without the `Cycle` to `JoltTraceRow` conversion, i.e. the
-    /// raw `tracer::trace` call that `TracerBackend::trace` wraps.
+    /// The same emulator run without the `Cycle` to `JoltTraceRow` conversion,
+    /// i.e. the raw `tracer::trace` call, which keeps every cycle in one vector
+    /// where `TracerBackend::trace` converts them chunk by chunk.
     ///
-    /// WHY this exists: the conversion pass dominates the seam (measured at
-    /// 74% for fibonacci and 86% for sha2-chain), and a backend that emits
-    /// `JoltTraceRow` directly skips it entirely. Reporting only the seam total
-    /// would let a backend bank that share as if it were codegen speedup, so
-    /// AC8/AC9 ratios are only interpretable against both numbers: `reference`
-    /// bounds the end-to-end win, `reference_raw` isolates the part that is
-    /// actually attributable to how rows are produced.
+    /// WHY this exists: a backend that emits `JoltTraceRow` directly skips the
+    /// conversion. Reporting only the seam total would let a backend bank that
+    /// share as if it were codegen speedup, so AC8/AC9 ratios are only
+    /// interpretable against both numbers: `reference` bounds the end-to-end
+    /// win, `reference_raw` the part that is attributable to how rows are
+    /// produced. Their difference is not the conversion's cost: `reference`
+    /// converts while the emulator runs and reuses its cycle buffers on a long
+    /// run, where `reference_raw` first-touches a buffer the size of the run.
     pub fn run_reference_raw(&self, setup: &TraceGenSetup) -> usize {
         raw_trace_cycles(&setup.program, &setup.inputs)
     }
 }
 
-/// Raw `tracer::trace`: the call `TracerBackend::trace` wraps, without the
-/// `Cycle` to `JoltTraceRow` conversion that follows it. Shared by the Criterion
+/// Raw `tracer::trace`: the emulator run of `TracerBackend::trace` without its
+/// `Cycle` to `JoltTraceRow` conversion. Shared by the Criterion
 /// `reference_raw` id and the `trace-gen-baseline` harness so both time the
 /// same thing.
 pub fn raw_trace_cycles(program: &JoltProgram, inputs: &TraceInputs) -> usize {

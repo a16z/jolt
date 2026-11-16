@@ -247,11 +247,24 @@ mod tests {
         }
     }
 
-    /// Every streaming family is selected. On a trace this small the
-    /// instruction-input kernel reads the rows in rounds 0 and 1 and fills its
-    /// dense tables in round 1, and the Spartan outer and product remainders
-    /// fill their tables in the passes that yield round 0's endpoints; the
-    /// parity tests in `jolt-kernels` cover later crossovers.
+    /// Every streaming family is selected, and the proof must equal the
+    /// default kernels' byte for byte. The rounds a kernel streams follow
+    /// from its cap and its clamps, so this test pins none of them: the
+    /// parity tests in `jolt-kernels` cover every round at which a kernel
+    /// can turn dense. What this trace and config add:
+    /// - The trace ends inside its padded domain, so every streamed pass,
+    ///   walk and fold weighs a constant suffix once, and every table a
+    ///   kernel turns dense holds it as its tail.
+    /// - The derived config binds the register read-write check cycle-first,
+    ///   the order in which its streaming kernel runs. `e2e_matrix`'s
+    ///   all-families case binds address-first in the builds that compile
+    ///   this file, which keeps the default kernel.
+    /// - The guest's bytecode table is small enough for the direct path of
+    ///   the bytecode read-RAF address walk; the unit tests in `jolt-kernels`
+    ///   cover the routed one.
+    /// - The RAM kernels have no crossover: they read the event log, and
+    ///   stage 6b its own address column, at every trace size.
+    /// - Stage 8's joint opening collects no columns.
     #[test]
     fn streaming_kernels_reproduce_the_default_proof() {
         let Fixture {
@@ -260,6 +273,11 @@ mod tests {
             public_io,
             witness,
         } = fixture();
+        let rows = witness.random_access().expect("resident rows");
+        assert!(
+            rows.physical_cycles() < rows.cycles(),
+            "the instruction-rows kernels must meet a constant suffix",
+        );
         let prove = |backend: JoltBackend<Fr, DoryScheme>| {
             dory::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, ProverState<Keccak>>(
                 backend.with_witness(&witness),
@@ -273,6 +291,9 @@ mod tests {
         let streamed = prove(JoltBackend::optimized().with_streaming(StreamingFamilies {
             spartan: true,
             instruction_input: true,
+            ram: true,
+            registers: true,
+            instruction_rows: true,
         }));
         jolt_verifier::verify::<Fr, DoryScheme, Pedersen<Bn254G1>, VerifierState<'_, Keccak>>(
             &preprocessing.verifier,

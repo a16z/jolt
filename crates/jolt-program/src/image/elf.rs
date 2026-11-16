@@ -1,14 +1,19 @@
 use common::constants::RAM_START_ADDRESS;
 use jolt_riscv::{uncompress_rv64_instruction, JoltInstructionProfile, SourceInstruction};
-use object::{Object, ObjectSection, SectionKind};
-use std::collections::BTreeMap;
+use object::elf::SHF_WRITE;
+use object::{Object, ObjectSection, ObjectSymbol, SectionFlags, SectionKind, SymbolKind};
+use std::{
+    collections::{BTreeMap, HashMap},
+    ops::Range,
+};
 
-use crate::ProgramError;
+use crate::{preprocess::PreprocessingError, ProgramError};
 
 /// Contents decoded directly from an RV64 ELF program image.
 ///
-/// The instruction rows here match the executable text after RV64 decoding and
-/// compressed-instruction normalization. They have not been expanded into Jolt
+/// Bytes in `$d` mapping-symbol ranges of executable sections stay only in
+/// `memory_init`; all other executable bytes are decoded linearly. Instructions
+/// are normalized for compressed encodings but have not been expanded into Jolt
 /// bytecode yet.
 #[derive(Default, Debug, Clone)]
 #[cfg_attr(
@@ -24,6 +29,12 @@ pub struct Rv64ProgramImage {
     pub program_end: u64,
     /// ELF entry point.
     pub entry_address: u64,
+}
+
+#[derive(Clone, Copy)]
+enum MappingSymbol {
+    Code,
+    Data,
 }
 
 pub fn decode_elf(
@@ -42,6 +53,30 @@ pub fn decode_elf(
     let mut memory_image = BTreeMap::new();
     let mut program_end = RAM_START_ADDRESS;
     let mut text_ranges = Vec::new();
+    let mut mapping_symbols: HashMap<_, Vec<_>> = HashMap::new();
+    for symbol in obj.symbols() {
+        // Mapping symbols are local STT_NOTYPE; a global or typed `$x...`
+        // label is an ordinary symbol.
+        if !symbol.is_local() || symbol.kind() != SymbolKind::Unknown {
+            continue;
+        }
+        let (Some(section), Ok(name)) = (symbol.section_index(), symbol.name()) else {
+            continue;
+        };
+        let kind = if name.starts_with("$x") {
+            MappingSymbol::Code
+        } else if name == "$d" || name.starts_with("$d.") {
+            MappingSymbol::Data
+        } else {
+            continue;
+        };
+        mapping_symbols
+            .entry(section)
+            .or_default()
+            .push((symbol.address(), kind));
+    }
+    let mut data_ranges = Vec::new();
+    let mut writable_ranges = Vec::new();
 
     for section in obj
         .sections()
@@ -59,8 +94,25 @@ pub fn decode_elf(
             .data()
             .map_err(|_| ProgramError::MalformedImage("section data is not readable"))?;
 
+        if matches!(section.flags(), SectionFlags::Elf { sh_flags, .. } if sh_flags.contains(SHF_WRITE))
+            && start < end
+        {
+            writable_ranges.push((start, end));
+        }
         if section.kind() == SectionKind::Text {
             text_ranges.push((start, end));
+            if let Some(symbols) = mapping_symbols.get_mut(&section.index()) {
+                symbols.retain(|(address, _)| (start..end).contains(address));
+                // At a shared address the code symbol sorts last and wins.
+                symbols
+                    .sort_by_key(|&(address, kind)| (address, matches!(kind, MappingSymbol::Code)));
+                for (index, &(address, kind)) in symbols.iter().enumerate() {
+                    let next = symbols.get(index + 1).map_or(end, |(address, _)| *address);
+                    if address < next && matches!(kind, MappingSymbol::Data) {
+                        data_ranges.push((address, next));
+                    }
+                }
+            }
         }
 
         memory_init.extend(
@@ -77,12 +129,46 @@ pub fn decode_elf(
         );
     }
 
+    let data_ranges = merge_ranges(data_ranges);
     let mut instructions = Vec::new();
-    for (start, end) in merge_ranges(text_ranges) {
-        let raw_data: Vec<_> = (start..end)
+    let mut decode = |range: Range<u64>| {
+        let raw_data: Vec<_> = range
+            .clone()
             .map(|address| memory_image.get(&address).copied().unwrap_or(0))
             .collect();
-        decode_text_section(start, &raw_data, &mut instructions, profile)?;
+        decode_text_section(range.start, &raw_data, &mut instructions, profile)
+    };
+    for (start, end) in merge_ranges(text_ranges) {
+        let mut cursor = start;
+        for &(data_start, data_end) in data_ranges
+            .iter()
+            .filter(|(data_start, data_end)| *data_start < end && *data_end > start)
+        {
+            decode(cursor..data_start)?;
+            cursor = data_end;
+        }
+        decode(cursor..end)?;
+    }
+
+    for instruction in &instructions {
+        let row = instruction.row();
+        let address = row.address as u64;
+        let end = address
+            .checked_add(if row.is_compressed { 2 } else { 4 })
+            .ok_or(ProgramError::MalformedImage(
+                "invalid source instruction extent",
+            ))?;
+        let code_start = address / 8;
+        let code_end = end.div_ceil(8);
+        for &(start, end) in &writable_ranges {
+            let first_word = start / 8;
+            let end_word = end.div_ceil(8);
+            if code_start < end_word && first_word < code_end {
+                return Err(ProgramError::MalformedImage(
+                    "writable section shares a protected code doubleword",
+                ));
+            }
+        }
     }
 
     Ok(Rv64ProgramImage {
@@ -117,6 +203,9 @@ fn decode_text_section(
     let mut offset = 0;
     while offset < raw_data.len() {
         let address = section_address + offset as u64;
+        if !address.is_multiple_of(2) {
+            return Err(PreprocessingError::InvalidBytecodeAddress(address as usize).into());
+        }
         let Some(&[b0, b1]) = raw_data.get(offset..offset + 2) else {
             return Err(ProgramError::MalformedImage(
                 "truncated instruction halfword",
@@ -157,7 +246,7 @@ fn decode_text_section(
 )]
 mod tests {
     use super::{decode_elf, merge_ranges};
-    use crate::{ProgramError, RV64I};
+    use crate::{preprocess::PreprocessingError, ProgramError, RV64I};
     use common::constants::RAM_START_ADDRESS;
     use jolt_riscv::{SourceInstructionKind, RV64IMAC_JOLT, RV64IM_JOLT};
 
@@ -169,6 +258,7 @@ mod tests {
     const SHF_ALLOC: u64 = 0x2;
     const SHF_EXECINSTR: u64 = 0x4;
     const SHT_PROGBITS: u32 = 1;
+    const SHT_SYMTAB: u32 = 2;
     const SHT_STRTAB: u32 = 3;
     const SHT_NOBITS: u32 = 8;
 
@@ -296,6 +386,53 @@ mod tests {
         out
     }
 
+    const STB_GLOBAL_NOTYPE: u8 = 0x10;
+    const STB_LOCAL_FUNC: u8 = 0x02;
+
+    fn build_elf64_with_symbols(sections: Vec<TestSection>, symbols: &[(u64, &str)]) -> Vec<u8> {
+        let local: Vec<_> = symbols
+            .iter()
+            .map(|&(address, name)| (address, name, 0, 1))
+            .collect();
+        build_elf64_with_symbol_table(sections, &local)
+    }
+
+    /// Symbols are `(address, name, st_info, st_shndx)`.
+    fn build_elf64_with_symbol_table(
+        mut sections: Vec<TestSection>,
+        symbols: &[(u64, &str, u8, u16)],
+    ) -> Vec<u8> {
+        let strtab_index = sections.len() as u32 + 1;
+        let symtab_index = strtab_index + 1;
+        let mut strings = vec![0];
+        let mut entries = vec![0; 24];
+        for &(address, name, info, shndx) in symbols {
+            push_u32(&mut entries, strings.len() as u32);
+            entries.extend_from_slice(&[info, 0]);
+            push_u16(&mut entries, shndx);
+            push_u64(&mut entries, address);
+            push_u64(&mut entries, 0);
+            strings.extend_from_slice(name.as_bytes());
+            strings.push(0);
+        }
+        for (section_type, data) in [(SHT_STRTAB, strings), (SHT_SYMTAB, entries)] {
+            sections.push(TestSection {
+                name_offset: 0,
+                section_type,
+                flags: 0,
+                address: 0,
+                data,
+                size_override: None,
+            });
+        }
+        let mut elf = build_elf64(&sections);
+        let header = 64 + symtab_index as usize * 64;
+        elf[header + 40..header + 44].copy_from_slice(&strtab_index.to_le_bytes());
+        elf[header + 44..header + 48].copy_from_slice(&(symbols.len() as u32 + 1).to_le_bytes());
+        elf[header + 56..header + 64].copy_from_slice(&24u64.to_le_bytes());
+        elf
+    }
+
     /// Minimal valid ELF32 header (class = ELFCLASS32, no sections).
     fn build_elf32() -> Vec<u8> {
         let mut out = Vec::new();
@@ -384,6 +521,21 @@ mod tests {
     }
 
     #[test]
+    fn decode_elf_requires_even_instruction_addresses_in_all_profiles() {
+        let nop = 0x0000_0013u32;
+        for profile in [RV64I, RV64IM_JOLT, RV64IMAC_JOLT] {
+            let even = build_elf64(&[text_section(RAM_START_ADDRESS, &nop.to_le_bytes())]);
+            assert!(decode_elf(&even, profile).is_ok());
+            let address = RAM_START_ADDRESS + 1;
+            let odd = build_elf64(&[text_section(address, &nop.to_le_bytes())]);
+            assert!(matches!(
+                decode_elf(&odd, profile),
+                Err(ProgramError::Preprocessing(PreprocessingError::InvalidBytecodeAddress(got))) if got == address as usize
+            ));
+        }
+    }
+
+    #[test]
     fn decode_elf_rejects_odd_length_text_section() {
         // c.nop followed by a dangling byte
         let elf = build_elf64(&[text_section(RAM_START_ADDRESS, &[0x01, 0x00, 0x13])]);
@@ -466,6 +618,44 @@ mod tests {
     }
 
     #[test]
+    fn decode_elf_rejects_writable_bytes_sharing_a_code_word() {
+        let text = text_section(RAM_START_ADDRESS, &[0x01, 0x00]);
+        let data = data_section(RAM_START_ADDRESS + 4, &[0xaa]);
+        let mut bss = data_section(RAM_START_ADDRESS + 6, &[]);
+        bss.section_type = SHT_NOBITS;
+        bss.size_override = Some(2);
+        for writable in [data, bss] {
+            let elf = build_elf64(&[text_section(text.address, &text.data), writable]);
+            assert!(matches!(
+                decode_elf(&elf, RV64IMAC_JOLT),
+                Err(ProgramError::MalformedImage(
+                    "writable section shares a protected code doubleword"
+                ))
+            ));
+        }
+    }
+
+    #[test]
+    fn decode_elf_allows_writable_words_containing_only_text_padding() {
+        let elf = build_elf64(&[
+            text_section(RAM_START_ADDRESS, &[0x01, 0x00, 0, 0, 0, 0, 0, 0, 0, 0]),
+            data_section(RAM_START_ADDRESS + 10, &[0xaa, 0xbb]),
+        ]);
+        let image = decode_elf(&elf, RV64IMAC_JOLT).expect("padding word remains writable");
+        assert_eq!(image.instructions.len(), 1);
+    }
+
+    #[test]
+    fn decode_elf_allows_read_only_data_sharing_a_code_word() {
+        let mut rodata = data_section(RAM_START_ADDRESS + 2, &[0xaa, 0xbb]);
+        rodata.flags = SHF_ALLOC;
+        let elf = build_elf64(&[text_section(RAM_START_ADDRESS, &[0x01, 0x00]), rodata]);
+        let image =
+            decode_elf(&elf, RV64IMAC_JOLT).expect("read-only neighboring bytes may freeze");
+        assert_eq!(image.instructions.len(), 1);
+    }
+
+    #[test]
     fn decode_elf_ignores_sections_below_ram_start() {
         let elf = build_elf64(&[text_section(0x1000, &[0x01, 0x45])]);
         let image = decode_elf(&elf, RV64IMAC_JOLT).expect("image must decode");
@@ -514,5 +704,96 @@ mod tests {
         assert_eq!(image.instructions[0].kind(), SourceInstructionKind::ADDI);
         assert_eq!(image.instructions[0].row().address, address as usize);
         assert!(!image.instructions[0].row().is_compressed);
+    }
+
+    #[test]
+    fn decode_elf_mapping_symbols_preserve_code_after_a_data_halfword() {
+        let elf = build_elf64_with_symbols(
+            vec![text_section(
+                RAM_START_ADDRESS,
+                &[0x6f, 0x00, 0x60, 0x00, 0x03, 0x00, 0x05, 0x45],
+            )],
+            &[
+                (RAM_START_ADDRESS + 4, "$d"),
+                (RAM_START_ADDRESS + 6, "$xrv64i2p1_m2p0_a2p1_c2p0"),
+            ],
+        );
+        let image = decode_elf(&elf, RV64IMAC_JOLT).expect("mixed text must decode");
+        let addresses: Vec<_> = image
+            .instructions
+            .iter()
+            .map(|row| row.row().address)
+            .collect();
+        assert_eq!(
+            addresses,
+            vec![RAM_START_ADDRESS as usize, RAM_START_ADDRESS as usize + 6]
+        );
+    }
+
+    #[test]
+    fn decode_elf_mapping_symbols_skip_data_ranges() {
+        let elf = build_elf64_with_symbols(
+            vec![text_section(
+                RAM_START_ADDRESS,
+                &[
+                    0x13, 0x05, 0x10, 0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x13, 0x05, 0x20,
+                    0x00, 0x13, 0x05, 0x30, 0x00,
+                ],
+            )],
+            &[
+                (RAM_START_ADDRESS, "$x"),
+                (RAM_START_ADDRESS + 4, "$d.1"),
+                (RAM_START_ADDRESS + 10, "$x.1"),
+                (RAM_START_ADDRESS + 14, "$d"),
+            ],
+        );
+        let image = decode_elf(&elf, RV64IMAC_JOLT).expect("data must not reject the image");
+        let addresses: Vec<_> = image
+            .instructions
+            .iter()
+            .map(|row| row.row().address)
+            .collect();
+        assert_eq!(
+            addresses,
+            vec![RAM_START_ADDRESS as usize, RAM_START_ADDRESS as usize + 10]
+        );
+        assert!(image.memory_init.contains(&(RAM_START_ADDRESS + 14, 0x13)));
+    }
+
+    #[test]
+    fn decode_elf_mapping_symbols_ignore_foreign_and_out_of_range_symbols() {
+        let text = RAM_START_ADDRESS;
+        let elf = build_elf64_with_symbol_table(
+            vec![
+                text_section(
+                    text,
+                    &[
+                        0x13, 0x05, 0x10, 0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x13, 0x05,
+                        0x20, 0x00, 0x13, 0x05, 0x30, 0x00,
+                    ],
+                ),
+                data_section(text + 0x100, &[0; 4]),
+            ],
+            &[
+                // Unsorted, and a tie at 10 resolves to code regardless of order.
+                (text + 10, "$x.1", 0, 1),
+                (text + 10, "$d", 0, 1),
+                (text + 4, "$d.1", 0, 1),
+                // Outside the section, or not mapping symbols of this section.
+                (text - 4, "$d", 0, 1),
+                (text + 18, "$d", 0, 1),
+                (text + 14, "$d", STB_GLOBAL_NOTYPE, 1),
+                (text + 14, "$d", STB_LOCAL_FUNC, 1),
+                (text + 14, "$d", 0, 2),
+            ],
+        );
+        let image = decode_elf(&elf, RV64IMAC_JOLT).expect("data must not reject the image");
+        let addresses: Vec<_> = image
+            .instructions
+            .iter()
+            .map(|row| row.row().address)
+            .collect();
+        let text = text as usize;
+        assert_eq!(addresses, vec![text, text + 10, text + 14]);
     }
 }

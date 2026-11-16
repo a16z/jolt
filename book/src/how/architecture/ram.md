@@ -26,6 +26,14 @@ For the purposes of the memory checking argument, we remap the memory address to
 where `lowest_address` is the left-most address depicted in the diagram above.
 The division by eight reflects the fact that we treat guest memory as "doubleword-addressable" for the purposes of memory-checking.
 
+Layout admission requires `heap_end <= 2^64 - 8` and
+`lowest_address + 8 * max_ram_K <= 2^64`, where `max_ram_K` is the maximum
+admitted power-of-two-padded RAM domain, not the domain selected by one proof.
+Checked layout construction, full and committed preprocessing admission, and
+verifier-key deserialization enforce these bounds before execution or verification.
+The ELF decoder also rejects odd instruction addresses, matching bytecode admission's
+two-byte alignment requirement. These checks add no per-cycle proof relation.
+
 ### Sub-doubleword accesses
 
 Load and store instructions that access less than a full doubleword (e.g. `LB`, `SH`, `LW`) are expanded into [inline sequences](./emulation.md#virtual-instructions-and-sequences) around a *floor-addressed* doubleword access: `VirtualLoad{B,H,W}` reads, and `VirtualStore{B,H,W}` writes, the doubleword containing the effective address `ea = rs1 + imm`.

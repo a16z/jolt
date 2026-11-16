@@ -22,14 +22,17 @@ This model has the following consequences for privileged instructions:
 
 - **CSR access** is restricted to a fixed whitelist: `mstatus` (0x300), `mtvec` (0x305),
   `mscratch` (0x340), `mepc` (0x341), `mcause` (0x342), `mtval` (0x343).
-  Accessing any other CSR panics the tracer. Only `CSRRW` and `CSRRS` are implemented;
-  `CSRRC` and the immediate CSR variants are not supported.
+  Accessing any other CSR panics the tracer. All six Zicsr instructions are implemented
+  (`CSRRW`, `CSRRS`, `CSRRC` and the immediate forms `CSRRWI`, `CSRRSI`, `CSRRCI`).
   Writes are legalized as the privileged specification requires: `mstatus` keeps only MIE and MPIE,
   `mepc` clears bit 0, and an `mtvec` write with a reserved MODE (2 or 3) keeps the previous MODE.
   `mscratch`, `mcause` and `mtval` store the written value.
   See `specs/m-mode-trap-csr-semantics.md` for the argument and the exact sequences.
 
 - **EBREAK** halts the hart, as M-mode `ebreak` does under a debugger that has set `dcsr.ebreakm`.
+  It is Jolt's failure halt; `jolt.success` (the word `0x0000305B`) is the success halt.
+  A Jolt run must end at one of the two: the tracer rejects a run that stops anywhere else,
+  such as at a `j .` self-loop, with `TraceError::EndedWithoutHalt`.
 
 - **The R1CS constraint system has no privilege-mode or interrupt semantics.**
   CSR virtual registers (vr34–vr39) are treated as ordinary registers by the memory-checking circuit.

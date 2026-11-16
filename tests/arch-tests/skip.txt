@@ -17,16 +17,12 @@
 # changes") or because Jolt makes a different spec-legal choice than the Sail
 # model that computed ACT4's expected values.
 
-# Zicsr / Zicntr / Zihpm — CSR read-modify-write instructions.
-# Jolt's tracer does not implement the full CSR behavior that these ACT4
-# tests probe (e.g., fine-grained mcycle/minstret semantics, illegal-CSR
-# traps, side-effect ordering on csrrc/csrrci/csrrsi/csrrwi). Fixing would
-# require tracer changes, which the spec (specs/act4-tests.md Non-Goals)
-# puts out of scope.
-Zicsr-csrrc-00
-Zicsr-csrrci-00
-Zicsr-csrrsi-00
-Zicsr-csrrwi-00
+# ---------------------------------------------------------------------------
+# Zicntr / Zihpm — counter CSRs. Jolt models only the machine trap CSRs
+# (mstatus, mtvec, mepc, mcause, mtval, mscratch); it does not implement the
+# counters (cycle, time, instret, hpmcounter3-31), so CSR instructions on
+# them are rejected at decode time.
+# ---------------------------------------------------------------------------
 Zicntr-csrrc-00
 Zicntr-csrrs-00
 Zihpm-csrrc-00

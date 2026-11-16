@@ -1,8 +1,11 @@
+use super::ram::RamDomainError;
 #[cfg(feature = "field-inline")]
 use crate::field_inline::FieldInlineInstructionError;
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum PreprocessingError {
+    #[error(transparent)]
+    RamDomain(#[from] RamDomainError),
     #[error("bytecode instruction is not legal in the selected target profile: {0:?}")]
     IllegalTargetInstruction(jolt_riscv::JoltInstructionKind),
     #[error("bytecode instruction address is invalid for bytecode indexing: {0:#x}")]
