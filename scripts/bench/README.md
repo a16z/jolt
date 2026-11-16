@@ -171,7 +171,7 @@ queue timing and do not change the cost of a still-current tip.
 A PR based on a skipped tip retains its medians and signed changes. If there is
 no other unexpired exact-base reference, its check is neutral with reference
 unavailable; the sticky comment still lists executed sizes and qualifying
-changes using a 3% threshold marked as having no observed envelope. A reference
+changes using the trace-size thresholds alone, marked as having no observed envelope. A reference
 from a matching nightly or bootstrap can still apply.
 
 ### Historical PR interval
@@ -581,12 +581,11 @@ before any result complete the App check directly.
 The comment shows the base and head medians for end-to-end time and peak RSS,
 with signed percentage changes computed as `100 * (head_median / base_median - 1)`.
 Each row identifies its physical cores, `2^k` trace ceiling and measured base/head
-trace rows. The sticky PR comment shows a row only when the time or peak-RSS
-change exceeds its per-case reporting threshold: the larger of 3% and that
-metric's observed envelope. Selection uses
+trace rows. The sticky PR comment shows a case's row only when its time or
+peak-RSS change exceeds its reporting threshold, defined below. Selection uses
 `100 * (max(head/base, base/head) - 1) > threshold`, so
 increases and decreases use the same scale as the envelope. Each metric's
-threshold is shown next to its signed change; a missing envelope uses 3%, marked
+threshold is shown next to its signed change; a missing envelope is marked
 `no observed envelope`. These observed envelopes do not establish statistical
 significance. The comment links to the full results and benchmark history.
 The comment always lists the distinct core-count/ceiling pairs
@@ -595,6 +594,41 @@ without an exit are not listed as run.
 Only the configured measured repetitions contribute; warmups are excluded.
 Missing repetitions, failed processes and zero denominators remain unavailable
 comparisons. Proof sizes remain in the raw samples.
+
+### Reporting thresholds
+
+Thresholds depend on the trace ceiling, because the spread between runs of one
+binary shrinks as traces grow. `SIZE_THRESHOLDS` in `calibration.py` is their only
+definition; the sticky comment and the check summary render their numbers from it.
+
+| Trace ceiling | Time, size-group mean | Time, one case | Peak RSS, group mean and one case |
+|---|---:|---:|---:|
+| below 2^20 | 3% | 3% | 15% |
+| 2^20 to 2^21 | 3% | 4.5% | 15% |
+| 2^22 to 2^23 | 2% | 2.5% | 9% |
+| 2^24 to 2^26 | 1% | 2% | 3% |
+| 2^27 and above | 1% | 1% | 3% |
+
+A case is listed when a metric's change exceeds the larger of its table value and
+that metric's observed envelope for the case ("External calibration lifecycle"
+below). Without a matching reference the table value applies alone. A size group
+is the complete cases of one run sharing a PCS, physical-core count and trace
+ceiling. A group of two or more cases is listed when the geometric mean of its
+head/base median ratios, compared symmetrically like a single case, exceeds the
+group column. A calibration reference holds
+no null for a group mean, so the table applies alone there. A case without a
+trace ceiling uses the largest value of each column.
+
+Every value is above the largest null of its statistic measured at that size:
+in the windows of four calibration references (main `8a928741`, `0537900e`,
+`47b8cba4` and `27c56e54`, November 15 and 16, 2026) and between the base legs
+of PR runs that shared a base binary. The one-case time column is the largest
+such null in its row's range of sizes, rounded up to the next 0.5 percentage
+points: 2.65% at 2^18, 4.22% at 8-core 2^20, 2.48% at 2^22, 1.53% at 2^24 and
+0.98% at 2^27. The table has no core-count
+dimension, so 24-core 2^20 cases, whose null reached 2.32%, share the 4.5% that
+the 8-core cases require. Peak-RSS nulls reached 12.53% at 2^18, 14.46% at 2^20,
+8.70% at 2^22 and 2.13% at 2^24.
 
 ### External calibration lifecycle
 
@@ -614,9 +648,10 @@ identical legs, the complete configured PR case set, all `22N` zero-exit samples
 alternating order, affinity and metrics.
 It recomputes eight overlapping three-pair windows. For each metric and window,
 `d = 100 * (max(median(A)/median(B), median(B)/median(A)) - 1)`; nonpositive
-denominators are unavailable. The envelope is `0.5 * ceil(max(floor, 1.5 * max(d))
-/ 0.5)`, with time/RSS floors of 3%/2%. Rational arithmetic keeps rounding exact
-at half-percentage-point boundaries. Method: `null-median3-symmetric-envelope-v2`.
+denominators are unavailable. The envelope is `0.5 * ceil(1.5 * max(d) / 0.5)`;
+the reporting thresholds above set the minimum for each trace size.
+Rational arithmetic keeps rounding exact
+at half-percentage-point boundaries. Method: `null-median3-symmetric-envelope-v3`.
 These are observed informational bands, not confidence intervals or verdicts.
 
 Each schema-1 cell key is SHA256 of compact, sorted JSON with no nonfinite
@@ -696,19 +731,21 @@ not been performed by this source change.
 The verified manual reference remains evidence for the 17-cell hosted null at
 base `e37e6f24`, harness `535840a9` and collector `c6afb17a`. Its original JSON has
 SHA256 `09b4fa3f076d1042724959b8af7479f134fb131b3c4d667b401e6d38cd9dae6b`.
-Its time envelopes are 3–5%, and RSS envelopes are 2–12.5%. The saved reference
+Its time envelopes are 3–5%, and RSS envelopes are 2–12.5%, under the v2 method's
+floors of 3% and 2%; a manual comment reports a v2 file as an unsupported method.
+The saved reference
 and raw results retain their original identities; they are not an automatic
 reference for a later base. Manual output identifies the supplied reference by
 SHA256, but that rendering does not authenticate the source.
 
-The measured method is `null-median3-symmetric-envelope-v2`: ten same-binary null
+The measured method is `null-median3-symmetric-envelope-v3`: ten same-binary null
 pairs supply eight overlapping windows of three pairs. Each window compares the
 two leg medians in both directions and retains the larger percentage increase.
-The informational threshold is 1.5 times the largest window increase, with floors
-of 3% for time and 2% for peak RSS, rounded up to 0.5 percentage points. The
+The envelope is 1.5 times the largest window increase, rounded up to 0.5
+percentage points. The
 windows are not independent observations; no statistical significance or pass/fail
 claim follows. A manual comment using the matching reference displays each cell's
-threshold and observed maximum.
+envelope and observed maximum.
 
 References apply only to three measured repetitions. Match each cell against the
 base leg's revision, binary, guest, input, trace rows, compiler settings and
@@ -893,11 +930,11 @@ reference-unavailable reason; executor failures remain failures. Published
 bootstrap acceptance then requires bands for every configured PR probe case.
 PR-tier ingests create or update one sticky `github-actions[bot]` comment linking
 the full table in the ingest attempt's job summary and the history dashboard.
-Only cells exceeding the larger of 3% and their per-metric observed envelope in
+Only cases and size groups exceeding their reporting thresholds in
 either time or peak RSS are listed. Selection compares head/base and base/head
 symmetrically, while the values and signed changes retain the check summary's
 rounding. Each listed metric shows its reporting threshold; missing envelopes
-use 3% and are marked `no observed envelope`. The full table remains in the
+are marked `no observed envelope`. The full table remains in the
 linked results.
 Validated failed or partial PR results replace the comment with
 a comparison-unavailable message. A failed ingest leaves the previous comment

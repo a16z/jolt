@@ -80,17 +80,34 @@ class CalibrationTests(unittest.TestCase):
             if sample['leg'] == 'head':
                 sample['metrics'].update(e2e_s=3.12, peak_rss_bytes=5120)
         bands = calibration.envelopes(case)
-        self.assertEqual(bands['e2e_s']['threshold_pct'], 6.0)
-        self.assertEqual(bands['peak_rss_bytes']['threshold_pct'], 37.5)
+        self.assertEqual(bands['e2e_s']['envelope_pct'], 6.0)
+        self.assertEqual(bands['peak_rss_bytes']['envelope_pct'], 37.5)
         series = [90, 90, 100, 110, 110, 110, 100, 100, 100, 100]
         for sample in case['samples']:
             sample['metrics']['e2e_s'] = (series[sample['repetition']] if sample['leg'] == 'head' else 100)
-        self.assertEqual(calibration.envelopes(case)['e2e_s']['threshold_pct'], 17.0)
+        self.assertEqual(calibration.envelopes(case)['e2e_s']['envelope_pct'], 17.0)
         for sample in case['samples']:
             if sample['leg'] == 'base':
                 sample['metrics']['e2e_s'] = 0
         with self.assertRaisesRegex(ValueError, 'positive'):
             calibration.envelopes(case)
+
+    def test_size_thresholds_follow_the_table_and_rise_to_an_observed_envelope(self):
+        for scale, group_time, case_time, rss in [
+                (16, 3, 3, 15), (19, 3, 3, 15), (20, 3, 4.5, 15), (21, 3, 4.5, 15), (22, 2, 2.5, 9), (23, 2, 2.5, 9),
+                (24, 1, 2, 3), (26, 1, 2, 3), (27, 1, 1, 3), (30, 1, 1, 3), (None, 3, 4.5, 15)]:
+            with self.subTest(scale=scale):
+                self.assertEqual(calibration.size_thresholds(scale), {
+                    'case': {'e2e_s': case_time, 'peak_rss_bytes': rss},
+                    'group': {'e2e_s': group_time, 'peak_rss_bytes': rss}})
+        observed = {'e2e_s': {'envelope_pct': 2.5}, 'peak_rss_bytes': {'envelope_pct': 4.0}}
+        self.assertEqual(calibration.case_thresholds(24, observed), {'e2e_s': 2.5, 'peak_rss_bytes': 4})
+        self.assertEqual(calibration.case_thresholds(20, observed), {'e2e_s': 4.5, 'peak_rss_bytes': 15})
+        self.assertEqual(calibration.case_thresholds(24, None), {'e2e_s': 2, 'peak_rss_bytes': 3})
+        self.assertEqual(calibration.size_thresholds_text(),
+            "Trace-size thresholds (a size group's mean time / one case's time / peak RSS of either): "
+            'below 2^20, 3% / 3% / 15%; 2^20 to 2^21, 3% / 4.5% / 15%; 2^22 to 2^23, 2% / 2.5% / 9%; '
+            '2^24 to 2^26, 1% / 2% / 3%; 2^27 and above, 1% / 1% / 3%.')
 
     def test_normalization_admits_only_nonwritable_nonexecutable_metadata(self):
         if not all(shutil.which(tool) for tool in ('cc', 'objcopy', 'readelf')):
@@ -149,7 +166,7 @@ class CalibrationTests(unittest.TestCase):
         root, files = evidence(result)
         reference = ingest.calibration_reference(files, root, plan, dispatch, config, receipt)
         self.assertEqual(len(reference['cells']), 19)
-        self.assertTrue(all(c['metrics']['e2e_s']['threshold_pct'] == 3 for c in reference['cells']))
+        self.assertTrue(all(c['metrics']['e2e_s']['envelope_pct'] == 0 for c in reference['cells']))
         for mutate in (lambda r: r['cases'][0]['samples'][0].update(exit_code=7),
                        lambda r: r['cases'][0]['samples'].reverse(),
                        lambda r: r['builds'][1]['binaries']['dory'].update(sha256='f' * 64),
@@ -175,11 +192,11 @@ class CalibrationTests(unittest.TestCase):
         probe['suite']['repetitions'] = 3
         older = copy.deepcopy(reference)
         older.update(finished_at='2026-11-05T09:00:00Z')
-        older['cells'][0]['metrics']['e2e_s']['threshold_pct'] = 99
+        older['cells'][0]['metrics']['e2e_s']['envelope_pct'] = 99
         probe['external_references'] = {'references': [older, reference]}
         bands, reason = calibration.for_case(probe, probe['cases'][0])
         self.assertIsNone(reason)
-        self.assertEqual(bands['e2e_s']['threshold_pct'], 3)
+        self.assertEqual(bands['e2e_s']['envelope_pct'], 0)
         for change in (lambda r: r.update(finished_at='2026-11-07T10:10:01Z'),
                        lambda r: r['builds'][0].update(revision='a' * 40),
                        lambda r: r['builds'][0]['runner'].update(sha256='f' * 64),
@@ -266,7 +283,7 @@ class CalibrationTests(unittest.TestCase):
             with tempfile.TemporaryDirectory() as directory:
                 output = Path(directory) / 'summary.md'
                 ingest.bench.render_comment(rendered, output)
-                self.assertIn('3.00%', output.read_text())
+                self.assertIn('| 0.00% (max symmetric null 0.00%) |', output.read_text())
                 self.assertEqual(ingest.check_result('123-1', [rendered], 0, output.read_text())['conclusion'], 'success')
                 self.assertNotIn('pass/fail verdict', output.read_text())
             files['calibration/reference.json'] = b'{}'
