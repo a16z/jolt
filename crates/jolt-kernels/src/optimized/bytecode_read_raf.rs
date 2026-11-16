@@ -1191,7 +1191,6 @@ const CYCLE_CHUNK: usize = 4096;
 struct CycleGrouping {
     /// Distinct groups budgeted for the merge cache.
     entries: usize,
-    /// Groups observed before clearing the sample cache.
     sample_groups: usize,
     /// Groups per map-reduce task; repeated groups merge only within one task.
     #[cfg(feature = "parallel")]
@@ -1249,9 +1248,6 @@ impl BytecodePcChunks {
         [CycleGrouping::SHORT, CycleGrouping::LONG]
             .into_iter()
             .find(|plan| {
-                // Use full-window samples only for more than four factors and,
-                // in parallel builds, at least one batch per worker. Smaller
-                // products or fewer batches retain cache-sized samples.
                 let long_sample = self.selectors.len() > 4;
                 #[cfg(feature = "parallel")]
                 let long_sample =
