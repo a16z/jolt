@@ -273,30 +273,28 @@ pub(super) fn commit_columns<const D: usize>(
         )
         .entered();
         let block_width = plan.n_a * D;
-        let mut coefficients =
-            vec![vec![AkitaField::zero(); blocks_per_column * block_width]; num_columns];
-        for (task, block_rows) in partials.into_iter().enumerate() {
-            let Some(block_rows) = block_rows else {
-                continue;
-            };
-            let trace_block = task / schedule.parts;
-            let part = task % schedule.parts;
-            for (column, coefficients) in coefficients.iter_mut().enumerate() {
-                let start = trace_block * block_width;
-                let dst = &mut coefficients[start..start + block_width];
-                let src = block_rows[column * plan.n_a..(column + 1) * plan.n_a]
-                    .iter()
-                    .flat_map(|ring| ring.coefficients());
-                for (dst, src) in dst.iter_mut().zip(src) {
-                    if part == 0 {
-                        *dst = *src;
-                    } else {
+        // Every task holds a partial sum for each column, so the merge costs
+        // tasks times columns ring additions: one column per pool task.
+        (0..num_columns)
+            .into_par_iter()
+            .map(|column| {
+                let mut coefficients = vec![AkitaField::zero(); blocks_per_column * block_width];
+                for (task, block_rows) in partials.iter().enumerate() {
+                    let Some(block_rows) = block_rows else {
+                        continue;
+                    };
+                    let start = task / schedule.parts * block_width;
+                    let dst = &mut coefficients[start..start + block_width];
+                    let src = block_rows[column * plan.n_a..(column + 1) * plan.n_a]
+                        .iter()
+                        .flat_map(|ring| ring.coefficients());
+                    for (dst, src) in dst.iter_mut().zip(src) {
                         *dst += *src;
                     }
                 }
-            }
-        }
-        coefficients
+                coefficients
+            })
+            .collect()
     } else {
         let _accumulate_span = tracing::info_span!(
             "trace_onehot_commit_accumulate_flat",
