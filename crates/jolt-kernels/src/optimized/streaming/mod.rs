@@ -4,14 +4,16 @@
 //! immediately. [`JoltBackend::optimized`] keeps the eager kernels;
 //! [`JoltBackend::with_streaming`] installs a selection.
 
+mod cap;
 mod lazy_ra;
 mod pass;
 
-pub(crate) use lazy_ra::{RowIndexSource, StreamedFoldedRa, MATERIALIZE_BYTES};
+pub(crate) use cap::{DenseCap, DENSE_CAP};
+pub(crate) use lazy_ra::{RowIndexSource, StreamedFoldedRa};
 pub(crate) use pass::{
-    bind_groups_in_place, dense_crossover, exact_task_fill, gruen_pair_pass, key_runs,
+    bind_groups_in_place, exact_task_fill, gruen_pair_pass, key_runs, prefix_end,
     product_endpoint_terms, split_at_tasks, task_ranges, FillMismatch, GruenSums, PairHalves,
-    TaskSlots, DENSE_TABLE_CAP, VISIT_ROWS,
+    PairSuffix, TaskSlots, VISIT_ROWS,
 };
 
 use jolt_field::JoltField;

@@ -144,10 +144,18 @@ fn synthetic_reference<F: JoltField>(
     .unwrap()
 }
 
+/// The cap the two tables first fit after `depth` binds.
+fn cap_at<F: JoltField>(depth: usize) -> DenseCap {
+    DenseCap {
+        bytes: 2 * size_of::<F>(),
+        per_rows: 1 << depth,
+    }
+}
+
 /// Drives `reference` and the streaming kernel over `rows`, whose first
 /// `prefix_len` rows precede the constant suffix the kernel skips, through
-/// every round on `round_challenges`, the tables capped at exactly their size
-/// after `depth` binds: equal round polynomials, the dense tables first
+/// every round on `round_challenges`, the tables capped to first fit after
+/// `depth` binds: equal round polynomials, the dense tables first
 /// present at the crossover round `c` with `⌈prefix_len / 2^c⌉` entries each,
 /// equal output claims and the LT pin. Returns the input claim and `c`.
 fn assert_capped_parity<F: JoltField>(
@@ -159,7 +167,7 @@ fn assert_capped_parity<F: JoltField>(
     depth: usize,
 ) -> (F, usize) {
     let log_t = round_challenges.len();
-    let cap = 2 * size_of::<F>() * prefix_len.div_ceil(1 << depth);
+    let cap = cap_at::<F>(depth);
     let mut streaming = StreamingValEvaluationKernel::new(rows, &instance.inputs(), cap).unwrap();
     let dense_len = |kernel: &StreamingValEvaluationKernel<F>| match &kernel.tables {
         ValueTables::Dense { inc, wa } => {
@@ -188,7 +196,7 @@ fn assert_capped_parity<F: JoltField>(
     let last = bind.unwrap();
     reference.finish_rounds(last).unwrap();
     streaming.finish_rounds(last).unwrap();
-    let crossover = crossover_round::<F>(log_t, prefix_len, cap);
+    let crossover = crossover_round::<F>(log_t, cap);
     assert_eq!(
         filled,
         Some((crossover, prefix_len.div_ceil(1 << crossover))),
@@ -214,32 +222,14 @@ fn assert_capped_parity<F: JoltField>(
     (input_claim, crossover)
 }
 
-/// The crossover is exact at the cap's boundary for a whole domain and for a
-/// prefix (whose tables hold `⌈prefix / 2^round⌉` entries each), clamps to
-/// rounds `1..=rounds − 1`, and does not wrap when the tables exceed `usize`
-/// bytes (the widest cycle count `usize` holds).
+/// The crossover is the first round the cap admits, clamped to rounds
+/// `1..=rounds − 1`.
 #[test]
-fn crossover_round_is_exact_at_the_cap_and_past_usize_bytes() {
-    let cycle_bytes = 2 * size_of::<Fr>();
-    assert_eq!(crossover_round::<Fr>(20, 1 << 20, cycle_bytes << 10), 10);
-    assert_eq!(
-        crossover_round::<Fr>(20, 1 << 20, (cycle_bytes << 10) - 1),
-        11
-    );
-    assert_eq!(crossover_round::<Fr>(20, 1 << 19, cycle_bytes << 10), 9);
-    assert_eq!(
-        crossover_round::<Fr>(20, (1 << 19) + 1, cycle_bytes << 10),
-        10
-    );
-    assert_eq!(crossover_round::<Fr>(20, 1 << 20, usize::MAX), 1);
-    assert_eq!(crossover_round::<Fr>(20, 1 << 20, 0), 19);
-    assert_eq!(crossover_round::<Fr>(20, 0, 0), 1);
-    assert_eq!(crossover_round::<Fr>(1, 2, 0), 0);
-    let wide = usize::BITS as usize - 1;
-    assert_eq!(
-        crossover_round::<Fr>(wide, 1 << wide, cycle_bytes << 20),
-        wide - 20
-    );
+fn crossover_round_clamps_to_the_table_rounds() {
+    assert_eq!(crossover_round::<Fr>(20, cap_at::<Fr>(10)), 10);
+    assert_eq!(crossover_round::<Fr>(20, cap_at::<Fr>(0)), 1);
+    assert_eq!(crossover_round::<Fr>(20, cap_at::<Fr>(40)), 19);
+    assert_eq!(crossover_round::<Fr>(1, cap_at::<Fr>(40)), 0);
 }
 
 /// Full-range synthetic rows at every crossover round a cap selects, from a

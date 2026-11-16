@@ -581,11 +581,29 @@ mod matrix {
 
         pub fn prove_and_verify(case: &GuestCase, families: StreamingFamilies) {
             let _ = prove_and_verify_trace_ring(case, families);
+            if families != StreamingFamilies::default() {
+                // The derived configuration binds the read-write checks
+                // cycle-first, the only order in which the streaming register
+                // kernel replaces the default one.
+                let _ = prove_with_config(case, families, |_| {});
+            }
         }
 
         pub(super) fn prove_and_verify_trace_ring(
             case: &GuestCase,
             families: StreamingFamilies,
+        ) -> usize {
+            prove_with_config(case, families, |config| {
+                config.rw_config.ram_rw_phase1_num_rounds = 0;
+                config.rw_config.registers_rw_phase1_num_rounds = 0;
+            })
+        }
+
+        /// Returns the ring dimension of the verified proof's trace commitment.
+        fn prove_with_config(
+            case: &GuestCase,
+            families: StreamingFamilies,
+            configure: impl FnOnce(&mut ProverConfig),
         ) -> usize {
             let prepared = support::prepare(case);
             let mut config = ProverConfig::derive_from_dimensions::<AkitaField>(
@@ -596,8 +614,7 @@ mod matrix {
                 prepared.preprocessing.max_padded_trace_length,
             )
             .expect("derive config");
-            config.rw_config.ram_rw_phase1_num_rounds = 0;
-            config.rw_config.registers_rw_phase1_num_rounds = 0;
+            configure(&mut config);
             let untrusted_advice = !case.untrusted_advice.is_empty();
             let trusted_advice = !case.trusted_advice.is_empty();
             let preprocessing = preprocessing::preprocess_full_with_advice(
