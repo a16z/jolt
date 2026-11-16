@@ -236,6 +236,54 @@ impl Emitter {
         );
         Stubs { bad_jump }
     }
+
+    // One binary-search routine and table per body avoid O(stores * intervals)
+    // generated code. Private calling convention: rcx is the RAM byte offset,
+    // rsi returns membership; rax/rcx/rdx and callee-saved registers survive.
+    pub(super) fn emit_code_word_lookup(&mut self) {
+        if self.code_word_intervals.len() <= 1 {
+            return;
+        }
+        let lookup = self.code_word_lookup;
+        let table = self.ops.new_dynamic_label();
+        let count = self.code_word_intervals.len() as i64;
+        dynasm!(self.ops
+            ; .arch x64
+            ; =>lookup
+            ; lea r9, [=>table]
+            ; xor r10d, r10d
+            ; mov r11, QWORD count
+            ; search:
+            ; cmp r10, r11
+            ; jae >not_code
+            ; lea rsi, [r10 + r11]
+            ; shr rsi, 1
+            ; mov r8, rsi
+            ; shl r8, 4
+            ; cmp rcx, QWORD [r9 + r8]
+            ; jb >left
+            ; cmp rcx, QWORD [r9 + r8 + 8]
+            ; jb >code
+            ; lea r10, [rsi + 1]
+            ; jmp <search
+            ; left:
+            ; mov r11, rsi
+            ; jmp <search
+            ; code:
+            ; mov esi, 1
+            ; ret
+            ; not_code:
+            ; xor esi, esi
+            ; ret
+            ; .align 8
+            ; =>table
+        );
+        for &(start, end) in &self.code_word_intervals {
+            dynasm!(self.ops
+                ; .u64 start as u64 * 8, end as u64 * 8
+            );
+        }
+    }
 }
 
 enum AluRR {
@@ -476,9 +524,9 @@ impl DynasmEmitter {
             ; cmp rsi, (STACK_CANARY_SIZE + 7) as i32
             ; jb >protected_word
         );
-        // Public intervals compile to two-bound comparisons in the existing store
-        // path; only a protected-word hit calls Rust, and no per-store table is built.
-        for &(start, end) in &e.code_word_intervals {
+        if let (Some(&(start, _)), Some(&(_, end))) =
+            (e.code_word_intervals.first(), e.code_word_intervals.last())
+        {
             let length = ((end - start) as u64 * 8) as i64;
             let start = (start as u64 * 8) as i64;
             dynasm!(e.ops
@@ -488,8 +536,20 @@ impl DynasmEmitter {
                 ; sub rsi, r8
                 ; mov r8, QWORD length
                 ; cmp rsi, r8
-                ; jb >protected_word
             );
+            if e.code_word_intervals.len() == 1 {
+                dynasm!(e.ops ; .arch x64 ; jb >protected_word);
+            } else {
+                let lookup = e.code_word_lookup;
+                dynasm!(e.ops
+                    ; .arch x64
+                    ; jae >unprotected_word
+                    ; call =>lookup
+                    ; test esi, esi
+                    ; jnz >protected_word
+                    ; unprotected_word:
+                );
+            }
         }
         if e.mode == EmitMode::Record {
             e.obs_reload();

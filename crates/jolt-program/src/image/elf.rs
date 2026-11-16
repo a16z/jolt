@@ -544,6 +544,23 @@ mod tests {
     }
 
     #[test]
+    fn decode_elf_allows_writable_sections_between_code_regions() {
+        let data = data_section(RAM_START_ADDRESS + 8, &[0xaa; 8]);
+        let mut bss = data_section(RAM_START_ADDRESS + 8, &[]);
+        bss.section_type = SHT_NOBITS;
+        bss.size_override = Some(8);
+        for writable in [data, bss] {
+            let elf = build_elf64(&[
+                text_section(RAM_START_ADDRESS, &[0x01, 0x00]),
+                writable,
+                text_section(RAM_START_ADDRESS + 16, &[0x01, 0x00]),
+            ]);
+            let image = decode_elf(&elf, RV64IMAC_JOLT).expect("code gap remains writable");
+            assert_eq!(image.instructions.len(), 2);
+        }
+    }
+
+    #[test]
     fn decode_elf_allows_read_only_data_sharing_a_code_word() {
         let mut rodata = data_section(RAM_START_ADDRESS + 2, &[0xaa, 0xbb]);
         rodata.flags = SHF_ALLOC;

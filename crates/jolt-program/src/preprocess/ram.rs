@@ -184,7 +184,17 @@ fn bytecode_source_extents(
 }
 
 /// Membership in an admitted canonical interval list, without a RAM-sized mask.
+/// A single interval and addresses outside the code bounds take O(1); addresses
+/// inside fragmented code bounds take O(log n).
 pub fn is_code_word(intervals: &[(usize, usize)], word_index: usize) -> bool {
+    match intervals {
+        [] => return false,
+        [(start, end)] => return (*start..*end).contains(&word_index),
+        [(start, _), .., (_, end)] if word_index < *start || word_index >= *end => {
+            return false;
+        }
+        _ => {}
+    }
     let next = intervals.partition_point(|&(start, _)| start <= word_index);
     next.checked_sub(1)
         .and_then(|index| intervals.get(index))
@@ -318,12 +328,18 @@ mod tests {
             ),
             Ok(vec![(0, 2), (4, 6)])
         );
-        let intervals = [(0, 2), (4, 6)];
-        for word in 0..8 {
-            assert_eq!(
-                super::is_code_word(&intervals, word),
-                matches!(word, 0 | 1 | 4 | 5)
-            );
+        for (intervals, expected) in [
+            (vec![], vec![]),
+            (vec![(2, 4)], vec![2, 3]),
+            (vec![(0, 2), (4, 6)], vec![0, 1, 4, 5]),
+            (vec![(1, 2), (3, 5), (6, 7)], vec![1, 3, 4, 6]),
+        ] {
+            for word in (0..8).chain([usize::MAX]) {
+                assert_eq!(
+                    super::is_code_word(&intervals, word),
+                    expected.contains(&word)
+                );
+            }
         }
     }
 

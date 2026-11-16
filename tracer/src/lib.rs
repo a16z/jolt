@@ -921,23 +921,37 @@ mod tests {
     }
 
     #[test]
-    fn code_preserving_stores_agree_in_eager_lazy_and_parallel_replay() {
-        // auipc x1, 0; ld x2, 0(x1); sd x2, 0(x1) (same value); jolt.success
-        let words = [0x0000_0097, 0x0000_b103, 0x0020_b023, JOLT_SUCCESS_WORD];
-        let elf = build_elf64(&words, &[], StrtabOrder::GnuLd);
-        let config = tiny_guest_config(&elf);
-        let (lazy, eager, _, _, _) = trace(&elf, None, &[], &[], &[], &config, None);
-        assert_eq!(lazy.collect::<Vec<_>>(), eager);
-        let emulator = create_emulator(&elf, None, &[], &[], &[], &config, None);
-        let (parallel, _) = parallel::run_two_pass(
-            emulator,
-            &TwoPassConfig {
-                workers: 2,
-                chunk_rows: 1,
-                capacity_rows: 128,
-            },
-        );
-        assert_eq!(parallel, eager);
+    fn code_guards_agree_in_eager_lazy_and_parallel_replay() {
+        for words in [
+            vec![0x0000_0097, 0x0000_b103, 0x0020_b023, JOLT_SUCCESS_WORD],
+            // auipc x1, 0; addi x2, x0, 1; sd x2, 24(x1); jump over the gap.
+            vec![
+                0x0000_0097,
+                0x0010_0113,
+                0x0020_bc23,
+                0x0140_006f,
+                0,
+                0,
+                0,
+                0,
+                JOLT_SUCCESS_WORD,
+            ],
+        ] {
+            let elf = build_elf64(&words, &[], StrtabOrder::GnuLd);
+            let config = tiny_guest_config(&elf);
+            let (lazy, eager, _, _, _) = trace(&elf, None, &[], &[], &[], &config, None);
+            assert_eq!(lazy.collect::<Vec<_>>(), eager);
+            let emulator = create_emulator(&elf, None, &[], &[], &[], &config, None);
+            let (parallel, _) = parallel::run_two_pass(
+                emulator,
+                &TwoPassConfig {
+                    workers: 2,
+                    chunk_rows: 1,
+                    capacity_rows: 128,
+                },
+            );
+            assert_eq!(parallel, eager);
+        }
     }
 
     #[test]

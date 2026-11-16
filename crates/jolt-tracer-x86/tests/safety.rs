@@ -255,6 +255,105 @@ fn code_stores_accept_the_old_value_and_reject_changes() {
 }
 
 #[test]
+fn disjoint_code_guards_preserve_values_and_leave_gaps_writable() {
+    for (offset, value) in (0..=136)
+        .step_by(8)
+        .flat_map(|offset| [(offset, 0), (offset, 1)])
+    {
+        let protected = matches!(offset, 0 | 8 | 16 | 40 | 64 | 72 | 96 | 128);
+        let accepted = !protected || value == 0;
+        let mut store = row(Kind::SD, Some(1), None, offset);
+        store.operands.rs2 = Some(3);
+        let mut rows = vec![
+            row(Kind::AUIPC, None, Some(1), 0),
+            row(Kind::ADDI, Some(0), Some(3), value),
+            store,
+            row(Kind::LD, Some(1), Some(2), offset),
+            row(Kind::JAL, None, Some(0), 24),
+        ];
+        for (index, row) in rows.iter_mut().enumerate() {
+            row.address = RAM_START_ADDRESS as usize + 4 * index;
+        }
+        rows.extend([40, 64, 72, 96, 128].map(|offset| terminal_row(RAM_START_ADDRESS + offset)));
+        let program = JoltProgram::from_parts(
+            minimal_elf(RAM_START_ADDRESS),
+            rows,
+            Vec::new(),
+            RAM_START_ADDRESS + 1024,
+            RAM_START_ADDRESS,
+        );
+        let inputs = TraceInputs::new(Vec::new(), Vec::new(), Vec::new(), memory_config());
+        let mut backend = X86TracerBackend::new();
+        let machine = backend.run_machine(&program, inputs.clone());
+        let trace = backend.trace(&program, inputs.clone());
+        let execution = backend.execute(&program, inputs, 1);
+        if !accepted {
+            assert!(machine.is_err());
+            assert!(trace.is_err());
+            assert!(execution.is_err());
+            continue;
+        }
+        assert!(machine.expect("run store").require_halt().is_ok());
+        let trace = trace.expect("trace store");
+        assert_eq!(
+            trace.trace.rows()[3]
+                .registers()
+                .rd
+                .expect("loaded word")
+                .post_value,
+            value as u64
+        );
+        for (checkpoint, expected) in execution
+            .expect("execute store")
+            .checkpoints
+            .iter()
+            .zip(trace.trace.rows())
+        {
+            let replay = backend.replay_chunk(checkpoint).expect("replay store");
+            assert_eq!(replay.rows(), std::slice::from_ref(expected));
+        }
+    }
+}
+
+#[test]
+fn code_guards_use_compressed_source_extents_after_expansion() {
+    for compressed in [false, true] {
+        let mut store = row(Kind::SD, Some(1), None, 0);
+        store.operands.rs2 = Some(3);
+        let mut program = single_row_program(store);
+        let source = Instruction::decode(
+            jolt_riscv::uncompress_rv64_instruction(0x4000),
+            SCRATCH_START + 6,
+            compressed,
+        )
+        .expect("decode c.lw");
+        let expanded = expand_instruction(
+            &source.source_instruction(),
+            &mut ExpansionAllocator::new(),
+            RV64IMAC_JOLT,
+        )
+        .expect("expand c.lw");
+        assert!(expanded.len() > 1);
+        program
+            .expanded_bytecode
+            .extend(expanded.into_iter().map(JoltInstructionRow::from));
+        let mut pre = [0u64; REGS];
+        pre[1] = SCRATCH_START + 8;
+        pre[3] = 1;
+        let result = run_program(&program, &pre, &[], &[]).expect("run boundary store");
+        assert_eq!(
+            result.exit,
+            if compressed {
+                ExitReason::HaltedSuccess as u64
+            } else {
+                ExitReason::FaultHelper as u64
+            }
+        );
+        assert_eq!(result.scratch[1], u64::from(compressed));
+    }
+}
+
+#[test]
 fn slow_load_rejects_addresses_below_the_lowest_mapped_word() {
     let program = single_row_program(row(Kind::LD, Some(1), Some(2), 0));
     let mut pre = [0u64; REGS];

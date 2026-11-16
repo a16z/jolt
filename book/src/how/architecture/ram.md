@@ -61,6 +61,13 @@ advice, untrusted advice or the stack canary
 outward to doublewords. Same-value stores remain valid, including byte, halfword
 and word stores into a protected doubleword.
 
+Source-instruction doublewords are merged into sorted, disjoint intervals; gaps
+remain writable unless another protected region covers them. Both tracers use
+O(1) code checks for a single interval and for addresses outside the outer code
+bounds. Addresses inside fragmented bounds use an O(log n) search over the n
+intervals. The x86 tracer shares one search routine and interval table per
+compiled body, so generated guards occupy O(stores + n) space.
+
 The interpreter, replay tracer and native tracer reject a changed protected
 word before writing it, and reject loads below `lowest_address`. Host calls
 (prints, cycle markers and advice writes) are logged and ignored when their
