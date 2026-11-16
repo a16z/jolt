@@ -34,29 +34,21 @@ use jolt_witness::{WitnessBundle, WitnessError};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use super::{dense_crossover, task_ranges, VISIT_ROWS};
+use super::{task_ranges, DenseCap, VISIT_ROWS};
 use crate::optimized::lazy_ra::{double_branches, LazyBind, LazyFoldedRa, DEFAULT_MAX_WIDTH};
 use crate::optimized::support::BundleStore;
-
-/// Bytes of each dense polynomial a [`StreamedFoldedRa::new`] family
-/// materializes ([`materialize_depth`]).
-pub(crate) const MATERIALIZE_BYTES: usize = 1 << 26;
 
 /// The default family's materializing bind, its fourth.
 const DEFAULT_MATERIALIZE_DEPTH: usize = (2 * DEFAULT_MAX_WIDTH).ilog2() as usize;
 
-/// The bind depth at which a family over `2^rounds` cycles materializes: the
-/// first at which a polynomial over the whole domain, `2^rounds >> depth`
-/// entries, fits `bytes`, so one that stops at a constant suffix fits too; at
-/// least the default family's, whose polynomials are no shorter where they
-/// stop at the same suffix and the domain has that many binds; and at most
-/// the last bind, so the final claims are always dense entries. Sizes are
-/// compared in entries against the entries `bytes` holds, which is the same
-/// test as bytes against `bytes` and cannot overflow where the byte count of
-/// `2^rounds` entries would, for `rounds < usize::BITS`
-/// ([`BundleStore::resident`] refuses every larger domain).
-fn materialize_depth<F>(rounds: usize, bytes: usize) -> usize {
-    dense_crossover(1 << rounds, bytes / size_of::<F>(), rounds)
+/// The bind depth at which a family of `polys` polynomials over `2^rounds`
+/// cycles materializes: the first at which its dense polynomials, `polys`
+/// field elements per cycle before any bind, fit `cap`; at least the default
+/// family's, whose polynomials are no shorter where they stop at the same
+/// suffix and the domain has that many binds; and at most the last bind, so
+/// the final claims are always dense entries.
+fn materialize_depth<F>(polys: usize, rounds: usize, cap: DenseCap) -> usize {
+    cap.crossover(polys.saturating_mul(size_of::<F>()), rounds)
         .max(DEFAULT_MATERIALIZE_DEPTH)
         .min(rounds)
 }
@@ -118,16 +110,17 @@ pub(crate) struct StreamedFoldedRa<F: JoltField, S: RowIndexSource> {
 
 impl<F: JoltField, S: RowIndexSource> StreamedFoldedRa<F, S> {
     /// One scale table per selector polynomial, in `source`'s column order,
-    /// over the `2^rounds` cycles of `rows`. Each polynomial materializes at
-    /// `materialize_bytes` at most ([`materialize_depth`]).
+    /// over the `2^rounds` cycles of `rows`. The polynomials materialize
+    /// together, at the first bind at which they fit `cap`
+    /// ([`materialize_depth`]).
     pub(crate) fn new(
         tables: Vec<Vec<F>>,
         source: S,
         rows: BundleStore<S::Row>,
         rounds: usize,
-        materialize_bytes: usize,
+        cap: DenseCap,
     ) -> Result<Self, WitnessError> {
-        let schedule = Schedule::Depth(materialize_depth::<F>(rounds, materialize_bytes));
+        let schedule = Schedule::Depth(materialize_depth::<F>(tables.len(), rounds, cap));
         Self::over(tables, 1, schedule, source, rows, rounds, 0)
     }
 
@@ -167,7 +160,8 @@ impl<F: JoltField, S: RowIndexSource> StreamedFoldedRa<F, S> {
         rounds: usize,
         min_prefix: usize,
     ) -> Result<Self, WitnessError> {
-        // `rounds` is below `usize::BITS`, as in [`materialize_depth`].
+        // `rounds` is below `usize::BITS`: [`BundleStore::resident`] refuses
+        // every larger domain.
         let cycles = 1usize << rounds;
         let mut family = Self {
             tables,
@@ -719,7 +713,10 @@ mod tests {
                 TestSource,
                 rows,
                 rounds,
-                size_of::<F>() << (rounds - target),
+                DenseCap {
+                    bytes: TEST_COLUMNS * size_of::<F>(),
+                    per_rows: 1 << target,
+                },
             )
             .unwrap()
         });
@@ -849,24 +846,21 @@ mod tests {
         assert_eq!(step(1 << (usize::BITS - 1), 128), LazyBind::Double);
     }
 
-    /// The materializing bind is exact at the budget's boundary, never
-    /// earlier than the default family's fourth, the last bind where no
-    /// earlier one fits or the domain is shorter, and does not wrap when the
-    /// polynomials exceed `usize` bytes (a round count one below the word
-    /// size).
+    /// The materializing bind is the first at which the family's polynomials
+    /// fit the cap together, never earlier than the default family's fourth,
+    /// and the last bind where no earlier one fits or the domain is shorter.
     #[test]
-    fn materialize_depth_is_exact_at_the_budget_and_past_usize_bytes() {
-        let entry = size_of::<Fr>();
-        assert_eq!(materialize_depth::<Fr>(20, entry << 10), 10);
-        assert_eq!(materialize_depth::<Fr>(20, (entry << 10) - 1), 11);
-        assert_eq!(materialize_depth::<Fr>(20, usize::MAX), 4);
-        assert_eq!(materialize_depth::<Fr>(20, 0), 20);
-        assert_eq!(materialize_depth::<Fr>(3, usize::MAX), 3);
-        assert_eq!(materialize_depth::<Fr>(0, MATERIALIZE_BYTES), 0);
-        assert_eq!(materialize_depth::<Fr>(28, MATERIALIZE_BYTES), 7);
-        let wide = usize::BITS as usize - 1;
-        assert_eq!(materialize_depth::<Fr>(wide, entry << 20), wide - 20);
-        assert_eq!(materialize_depth::<Fr>(wide, usize::MAX), 5);
+    fn materialize_depth_counts_every_polynomial_and_clamps() {
+        let at = |depth: usize| DenseCap {
+            bytes: 3 * size_of::<Fr>(),
+            per_rows: 1 << depth,
+        };
+        assert_eq!(materialize_depth::<Fr>(3, 20, at(10)), 10);
+        assert_eq!(materialize_depth::<Fr>(4, 20, at(10)), 11);
+        assert_eq!(materialize_depth::<Fr>(3, 20, at(0)), 4);
+        assert_eq!(materialize_depth::<Fr>(3, 20, at(40)), 20);
+        assert_eq!(materialize_depth::<Fr>(3, 3, at(0)), 3);
+        assert_eq!(materialize_depth::<Fr>(3, 0, at(0)), 0);
     }
 
     /// Over a witness's resident rows the family stops at the trace's
@@ -883,7 +877,10 @@ mod tests {
                     TestSource,
                     rows,
                     rounds,
-                    usize::MAX,
+                    DenseCap {
+                        bytes: usize::MAX,
+                        per_rows: 1,
+                    },
                 )
                 .unwrap();
                 let dense = (0..depth)
@@ -949,7 +946,10 @@ mod tests {
                 TestSource,
                 BundleStore::Retained(rows),
                 rounds,
-                0,
+                DenseCap {
+                    bytes: 0,
+                    per_rows: 1,
+                },
             ),
             Err(WitnessError::InvalidDimensions { .. })
         ));

@@ -1,8 +1,8 @@
 //! Streaming registers value evaluation (stage 5): the default kernel's
 //! summand, with the increment and write-address columns read from the
 //! witness's resident rows instead of the `rd` indices stage 4 parks. While
-//! the two dense tables exceed [`DENSE_TABLE_CAP`], round `j` contracts each
-//! column over the low and high halves of its `2^(j+1)`-cycle pairs with
+//! the two dense tables exceed the kernel's [`DenseCap`], round `j` contracts
+//! each column over the low and high halves of its `2^(j+1)`-cycle pairs with
 //! `eq(r_1..r_j, ·)` (LowToHigh binding gives
 //! `f^(j)(y) = Σ_b eq(r, b)·f(2^j·y + b)`), with
 //! `wa(t) = eq(r_address)[rd_t]` served from the `K`-entry eq table. The
@@ -39,7 +39,7 @@ use rayon::prelude::*;
 use crate::optimized::prefix_product::PrefixColumn;
 use crate::optimized::registers_read_write::RegisterCycleRow;
 use crate::optimized::streaming::{
-    dense_crossover, split_at_tasks, task_ranges, PairHalves, DENSE_TABLE_CAP, VISIT_ROWS,
+    prefix_end, split_at_tasks, task_ranges, DenseCap, PairHalves, DENSE_CAP, VISIT_ROWS,
 };
 use crate::optimized::support::{
     accumulate_triple_product, pin_derived_term, triple_product_round_evals, BundleStore,
@@ -51,16 +51,13 @@ use crate::{
 
 pub struct StreamingRegistersValEvaluation;
 
-/// The round, of `rounds`, whose pass fills the two dense tables over
-/// `prefix_len` cycles: the first whose tables fit `cap` bytes, at least
-/// round 1 when there are two or more rounds, so each table never holds more
-/// than every second prefix cycle, and at most the last round, so openings
-/// are always table entries. Sizes are compared in cycles against the cycles
-/// `cap` holds, which is the same test as bytes against `cap` and cannot
-/// overflow where the byte count of the prefix would.
-fn crossover_round<F: JoltField>(rounds: usize, prefix_len: usize, cap: usize) -> usize {
-    let cap_cycles = cap / (2 * size_of::<F>());
-    dense_crossover(prefix_len, cap_cycles, rounds)
+/// The round, of `rounds`, whose pass fills the two dense tables, which take
+/// two field elements per cycle before any bind: the first at which they fit
+/// `cap`, at least round 1 when there are two or more rounds, so each table
+/// never holds more than every second prefix cycle, and at most the last
+/// round, so openings are always table entries.
+fn crossover_round<F: JoltField>(rounds: usize, cap: DenseCap) -> usize {
+    cap.crossover(2 * size_of::<F>(), rounds)
         .max(1)
         .min(rounds.saturating_sub(1))
 }
@@ -79,9 +76,7 @@ impl<F: JoltField> PrepareKernel<F, RegistersValEvaluation<F>> for StreamingRegi
             ROWS_LABEL,
         )?;
         Ok(Box::new(StreamingValEvaluationKernel::new(
-            rows,
-            &inputs,
-            DENSE_TABLE_CAP,
+            rows, &inputs, DENSE_CAP,
         )?))
     }
 }
@@ -147,12 +142,12 @@ fn rows_unavailable<F: JoltField>(_: WitnessError) -> SumcheckError<F> {
 }
 
 impl<F: JoltField> StreamingValEvaluationKernel<F> {
-    /// `dense_cap` bounds the bytes of the two dense tables together;
-    /// production passes [`DENSE_TABLE_CAP`].
+    /// `cap` bounds the two dense tables together; production passes
+    /// [`DENSE_CAP`].
     fn new(
         rows: BundleStore<RdWriteRow>,
         inputs: &ProverInputs<'_, F, RegistersValEvaluation<F>>,
-        dense_cap: usize,
+        cap: DenseCap,
     ) -> Result<Self, KernelError<F>> {
         let log_t = inputs.relation.trace_dimensions().log_t();
         if log_t == 0 {
@@ -182,7 +177,7 @@ impl<F: JoltField> StreamingValEvaluationKernel<F> {
         };
         Ok(Self {
             tables: ValueTables::Streamed { prefix_len, tail },
-            dense_round: crossover_round::<F>(log_t, prefix_len, dense_cap),
+            dense_round: crossover_round::<F>(log_t, cap),
             challenges: RoundChallenges::new(log_t),
             rows,
             eq_address: EqPolynomial::<F>::evals(r_address, None),
@@ -228,9 +223,7 @@ impl<F: JoltField> StreamingValEvaluationKernel<F> {
         let bound = self.challenges.bound();
         let cycles = 1usize << self.challenges.total();
         // The prefix rounded up to whole pairs, which the domain holds.
-        let end = prefix_len
-            .checked_next_multiple_of(2 << bound)
-            .map_or(cycles, |end| end.min(cycles));
+        let end = prefix_end(prefix_len, 2 << bound, cycles);
         let ranges = task_ranges(end, 2 << bound);
         let slices: Vec<Option<[&mut [F]; 2]>> = match tables {
             Some(tables) => {
