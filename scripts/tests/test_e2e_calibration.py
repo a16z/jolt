@@ -168,6 +168,20 @@ class CalibrationTests(unittest.TestCase):
         changed['host']['settings']['swap_free_bytes'] = 100
         self.assertEqual(calibration.cell_key(changed, changed['cases'][0]), key)
 
+    def test_management_node_updates_between_and_during_runs_keep_the_reference(self):
+        result, *_ = null_fixture()
+        result['host_after']['control_plane'] = dict(version='pika 2', cli_sha256='a' * 64, node_sha256='b' * 64)
+        reference = calibration.reference(json.dumps(result).encode(), result, dict(
+            plan_run_id=123, plan_run_attempt=1, ingest_run_id=456, ingest_run_attempt=1))
+        probe = copy.deepcopy(result)
+        probe.update(started_at='2026-11-05T11:00:00Z', finished_at='2026-11-05T11:10:00Z',
+                     external_references={'references': [reference]})
+        probe['suite']['repetitions'] = 3
+        probe['host']['control_plane'] = dict(version='pika 3', cli_sha256='c' * 64, node_sha256='d' * 64)
+        probe['host_after']['control_plane'] = dict(version='pika 4', cli_sha256='e' * 64, node_sha256='f' * 64)
+        self.assertEqual(calibration.for_case(probe, probe['cases'][0]),
+                         (reference['cells'][0]['metrics'], None))
+
     def test_sidecar_validation_recomputes_bands_and_refuses_substitution(self):
         result, plan, dispatch, config, receipt = null_fixture(19)
         root, files = evidence(result)
