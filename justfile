@@ -1,4 +1,4 @@
-# Recipes forward their arguments as "$@": interpolating {{ args }} instead would re-split a quoted
+# Recipes read their arguments as "$@" or "$1": interpolating {{ args }} instead would re-split a quoted
 # filter such as -E 'test(/a b/)' into separate words.
 set positional-arguments
 
@@ -28,6 +28,7 @@ style:
 
 # Find unused dependencies, as the rust.yml machete job does
 machete:
+    cargo-machete
     cargo machete --with-metadata
 
 # rust.yml denies warnings through RUSTFLAGS. The Clippy recipes pass -D warnings to Clippy instead:
@@ -50,7 +51,7 @@ test *args:
 
 # Guest x mode acceptance matrix under one feature set (CLAUDE.md lists them), e.g. prover-fixtures,zk
 e2e-matrix features="prover-fixtures":
-    cargo nextest run -p jolt-prover --features {{ features }} -E 'binary(e2e_matrix)' --cargo-quiet
+    cargo nextest run -p jolt-prover --features "$1" -E 'binary(e2e_matrix)' --cargo-quiet
 
 # Install the jolt CLI that guest builds call; rerun after pulling changes
 install-cli:
