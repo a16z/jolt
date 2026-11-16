@@ -42,7 +42,7 @@ def normalized(path):
 
 
 def host_identity(host):
-    identity = {key: host[key] for key in ('id', 'kernel', 'microcode', 'control_plane')}
+    identity = {key: host[key] for key in ('id', 'kernel', 'microcode')}
     identity['settings'] = {key: host['settings'][key] for key in
         ('boost', 'smt', 'governor', 'transparent_huge_pages', 'swap_total_bytes')}
     return identity
@@ -76,7 +76,7 @@ def cell_key(result, case):
         for name in ('trace_rows', 'padded_trace_rows')}
     if any(len(values) != 1 for values in rows.values()):
         raise ValueError('base trace rows are absent or changed')
-    key = {'schema': 1, 'method': METHOD, 'normalization': NORMALIZATION, 'metric_contract': 1,
+    key = {'schema': 2, 'method': METHOD, 'normalization': NORMALIZATION, 'metric_contract': 1,
         'host': host, 'build': build, 'cache_policy': result['runtime_cache']['dory'],
         'case': {name: case[name] for name in ('id', 'workload', 'pcs', 'backend', 'physical_cores', 'cpu_ids')},
         'rows': {name: next(iter(values)) for name, values in rows.items()}}
@@ -209,9 +209,6 @@ def manual_reference(result, case):
             'toolchain', 'target_cpu', 'target_triple', 'rustflags', 'profile', 'cargo_lock_sha256')]
         comparisons += [(f'host.{key}', source.get('host_id' if key == 'id' else key), host.get(key))
                         for key in ('id', 'kernel', 'microcode')]
-        comparisons += [(f'host.control_plane.{key}', source['control_plane'].get(key),
-                         (host.get('control_plane') or {}).get(key))
-                        for key in ('version', 'cli_sha256', 'node_sha256')]
         comparisons += [(f'host.settings.{key}', source['settings'].get(key), host.get('settings', {}).get(key))
                         for key in ('boost', 'smt', 'governor', 'transparent_huge_pages', 'swap_total_bytes')]
         for label, expected, actual in comparisons:
