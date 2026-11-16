@@ -84,7 +84,7 @@ fn measure<G: GuestConfig>(guest: &G, runs: usize) -> serde_json::Value {
     }
     // Read before the raw runs: they keep the whole run's `Vec<Cycle>`
     // (96 B/row), which on a long trace is more than the seam's rows
-    // (64 B/row) plus its one chunk of cycles.
+    // (64 B/row) plus its rotating buffers of cycles.
     let peak_rss_bytes = peak_rss_bytes();
     // Raw tracing, timed separately: the same emulator run with every cycle
     // kept and none converted to a row.

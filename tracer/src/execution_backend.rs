@@ -648,11 +648,11 @@ mod chunked_tests {
         }
     }
 
-    /// The serial tracer converts its cycle buffer to rows each time the
-    /// buffer reaches the chunk bound. Every bound, from one that converts
-    /// after each tick to one the whole run stays under, yields the rows,
-    /// dimensions and exact-capacity row buffer of one conversion of the
-    /// whole trace.
+    /// The serial tracer converts a cycle buffer to rows each time one
+    /// reaches the chunk bound, and fills the next of its buffers. Every
+    /// bound, from one that converts after each tick to one the whole run
+    /// stays under, yields the rows, dimensions and exact-capacity row buffer
+    /// of one conversion of the whole trace.
     #[test]
     fn serial_tracing_composes_across_conversion_chunks() {
         let (program, inputs) = muldiv_setup();
