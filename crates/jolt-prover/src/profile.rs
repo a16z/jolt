@@ -92,6 +92,13 @@ const CYCLES_PER_SHA3: f64 = 4330.0;
 const CYCLES_PER_BTREEMAP_OP: f64 = 1550.0;
 const CYCLES_PER_FIBONACCI_UNIT: f64 = 12.0;
 const SAFETY_MARGIN: f64 = 0.9;
+const ETHEREUM_TRANSACTION_WITNESS: &[u8] =
+    include_bytes!("../../../examples/ethereum-transaction/fixtures/mainnet-26429593-0.rlp");
+// Must equal the guest's `#[jolt::provable]` attributes. The guest's entry
+// point locates its input and output from them at compile time; this harness
+// builds the `Program` without reading them, and nothing checks the two agree.
+const ETHEREUM_TRANSACTION_STACK_SIZE: u64 = 1 << 20;
+const ETHEREUM_TRANSACTION_MAX_INPUT_SIZE: u64 = 1 << 18;
 const LEGACY_TIMINGS_HEADER: &str = "benchmark_name,scale,prover_time_s,trace_length,proving_hz,proof_size,proof_size_compressed,backend";
 const TIMINGS_HEADER: &str = "benchmark_name,scale,prover_time_s,trace_length,proving_hz,proof_size,proof_size_compressed,backend,setup_time_s,verifier_parallel_time_s,verifier_single_thread_time_s,verifier_parallel_threads";
 
@@ -131,6 +138,9 @@ pub enum Workload {
     #[value(name = "btreemap")]
     BTreeMap,
     Secp256k1Batch,
+    /// One mainnet transaction (`examples/ethereum-transaction`). Its input is
+    /// a checked-in witness, so it has one size.
+    EthereumTransaction,
     /// The eq-MLE field-inline guest (`examples/field-ops`): the workload
     /// that exercises the field-inline columns and kernels. Fixed-size (its input does
     /// not scale), so it is not in the default sweep list.
@@ -148,6 +158,7 @@ impl Workload {
             Self::Sha3Chain => "sha3-chain",
             Self::BTreeMap => "btreemap",
             Self::Secp256k1Batch => "secp256k1-batch",
+            Self::EthereumTransaction => "ethereum-transaction",
             #[cfg(feature = "field-inline")]
             Self::FieldOps => "field-ops",
         }
@@ -159,6 +170,12 @@ impl Workload {
                 let mut program = Program::new("secp256k1-ecdsa-verify-guest");
                 program.add_guest_feature("batch-bench");
                 program.set_func("verify_batch");
+                program
+            }
+            Self::EthereumTransaction => {
+                let mut program = Program::new("ethereum-transaction-guest");
+                program.set_stack_size(ETHEREUM_TRANSACTION_STACK_SIZE);
+                program.set_max_input_size(ETHEREUM_TRANSACTION_MAX_INPUT_SIZE);
                 program
             }
             _ => Program::new(&format!("{}-guest", self.as_str())),
@@ -180,6 +197,7 @@ impl Workload {
             Self::Sha3Chain => 22,
             Self::BTreeMap => 20,
             Self::Secp256k1Batch => 20,
+            Self::EthereumTransaction => 23,
             #[cfg(feature = "field-inline")]
             Self::FieldOps => 16,
         }
@@ -191,7 +209,9 @@ impl Workload {
             Self::Sha2Chain => CYCLES_PER_SHA256,
             Self::Sha3Chain => CYCLES_PER_SHA3,
             Self::BTreeMap => CYCLES_PER_BTREEMAP_OP,
-            Self::Secp256k1Batch => return self.input_for_operations(1),
+            Self::Secp256k1Batch | Self::EthereumTransaction => {
+                return self.input_for_operations(1)
+            }
             #[cfg(feature = "field-inline")]
             Self::FieldOps => return eqpoly_inputs(),
         };
@@ -209,6 +229,10 @@ impl Workload {
             ]
             .concat(),
             Self::Secp256k1Batch => prepare::secp256k1_inputs(operations),
+            Self::EthereumTransaction => {
+                assert_eq!(operations, 1, "the witness holds one transaction");
+                postcard::to_stdvec(ETHEREUM_TRANSACTION_WITNESS).expect("serialize input")
+            }
             #[cfg(feature = "field-inline")]
             Self::FieldOps => eqpoly_inputs(),
         }
@@ -311,7 +335,8 @@ pub struct ProfileArgs {
     pub name: Workload,
 
     /// log2 of the max (padded) trace length; per-workload default when
-    /// omitted (fibonacci 16, sha2-chain 22, sha3-chain 22, btreemap 20, field-ops 16).
+    /// omitted (fibonacci 16, sha2-chain 22, sha3-chain 22, btreemap 20,
+    /// ethereum-transaction 23, field-ops 16).
     #[clap(long)]
     pub scale: Option<u32>,
 

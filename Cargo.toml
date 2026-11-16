@@ -136,6 +136,8 @@ members = [
   "examples/advice-consumer/guest",
   "examples/sig-recovery/host",
   "examples/sig-recovery/guest",
+  "examples/ethereum-transaction",
+  "examples/ethereum-transaction/guest",
   "zklean-extractor",
   "z3-verifier",
   "jolt-eval",

@@ -1,0 +1,18 @@
+[package]
+name = "ethereum-transaction"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+jolt-sdk = { workspace = true, features = ["host"] }
+guest = { package = "ethereum-transaction-guest", path = "./guest" }
+jolt-inlines-secp256k1 = { workspace = true, features = ["host"] }
+alloy-consensus = { workspace = true }
+alloy-eips = { workspace = true }
+alloy-primitives = { workspace = true, features = ["k256", "serde"] }
+alloy-rlp = "0.3"
+serde = { workspace = true }
+serde_json = { workspace = true, features = ["std"] }
+
+[package.metadata.cargo-machete]
+ignored = ["jolt-inlines-secp256k1"]
