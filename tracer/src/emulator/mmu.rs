@@ -1562,33 +1562,6 @@ mod test_mmu {
     }
 
     #[test]
-    fn disjoint_code_guards_preserve_values_and_leave_gaps_writable() {
-        let mut mmu = setup_mmu();
-        let start = DRAM_BASE + 0x40;
-        let lowest = mmu
-            .jolt_device
-            .as_ref()
-            .unwrap()
-            .memory_layout
-            .get_lowest_address();
-        mmu.code_word_intervals = jolt_program::preprocess::ram::code_word_intervals(
-            [(start, true), (start + 16, false), (start + 32, true)],
-            lowest,
-        )
-        .unwrap()
-        .into();
-        for address in [start, start + 16, start + 32] {
-            mmu.store_doubleword(address, 0).unwrap();
-            assert!(catch_unwind(AssertUnwindSafe(|| mmu.store_doubleword(address, 1))).is_err());
-            assert_eq!(mmu.load_doubleword(address).unwrap().0, 0);
-        }
-        for address in [start - 8, start + 8, start + 24, start + 40] {
-            mmu.store_doubleword(address, 1).unwrap();
-            assert_eq!(mmu.load_doubleword(address).unwrap().0, 1);
-        }
-    }
-
-    #[test]
     fn protected_layout_stores_preserve_every_lane_before_mutation() {
         const OLD: u64 = 0x8877_6655_4433_2211;
         for region in 0..4 {

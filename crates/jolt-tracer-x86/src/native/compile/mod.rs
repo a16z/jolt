@@ -204,7 +204,6 @@ pub struct Emitter {
     pub text_base: u64,
     pub text_span: u64,
     code_word_intervals: Vec<(usize, usize)>,
-    code_word_lookup: DynamicLabel,
 }
 
 impl Emitter {
@@ -248,8 +247,7 @@ impl CompiledBody {
         // SAFETY: `entry` points into the finalized (read+execute) buffer at
         // the prologue emitted by `compile`; the generated code only touches
         // the GuestState plane, the RAM plane it carries, the observation
-        // buffer, the jump table, and the interval table embedded in the code
-        // buffer, per the emitter's invariants.
+        // buffer, and the jump table, per the emitter's invariants.
         let f: extern "sysv64" fn(*mut GuestState, *const usize) =
             unsafe { core::mem::transmute(entry) };
         f(state, self.jump_table.as_ptr());
@@ -277,14 +275,12 @@ impl CompiledBody {
 
         let code_word_intervals = bytecode_code_word_intervals(rows, RAM_START_ADDRESS)
             .map_err(|_| TraceError::Backend("invalid source code-word intervals"))?;
-        let mut ops =
-            Assembler::new().map_err(|_| TraceError::Backend("failed to create x64 assembler"))?;
-        let code_word_lookup = ops.new_dynamic_label();
         let mut emitter = Emitter {
             mode,
             pausable,
             row_index: 0,
-            ops,
+            ops: Assembler::new()
+                .map_err(|_| TraceError::Backend("failed to create x64 assembler"))?,
             advice_jobs: Vec::new(),
             advice_slot: 0,
             advice_ready: false,
@@ -294,7 +290,6 @@ impl CompiledBody {
             text_base,
             text_span,
             code_word_intervals,
-            code_word_lookup,
         };
 
         let entry = emitter.emit_prologue();
@@ -339,7 +334,6 @@ impl CompiledBody {
         emitter.emit_jump_to_bad_jump();
         emitter.emit_unmapped_target_stubs();
         let stubs = emitter.emit_stubs();
-        emitter.emit_code_word_lookup();
 
         let group_offsets = core::mem::take(&mut emitter.group_offsets);
         let advice_jobs = core::mem::take(&mut emitter.advice_jobs);
