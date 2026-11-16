@@ -15,6 +15,13 @@
 //! rerun preprocessing with compatible catalogs, and rebuild recursion images.
 //! This setup encoding has no independent format-version constant; applications
 //! persisting it must associate it with the producing implementation revision.
+//!
+//! # Untrusted input
+//!
+//! Decode untrusted bytes of [`AkitaCommitment`], [`AkitaBatchProof`],
+//! [`AkitaVerifierSetup`] or a proof that holds them with a slice decoder
+//! (`bincode::serde::decode_from_slice`): a reader-backed bincode decoder
+//! allocates a byte payload's announced length before it reads the payload.
 
 // In the jolt-verifier runtime closure: stricter panic and unsafe discipline
 // than the workspace lints (specs/verifier-closure-lints.md).

@@ -414,6 +414,7 @@ mod wire_tests {
     use super::*;
     use crate::adapters::{AkitaCommitment, AkitaVerifierScheduleArtifacts};
     use crate::AkitaChunkProfile;
+    use bincode::error::DecodeError;
     use serde::de::DeserializeOwned;
 
     #[test]
@@ -485,7 +486,12 @@ mod wire_tests {
             for announced in [1u64 << 31, 1 << 46, u64::MAX] {
                 let mut input = fields_before_length.to_vec();
                 input.extend(bincode::serde::encode_to_vec(announced, config).unwrap());
-                assert!(bincode::serde::decode_from_slice::<T, _>(&input, config).is_err());
+                // Only the payload read reports the announced length as missing.
+                assert!(matches!(
+                    bincode::serde::decode_from_slice::<T, _>(&input, config),
+                    Err(DecodeError::UnexpectedEnd { additional })
+                        if u64::try_from(additional) == Ok(announced)
+                ));
             }
         }
         // Flavor, layout digest and four zero counts.
