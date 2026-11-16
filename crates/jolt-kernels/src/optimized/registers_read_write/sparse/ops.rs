@@ -133,7 +133,7 @@ const PARALLEL_MOVE_BYTES: usize = 4 << 20;
 /// A run lands on storage that earlier runs occupied, so runs move in block
 /// order. But all the runs whose destinations end at or before the first
 /// unmoved run's start can move at once.
-pub(super) fn close_block_gaps<T: Copy + Send + Sync>(
+pub(crate) fn close_block_gaps<T: Copy + Send + Sync>(
     values: &mut [T],
     bounds: &[usize],
     counts: &[usize],
