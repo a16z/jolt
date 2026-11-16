@@ -58,10 +58,16 @@ The dashboard shows the raw PR measurements without bands.
 
 The sticky PR comment links to full results and benchmark history. It lists every
 core-count/trace-ceiling pair with a recorded process exit, even when no change
-exceeds its per-case reporting threshold. Its table keeps a row only when the
-time or peak-RSS change exceeds the larger of 3% and that metric's observed
-envelope, comparing head/base and base/head symmetrically. Missing envelopes use
-3%. Each metric's threshold is shown next to its signed change. Each row
+exceeds its reporting threshold. Thresholds depend on the trace ceiling; the
+[producer README](https://github.com/a16z/jolt/blob/main/scripts/bench/README.md#reporting-thresholds)
+gives the table, which `SIZE_THRESHOLDS` in `scripts/bench/calibration.py`
+defines, and the measurements behind it. The comment keeps
+a case's row only when its time or peak-RSS change exceeds the larger of the
+table value and that metric's observed envelope, comparing head/base and
+base/head symmetrically. A missing envelope leaves the table value alone. A size
+group is the cases sharing a PCS, core count and trace ceiling; a group of two or
+more cases is listed when the geometric mean of its changes exceeds the group
+column. Each threshold is shown next to its signed change. Each case row
 identifies its physical cores, `2^k` ceiling and measured base/head trace rows.
 If planning refuses a labelled PR, the same sticky comment instead gives the
 reason and links to the planning run. A dependent job in that workflow reads its
