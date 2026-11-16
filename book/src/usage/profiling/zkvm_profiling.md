@@ -77,9 +77,11 @@ tables turn dense. The stage-6a address phases accumulate their tables from
 the resident trace. The stage-6b booleanity and instruction RA
 virtualization kernels gather their one-hot selectors from it until their
 dense polynomials fit the cap described below, and not before the eager
-kernels' fourth bind; the
-stage-6b bytecode read-RAF cycle phase gathers its RA factors from it until
-the bind at which the eager kernel's turn dense. These passes and the tables
+kernels' fourth bind. The stage-6b bytecode read-RAF cycle phase follows the
+same rule for all of its per-cycle tables: until they fit the cap together,
+it gathers its RA factors and, under Akita, the fused increment from the
+resident trace and evaluates its coefficient tables from their eq terms.
+These passes and the tables
 they fill stop at the trace's constant padding suffix, as the eager kernels'
 tables do. With the family selected, no kernel collects the packed per-cycle
 instruction rows that the eager kernels share from stage 5 on. Under Dory the
@@ -97,8 +99,9 @@ families with `--streaming instruction-input,spartan,ram,registers`.
 Instruction-input, Spartan and register
 early rounds recompute from the resident trace until the dense tables, or for
 the register read-write check one level of sparse entries, fit the same cap.
-The cap is one density for these kernels and for the two stage-6b selector
-kernels: 4 bytes of dense state per trace row before the padding suffix, a
+The cap is one density for these kernels, for the two stage-6b selector
+kernels and for the stage-6b bytecode read-RAF cycle phase: 4 bytes of dense
+state per trace row before the padding suffix, a
 sixteenth of what a resident row takes. Dense tables halve with every bind,
 so the round at which a kernel's tables fit depends on how many field
 elements they hold per cycle and on the element's size (16 bytes under
@@ -106,9 +109,9 @@ Akita, 32 under Dory), not on the trace length, and every round before it
 costs one pass over the resident rows. The Spartan and instruction-input
 tables stop at the padding suffix, as the eager kernels' do. The full trace
 remains resident, and the cap bounds the dense state of each kernel that
-takes it, not the process. The stage-5 instruction read-RAF kernel and the
-stage-6b bytecode read-RAF cycle phase take no cap: their tables turn dense
-where the eager kernels' do and are sized by the trace. Stages whose tables
+takes it, not the process. The stage-5 instruction read-RAF kernel takes no
+cap: its tables turn dense where the eager kernel's do and are sized by the
+trace. Stages whose tables
 no streaming kernel replaces keep their size.
 Streaming workload, CSV and trace names append `_streaming_<families>` in
 canonical order (`instruction_input`, `spartan`, `ram`, `registers`,

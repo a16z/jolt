@@ -17,9 +17,8 @@ pub(crate) struct DenseCap {
 /// one pass over the rows before the padding. It bounds one kernel, not a
 /// stage: an in-place bind keeps a table's storage for three rounds, so a
 /// stage holds together the fills of its kernels that fill within three
-/// rounds of each other. The instruction read-RAF kernel and the bytecode
-/// read-RAF cycle kernel take no cap: their tables turn dense on the default
-/// kernels' schedule.
+/// rounds of each other. The instruction read-RAF kernel takes no cap: its
+/// tables turn dense on the default kernel's schedule.
 pub(crate) const DENSE_CAP: DenseCap = DenseCap {
     bytes: 4,
     per_rows: 1,
