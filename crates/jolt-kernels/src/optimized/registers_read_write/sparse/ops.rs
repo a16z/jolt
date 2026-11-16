@@ -124,7 +124,6 @@ pub(crate) fn bind_sparse_entries_in_place<E>(
     entries.truncate(total);
 }
 
-/// Bytes a batch of runs must hold before the pool moves it.
 #[cfg(feature = "parallel")]
 const PARALLEL_MOVE_BYTES: usize = 4 << 20;
 
@@ -133,9 +132,7 @@ const PARALLEL_MOVE_BYTES: usize = 4 << 20;
 ///
 /// A run lands on storage that earlier runs occupied, so runs move in block
 /// order. But all the runs whose destinations end at or before the first
-/// unmoved run's start can move at once, and the gap ahead of a run grows
-/// with the runs behind it, so those batches grow geometrically and nearly
-/// every byte moves in a parallel batch.
+/// unmoved run's start can move at once.
 pub(super) fn close_block_gaps<T: Copy + Send + Sync>(
     values: &mut [T],
     bounds: &[usize],
@@ -758,14 +755,16 @@ pub(super) fn bind_seed_entries_fused<F: JoltField>(
 mod tests {
     use super::close_block_gaps;
 
-    /// Blocks of `block` values each keep a live prefix; the live values in
-    /// block order are what closing the gaps must leave.
-    fn assert_gaps_close(block: usize, live: impl Fn(usize) -> usize, blocks: usize) {
-        let bounds: Vec<usize> = (0..=blocks).map(|index| index * block).collect();
-        let counts: Vec<usize> = (0..blocks).map(|index| live(index).min(block)).collect();
-        let mut values: Vec<u64> = (0..(blocks * block) as u64).collect();
+    fn assert_gaps_close(block_len: usize, live_len: impl Fn(usize) -> usize, blocks: usize) {
+        let bounds: Vec<usize> = (0..=blocks).map(|index| index * block_len).collect();
+        let counts: Vec<usize> = (0..blocks)
+            .map(|index| live_len(index).min(block_len))
+            .collect();
+        let mut values: Vec<u64> = (0..(blocks * block_len) as u64).collect();
         let expected: Vec<u64> = (0..blocks)
-            .flat_map(|index| (0..counts[index]).map(move |offset| (index * block + offset) as u64))
+            .flat_map(|index| {
+                (0..counts[index]).map(move |offset| (index * block_len + offset) as u64)
+            })
             .collect();
         let total = close_block_gaps(&mut values, &bounds, &counts);
         assert_eq!(total, expected.len());
@@ -774,13 +773,14 @@ mod tests {
 
     #[test]
     fn closing_block_gaps_keeps_the_live_runs_in_order() {
-        // Large enough for parallel batches, with full, empty and partial blocks.
         assert_gaps_close(1 << 12, |index| (1 << 12) - index % 5 * 300, 600);
         assert_gaps_close(
             1 << 12,
             |index| if index % 7 == 0 { 0 } else { 1 << 12 },
             600,
         );
+        // The one case whose batches reach `PARALLEL_MOVE_BYTES`; a smaller table
+        // leaves the pool branch untested.
         assert_gaps_close(1 << 12, |index| (index * 37) % (1 << 12), 600);
         // A first block with one hole makes every later run overlap its destination.
         assert_gaps_close(64, |index| if index == 0 { 63 } else { 64 }, 50);

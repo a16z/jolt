@@ -145,39 +145,9 @@ fn bind_prefix_waves<F: JoltField>(
     values.truncate(rows.div_ceil(2) * columns);
     let shrink = values.capacity() >= IN_PLACE_SHRINK_FACTOR * values.len().max(1);
     if shrink {
-        release_capacity(values);
+        values.shrink_to_fit();
     }
     shrink
-}
-
-/// Values a table must hold before the pool copies it into a fitted
-/// allocation.
-#[cfg(feature = "parallel")]
-const PARALLEL_RELEASE_LEN: usize = 1 << 18;
-
-/// Shrinks `values` to its length. An allocator moves a table this much
-/// smaller than its allocation, and `shrink_to_fit` makes that copy on the
-/// calling thread; a large table is copied across the pool instead. Either
-/// way both allocations exist only for the copy.
-fn release_capacity<F: JoltField>(values: &mut Vec<F>) {
-    #[cfg(feature = "parallel")]
-    if values.len() >= PARALLEL_RELEASE_LEN {
-        use rayon::prelude::*;
-        const TILE: usize = 1 << 16;
-        let len = values.len();
-        let mut fitted = Vec::with_capacity(len);
-        fitted.spare_capacity_mut()[..len]
-            .par_chunks_mut(TILE)
-            .zip(values.par_chunks(TILE))
-            .for_each(|(slots, tile)| {
-                let _ = slots.write_copy_of_slice(tile);
-            });
-        // SAFETY: the tiles above wrote the first `len` slots.
-        unsafe { fitted.set_len(len) };
-        *values = fitted;
-        return;
-    }
-    values.shrink_to_fit();
 }
 
 #[derive(Deserialize)]
