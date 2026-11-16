@@ -56,18 +56,10 @@ The dashboard shows the raw PR measurements without bands.
 
 The sticky PR comment links to full results and benchmark history. It lists every
 core-count/trace-ceiling pair with a recorded process exit, even when no change
-exceeds its reporting threshold. Thresholds depend on the trace ceiling:
-
-| Trace ceiling | Time, size-group mean | Time, one case | Peak RSS, group mean and one case |
-|---|---:|---:|---:|
-| below 2^20 | 3% | 3% | 15% |
-| 2^20 to 2^21 | 3% | 4.5% | 15% |
-| 2^22 to 2^23 | 2% | 2.5% | 9% |
-| 2^24 to 2^26 | 1% | 2% | 3% |
-| 2^27 and above | 1% | 1% | 3% |
-
-`SIZE_THRESHOLDS` in `scripts/bench/calibration.py` defines these values, and
-`scripts/bench/README.md` records the measurements behind them. The comment keeps
+exceeds its reporting threshold. Thresholds depend on the trace ceiling; the
+[producer README](https://github.com/a16z/jolt/blob/main/scripts/bench/README.md#reporting-thresholds)
+gives the table, which `SIZE_THRESHOLDS` in `scripts/bench/calibration.py`
+defines, and the measurements behind it. The comment keeps
 a case's row only when its time or peak-RSS change exceeds the larger of the
 table value and that metric's observed envelope, comparing head/base and
 base/head symmetrically. A missing envelope leaves the table value alone. A size

@@ -158,14 +158,16 @@ class IngestTests(unittest.TestCase):
     def test_pr_comment_lists_size_groups_whose_mean_change_exceeds_the_group_threshold(self):
         result = inputs()[0]
         template = result['cases'].pop()
-        for workload, cores, scale, seconds, rss in [
-                ('fibonacci', 24, 24, 98.5, 10000), ('sha2-chain', 24, 24, 99, 10000),
-                ('fibonacci', 24, 16, 98, 10000), ('sha2-chain', 24, 16, 97.5, 10000),
-                ('fibonacci', 8, 20, 106, 10000), ('sha2-chain', 8, 20, 94, 10000),
-                ('fibonacci', 24, 22, 100, 11000), ('sha2-chain', 24, 22, 100, 11000),
-                ('fibonacci', 24, 27, 98.5, 10000)]:
+        for workload, pcs, cores, scale, seconds, rss in [
+                ('fibonacci', 'akita', 24, 24, 98.5, 10000), ('sha2-chain', 'akita', 24, 24, 99, 10000),
+                ('fibonacci', 'dory', 24, 24, 99.5, 10000), ('sha2-chain', 'dory', 24, 24, 100, 10000),
+                ('fibonacci', 'akita', 8, 24, 100, 10000), ('sha2-chain', 'akita', 8, 24, 100.2, 10000),
+                ('fibonacci', 'dory', 24, 16, 98, 10000), ('sha2-chain', 'dory', 24, 16, 97.5, 10000),
+                ('fibonacci', 'dory', 8, 20, 106, 10000), ('sha2-chain', 'dory', 8, 20, 94, 10000),
+                ('fibonacci', 'dory', 24, 22, 100, 11000), ('sha2-chain', 'dory', 24, 22, 100, 11000),
+                ('fibonacci', 'dory', 24, 27, 98, 10000)]:
             case = copy.deepcopy(template)
-            case.update(workload=workload, physical_cores=cores, scale_log2=scale)
+            case.update(workload=workload, pcs=pcs, physical_cores=cores, scale_log2=scale)
             for sample in case['samples']:
                 sample['metrics'].update(e2e_s=100 if sample['leg'] == 'base' else seconds,
                                          peak_rss_bytes=10000 if sample['leg'] == 'base' else rss)
@@ -173,12 +175,13 @@ class IngestTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             summary = Path(directory) / 'summary.md'
             comment = ingest.render_pr_comment(result, summary, 'https://fixture.invalid/results')
-            groups = [line for line in comment.splitlines() if line.startswith('| dory |')]
+            groups = [line for line in comment.splitlines() if line.startswith(('| akita |', '| dory |'))]
             self.assertEqual(groups, [
-                '| dory | 24 | 2^24 | 2 | End-to-end time | -1.25% | 1.00% | -1.50% to -1.00% |',
+                '| akita | 24 | 2^24 | 2 | End-to-end time | -1.25% | 1.00% | -1.50% to -1.00% |',
                 '| dory | 24 | 2^22 | 2 | Peak RSS | +10.00% | 9.00% | +10.00% to +10.00% |'])
-            self.assertEqual([line for line in summary.read_text().splitlines() if line.startswith('| dory |')], groups)
-        cases = [line.split(' | ')[:3] for line in comment.splitlines() if ' / dory | ' in line]
+            self.assertEqual([line for line in summary.read_text().splitlines()
+                              if line.startswith(('| akita |', '| dory |'))], groups)
+        cases = [line.split(' | ')[:3] for line in comment.splitlines() if ' / akita | ' in line or ' / dory | ' in line]
         self.assertEqual(cases, [['| fibonacci / dory', '8', '2^20'], ['| sha2-chain / dory', '8', '2^20'],
                                  ['| fibonacci / dory', '24', '2^22'], ['| sha2-chain / dory', '24', '2^22'],
                                  ['| fibonacci / dory', '24', '2^27']])

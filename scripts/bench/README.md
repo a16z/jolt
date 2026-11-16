@@ -607,7 +607,7 @@ definition; the sticky comment and the check summary render their numbers from i
 | 2^20 to 2^21 | 3% | 4.5% | 15% |
 | 2^22 to 2^23 | 2% | 2.5% | 9% |
 | 2^24 to 2^26 | 1% | 2% | 3% |
-| 2^27 and above | 1% | 1% | 3% |
+| 2^27 and above | 1% | 1.5% | 3% |
 
 A case is listed when a metric's change exceeds the larger of its table value and
 that metric's observed envelope for the case ("External calibration lifecycle"
@@ -619,16 +619,41 @@ group column. A calibration reference holds
 no null for a group mean, so the table applies alone there. A case without a
 trace ceiling uses the largest value of each column.
 
-Every value is above the largest null of its statistic measured at that size:
-in the windows of four calibration references (main `8a928741`, `0537900e`,
-`47b8cba4` and `27c56e54`, November 15 and 16, 2026) and between the base legs
-of PR runs that shared a base binary. The one-case time column is the largest
-such null in its row's range of sizes, rounded up to the next 0.5 percentage
-points: 2.65% at 2^18, 4.22% at 8-core 2^20, 2.48% at 2^22, 1.53% at 2^24 and
-0.98% at 2^27. The table has no core-count
-dimension, so 24-core 2^20 cases, whose null reached 2.32%, share the 4.5% that
-the 8-core cases require. Peak-RSS nulls reached 12.53% at 2^18, 14.46% at 2^20,
-8.70% at 2^22 and 2.13% at 2^24.
+Each value starts from the sensitivity requested for its row and is raised,
+where needed, to the next 0.5 percentage points above the largest null of its
+statistic within the row's range of sizes. The nulls are those of November 15
+and 16, 2026: the windows of the six calibration references published on those
+dates (main `8a928741`, `0537900e`, `11f6519d`, `40dedcdd`, `47b8cba4` and
+`27c56e54`), and the differences between the base legs of PR runs that shared a
+base binary. No null raised the group-mean time column or the peak-RSS column,
+which hold the requested sensitivities. The one-case time column was raised in
+four rows, by nulls of 4.22% at 8-core 2^20, 2.48% at 2^22, 1.53% at 2^24 and
+1.07% at 2^27. The table has no core-count dimension, so the 24-core 2^20 cases,
+whose null reached 2.32%, share the value that the 8-core cases require. The
+suite has no group of two or more cases at 2^27, so no null stands behind that
+group value, and the single 2^27 case does not reach the sensitivity requested
+there.
+
+The values do not clear every published null. Of the 51 references published
+from November 6 to 16, 2026 (44 main revisions), 13 references (12 revisions)
+hold a one-case null at or above its table value:
+
+| Size group | Metric | References with such a null, of those measuring the group | Largest null |
+|---|---|---:|---:|
+| Akita, 24 cores, 2^18 | time | 2 of 44 | 3.47% |
+| Akita, 8 cores, 2^20 | time | 4 of 51 | 5.42% |
+| Akita, 8 cores, 2^20 | peak RSS | 8 of 51 | 23.00% |
+| Akita, 24 cores, 2^22 | peak RSS | 1 of 51 | 9.17% |
+| Akita, 24 cores, 2^24 | time | 1 of 44 | 2.08% |
+
+No group-mean null in those references reaches its group value. The table is
+not raised to these maxima, which would put it outside the requested
+sensitivities. With a matching reference a case's threshold is also at least
+its envelope, so a reference from such a session raises the threshold for runs
+against its revision. Without a matching reference the table applies alone, and
+a comment can list a case of an unchanged binary. The counts above say how many
+references held such a null among their eight windows per case, not how often
+one three-pair comparison produces a listing.
 
 ### External calibration lifecycle
 

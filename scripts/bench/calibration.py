@@ -14,14 +14,14 @@ import tempfile
 METHOD = 'null-median3-symmetric-envelope-v3'
 NORMALIZATION = 'elf-no-build-id-comment-v1'
 # Percent reporting thresholds by trace ceiling; a row applies from its `from_scale_log2` up to the next row's.
-# This is their only definition: selection and every rendered sentence read it, and scripts/bench/README.md
-# ("Reporting thresholds") records the null measurements each value sits above.
+# This is their only definition: selection and every rendered sentence read it. scripts/bench/README.md
+# ("Reporting thresholds") gives the rule that derives each value and how often published nulls reach it.
 SIZE_THRESHOLDS = (
     {'from_scale_log2': 0, 'group_time': 3.0, 'case_time': 3.0, 'rss': 15.0},
     {'from_scale_log2': 20, 'group_time': 3.0, 'case_time': 4.5, 'rss': 15.0},
     {'from_scale_log2': 22, 'group_time': 2.0, 'case_time': 2.5, 'rss': 9.0},
     {'from_scale_log2': 24, 'group_time': 1.0, 'case_time': 2.0, 'rss': 3.0},
-    {'from_scale_log2': 27, 'group_time': 1.0, 'case_time': 1.0, 'rss': 3.0},
+    {'from_scale_log2': 27, 'group_time': 1.0, 'case_time': 1.5, 'rss': 3.0},
 )
 
 

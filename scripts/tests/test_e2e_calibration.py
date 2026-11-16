@@ -4,6 +4,7 @@ import io
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -95,7 +96,7 @@ class CalibrationTests(unittest.TestCase):
     def test_size_thresholds_follow_the_table_and_rise_to_an_observed_envelope(self):
         for scale, group_time, case_time, rss in [
                 (16, 3, 3, 15), (19, 3, 3, 15), (20, 3, 4.5, 15), (21, 3, 4.5, 15), (22, 2, 2.5, 9), (23, 2, 2.5, 9),
-                (24, 1, 2, 3), (26, 1, 2, 3), (27, 1, 1, 3), (30, 1, 1, 3), (None, 3, 4.5, 15)]:
+                (24, 1, 2, 3), (26, 1, 2, 3), (27, 1, 1.5, 3), (30, 1, 1.5, 3), (None, 3, 4.5, 15)]:
             with self.subTest(scale=scale):
                 self.assertEqual(calibration.size_thresholds(scale), {
                     'case': {'e2e_s': case_time, 'peak_rss_bytes': rss},
@@ -104,10 +105,16 @@ class CalibrationTests(unittest.TestCase):
         self.assertEqual(calibration.case_thresholds(24, observed), {'e2e_s': 2.5, 'peak_rss_bytes': 4})
         self.assertEqual(calibration.case_thresholds(20, observed), {'e2e_s': 4.5, 'peak_rss_bytes': 15})
         self.assertEqual(calibration.case_thresholds(24, None), {'e2e_s': 2, 'peak_rss_bytes': 3})
-        self.assertEqual(calibration.size_thresholds_text(),
+        text = calibration.size_thresholds_text()
+        self.assertEqual(text,
             "Trace-size thresholds (a size group's mean time / one case's time / peak RSS of either): "
             'below 2^20, 3% / 3% / 15%; 2^20 to 2^21, 3% / 4.5% / 15%; 2^22 to 2^23, 2% / 2.5% / 9%; '
-            '2^24 to 2^26, 1% / 2% / 3%; 2^27 and above, 1% / 1% / 3%.')
+            '2^24 to 2^26, 1% / 2% / 3%; 2^27 and above, 1% / 1.5% / 3%.')
+        documented = Path(calibration.__file__).with_name('README.md').read_text().split(
+            '### Reporting thresholds')[1].split('\n### ')[0]
+        rows = re.findall(r'^\| ([^|]+) \| ([\d.]+%) \| ([\d.]+%) \| ([\d.]+%) \|$', documented, re.M)
+        self.assertEqual('; '.join(f'{sizes}, {group} / {case} / {rss}' for sizes, group, case, rss in rows) + '.',
+                         text.split(': ')[1])
 
     def test_normalization_admits_only_nonwritable_nonexecutable_metadata(self):
         if not all(shutil.which(tool) for tool in ('cc', 'objcopy', 'readelf')):
