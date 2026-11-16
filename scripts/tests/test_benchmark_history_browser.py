@@ -36,7 +36,9 @@ class BenchmarkHistoryBrowserTests(unittest.TestCase):
             data["started_at"] = f"2026-01-{number - 100:02}T00:00:00Z"
             data["finished_at"] = f"2026-01-{number - 100:02}T00:01:00Z"
             data["host"]["settings"].update(swap_total_bytes=8589930496, swap_free_bytes=8165384192)
-            data["builds"][0]["host"]["settings"] = {"swap_total_bytes": 8589930496, "swap_free_bytes": 8165384192}
+            data["host"]["control_plane"] = {"version": f"SYNTHETIC node {number}"}
+            data["builds"][0]["host"].update(id=f"SYNTHETIC build host {number}", settings={
+                "swap_total_bytes": 8589930496, "swap_free_bytes": 8165384192})
             case = data["cases"][0]
             if number == 101:
                 for sample, proof_bytes, trace_rows in zip(case["samples"][1:], [123455, 123457], [4194300, 4194302]):
@@ -176,16 +178,18 @@ class BenchmarkHistoryBrowserTests(unittest.TestCase):
             self.assertEqual(build["cargo_lock_sha256"], "c" * 64)
             changed = self.page.locator("#history-rows tr").filter(has_text="Run 1104, attempt 1")
             self.assertEqual(changed.locator("td").nth(2).inner_text().splitlines()[0], "32")
-            build = json.loads(changed.locator("pre").text_content())["build"]
+            details = json.loads(changed.locator("pre").text_content())
+            build = details["build"]
             self.assertEqual(build["host"]["settings"]["swap_free_bytes"], 8110710784)
+            self.assertEqual(build["host"]["id"], "SYNTHETIC build host 104")
+            self.assertEqual(details["host_control_plane"], {"version": "SYNTHETIC node 104"})
             raw_link = changed.get_by_role("link", name="Raw JSON", exact=True).get_attribute("href")
             raw = self.page.request.get(self.url + raw_link).json()
             self.assertEqual(raw["host"]["settings"]["swap_free_bytes"], 8110710784)
             self.assertEqual(raw["builds"][0]["host"], build["host"])
             configuration = json.loads(self.page.locator("#regime-select").input_value())
-            for host in (configuration["host"], configuration["build_settings"]["host"]):
-                self.assertEqual(host["settings"]["swap_total_bytes"], 8589930496)
-                self.assertNotIn("swap_free_bytes", host["settings"])
+            self.assertEqual(configuration["host"]["settings"]["swap_total_bytes"], 8589930496)
+            self.assertNotIn("swap_free_bytes", configuration["host"]["settings"])
         self.select_point(cores=8)
         self.assertEqual(self.page.locator(".chart-point").count(), 1)
         self.select_point(cores=24)

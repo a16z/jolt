@@ -74,13 +74,32 @@ repetitions and missing metrics have no plotted value and break the line. The
 initial view loads the newest 30 records; **Load older runs** retains and reads
 earlier records. Each rerun attempt remains distinct.
 
-Inputs, PCS, core count (1/8/24), scale, tier and leg separate points. Host,
-CPU affinity, compiler, target, flags, profile and harness separate configurations.
+Inputs, PCS, core count (1/8/24), scale, tier and leg separate points. Two things
+separate configurations. The first is the machine that ran the proof: the case's
+CPU affinity and every recorded field of the run host except the two omitted
+below (machine ID, hostname, CPU model, flags and topology, kernel, microcode,
+memory size and settings). The second is the build settings that can change the
+binary: compiler, Cargo version, target triple, CPU and features, flags, profile,
+harness file hashes and the benchmark runner's hash.
+
+Three recorded fields describe one run without changing what it measures, so
+configuration identity omits them:
+
+- `swap_free_bytes` is a changing observation; swap capacity and the other
+  settings remain.
+- `control_plane` is the version and binary hashes of the Pika management node
+  and CLI on the run host. The proof process never executes them, and a version
+  does not say how busy the node was during a run.
+- The build manifest's `host` is a snapshot of the machine that built the binary.
+  On main and nightly that machine is a disposable hosted runner, which never
+  runs the proof. On pull requests it is the run host itself, which the
+  run-host fields above already identify. Whatever the build machine changes in
+  the binary shows in the per-point binary hash.
+
 Source revisions, binary/guest/lockfile/schedule hashes remain per-point metadata.
-Only the changing `swap_free_bytes` observation is omitted from configuration
-identity; capacity and other settings remain. **Build and source** retains the
-original full build manifest. Its construction time is not the current cost of
-reusing a bundle; current preparation is `wall_time.build_s`.
+**Build and source** shows each run's `control_plane` and its original full build
+manifest, including the build machine. The manifest's construction time is not
+the current cost of reusing a bundle; current preparation is `wall_time.build_s`.
 
 `e2e_s` covers prebuilt guest loading, tracing, preprocessing, setup, proving and
 serialization, excluding compilation and verification. `prove_s` covers only the
