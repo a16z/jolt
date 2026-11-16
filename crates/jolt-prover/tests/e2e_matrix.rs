@@ -571,7 +571,7 @@ mod matrix {
         use super::StreamingFamilies;
         use jolt_akita::{AkitaChunkProfile, AkitaField, AkitaScheduleArtifacts, AkitaScheme};
         use jolt_prover::akita;
-        use jolt_prover::akita::preprocessing::{self, AkitaProverPreprocessing, AkitaVc};
+        use jolt_prover::akita::preprocessing::{self, AkitaVc};
         use jolt_prover::JoltBackend;
         use jolt_prover::ProverConfig;
         use jolt_transcript::{Keccak, ProverState, VerifierState};
@@ -619,14 +619,10 @@ mod matrix {
                     .with_streamed_ring_switch()
                     .expect("streamed ring-switch setup");
             }
-            // An advice commitment opens only on the backend that made it.
-            let commit_trusted = |preprocessing: &AkitaProverPreprocessing| {
-                trusted_advice.then(|| {
-                    preprocessing::commit_trusted_advice(preprocessing, &case.trusted_advice)
-                        .expect("trusted advice commitment")
-                })
-            };
-            let trusted = commit_trusted(&preprocessing);
+            let trusted = trusted_advice.then(|| {
+                preprocessing::commit_trusted_advice(&preprocessing, &case.trusted_advice)
+                    .expect("trusted advice commitment")
+            });
             let program_preprocessing = preprocessing
                 .program_arc()
                 .expect("full program preprocessing");
@@ -660,7 +656,6 @@ mod matrix {
             .expect("Akita proof must verify");
             if families != StreamingFamilies::default() {
                 preprocessing.pcs_setup = eager_setup;
-                let trusted = commit_trusted(&preprocessing);
                 let eager = akita::prove::<AkitaField, AkitaScheme, AkitaVc, ProverState<Keccak>>(
                     JoltBackend::optimized().with_witness(&witness),
                     &preprocessing,
