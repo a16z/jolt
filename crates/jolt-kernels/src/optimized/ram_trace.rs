@@ -441,11 +441,20 @@ pub(crate) fn validate_addresses<F: JoltField>(
     Ok(())
 }
 
-const FOLD_CYCLES_CHUNK: usize = 1 << 20;
+/// Bytes of `ram_k`-entry sums the parallel cycle fold may hold beside its
+/// result.
+#[cfg(feature = "parallel")]
+const FOLD_CYCLES_PART_BYTES: usize = 256 << 20;
 
 /// Cycle fold of the one-hot `ra` grid:
 /// `out[k] = Σ_j eq(r_cycle, j) · ra(k, j) = Σ_{j : addresses[j] = k} eq_cycle[j]`.
-/// Eq values are generated in chunks from `e_hi ⊗ e_lo`.
+/// Eq values come from `e_hi ⊗ e_lo`, for the cycles with an access only.
+///
+/// The sum scatters by address, so the cycles split into as many parts as
+/// the pool has threads, each with a `ram_k`-entry sum of its own, added at
+/// the end. The parts beside the result stay within
+/// [`FOLD_CYCLES_PART_BYTES`]; a larger address space takes fewer parts,
+/// down to the one walk a build without `parallel` makes.
 pub(crate) fn fold_cycles<F: JoltField>(
     addresses: &RamAddresses,
     r_cycle: &[F],
@@ -458,38 +467,45 @@ pub(crate) fn fold_cycles<F: JoltField>(
     let e_lo = EqPolynomial::<F>::evals(r_lo, None);
     let lo_bits = r_lo.len();
     let lo_mask = e_lo.len() - 1;
-
-    let mut out = vec![F::zero(); ram_k];
-    let mut staging: Vec<F> = vec![F::zero(); FOLD_CYCLES_CHUNK.min(addresses.len())];
-    for (chunk_index, chunk) in addresses.chunks(FOLD_CYCLES_CHUNK).enumerate() {
-        let base = chunk_index * FOLD_CYCLES_CHUNK;
-        let staging = &mut staging[..chunk.len()];
-        let fill = |(offset, slot): (usize, &mut F)| {
-            let j = base + offset;
-            *slot = e_hi[j >> lo_bits] * e_lo[j & lo_mask];
-        };
-        #[cfg(feature = "parallel")]
-        staging
-            .par_iter_mut()
-            .enumerate()
-            .with_min_len(1 << 10)
-            .for_each(fill);
-        #[cfg(not(feature = "parallel"))]
-        staging.iter_mut().enumerate().for_each(fill);
-
-        for (&address, &eq) in chunk.iter().zip(staging.iter()) {
+    let fold_part = |first_cycle: usize, part: &[u32]| {
+        let mut out = vec![F::zero(); ram_k];
+        for (offset, &address) in part.iter().enumerate() {
             if address != NO_ACCESS {
-                out[address as usize] += eq;
+                let j = first_cycle + offset;
+                out[address as usize] += e_hi[j >> lo_bits] * e_lo[j & lo_mask];
             }
         }
+        out
+    };
+
+    #[cfg(feature = "parallel")]
+    {
+        let extra_parts = FOLD_CYCLES_PART_BYTES / (ram_k * size_of::<F>()).max(1);
+        let parts = rayon::current_num_threads().min(1 + extra_parts);
+        // A part shorter than the address space would spend more on its sum
+        // than on its cycles.
+        let part_len = addresses.len().div_ceil(parts).max(ram_k).max(1);
+        addresses
+            .par_chunks(part_len)
+            .enumerate()
+            .map(|(index, part)| fold_part(index * part_len, part))
+            .reduce_with(|mut sum, part| {
+                sum.par_iter_mut()
+                    .zip(part)
+                    .with_min_len(1 << 12)
+                    .for_each(|(sum, value)| *sum += value);
+                sum
+            })
+            .unwrap_or_else(|| vec![F::zero(); ram_k])
     }
-    out
+    #[cfg(not(feature = "parallel"))]
+    fold_part(0, addresses)
 }
 
 #[cfg(test)]
 #[expect(clippy::panic, clippy::unwrap_used, reason = "test module")]
 mod tests {
-    use jolt_field::Fr;
+    use jolt_field::{Fr, Ring, Zero};
     use jolt_witness::testing::with_sample_backend;
 
     use super::*;
@@ -542,6 +558,33 @@ mod tests {
                 ram_access_columns_bytes(prefix_cycles, 2).unwrap()
             );
         });
+    }
+
+    /// Many more cycles than addresses, so the fold splits into one part per
+    /// pool thread; the sum is checked against the unsplit eq table.
+    #[test]
+    fn cycle_fold_matches_the_eq_table_across_parts() {
+        let (log_t, ram_k) = (12, 4);
+        let cycles = 1usize << log_t;
+        let values: Vec<u32> = (0..cycles)
+            .map(|j| {
+                if j % 3 == 0 {
+                    NO_ACCESS
+                } else {
+                    (j % 5 % ram_k) as u32
+                }
+            })
+            .collect();
+        let r_cycle: Vec<Fr> = (0..log_t).map(|i| Fr::from_u64(7 + 3 * i as u64)).collect();
+        let eq = EqPolynomial::<Fr>::evals(&r_cycle, None);
+        let mut expected = vec![Fr::zero(); ram_k];
+        for (&address, &weight) in values.iter().zip(&eq) {
+            if address != NO_ACCESS {
+                expected[address as usize] += weight;
+            }
+        }
+        let addresses = RamAddresses::new(values, cycles);
+        assert_eq!(fold_cycles(&addresses, &r_cycle, ram_k), expected);
     }
 
     #[test]
