@@ -8,6 +8,13 @@ ark-ec = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist
 ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
 ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
 
+# Akita consumes these from the Jolt Git source; as in the root workspace,
+# redirect them to the workspace members so Cargo resolves one identity for each.
+[patch."https://github.com/a16z/jolt"]
+jolt-field = { path = "../../jolt-field" }
+jolt-poly = { path = "../../jolt-poly" }
+jolt-transcript = { path = "../../jolt-transcript" }
+
 [package]
 name = "jolt-verifier-fuzz"
 version = "0.0.0"
@@ -42,6 +49,13 @@ pr-seconds = 15
 daily-seconds = 300
 weekly-seconds = 900
 
+[package.metadata.jolt-fuzz.targets.akita_proof_deserialize_no_panic]
+focus = "defensive"
+cargo-features = ["akita"]
+pr-seconds = 15
+daily-seconds = 300
+weekly-seconds = 900
+
 [package.metadata.jolt-fuzz.targets.validate_inputs_no_panic]
 focus = "defensive"
 pr-seconds = 15
@@ -50,10 +64,12 @@ weekly-seconds = 900
 
 [features]
 zk = ["jolt-verifier/zk"]
+akita = ["jolt-verifier/akita", "dep:jolt-akita"]
 
 [dependencies]
 libfuzzer-sys = "0.4"
 jolt-verifier = { path = "..", features = ["fuzzing"] }
+jolt-akita = { path = "../../jolt-akita", optional = true }
 jolt-claims = { path = "../../jolt-claims" }
 jolt-crypto = { path = "../../jolt-crypto" }
 jolt-dory = { path = "../../jolt-dory" }
@@ -77,6 +93,14 @@ path = "fuzz_targets/proof_deserialize_no_panic.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "akita_proof_deserialize_no_panic"
+path = "fuzz_targets/akita_proof_deserialize_no_panic.rs"
+test = false
+doc = false
+bench = false
+required-features = ["akita"]
 
 [[bin]]
 name = "validate_inputs_no_panic"

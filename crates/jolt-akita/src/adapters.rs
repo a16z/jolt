@@ -1053,9 +1053,7 @@ pub struct AkitaCommitment {
     /// Field-coefficient count of the serialized backend commitment — the
     /// deserialization context [`akita_types::Commitment`] requires.
     pub(crate) backend_coeff_len: usize,
-    // `serde_bytes` on byte payloads decodes them as one copy; bincode
-    // otherwise walks a `Vec<u8>` element by element, ~27 guest cycles per byte.
-    #[serde(with = "serde_bytes")]
+    #[serde(with = "crate::byte_string")]
     pub(crate) serialized_backend_bytes: Vec<u8>,
 }
 
@@ -1192,7 +1190,7 @@ pub struct AkitaBatchProof {
     /// Akita's argument on the standalone paths. Empty for Jolt's trace batch,
     /// whose argument is in Jolt's argument string; its verifier rejects a
     /// non-empty body.
-    #[serde(with = "serde_bytes")]
+    #[serde(with = "crate::byte_string")]
     pub(crate) backend_proof: Vec<u8>,
 }
 

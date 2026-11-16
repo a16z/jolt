@@ -33,6 +33,7 @@
 )]
 
 mod adapters;
+mod byte_string;
 pub mod configs;
 pub mod deferred;
 pub mod family_contract;
