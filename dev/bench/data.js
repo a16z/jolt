@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794821235610,
+  "lastUpdate": 1794840373173,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -254914,6 +254914,270 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 888992,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "atretyakov@a16z.com",
+            "name": "Andrew Tretyakov",
+            "username": "0xAndoroid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "47b8cba4eeb2462c82f7872aaf45aa822a23f1d7",
+          "message": "perf(tracer): convert cycles to trace rows while the emulator runs (#2466)\n\n* perf(tracer): convert cycles to trace rows in chunks while the emulator runs\n\nTracerBackend::trace ran the whole guest into one Vec<Cycle> (96 B per\ncycle) and then converted it, so the cycle buffer and the rows (64 B per\nrow) were resident together. The serial path now converts each 2^22\nbuffered cycles as the emulator produces them and reuses the buffer, so\nthe tracing peak is the rows plus about 384 MiB of cycles. Rows,\ndimensions and field events are unchanged; the two-pass parallel path and\ntracer::trace, which returns the cycles, are unchanged.\n\nThe buffer is that large because a smaller one costs time when the rayon\npool spans several L3 domains: the emulator refills the buffer right after\nthe pool has read it, and on an EPYC 9354P it refills a small buffer\nseveral times slower when the pool's threads run in another L3 domain than\nits own. There, on runs of 9 to 50 million cycles, a 2^20-cycle buffer is\nbetween 13% faster and 1% slower than converting the whole run at once,\nand 2^21 and 2^22 cycles are 24% to 51% faster.\n\ntry_trace had no caller left besides trace and is folded into it. The\ntrace-gen baseline harness reads the seam's peak RSS before its raw runs,\nwhose whole-run cycle vector would now set the high-water mark.\n\n* perf(tracer): rotate cycle buffers and convert them while the emulator runs\n\nThe serial path reused one 2^22-cycle buffer and converted it while the\nemulator waited. The emulator is slow to refill a buffer that the rayon\npool has just read. With 4 KiB pages the page faults saved by the reuse\nhid that cost. With huge pages behind the heap, where fresh memory is\ncheap, tracing 9 to 50 million cycles was 39% to 76% slower than\nconverting the whole run at once (EPYC 9354P).\n\nThe serial path now rotates six buffers of 2^21 cycles. The pool converts\nthe buffer filled last while the emulator fills the buffer converted\nlongest ago, so four other conversions pass before a buffer is refilled,\nand the conversion no longer blocks the emulator. On that CPU tracing 2\nto 50 million cycles is 5% to 55% faster than main with 4 KiB pages and\n8% to 26% faster with huge pages. Tracing holds the rows plus at most\n1.1 GiB of cycles; a run of up to 12.6 million cycles fits the six\nbuffers and holds what it held on main.\n\nThree jolt-eval comments and the trace-gen baseline legend described the\nseam as raw tracing plus the conversion; they now say what the two\ntimings measure.\n\n* docs(tracer): describe the rotating buffers in two comments\n\nThe doc comment of serial_tracing_composes_across_conversion_chunks and a\ncomment in jolt-eval's trace-gen-baseline harness still described the one\nreused cycle buffer of the first commit. No code changes.",
+          "timestamp": "2026-11-16T08:44:57-05:00",
+          "tree_id": "126085554568a51166dc93318f4de4fe2a92f0e1",
+          "url": "https://github.com/a16z/jolt/commit/47b8cba4eeb2462c82f7872aaf45aa822a23f1d7"
+        },
+        "date": 1794840365491,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 3.0053,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 888936,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.2009,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 463816,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 464280,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 464140,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.6866,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 463852,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-mem",
+            "value": 889008,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 1.518,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 463740,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 3.9546,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 463792,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 4.4966,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 131268,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.5619,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 889288,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.5316,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 463828,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.3916,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 464136,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 20.7939,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 464024,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 4.4732,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 463512,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 29.8175,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 699148,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 14.4139,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 607496,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 60.1614,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 645100,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.5035,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 463960,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.7405,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 464300,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 15.8209,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 889172,
             "unit": "KB",
             "extra": ""
           }
