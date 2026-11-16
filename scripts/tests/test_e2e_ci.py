@@ -441,6 +441,34 @@ const github = {
             self.assertFalse(receipt['enabled'])
             self.assertIn('stale or replayed', receipt['reason'])
 
+    def test_pr_merge_base_without_a_suite_workload_is_refused_with_the_remedy(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            event = root / 'event.json'
+            event.write_text('{}')
+            suite = ci.bench.DEFAULT_CONFIG.read_bytes()
+            older = json.loads(suite)
+            workload = older['tiers']['main']['cases'][-1]['workload']
+            for tier in older['tiers'].values():
+                tier['cases'] = [case for case in tier['cases'] if case['workload'] != workload]
+            sources = {'a' * 40: suite, 'd' * 40: json.dumps(older).encode()}
+            resolved = ('a' * 40, [{'base': 'd' * 40, 'head': 'c' * 40, 'submitted_head': 'b' * 40}], 7,
+                        {'label_created_at': '2026-11-02T18:00:00Z'})
+            actual = {'event': 'pull_request_target', 'path': ci.bench.WORKFLOW_FILE, 'head_sha': 'b' * 40,
+                      'run_attempt': 1, 'created_at': '2026-11-02T18:00:01Z'}
+            with patch.dict(os.environ, GITHUB_EVENT_PATH=str(event), GITHUB_EVENT_NAME='pull_request_target',
+                    GITHUB_REPOSITORY='a16z/jolt', GITHUB_REF='refs/heads/main', GITHUB_SHA='a' * 40, GITHUB_RUN_ID='123',
+                    GITHUB_RUN_ATTEMPT='1', JOLT_E2E_ENABLED='true', GITHUB_OUTPUT=str(root / 'outputs'),
+                    GITHUB_STEP_SUMMARY=str(root / 'summary')), patch.object(ci, 'resolve', return_value=resolved), \
+                    patch.object(ci, 'github', return_value=actual), \
+                    patch.object(ci, 'git_file', side_effect=lambda revision, name: sources[revision]), \
+                    patch.object(ci.bench, 'harness_files') as native_inputs:
+                self.assertEqual(ci.plan(argparse.Namespace(config=ci.bench.DEFAULT_CONFIG, out=root / 'plan')), 0)
+                native_inputs.assert_not_called()
+            receipt = json.loads((root / 'plan/plan.json').read_text())
+            self.assertFalse(receipt['enabled'])
+            self.assertRegex(receipt['reason'], f'{"d" * 10}, which lacks the suite workload {workload}; push to the PR branch')
+
     def test_unsupported_privileged_requests_keep_a_successful_receipt_job(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

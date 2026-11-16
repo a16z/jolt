@@ -74,12 +74,12 @@ checked-in witness for the first transaction of mainnet block 26429593, which
 `examples/ethereum-transaction/README.md` describes. The guest verifies the
 transaction's state against the parent block's state root, executes it in revm
 and recomputes the state root. Its trace measured 5318508 rows, so it runs
-under a `2^23` ceiling. It runs only at 24 cores: on CherryPika, a shared EPYC
-9354P that is not jolt-bench, one process at one core took 59 seconds with
-Akita and 331 seconds with Dory under other load. Its expanded bytecode
-measured 679691 instructions, which gives the bytecode read-address polynomial
-five factors under both PCS. The five other guests measured at most 22718
-instructions and four factors.
+under a `2^23` ceiling. It runs only at 24 cores, the fewest cases that cover
+the large program: on CherryPika, a shared EPYC 9354P that is not jolt-bench,
+one 8-core Dory proof took 63 seconds end to end under other load. Its expanded
+bytecode measured 679691 instructions, which gives the bytecode read-address
+polynomial five factors under both PCS. The five other guests measured at most
+22718 instructions and four factors.
 
 | Tier | Cases | Warmups / measured repetitions per leg |
 |---|---|---:|
@@ -418,10 +418,19 @@ uses its own native harness instead. Failed build output is published in
 and suite configuration still come from main; the PR's collector code is never
 executed.
 
-A leg whose revision predates a suite workload cannot prepare it under either
-harness, so its build preparation fails. This happens when main's suite has
-gained a workload since GitHub last computed the PR's merge ref; a run requested
-after GitHub recomputes the ref builds normally.
+Neither harness can prepare a workload that a leg's revision lacks, and both
+legs descend from the base of the PR's merge ref. The planner therefore refuses
+a PR run whose merge-ref base lacks a workload of main's suite, and names the
+workload. GitHub recomputes a merge ref when the PR branch is pushed. Pushes to
+main alone do not: on November 16, 2026 the merge ref of #2378 still had the
+base it was created with after several later pushes to main, and reading the PR
+through the API did not change it. Push to the PR branch, for example by
+merging main into it, before requesting the run again.
+
+A main push that carries several first-parent commits builds each of them with
+the tip's harness and no fallback. If the tip adds a workload, the earlier
+commits cannot be built, preparation fails for the whole push, and that push
+records no history and no calibration reference.
 
 Build manifests record the collector revision as `harness_revision`, the actual
 native code as `native_harness_revision`, its file hashes, and any fallback reason

@@ -158,6 +158,18 @@ def plan(args):
         harness = plan['harness']
         if git_file(harness, plan['config']['path']) != args.config.read_bytes():
             raise ValueError('suite configuration differs from the committed harness')
+        if tier == 'pr':
+            # Both legs descend from the merge ref's base, and neither harness
+            # can prepare a workload that base lacks. GitHub recomputes the ref
+            # on a push to the PR branch, not when main moves.
+            base = plan['runs'][0]['base']
+            planned, _ = bench.build_inputs(bench.parse_json(args.config.read_text()))
+            known, _ = bench.build_inputs(bench.parse_json(git_file(base, plan['config']['path']).decode()))
+            missing = sorted(planned.keys() - known.keys())
+            if missing:
+                raise ValueError(f'the PR merge ref is based on main commit {base[:10]}, which lacks the suite '
+                                 f'workload {", ".join(missing)}; push to the PR branch (for example, merge '
+                                 'main into it) so that GitHub recomputes the merge ref')
         harness_files = bench.harness_files(harness)
         for item in plan['runs']:
             for revision in (item['base'], item['head']):
