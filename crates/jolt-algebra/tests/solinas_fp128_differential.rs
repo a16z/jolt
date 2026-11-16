@@ -431,7 +431,6 @@ fn fp128_serde_decodes_canonical_byte_tuples_only() {
     let single_bits = (0..128).map(|bit| 1u128 << bit);
     let random = (0..1000).map(|_| rng.gen::<u128>() % MODULUS);
     for value in limb_boundaries.into_iter().chain(single_bits).chain(random) {
-        // Trailing bytes stay unread: the element is a fixed 16-byte tuple.
         let mut input = value.to_le_bytes().to_vec();
         input.extend_from_slice(&[0xaa, 0xbb]);
         assert_eq!(decode(&input), Ok((Some(value), 16)), "{value:#x}");
@@ -449,7 +448,6 @@ fn fp128_serde_decodes_canonical_byte_tuples_only() {
         assert_eq!(decode(&value.to_le_bytes()), rejected, "{value:#x}");
     }
     for length in 0..16 {
-        // A short input fails exactly as the 16-byte array it replaces does.
         let short = &[0u8; 16][..length];
         let as_bytes = bincode::serde::decode_from_slice::<[u8; 16], _>(short, config)
             .err()

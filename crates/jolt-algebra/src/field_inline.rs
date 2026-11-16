@@ -258,7 +258,6 @@ mod emit {
     pub fn mul_out_out_a() {
         fixed!(r_word(FUNCT3_MUL, REG_OUT, REG_OUT, REG_A));
     }
-    /// `OUT = OUT + A`.
     #[inline(always)]
     pub fn out_add_a() {
         fixed!(r_word(FUNCT3_ADD, REG_OUT, REG_OUT, REG_A));

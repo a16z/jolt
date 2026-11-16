@@ -400,9 +400,10 @@ pub trait CanonicalBytes {
 /// Transcript absorption and challenge derivation use the explicit
 /// [`CanonicalBytes`] encoding so the hashed byte stream is specified
 /// independently of any serialization library. Proof/wire serialization goes
-/// through serde + bincode, reusing
-/// [`from_bytes_le_checked`](Self::from_bytes_le_checked) so non-canonical
-/// encodings are rejected uniformly.
+/// through serde + bincode and rejects non-canonical encodings with the same
+/// check: [`from_bytes_le_checked`](Self::from_bytes_le_checked), or for
+/// `Fp128` [`from_u128_checked`](Self::from_u128_checked), which its
+/// `from_bytes_le_checked` calls.
 pub trait CanonicalEncoding:
     CanonicalBytes + Sized + Copy + Default + PartialEq + Eq + Debug + Hash + Send + Sync + 'static
 {

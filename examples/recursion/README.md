@@ -93,5 +93,6 @@ five-row block tail and four-element tail, product arities 0 through 4, nested
 signed-sum iterators, zero/nonzero inverses, and multiply-add against multiply
 then add. The Akita build requires the
 Fp128 row kernels to dispatch; the Dory build checks the BN254 arithmetic
-wrappers. CI runs both. The `kernel-tests` guest feature is used only for this
+wrappers. No CI job runs it: run `check-field-kernels` by hand in both
+builds. The `kernel-tests` guest feature is used only for this
 entry point.

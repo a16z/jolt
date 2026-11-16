@@ -107,8 +107,8 @@ The field-inline unit computes in the one field the outer proof fixes, so the
 guest selects it: `field-inline-guest-fp128` routes the Fp128 protocol prime
 (Akita) and `field-inline-guest-bn254` routes BN254 `Fr` (Dory); every other
 field keeps its software arithmetic. The routed field's dot products, row
-dots, product sums, signed sums, multiplications, and inversions run through
-field-inline instructions (`field_inline.rs`).
+dots, product sums, signed sums, multiplications, multiply-adds, and
+inversions run through field-inline instructions (`field_inline.rs`).
 
 - **Operand ingress** clears a field register (`FIELD_LOAD_IMM 0`), then folds
   the operand's words in with `FIELD_LOAD_ACCUMULATE_FROM_MEMORY` (two for
@@ -310,9 +310,12 @@ recognizes the mask blocks cost more rows (0.36M) than it saved, because the
   final stage above p, and a merged-twist Cooley–Tukey butterfly needs two
   reductions where Gentleman–Sande needs one, so neither saves rows without a
   narrower contract.
-- **Proof field decoding.** Fp128 elements decode through serde's per-byte
-  `[u8; 16]` tuple path (about 100 rows each); a faster path changes the
-  bincode wire format.
+- **Proof field decoding.** Fp128 elements arrive as 16 separate bytes through
+  serde's tuple path, one call per byte, and the decoder assembles two 64-bit
+  words from them. Decoding an element as `u64` or `u128` integers or as a
+  byte string takes fewer calls, but bincode's standard configuration writes
+  those integers at variable length and prefixes a byte string with its
+  length, so either changes the wire format.
 - **Measured and rejected:** a single-pass operator-norm accumulation (more
   rows than the chunked kernel) and a merged per-event cache in the
   compression evaluation (65K rows, not worth the code).
@@ -327,5 +330,5 @@ cargo run --release -p recursion --features akita,field-inline,ntt-inline -- \
   trace --embed --example fibonacci --workdir /tmp/recursion
 ```
 
-CI runs the same flow in embedded mode and requires the guest to reject a proof
-with one tampered opening.
+No CI job runs this flow. It is run by hand, together with the check that the
+guest rejects a proof with one tampered opening.
