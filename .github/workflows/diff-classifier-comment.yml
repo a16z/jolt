@@ -1,0 +1,87 @@
+# Posts the sticky comment of "PR Diff Classification" (diff-classifier.yml) on every pull request,
+# forks included: a fork's pull_request token cannot write one, so it is posted here, after that
+# workflow's run completes. GitHub runs this file and its checkouts from the default branch
+# whatever started the triggering run, which can be a pull request's own copy of any workflow with
+# that name, so only the head GitHub recorded for that run is used. The classify job re-reads the
+# pull request from the API, fetches its head as git objects and reads them with this branch's
+# classifier, never checking them out. The comment job, the only one whose token can write,
+# receives only what that job rendered: fixed text and counts. Runs attach to the default branch's
+# head commit, so nothing here can fail a pull request's checks.
+name: PR Diff Classification comment
+
+on:
+  workflow_run:
+    workflows: [PR Diff Classification]
+    types: [completed]
+
+permissions: {}
+
+# Runs in one group render the same comments for the same head: one at a time, they cannot both
+# create a pull request's first comment, and a queued duplicate that GitHub drops loses nothing.
+concurrency:
+  group: >-
+    ${{ github.workflow }}
+    ${{ github.event.workflow_run.head_repository.id }}
+    ${{ github.event.workflow_run.head_branch }}
+    ${{ github.event.workflow_run.head_sha }}
+  cancel-in-progress: false
+
+jobs:
+  classify:
+    if: github.event.workflow_run.event == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      pulls: ${{ steps.classify.outputs.pulls }}
+    steps:
+      # blob:none keeps the full-history fetch small (commits + trees only);
+      # the classifier needs real history for an exact merge-base, and git
+      # lazily batch-fetches just the blobs the diff touches.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          filter: blob:none
+          persist-credentials: false
+      - name: Classify the open pull requests at the triggering run's head
+        id: classify
+        env:
+          GH_TOKEN: ${{ github.token }}
+        # The credential helper lets git fetch with this job's read-only token, which a private
+        # repository requires, without storing the token in the checkout.
+        run: |
+          gh auth setup-git
+          python3 scripts/ci/diff_classifier_comment.py
+
+  comment:
+    needs: classify
+    if: needs.classify.outputs.pulls != '[]'
+    name: 'comment on #${{ matrix.pull.number }}'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    strategy:
+      matrix:
+        pull: ${{ fromJSON(needs.classify.outputs.pulls) }}
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts/bench
+      - name: Write the rendered comment
+        env:
+          BODY: ${{ matrix.pull.body }}
+        run: printf '%s' "$BODY" > "$RUNNER_TEMP/diff-classifier.md"
+      - name: Upsert the sticky comment unless the head moved
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        with:
+          script: |
+            await require('./scripts/bench/sticky_comment.js')({github, context});
+        env:
+          COMMENT_PATH: ${{ runner.temp }}/diff-classifier.md
+          PR_NUMBER: ${{ matrix.pull.number }}
+          PR_HEAD: ${{ matrix.pull.head }}
