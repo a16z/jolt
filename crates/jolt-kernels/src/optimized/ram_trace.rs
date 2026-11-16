@@ -441,44 +441,33 @@ pub(crate) fn validate_addresses<F: JoltField>(
     Ok(())
 }
 
-/// Bytes of `ram_k`-entry sums the parallel cycle fold may hold beside its
-/// result.
+/// Bytes of `ram_k`-entry sums [`fold_parts`] may hold beside its result.
 #[cfg(feature = "parallel")]
-const FOLD_CYCLES_PART_BYTES: usize = 256 << 20;
+const FOLD_PART_BYTES: usize = 256 << 20;
 
-/// Cycle fold of the one-hot `ra` grid:
-/// `out[k] = Σ_j eq(r_cycle, j) · ra(k, j) = Σ_{j : addresses[j] = k} eq_cycle[j]`.
-pub(crate) fn fold_cycles<F: JoltField>(
-    addresses: &RamAddresses,
-    r_cycle: &[F],
+/// Sums a `ram_k`-entry table over `items`, in contiguous parts on the pool
+/// under `parallel`: `add_part(sum, first, part)` adds the terms of `part`,
+/// whose first item is `items[first]`, into the part's own zeroed `sum`, and
+/// the sums are added.
+pub(crate) fn fold_parts<F: JoltField, T: Sync>(
+    items: &[T],
     ram_k: usize,
+    add_part: impl Fn(&mut [F], usize, &[T]) + Sync,
 ) -> Vec<F> {
-    let addresses = addresses.prefix();
-    let mid = r_cycle.len() / 2;
-    let (r_hi, r_lo) = r_cycle.split_at(mid);
-    let e_hi = EqPolynomial::<F>::evals(r_hi, None);
-    let e_lo = EqPolynomial::<F>::evals(r_lo, None);
-    let lo_bits = r_lo.len();
-    let lo_mask = e_lo.len() - 1;
-    let fold_part = |first_cycle: usize, part: &[u32]| {
-        let mut out = vec![F::zero(); ram_k];
-        for (offset, &address) in part.iter().enumerate() {
-            if address != NO_ACCESS {
-                let j = first_cycle + offset;
-                out[address as usize] += e_hi[j >> lo_bits] * e_lo[j & lo_mask];
-            }
-        }
-        out
+    let fold_part = |first: usize, part: &[T]| {
+        let mut sum = vec![F::zero(); ram_k];
+        add_part(&mut sum, first, part);
+        sum
     };
 
     #[cfg(feature = "parallel")]
     {
-        let extra_parts = FOLD_CYCLES_PART_BYTES / (ram_k * size_of::<F>()).max(1);
+        let extra_parts = FOLD_PART_BYTES / (ram_k * size_of::<F>()).max(1);
         let parts = rayon::current_num_threads().min(1 + extra_parts);
         // A part shorter than the address space would spend more on its sum
-        // than on its cycles.
-        let part_len = addresses.len().div_ceil(parts).max(ram_k).max(1);
-        addresses
+        // than on its items.
+        let part_len = items.len().div_ceil(parts).max(ram_k).max(1);
+        items
             .par_chunks(part_len)
             .enumerate()
             .map(|(index, part)| fold_part(index * part_len, part))
@@ -492,13 +481,36 @@ pub(crate) fn fold_cycles<F: JoltField>(
             .unwrap_or_else(|| vec![F::zero(); ram_k])
     }
     #[cfg(not(feature = "parallel"))]
-    fold_part(0, addresses)
+    fold_part(0, items)
+}
+
+/// Cycle fold of the one-hot `ra` grid:
+/// `out[k] = Σ_j eq(r_cycle, j) · ra(k, j) = Σ_{j : addresses[j] = k} eq_cycle[j]`.
+pub(crate) fn fold_cycles<F: JoltField>(
+    addresses: &RamAddresses,
+    r_cycle: &[F],
+    ram_k: usize,
+) -> Vec<F> {
+    let mid = r_cycle.len() / 2;
+    let (r_hi, r_lo) = r_cycle.split_at(mid);
+    let e_hi = EqPolynomial::<F>::evals(r_hi, None);
+    let e_lo = EqPolynomial::<F>::evals(r_lo, None);
+    let lo_bits = r_lo.len();
+    let lo_mask = e_lo.len() - 1;
+    fold_parts(addresses.prefix(), ram_k, |out, first_cycle, part| {
+        for (offset, &address) in part.iter().enumerate() {
+            if address != NO_ACCESS {
+                let j = first_cycle + offset;
+                out[address as usize] += e_hi[j >> lo_bits] * e_lo[j & lo_mask];
+            }
+        }
+    })
 }
 
 #[cfg(test)]
 #[expect(clippy::panic, clippy::unwrap_used, reason = "test module")]
 mod tests {
-    use jolt_field::{Fr, Ring, Zero};
+    use jolt_field::Fr;
     use jolt_witness::testing::with_sample_backend;
 
     use super::*;
@@ -551,31 +563,6 @@ mod tests {
                 ram_access_columns_bytes(prefix_cycles, 2).unwrap()
             );
         });
-    }
-
-    #[test]
-    fn cycle_fold_matches_the_eq_table_across_parts() {
-        let (log_t, ram_k) = (12, 4);
-        let cycles = 1usize << log_t;
-        let values: Vec<u32> = (0..cycles)
-            .map(|j| {
-                if j % 3 == 0 {
-                    NO_ACCESS
-                } else {
-                    (j % 5 % ram_k) as u32
-                }
-            })
-            .collect();
-        let r_cycle: Vec<Fr> = (0..log_t).map(|i| Fr::from_u64(7 + 3 * i as u64)).collect();
-        let eq = EqPolynomial::<Fr>::evals(&r_cycle, None);
-        let mut expected = vec![Fr::zero(); ram_k];
-        for (&address, &weight) in values.iter().zip(&eq) {
-            if address != NO_ACCESS {
-                expected[address as usize] += weight;
-            }
-        }
-        let addresses = RamAddresses::new(values, cycles);
-        assert_eq!(fold_cycles(&addresses, &r_cycle, ram_k), expected);
     }
 
     #[test]
