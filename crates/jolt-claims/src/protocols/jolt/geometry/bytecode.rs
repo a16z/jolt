@@ -641,9 +641,7 @@ fn read_raf_flag_terms(
 }
 
 /// Dense indices for the distinct [`JoltInstructionRow::flag_class`]es of a
-/// bytecode table, in first-seen order. Every key is below
-/// [`JoltInstructionRow::FLAG_CLASS_KEYS`], so a word table indexed by key
-/// holds `class + 1` (zero for an unseen key).
+/// bytecode table, in first-seen order.
 struct FlagClasses {
     slots: Vec<usize>,
     count: usize,

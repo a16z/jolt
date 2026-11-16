@@ -24,7 +24,7 @@ use jolt_poly::{
     try_eq_mle, IdentityPolynomial, MultilinearEvaluation, OperandPolynomial, OperandSide,
 };
 
-use crate::stages::relations::ConcreteSumcheck;
+use crate::stages::relations::{evaluate_output_expression, ConcreteSumcheck};
 use crate::stages::stage2::{Stage2BatchOutputClaims, Stage2BatchOutputPoints};
 use crate::VerifierError;
 
@@ -249,7 +249,7 @@ impl<F: JoltField> ConcreteSumcheck<F> for InstructionReadRaf<F> {
         challenges: &InstructionReadRafChallenges<F>,
     ) -> Result<F, VerifierError> {
         let mut prepared = None;
-        self.evaluate_output_expression(output_values, challenges, |id| {
+        evaluate_output_expression(self, output_values, challenges, |id| {
             let JoltDerivedId::InstructionReadRaf(public) = id else {
                 return Err(VerifierError::MissingStageClaimDerived { id: (*id).into() });
             };
@@ -263,6 +263,7 @@ impl<F: JoltField> ConcreteSumcheck<F> for InstructionReadRaf<F> {
 }
 
 #[cfg(test)]
+#[expect(clippy::unwrap_used, reason = "test code unwraps its own fixtures")]
 mod tests {
     use super::*;
     use crate::stages::relations::ConcreteSumcheck;
@@ -276,7 +277,6 @@ mod tests {
     /// geometry's `read_raf_output_openings` set. If they drift, the ZK
     /// commitment-count and clear shape-check derived from the `Expr` would be wrong.
     #[test]
-    #[expect(clippy::unwrap_used)]
     fn expected_output_openings_matches_geometry_shape() {
         let dimensions = InstructionReadRafDimensions::try_from((5, 128, 3)).unwrap();
         let expected: std::collections::BTreeSet<_> = {
@@ -306,7 +306,6 @@ mod tests {
     /// leading-half slice, the two transposition traps.
     #[test]
     #[expect(
-        clippy::unwrap_used,
         clippy::as_conversions,
         clippy::indexing_slicing,
         clippy::integer_division,
@@ -383,7 +382,6 @@ mod tests {
     }
 
     #[test]
-    #[expect(clippy::unwrap_used)]
     fn read_raf_output_uses_the_current_point_and_rejects_malformed_points() {
         let relation = InstructionReadRaf::<Fr>::new(
             InstructionReadRafDimensions::try_from((2, 128, 4)).unwrap(),
@@ -424,8 +422,8 @@ mod tests {
                 .unwrap(),
             zero
         );
-        // Nonzero weight on every public value: sharing them across the terms
-        // gives the same output as deriving each term by itself.
+        // Every public value has a nonzero weight, so an error in any one of
+        // them changes the output.
         let weighted_inputs = InstructionReadRafInputClaims {
             lookup_output: vec![Fr::from_u64(3), Fr::from_u64(5)],
             left_lookup_operand: vec![zero; 2],
@@ -450,8 +448,8 @@ mod tests {
             instruction_ra: vec![Fr::from_u64(2); 4],
             instruction_raf_flag: Fr::from_u64(19),
         };
-        let separately = relation
-            .evaluate_output_expression(&weighted_values, &challenges, |id| {
+        let separately =
+            evaluate_output_expression(&relation, &weighted_values, &challenges, |id| {
                 relation.derive_output_term(id, &weighted_inputs, &weighted_points, &challenges)
             })
             .unwrap();
