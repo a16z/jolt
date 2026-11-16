@@ -121,11 +121,12 @@ CLAUDE.md owns these rules; probe each one the change reaches.
 - **Wire formats:** serialized enums stay append-only; fixtures and digests change only on purpose.
 - **Modes:** clear, ZK, Akita and field-inline can break alone; test each one the change reaches.
 - **Prover hot paths:** one pass over the trace; profile a suspected regression (CLAUDE.md).
-- **Other backends:** for each optimization the change adds, decide from the code whether it
-  applies to the other implementations CLAUDE.md's Performance section lists (streaming or eager
-  kernels, Dory or Akita, Metal, the other tracer backend). An applicable one is ported in the
-  change, tracked by an open issue the PR body links, or left out for a stated reason that holds;
-  a missing or wrong answer is a finding.
+- **Other backends:** for each optimization the change adds, find the other implementations of
+  the same work in the tree and decide from their code whether it applies. CLAUDE.md's Performance
+  section gives examples, not a closed list: streaming or eager kernels, Dory or Akita,
+  per-architecture field arithmetic, Metal, the other tracer backend. An applicable one is ported
+  in the change, tracked by an open issue the PR body links, or left out for a stated reason that
+  holds; a missing or wrong answer is a finding.
 
 ## Findings and verdict
 
