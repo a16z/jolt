@@ -65,7 +65,11 @@ Same-value stores remain valid, including byte, halfword and word stores into a
 protected doubleword.
 
 The interpreter, replay tracer and native tracer reject a changed protected
-word before writing it, and reject loads below `lowest_address`. Host calls
+word before writing it, and reject loads below `lowest_address`. They also
+reject an instruction fetch at an address that starts no decoded source
+instruction, such as a jump into data, padding or the middle of an instruction:
+the native tracer compiles only the decoded instructions, and the interpreter
+checks each address before decoding it. Host calls
 (prints, cycle markers and advice writes) are logged and ignored when their
 buffer contains a byte below `lowest_address` or any other byte a guest load
 would reject.

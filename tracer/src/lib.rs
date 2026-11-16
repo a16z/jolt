@@ -425,7 +425,7 @@ pub fn create_emulator(
         emulator.set_elf_path(elf_path);
     }
     emulator.setup_program(elf_contents);
-    emulator.protect_code_region(elf_contents);
+    emulator.protect_code(elf_contents);
     emulator
 }
 
@@ -954,6 +954,31 @@ mod tests {
                 0x0020_b023,
                 JOLT_SUCCESS_WORD,
             ],
+            &[],
+            StrtabOrder::GnuLd,
+        );
+        let config = tiny_guest_config(&elf);
+        let mut emulator = create_emulator(&elf, None, &[], &[], &[], &config, None);
+        emulator.tick(None);
+        emulator.tick(None);
+        let checkpoint = ChunkCheckpoint::capture(&emulator);
+        let mut worker = ChunkWorker::new(&emulator);
+        let mut pool = SnapshotPool::new();
+        let image = pool.capture(&emulator.get_cpu().mmu.memory.memory);
+        worker.install_chunk(&checkpoint, image);
+        assert!(catch_unwind(AssertUnwindSafe(|| worker.run_ticks(1, &mut Vec::new()))).is_err());
+        assert!(catch_unwind(AssertUnwindSafe(|| emulator.tick(None))).is_err());
+    }
+
+    #[test]
+    fn interpreter_and_replay_reject_fetches_inside_a_decoded_instruction() {
+        use crate::parallel::{ChunkCheckpoint, ChunkWorker, SnapshotPool};
+        use std::panic::{catch_unwind, AssertUnwindSafe};
+
+        // auipc x1, 0; jalr x0, 10(x1); addi x0, x2, 0; jolt.success. The jump
+        // lands on the addi's upper halfword, which decodes as c.nop.
+        let elf = build_elf64(
+            &[0x0000_0097, 0x00a0_8067, 0x0001_0013, JOLT_SUCCESS_WORD],
             &[],
             StrtabOrder::GnuLd,
         );

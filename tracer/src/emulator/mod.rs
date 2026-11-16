@@ -31,11 +31,11 @@ pub mod terminal;
 
 use self::cpu::{Cpu, HaltKind};
 use self::elf_analyzer::ElfAnalyzer;
+use self::mmu::CodeGuard;
 use self::terminal::Terminal;
 
 use common::constants::{DEFAULT_HEAP_SIZE, RAM_START_ADDRESS};
 use jolt_program::execution::TraceError;
-use jolt_program::preprocess::ram::code_region;
 #[cfg(not(feature = "field-inline"))]
 use jolt_riscv::RV64IMAC_JOLT_ALL_INLINES;
 #[cfg(feature = "field-inline")]
@@ -310,15 +310,16 @@ impl Emulator {
         self.cpu.update_pc(header.e_entry);
     }
 
-    /// Write-protects the code region of `elf_contents`, every doubleword from
-    /// its first source instruction through its last: a store that changes one
-    /// faults. Install the `JoltDevice` first, since its `lowest_address`
+    /// Guards the code of `elf_contents`: a store that changes a doubleword of
+    /// its code region, from its first source instruction through its last,
+    /// faults, and so does a fetch at an address that starts no decoded source
+    /// instruction. Install the `JoltDevice` first, since its `lowest_address`
     /// anchors the word indices.
     #[expect(
         clippy::expect_used,
         reason = "no error path, like create_emulator on over-long I/O: it panics without a JoltDevice or on a program image jolt-program rejects"
     )]
-    pub fn protect_code_region(&mut self, elf_contents: &[u8]) {
+    pub fn protect_code(&mut self, elf_contents: &[u8]) {
         #[cfg(not(feature = "field-inline"))]
         let profile = RV64IMAC_JOLT_ALL_INLINES;
         #[cfg(feature = "field-inline")]
@@ -327,14 +328,18 @@ impl Emulator {
             .expect("program ELF decoding failed");
         let mmu = self.cpu.get_mut_mmu();
         let jolt_device = mmu.jolt_device.as_ref().expect("JoltDevice not set");
-        mmu.code_region = code_region(
-            image.instructions.iter().map(|instruction| {
+        let sources: Vec<(u64, bool)> = image
+            .instructions
+            .iter()
+            .map(|instruction| {
                 let row = instruction.row();
                 (row.address as u64, row.is_compressed)
-            }),
-            jolt_device.memory_layout.get_lowest_address(),
-        )
-        .expect("decoded code region is valid");
+            })
+            .collect();
+        mmu.code_guard = Some(
+            CodeGuard::new(&sources, jolt_device.memory_layout.get_lowest_address())
+                .expect("decoded code region is valid"),
+        );
     }
 
     pub fn get_cpu(&self) -> &Cpu {

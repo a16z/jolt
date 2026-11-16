@@ -57,7 +57,7 @@ fn main() {
     // As in `run_test`, an ELF without `tohost` is a Jolt guest: guard its
     // code region as tracing for a proof does.
     if emulator.tohost_addr == 0 {
-        emulator.protect_code_region(&elf_content);
+        emulator.protect_code(&elf_content);
     }
 
     let endcode = emulator.run_test(args.trace.unwrap_or(false), args.disassemble);
