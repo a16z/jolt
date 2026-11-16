@@ -46,8 +46,12 @@ impl<F> PartialEq for NoVectorCommitment<F> {
 
 impl<F> Eq for NoVectorCommitment<F> {}
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct NoCommitment;
+/// Uninhabited on purpose. A value would take no input bytes, so a counted
+/// sequence of them would give a decoder an input-chosen number of steps with
+/// nothing behind the count; with no value, such a sequence decodes only when
+/// empty.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum NoCommitment {}
 
 impl CanonicalBytes for NoCommitment {
     const NUM_BYTES: usize = 0;
@@ -59,16 +63,6 @@ impl CanonicalBytes for NoCommitment {
 impl Encoding for NoCommitment {
     fn encode(&self) -> impl AsRef<[u8]> {
         []
-    }
-}
-
-impl<F: JoltField> HomomorphicCommitment<F> for NoCommitment {
-    fn add(_c1: &Self, _c2: &Self) -> Self {
-        Self
-    }
-
-    fn linear_combine(_c1: &Self, _c2: &Self, _scalar: &F) -> Self {
-        Self
     }
 }
 
