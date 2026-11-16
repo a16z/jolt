@@ -91,7 +91,10 @@ fn streaming_option_selects_the_requested_families() {
             selection,
         ])
         .unwrap();
-        assert_eq!(cli.args.streaming, Some(expected));
+        assert_eq!(
+            cli.args.streaming.map(|selection| selection.families),
+            Some(expected)
+        );
     }
 }
 
@@ -302,6 +305,8 @@ fn streaming_profiles_have_distinct_artifact_and_csv_names() {
             Some("instruction-rows,registers,ram"),
             "_streaming_ram_registers_instruction_rows",
         ),
+        #[cfg(feature = "akita")]
+        (Some("ring-switch,ram"), "_streaming_ram_ring_switch"),
     ] {
         let mut options = vec![
             "jolt-prover",

@@ -571,7 +571,7 @@ mod matrix {
         use super::StreamingFamilies;
         use jolt_akita::{AkitaChunkProfile, AkitaField, AkitaScheduleArtifacts, AkitaScheme};
         use jolt_prover::akita;
-        use jolt_prover::akita::preprocessing::{self, AkitaVc};
+        use jolt_prover::akita::preprocessing::{self, AkitaProverPreprocessing, AkitaVc};
         use jolt_prover::JoltBackend;
         use jolt_prover::ProverConfig;
         use jolt_transcript::{Keccak, ProverState, VerifierState};
@@ -600,7 +600,7 @@ mod matrix {
             config.rw_config.registers_rw_phase1_num_rounds = 0;
             let untrusted_advice = !case.untrusted_advice.is_empty();
             let trusted_advice = !case.trusted_advice.is_empty();
-            let preprocessing = preprocessing::preprocess_full_with_advice(
+            let mut preprocessing = preprocessing::preprocess_full_with_advice(
                 &AkitaScheduleArtifacts::shared_from_default_directory(AkitaChunkProfile::new(
                     8, 2,
                 )),
@@ -610,10 +610,23 @@ mod matrix {
                 trusted_advice,
             )
             .expect("Akita preprocessing");
-            let trusted = trusted_advice.then(|| {
-                preprocessing::commit_trusted_advice(&preprocessing, &case.trusted_advice)
-                    .expect("trusted advice commitment")
-            });
+            // A streaming selection also streams the opening's ring-switch NTT
+            // operations; the eager proof below opens on the default backends.
+            let eager_setup = preprocessing.pcs_setup.clone();
+            if families != StreamingFamilies::default() {
+                preprocessing.pcs_setup = preprocessing
+                    .pcs_setup
+                    .with_streamed_ring_switch()
+                    .expect("streamed ring-switch setup");
+            }
+            // An advice commitment opens only on the backend that made it.
+            let commit_trusted = |preprocessing: &AkitaProverPreprocessing| {
+                trusted_advice.then(|| {
+                    preprocessing::commit_trusted_advice(preprocessing, &case.trusted_advice)
+                        .expect("trusted advice commitment")
+                })
+            };
+            let trusted = commit_trusted(&preprocessing);
             let program_preprocessing = preprocessing
                 .program_arc()
                 .expect("full program preprocessing");
@@ -646,6 +659,8 @@ mod matrix {
             )
             .expect("Akita proof must verify");
             if families != StreamingFamilies::default() {
+                preprocessing.pcs_setup = eager_setup;
+                let trusted = commit_trusted(&preprocessing);
                 let eager = akita::prove::<AkitaField, AkitaScheme, AkitaVc, ProverState<Keccak>>(
                     JoltBackend::optimized().with_witness(&witness),
                     &preprocessing,

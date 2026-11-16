@@ -85,7 +85,13 @@ instruction rows that the eager kernels share from stage 5 on. Under Dory the
 family also selects a stage-8 joint opening whose trace views read the
 resident trace in each of their passes, where the eager opening's share
 packed per-cycle columns (64 bytes per cycle before the padding suffix)
-through the PCS opening. Combine
+through the PCS opening. An Akita build also accepts `ring-switch`, which
+selects no kernel: the prover's Akita backends are built with a ring-switch
+cache limit of zero (`AkitaProverSetup::with_streamed_ring_switch`), so the
+stage-8 opening transforms the setup-matrix rows of its ring-switch relations
+as it reads them, where the default backends keep their NTT form until the
+opening returns. The opening's peak memory falls, its time rises on large
+traces, and the proof bytes are the same. Combine
 families with `--streaming instruction-input,spartan,ram,registers`.
 Instruction-input, Spartan and register
 early rounds recompute from the resident trace until the dense tables, or for
@@ -94,8 +100,8 @@ cap; the full trace remains resident. This is not a process-memory cap, and
 streaming can use more memory than eager kernels on small or padded traces.
 Streaming workload, CSV and trace names append `_streaming_<families>` in
 canonical order (`instruction_input`, `spartan`, `ram`, `registers`,
-`instruction_rows`), so their run directories and `latest_` links stay separate
-from eager runs.
+`instruction_rows`, then `ring_switch` under Akita), so their run directories
+and `latest_` links stay separate from eager runs.
 The option belongs to `profile` only: `benchmark` sweeps have no streaming
 selection, and a resumed sweep ignores streaming profile artifacts.
 `summary.json` records the selection in `run.streaming_families`;
