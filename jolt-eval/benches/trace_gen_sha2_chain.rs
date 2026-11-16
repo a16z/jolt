@@ -31,10 +31,12 @@ fn bench(c: &mut Criterion) {
     group.bench_function("reference", |b| {
         b.iter(|| assert_eq!(objective.run_reference(&setup), setup.trace_len))
     });
-    // Same group and throughput so the pair decomposes the seam: `reference`
-    // is raw tracing plus the Cycle to JoltTraceRow conversion, `reference_raw` is
-    // raw tracing alone. The AOT backend emits JoltTraceRow directly and so skips
-    // the difference; AC8/AC9 ratios need both to be attributable.
+    // Same group and throughput: `reference_raw` is the same emulator run with
+    // every Cycle kept and none converted to JoltTraceRow. The AOT backend emits
+    // JoltTraceRow directly, so AC8/AC9 ratios need both ids. Their difference
+    // is not the conversion's cost: `reference` converts while the emulator
+    // runs and reuses its cycle buffers on a long run, where `reference_raw`
+    // first-touches a buffer the size of the run.
     group.bench_function("reference_raw", |b| {
         b.iter(|| assert_eq!(objective.run_reference_raw(&setup), setup.trace_len))
     });

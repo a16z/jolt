@@ -94,7 +94,7 @@ mod emit {
         ($w:expr) => {
             // SAFETY: one fixed field-inline word; no Rust memory is touched.
             unsafe {
-                core::arch::asm!(".word {w}", w = const $w, options(nostack));
+                core::arch::asm!(".insn 4, {w}", w = const $w, options(nostack));
             }
         };
     }

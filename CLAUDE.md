@@ -37,13 +37,17 @@ A push voids the line. After opening a pull request and after every push, review
 
 When the Pika App dispatcher and forced-command target are configured and the
 `JOLT_E2E_ENABLED` repository variable is `true` (setup in
-`scripts/bench/README.md`), a maintainer or administrator can add the `benchmark` label to a same-repository PR. The label
-persists across pushes: each admitted run builds base and candidate locally with
-release/znver4, then runs the PR suite in `scripts/bench/suites.json`. Forks
-and labels applied by write-only contributors are not admitted. While the label
+`scripts/bench/README.md`), a maintainer or administrator can add the `benchmark` label to a PR into main.
+Each admitted run builds base and candidate locally with
+release/znver4, then runs the PR suite in `scripts/bench/suites.json`. Labels
+applied by write-only contributors are not admitted. On a same-repository PR the
+label persists across pushes: while it
 remains, any later push to the branch, by anyone who can push to it, runs its code
 (including `build.rs`) on the benchmark machine's persistent account without new
-approval. Only `runner` on `jolt-bench` executes PR code; no Pika agent runs there.
+approval. On a fork PR the label admits only the head it was applied to: after a
+push, a maintainer reviews the new head, then removes and re-applies the label.
+A fork PR also needs a Pika App dispatcher that admits fork heads (contract in
+`scripts/bench/README.md`). Only `runner` on `jolt-bench` executes PR code; no Pika agent runs there.
 The App rechecks admission before dispatch and publishes an **End-to-end benchmark**
 check. Results are in the **End-to-end benchmark ingest** run's `jolt-e2e-*`
 artifact and the dashboard's **Pull requests** view at
@@ -235,6 +239,7 @@ clear, ZK, and verifier-fixture tests.
 - Use `#[inline]` judiciously in hot paths
 - Pre-allocate vectors unsafely when size is known; avoid clones in hot paths
 - Hot trace paths get one pass and one owner of trace-sized storage. Produce or share derived rows during the existing pass instead of walking or materializing the trace again.
+- A PR that adds a prover or verifier optimization states in its body, per optimization, whether it applies to the other implementations of the same work, such as the eager and streaming kernels of `jolt-kernels`' optimized tier, the Dory and Akita paths, the per-architecture field arithmetic in `jolt-algebra` (assembly, NEON, AVX-512, AVX2), the Metal runtime and field arithmetic in `jolt-metal`, and the `tracer` and `jolt-tracer-x86` execution backends. Where it applies, port it in the same PR, link an open issue that tracks the port, or state why it is not ported. A missing answer is a review finding.
 
 ### Prover Hot Paths
 

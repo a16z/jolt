@@ -9,17 +9,13 @@ use std::ops::Range;
 
 use jolt_field::JoltField;
 use jolt_poly::GruenSplitEqPolynomial;
+use jolt_utils::unsafe_allocate_zero_vec;
 use jolt_witness::WitnessError;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
 /// Rows per callback of a task's visit.
 pub(crate) const VISIT_ROWS: usize = 1 << 12;
-
-/// Byte cap on one streaming kernel's dense tables: its rounds recompute
-/// their pairs from the rows until the tables fit ([`dense_crossover`]).
-/// 4 GiB, or every representable size where `usize` cannot hold 4 GiB.
-pub(crate) const DENSE_TABLE_CAP: usize = 4usize.saturating_mul(1 << 30);
 
 /// Tasks per pool thread in a [`task_ranges`] partition, so work stealing can
 /// even out unequal row costs between tasks.
@@ -55,6 +51,14 @@ pub(crate) fn task_ranges(cycles: usize, group: usize) -> Vec<Range<usize>> {
     (0..tasks)
         .map(|task| start(task)..start(task + 1))
         .collect()
+}
+
+/// Where the `group`-cycle groups that hold one of the first `prefix` cycles
+/// end, of `cycles` cycles in whole groups.
+pub(crate) fn prefix_end(prefix: usize, group: usize, cycles: usize) -> usize {
+    prefix
+        .checked_next_multiple_of(group)
+        .map_or(cycles, |end| end.min(cycles))
 }
 
 /// Splits `items`, sorted by `key`, into at most [`task_count`] contiguous
@@ -255,17 +259,6 @@ pub(crate) fn split_at_tasks<'a, T, const N: usize>(
         .collect()
 }
 
-/// The first bind depth `k` at which tables over `cycles` cycles before any
-/// bind fit a cap of `cap_cycles` cycles (`⌈cycles / 2^k⌉ ≤ cap_cycles`), or
-/// `rounds` when none of the `rounds` depths does. Both arguments count
-/// cycles: a caller divides its byte cap by its tables' bytes per cycle, so
-/// the byte size of the whole domain is never formed.
-pub(crate) fn dense_crossover(cycles: usize, cap_cycles: usize, rounds: usize) -> usize {
-    (0..rounds)
-        .find(|&depth| cycles.div_ceil(1 << depth) <= cap_cycles)
-        .unwrap_or(rounds)
-}
-
 /// Contracts consecutive rows into the halves of `2^(log_half + 1)`-row
 /// pairs: row `t` adds its `M` values to half `(t >> log_half) & 1` of pair
 /// `t >> (log_half + 1)`. A walk adds every row of its range in order, so a
@@ -370,18 +363,31 @@ where
     }
 }
 
+/// The constant suffix of a streamed round's cycle domain.
+pub(crate) struct PairSuffix<F, const M: usize> {
+    /// Its first cycle, the domain's cycle count when it has none.
+    pub(crate) start: usize,
+    /// Table `m`'s `[low, high]` halves of a pair whose cycles all lie in the
+    /// suffix; never read when it has none.
+    pub(crate) halves: [[F; 2]; M],
+}
+
 /// One pass of a streamed round of the split-eq summand
 /// `Σ_pair E(pair) · terms(pair)`, its pairs spanning `2^log_pair_cycles`
-/// cycles each: the cycle domain (`|e_out| · |e_in|` pairs) splits into
-/// [`task_ranges`] of whole Gruen groups, and each task's `walk` visits its
-/// range once, serially, in callbacks of at most `chunk` rows, passing every
-/// completed pair to its [`PairSink`] in order. A filling pass splits
-/// `tables` (pair `z` at entries `2z, 2z + 1`) at the task boundaries, so
-/// each task writes only its own slices.
+/// cycles each, over a cycle domain of `|e_out| · |e_in|` pairs: the Gruen
+/// groups that hold a cycle before `suffix` split into [`task_ranges`], and
+/// each task's `walk` visits its range once, serially, in callbacks of at
+/// most `chunk` rows, passing every completed pair to its [`PairSink`] in
+/// order. The pairs of the later groups all hold `suffix.halves`, and
+/// [`GruenSplitEqPolynomial::suffix_weight`] weighs their terms once. A
+/// filling pass allocates every table of `tables` at the entries of the
+/// visited pairs (pair `z` at entries `2z, 2z + 1`) and splits it at the
+/// task boundaries, so each task writes only its own slices.
 pub(crate) fn gruen_pair_pass<F, T, const M: usize, const N: usize>(
     split_eq: &GruenSplitEqPolynomial<F>,
     log_pair_cycles: usize,
-    tables: Option<[&mut [F]; M]>,
+    suffix: &PairSuffix<F, M>,
+    tables: Option<&mut [Vec<F>; M]>,
     terms: T,
     walk: impl Fn(Range<usize>, usize, &mut PairSink<'_, F, T, M, N>) -> Result<(), WitnessError> + Sync,
 ) -> Result<[F; N], WitnessError>
@@ -392,12 +398,23 @@ where
     let e_out = split_eq.e_out_current();
     let e_in = split_eq.e_in_current();
     let group = e_in.len() << log_pair_cycles;
-    let ranges = task_ranges(e_out.len() * group, group);
+    let cycles = e_out.len() * group;
+    let end = prefix_end(suffix.start, group, cycles);
+    let ranges = task_ranges(end, group);
     let slices: Vec<Option<[&mut [F]; M]>> = match tables {
-        Some(tables) => split_at_tasks(tables, &ranges, |cycle| 2 * (cycle >> log_pair_cycles))
+        Some(tables) => {
+            for table in tables.iter_mut() {
+                *table = unsafe_allocate_zero_vec(2 * (end >> log_pair_cycles));
+            }
+            split_at_tasks(
+                tables.each_mut().map(|table| table.as_mut_slice()),
+                &ranges,
+                |cycle| 2 * (cycle >> log_pair_cycles),
+            )
             .into_iter()
             .map(Some)
-            .collect(),
+            .collect()
+        }
         None => ranges.iter().map(|_| None).collect(),
     };
     let task =
@@ -413,18 +430,25 @@ where
         };
     let add = |left: [F; N], right: [F; N]| std::array::from_fn(|i| left[i] + right[i]);
     #[cfg(feature = "parallel")]
-    return ranges
+    let mut total = ranges
         .par_iter()
         .zip(slices)
         .map(task)
-        .try_reduce(|| [F::zero(); N], |left, right| Ok(add(left, right)));
+        .try_reduce(|| [F::zero(); N], |left, right| Ok(add(left, right)))?;
     #[cfg(not(feature = "parallel"))]
-    ranges
+    let mut total = ranges
         .iter()
         .zip(slices)
         .try_fold([F::zero(); N], |sum, task_input| {
-            Ok(add(sum, task(task_input)?))
-        })
+            Ok::<_, WitnessError>(add(sum, task(task_input)?))
+        })?;
+    if end < cycles {
+        let weight = split_eq.suffix_weight(end >> log_pair_cycles);
+        for (total, term) in total.iter_mut().zip(terms(suffix.halves)) {
+            *total += weight * term;
+        }
+    }
+    Ok(total)
 }
 
 /// `(q(0), q(∞))` terms of one pair of a two-factor product summand `a·b`,

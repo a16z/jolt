@@ -100,7 +100,7 @@ macro_rules! __field_inline_word {
             // SAFETY: this emits a fixed custom Jolt instruction word for the
             // tracer; operands are encoded constants, and no Rust memory is touched.
             unsafe {
-                core::arch::asm!(".word {word}", word = const WORD, options(nostack));
+                core::arch::asm!(".insn 4, {word}", word = const WORD, options(nostack));
             }
         }
         #[cfg(not(any(target_arch = "riscv32", target_arch = "riscv64")))]

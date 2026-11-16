@@ -42,8 +42,8 @@ fn eval_eq_mle(pairs: [[u64; 2]; 4], expected_limbs: [u64; 4]) -> u64 {
         // a1 is clobbered, and only field register 12 is changed.
         unsafe {
             core::arch::asm!(
-                ".word {load_high}",
-                ".word {load_low}",
+                ".insn 4, {load_high}",
+                ".insn 4, {load_low}",
                 load_high = const jolt::field_inline::memory_accumulate_word(12, 1),
                 load_low = const jolt::field_inline::memory_accumulate_word(12, 0),
                 in("a0") limbs.as_ptr(),
