@@ -696,7 +696,7 @@ impl RamReadWriteBytes {
     /// Not counted: later binds, and the preparation transients other than
     /// the stored tables: the access columns' collection (the eager check
     /// reserves it separately), `val_init`'s `K` reconstruction flags,
-    /// address-first's eq-table tensor factors, and RAF's fold staging and eq
+    /// address-first's eq-table tensor factors, and RAF's fold part tables and eq
     /// factors.
     pub fn new<F: JoltField>(
         dimensions: ReadWriteDimensions,
