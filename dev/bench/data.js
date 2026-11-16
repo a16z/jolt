@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794787155525,
+  "lastUpdate": 1794811263903,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -254122,6 +254122,270 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 888540,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "atretyakov@a16z.com",
+            "name": "Andrew Tretyakov",
+            "username": "0xAndoroid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "f177efd569bf56d379a0df629ed31fa85320b77a",
+          "message": "perf(jolt-kernels): cap the streaming kernels' dense tables at 4 bytes per trace row (#2461)\n\n* perf(jolt-kernels): cap the streaming kernels' dense tables at 4 bytes per trace row\n\nThe opt-in streaming kernels chose the round at which they fill their dense\ntables by two absolute byte constants: 4 GiB for a kernel's tables and 64 MiB\nper one-hot selector polynomial. With Akita's 16-byte field elements no trace\nof up to 2^26 cycles reached them in the Spartan kernels, which filled their\ntables in round 0 over every padded cycle and held more than the default\nkernels.\n\nOne rule replaces both constants, owned by `DenseCap`: a streaming kernel\nfills its dense state at the first round at which that state takes at most\n4 bytes per trace row before the padding. The Spartan outer, Spartan product\nand instruction-input passes and tables now stop at the padding, as the\ndefault kernels' tables do.\n\nAkita, sha2-chain, all five families, 2^26 padded cycles: the process peak\nfalls from 7.51 GiB to about 5.6 GiB, where the stage-8 opening sets it, and\nstages 1, 3 and 4 fall from 6.1 to 7.5 GiB to about 3.7 GiB. Proof bytes are\nunchanged.\n\n* test(jolt-kernels): pin the production cap on a register trace it binds\n\nReview fixes on top of the cap rule:\n\n- The register frontier test asserted the production cap on a 253-row\n  trace, where the cap admits no level and the kernel fills at its forced\n  last round, as it does under a cap of zero. The assertion moves to its\n  own test over 1,024 rows, where the cap admits a level before the last\n  cycle round.\n- The doc comment of `streaming_kernels_reproduce_the_default_proof` gave\n  fill rounds that the cap rule changed. It now states what the test pins\n  and no round numbers.\n- `DENSE_CAP`'s doc comment and the book said every streaming kernel runs\n  under the cap. The instruction read-RAF kernel and the bytecode read-RAF\n  cycle kernel take none, and both texts now say so.",
+          "timestamp": "2026-11-16T00:40:47-05:00",
+          "tree_id": "463ade2bf8f772eea56d5fd3f6c67e76d1d4b13c",
+          "url": "https://github.com/a16z/jolt/commit/f177efd569bf56d379a0df629ed31fa85320b77a"
+        },
+        "date": 1794811257346,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 3.081,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 889060,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.2292,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 463760,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 464196,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 463480,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.6833,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 464440,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-mem",
+            "value": 888836,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 1.5286,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 464072,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 3.9357,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 463892,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 3.9286,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 133660,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.6186,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 889248,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.5269,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 464080,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.3912,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 463892,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 21.01,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 463464,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 4.6623,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 464220,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 29.9186,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 699060,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 14.4478,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 614768,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 60.3914,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 632552,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.5002,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 463500,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.7361,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 464056,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 15.8673,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 889732,
             "unit": "KB",
             "extra": ""
           }
