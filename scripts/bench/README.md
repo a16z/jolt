@@ -717,8 +717,8 @@ references. An update during a run is not detected, like any other background
 activity on the target. Of the 52 nulls measured from November 6 to 16, five had
 such an update between their snapshots and no other reason to be refused. Against
 the published nulls of the same cases started within 36 hours, three of the five
-were no noisier in mean and maximum time window delta, cells above the 3% floor
-and mean RSS window delta; the other two exceeded the neighbours' maximum on two
+were no noisier in mean and maximum time window delta, cells with a time window
+delta above 3% and mean RSS window delta; the other two exceeded the neighbours' maximum on two
 of those four, the largest excess being a maximum time window delta of 5.11%
 against 3.97%.
 
