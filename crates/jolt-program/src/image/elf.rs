@@ -864,4 +864,24 @@ mod tests {
         let text = text as usize;
         assert_eq!(addresses, vec![text, text + 8]);
     }
+
+    #[test]
+    fn decode_elf_function_symbols_alone_create_no_data_range() {
+        let text = RAM_START_ADDRESS;
+        let elf = build_elf64_with_symbol_table(
+            vec![text_section(
+                text,
+                &[0x13, 0x05, 0x10, 0x00, 0x13, 0x05, 0x20, 0x00],
+            )],
+            &[(text + 4, "function", STB_GLOBAL_FUNC, 1)],
+        );
+        let image = decode_elf(&elf, RV64IMAC_JOLT).expect("fixture image must decode");
+        let addresses: Vec<_> = image
+            .instructions
+            .iter()
+            .map(|row| row.row().address)
+            .collect();
+        let text = text as usize;
+        assert_eq!(addresses, vec![text, text + 4]);
+    }
 }
