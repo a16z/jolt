@@ -275,7 +275,7 @@ fn build_command(args: JoltBuildArgs) -> Result<()> {
     std::env::set_var("CARGO_PROFILE_RELEASE_TRIM_PATHS", "all");
 
     if !preserve_debuginfo {
-        // The ELF loader needs $x/$d mapping symbols to classify executable bytes.
+        // The ELF loader classifies executable bytes by $x/$d mapping symbols and function symbols.
         jolt_rustflags.push("-Cstrip=debuginfo");
     }
 
