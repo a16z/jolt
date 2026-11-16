@@ -1002,6 +1002,14 @@ jobs:
         run: bash jolt-sdk/tests/gen-fixtures.sh
       - name: Run SDK verifier tests
         run: cargo nextest run --cargo-profile ci -p jolt-sdk --features host
+      # The prover benchmark suite (scripts/bench) builds and proves this guest
+      # for every main push, where a guest that fails to build stops that push's
+      # history and calibration. No other pull-request check compiles it for
+      # RISC-V or runs its tests.
+      - name: Build the ethereum-transaction guest
+        run: jolt build -p ethereum-transaction-guest -- --locked --release --features guest
+      - name: Run the ethereum-transaction guest tests
+        run: cargo nextest run --cargo-profile ci -p ethereum-transaction-guest --cargo-quiet
 
   test-tracer:
     runs-on: ubuntu-latest

@@ -422,7 +422,7 @@ Neither harness can prepare a workload that a leg's revision lacks, and both
 legs descend from the base of the PR's merge ref. The planner therefore refuses
 a PR run whose merge-ref base lacks a workload of main's suite, and names the
 workload. GitHub recomputes a merge ref when the PR branch is pushed. Pushes to
-main alone do not: on November 16, 2026 the merge ref of #2378 still had the
+main alone did not on November 16, 2026: the merge ref of #2378 still had the
 base it was created with after several later pushes to main, and reading the PR
 through the API did not change it. Push to the PR branch, for example by
 merging main into it, before requesting the run again.
