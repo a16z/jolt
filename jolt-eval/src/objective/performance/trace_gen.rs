@@ -98,13 +98,14 @@ impl<G: GuestConfig> TraceGenObjective<G> {
     /// i.e. the raw `tracer::trace` call, which keeps every cycle in one vector
     /// where `TracerBackend::trace` converts them chunk by chunk.
     ///
-    /// WHY this exists: the conversion pass dominates the seam (measured at
-    /// 74% for fibonacci and 86% for sha2-chain), and a backend that emits
-    /// `JoltTraceRow` directly skips it entirely. Reporting only the seam total
-    /// would let a backend bank that share as if it were codegen speedup, so
-    /// AC8/AC9 ratios are only interpretable against both numbers: `reference`
-    /// bounds the end-to-end win, `reference_raw` isolates the part that is
-    /// actually attributable to how rows are produced.
+    /// WHY this exists: a backend that emits `JoltTraceRow` directly skips the
+    /// conversion. Reporting only the seam total would let a backend bank that
+    /// share as if it were codegen speedup, so AC8/AC9 ratios are only
+    /// interpretable against both numbers: `reference` bounds the end-to-end
+    /// win, `reference_raw` the part that is attributable to how rows are
+    /// produced. Their difference is not the conversion's cost: `reference`
+    /// converts while the emulator runs and reuses its cycle buffers on a long
+    /// run, where `reference_raw` first-touches a buffer the size of the run.
     pub fn run_reference_raw(&self, setup: &TraceGenSetup) -> usize {
         raw_trace_cycles(&setup.program, &setup.inputs)
     }

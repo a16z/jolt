@@ -154,17 +154,17 @@ fn orchestrate(runs: usize) {
     }
     println!(
         "\nReference backend, serial (`TRACER_PARALLEL` unset); median of {runs} runs per guest.\n\
-         `seam` is `ExecutionBackend::trace`: the emulator run, with each chunk of buffered \
-         `Cycle`s converted to `JoltTraceRow`s as it fills; `raw trace` is `tracer::trace` alone, \
+         `seam` is `ExecutionBackend::trace`: the emulator run, with each buffer of `Cycle`s \
+         converted to `JoltTraceRow`s while the emulator fills the next; `raw trace` is `tracer::trace` alone, \
          the same run with every `Cycle` kept and none converted. A backend that emits \
          `JoltTraceRow` directly skips the conversion, so its speedup over `seam` includes that \
          share and only its gain over `raw trace` is attributable to codegen. Report both when \
          grading AC8/AC9. `conversion share` is (seam - raw trace) / seam, which is not the \
-         conversion's cost alone: raw tracing also first-touches a cycle buffer the size of the \
-         run, where the seam reuses one chunk.\n\
+         conversion's cost alone: the seam converts while the emulator runs, and raw tracing \
+         first-touches a cycle buffer the size of the run, where the seam reuses its buffers.\n\
          Peak RSS is the seam's, read before the raw runs: `Vec<JoltTraceRow>` (64 B/row) plus \
-         the one chunk of `Cycle`s (96 B each) the tracer buffers, so on a long trace it sits \
-         that chunk above the 64 B/row row-storage floor a direct-emit backend would have.\n\
+         the buffers of `Cycle`s (96 B each) the tracer rotates through, so on a long trace it \
+         sits those buffers above the 64 B/row row-storage floor a direct-emit backend would have.\n\
          Memory config is `GuestConfig`'s (stack 4 KiB, heap 32 KiB), not the 32 MiB heap \
          `Program::new` defaults to; this tracks `e2e_profiling.rs` and does not move the \
          numbers, but the denominator should say what it ran.\n\

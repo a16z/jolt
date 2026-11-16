@@ -15,6 +15,7 @@ use common::jolt_device::JoltDevice;
 
 use crate::emulator::cpu::AdviceTape;
 use crate::emulator::decode_cache::DecodeCache;
+use crate::emulator::Emulator;
 use crate::instruction::Cycle;
 #[cfg(feature = "field-inline")]
 use crate::instruction::RISCVCycle;
@@ -76,20 +77,27 @@ impl TracerBackend {
             } else {
                 let mut rows = Vec::with_capacity(crate::trace_capacity_reserve());
                 let mut batches = Vec::new();
-                let mut cycles = Vec::with_capacity(chunk_cycles);
-                // Termination matches `crate::trace`: stop on the first step
-                // that emits no rows.
-                loop {
-                    let buffered = cycles.len();
-                    crate::step_emulator(&mut emulator, Some(&mut cycles));
-                    let ended = cycles.len() == buffered;
-                    if ended || cycles.len() >= chunk_cycles {
-                        append_rows(&mut rows, &mut batches, &cycles, &bytecode)?;
-                        cycles.clear();
-                    }
-                    if ended {
-                        break;
-                    }
+                // Twice the bound: the step that crosses it emits a whole
+                // instruction's cycles, and a buffer that grew for them would
+                // be moved.
+                let mut ring: [Vec<Cycle>; SERIAL_BUFFERS] =
+                    std::array::from_fn(|_| Vec::with_capacity(2 * chunk_cycles));
+                let mut ended = fill_cycles(&mut emulator, &mut ring[0], chunk_cycles);
+                // `ring[0]` is the buffer filled last. Each round converts it on
+                // the pool while this thread fills `ring[1]`, the buffer whose
+                // conversion lies furthest back.
+                while !ring[0].is_empty() {
+                    let (full, rested) = ring.split_at_mut(1);
+                    let mut converted = Ok(());
+                    rayon::in_place_scope(|scope| {
+                        scope.spawn(|_| {
+                            converted = append_rows(&mut rows, &mut batches, &full[0], &bytecode);
+                        });
+                        ended = ended || fill_cycles(&mut emulator, &mut rested[0], chunk_cycles);
+                    });
+                    converted?;
+                    ring[0].clear();
+                    ring.rotate_left(1);
                 }
                 // `TraceData::heap_bytes` counts the rows at capacity, and the
                 // prover's memory budget reserves that many bytes.
@@ -123,20 +131,38 @@ impl ExecutionBackend for TracerBackend {
 
 const PARALLEL_ROW_CONVERSION_THRESHOLD: usize = 1 << 14;
 
-/// Cycles the serial tracer buffers before converting them to rows, so that
-/// one buffer of about this many [`Cycle`]s (384 MiB) is resident beside the
-/// rows instead of the whole run's.
+/// Cycles the serial tracer buffers before their conversion to rows starts
+/// (192 MiB of [`Cycle`]s).
+const SERIAL_CHUNK_CYCLES: usize = 1 << 21;
+
+/// Buffers of [`SERIAL_CHUNK_CYCLES`] cycles the serial tracer rotates through,
+/// so that the rows and about 1.1 GiB of cycles are resident instead of the
+/// whole run's cycles.
 ///
-/// A smaller buffer costs time when the rayon pool spans several L3 domains.
-/// The emulator refills the buffer right after the pool has read it, and on an
-/// EPYC 9354P (eight L3 domains) it refilled a 2^16-cycle buffer six times
-/// slower when the readers ran in another L3 domain than in its own (likely
-/// cache-line traffic between the domains). Against converting the whole run
-/// at once, tracing 9 to 50 million cycles on that CPU was 18% to 58% slower
-/// with a 2^18-cycle buffer, between 13% faster and 1% slower with 2^20
-/// cycles, 24% to 35% faster with 2^21 cycles and 28% to 51% faster with this
-/// size.
-const SERIAL_CHUNK_CYCLES: usize = 1 << 22;
+/// One reused buffer would hold less, but the emulator is slow to refill a
+/// buffer while caches still hold it from the conversion. On an EPYC 9354P
+/// (eight L3 domains, 288 MiB of cache) with huge pages behind the heap, the
+/// emulator took 0.80 s for 37 million cycles when it refilled one 2^22-cycle
+/// buffer after each conversion, and 0.37 s when that buffer's cache lines
+/// were flushed (CLFLUSH) in between. With 4 KiB pages the one buffer still
+/// beat converting the whole run at once, because fresh memory costs a page
+/// fault per page; with huge pages it lost. With six buffers, four other
+/// buffers are converted between a buffer's conversion and its refill.
+const SERIAL_BUFFERS: usize = 6;
+
+/// Steps the emulator until `cycles` holds `bound` cycles and returns whether
+/// the run ended first. Termination matches `crate::trace`: the run ends on
+/// the first step that emits no rows.
+fn fill_cycles(emulator: &mut Emulator, cycles: &mut Vec<Cycle>, bound: usize) -> bool {
+    while cycles.len() < bound {
+        let buffered = cycles.len();
+        crate::step_emulator(emulator, Some(cycles));
+        if cycles.len() == buffered {
+            return true;
+        }
+    }
+    false
+}
 
 struct ConvertedChunk {
     bounds: RamAddressBounds,
