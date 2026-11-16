@@ -39,6 +39,7 @@ NICE_NAMES = {
 def load_data(csv_path, backend):
     """Load benchmark data for one kernel backend from CSV."""
     data = defaultdict(list)
+    backends = set()
 
     try:
         with open(csv_path, 'r') as f:
@@ -46,6 +47,7 @@ def load_data(csv_path, backend):
             for row in reader:
                 if len(row) >= 7 and row[1].isdigit():  # Skip header
                     row_backend = row[7] if len(row) > 7 and row[7] else 'reference'
+                    backends.add(row_backend)
                     if row_backend != backend:
                         continue
                     name, scale, time, _, _, size, size_comp = row[:7]
@@ -54,6 +56,10 @@ def load_data(csv_path, backend):
     except FileNotFoundError:
         print(f"Error: CSV file not found at {csv_path}")
         sys.exit(1)
+
+    if backends and backend not in backends:
+        sys.exit(f"Error: no rows for backend '{backend}' in {csv_path} "
+                 f"(backends found: {', '.join(sorted(backends))})")
 
     return dict(data)
 
@@ -164,9 +170,9 @@ def main():
                              '(written by `jolt-prover benchmark`)')
     parser.add_argument('--output-dir', default='benchmark-runs',
                         help='Directory to save the output plots')
-    parser.add_argument('--backend', choices=['reference', 'optimized'],
-                        default='reference',
-                        help='Kernel backend rows to plot (default: reference)')
+    parser.add_argument('--backend', default='reference',
+                        help='Kernel backend rows to plot, as named in the '
+                             'CSV backend column (default: reference)')
     parser.add_argument(
         '--plot-type',
         choices=[
