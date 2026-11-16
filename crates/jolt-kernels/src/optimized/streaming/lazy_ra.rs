@@ -34,21 +34,21 @@ use jolt_witness::{WitnessBundle, WitnessError};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use super::{task_ranges, DenseCap, VISIT_ROWS};
+use super::{split_at_tasks, task_ranges, DenseCap, VISIT_ROWS};
 use crate::optimized::lazy_ra::{double_branches, LazyBind, LazyFoldedRa, DEFAULT_MAX_WIDTH};
 use crate::optimized::support::BundleStore;
 
 /// The default family's materializing bind, its fourth.
 const DEFAULT_MATERIALIZE_DEPTH: usize = (2 * DEFAULT_MAX_WIDTH).ilog2() as usize;
 
-/// The bind depth at which a family of `polys` polynomials over `2^rounds`
-/// cycles materializes: the first at which its dense polynomials, `polys`
-/// field elements per cycle before any bind, fit `cap`; at least the default
+/// The bind depth at which a family over `2^rounds` cycles materializes
+/// whose dense state takes `elements` field elements per cycle before any
+/// bind: the first at which that state fits `cap`; at least the default
 /// family's, whose polynomials are no shorter where they stop at the same
 /// suffix and the domain has that many binds; and at most the last bind, so
 /// the final claims are always dense entries.
-fn materialize_depth<F>(polys: usize, rounds: usize, cap: DenseCap) -> usize {
-    cap.crossover(polys.saturating_mul(size_of::<F>()), rounds)
+fn materialize_depth<F>(elements: usize, rounds: usize, cap: DenseCap) -> usize {
+    cap.crossover(elements.saturating_mul(size_of::<F>()), rounds)
         .max(DEFAULT_MATERIALIZE_DEPTH)
         .min(rounds)
 }
@@ -80,6 +80,14 @@ enum Schedule {
     Default { max_width: usize },
 }
 
+/// A family's dense state and, as dense, the `M` columns its caller gathers
+/// beside it ([`StreamedFoldedRa::bind_with_columns`]).
+type Materialized<F, I, const M: usize> = (LazyFoldedRa<F, I>, [Vec<F>; M]);
+
+/// One task of [`StreamedFoldedRa::materialize`]: its cycles, and its slices
+/// of the dense rows and of the `M` columns.
+type FillTask<'a, F, const M: usize> = ((&'a Range<usize>, &'a mut [F]), [&'a mut [F]; M]);
+
 /// Selector polynomials bound `LowToHigh` before they materialize.
 #[cfg_attr(
     feature = "allocative",
@@ -94,6 +102,9 @@ pub(crate) struct StreamedFoldedRa<F: JoltField, S: RowIndexSource> {
     /// table.
     tables: Vec<Vec<F>>,
     factors: usize,
+    /// Each branch's eq weight at the challenges bound so far: the branch
+    /// table of a base table that holds a one.
+    weights: Vec<F>,
     /// Binds so far: every polynomial has `2^depth` branches.
     depth: usize,
     schedule: Schedule,
@@ -120,8 +131,27 @@ impl<F: JoltField, S: RowIndexSource> StreamedFoldedRa<F, S> {
         rounds: usize,
         cap: DenseCap,
     ) -> Result<Self, WitnessError> {
-        let schedule = Schedule::Depth(materialize_depth::<F>(tables.len(), rounds, cap));
-        Self::over(tables, 1, schedule, source, rows, rounds, 0)
+        Self::with_columns(tables, source, rows, rounds, cap, 0, 0)
+    }
+
+    /// [`Self::new`] for a kernel that fills `columns` field elements per
+    /// cycle of its own at the family's materializing bind, those it gathers
+    /// there ([`Self::bind_with_columns`]) among them: that bind is the first
+    /// at which the polynomials and those elements fit `cap` together. The
+    /// family's constant suffix starts no earlier than cycle `min_prefix`
+    /// ([`Self::factored`]).
+    pub(crate) fn with_columns(
+        tables: Vec<Vec<F>>,
+        source: S,
+        rows: BundleStore<S::Row>,
+        rounds: usize,
+        cap: DenseCap,
+        columns: usize,
+        min_prefix: usize,
+    ) -> Result<Self, WitnessError> {
+        let elements = tables.len().saturating_add(columns);
+        let schedule = Schedule::Depth(materialize_depth::<F>(elements, rounds, cap));
+        Self::over(tables, 1, schedule, source, rows, rounds, min_prefix)
     }
 
     /// One base table per column, in `source`'s column order, over the
@@ -166,6 +196,7 @@ impl<F: JoltField, S: RowIndexSource> StreamedFoldedRa<F, S> {
         let mut family = Self {
             tables,
             factors,
+            weights: vec![F::one()],
             depth: 0,
             schedule,
             rounds,
@@ -195,11 +226,6 @@ impl<F: JoltField, S: RowIndexSource> StreamedFoldedRa<F, S> {
         self.tables.len() / self.factors
     }
 
-    /// The first cycle of the constant suffix, at most the domain's cycles.
-    pub(crate) fn prefix_len(&self) -> usize {
-        self.prefix
-    }
-
     /// Every polynomial's value on the constant suffix, at any depth.
     pub(crate) fn tail_values(&self) -> &[F] {
         &self.tail
@@ -208,7 +234,7 @@ impl<F: JoltField, S: RowIndexSource> StreamedFoldedRa<F, S> {
     /// The current pair rows that hold a cycle before the constant suffix.
     /// `prefix` is at most the domain's cycles ([`Self::over`]), so these are
     /// at most its pair rows and their cycles cannot overflow.
-    fn prefix_pairs(&self) -> usize {
+    pub(crate) fn prefix_pairs(&self) -> usize {
         self.prefix.div_ceil(2usize << self.depth)
     }
 
@@ -253,18 +279,23 @@ impl<F: JoltField, S: RowIndexSource> StreamedFoldedRa<F, S> {
     }
 
     /// Folds the current pair rows `y` that hold a cycle before the constant
-    /// suffix: `visit(state, y, lo(y), hi(y))`, where `lo(y)` and `hi(y)` hold
-    /// every polynomial's bound values at indices `2y` and `2y + 1`. The rows
-    /// split into [`task_ranges`] of whole pairs; each task visits its rows
-    /// once, serially, folding them into one `init()`, and `merge` joins the
-    /// tasks' states, of which `init()` must be an identity. Every callback
-    /// holds whole pairs, so no row's values depend on where a callback or a
-    /// task ends. Every later pair row holds [`Self::tail_values`] at both
-    /// indices and is left to the caller.
-    pub(crate) fn fold_pairs<A: Send>(
+    /// suffix: `visit(state, y, lo(y), hi(y), [c(2y), c(2y + 1)])`, where
+    /// `lo(y)` and `hi(y)` hold every polynomial's bound values at indices
+    /// `2y` and `2y + 1`, and `c(j) = columns(weights, rows)` are `M` values
+    /// the caller gathers from the cycles `rows` of index `j` and their
+    /// branch weights: `Σ_branch weights[branch] · v(rows[branch])` is the
+    /// bound value at `j` of the column that holds `v(row)` on each cycle.
+    /// The rows split into [`task_ranges`] of whole pairs; each task visits
+    /// its rows once, serially, folding them into one `init()`, and `merge`
+    /// joins the tasks' states, of which `init()` must be an identity. Every
+    /// callback holds whole pairs, so no row's values depend on where a
+    /// callback or a task ends. Every later pair row holds
+    /// [`Self::tail_values`] at both indices and is left to the caller.
+    pub(crate) fn fold_pairs<A: Send, const M: usize>(
         &self,
         init: impl Fn() -> A + Sync,
-        visit: impl Fn(&mut A, usize, &[F], &[F]) + Sync,
+        columns: impl Fn(&[F], &[S::Row]) -> [F; M] + Sync,
+        visit: impl Fn(&mut A, usize, &[F], &[F], [[F; M]; 2]) + Sync,
         merge: impl Fn(A, A) -> A + Sync,
     ) -> Result<A, WitnessError> {
         let pair = 2usize << self.depth;
@@ -279,7 +310,8 @@ impl<F: JoltField, S: RowIndexSource> StreamedFoldedRa<F, S> {
                         let (low, high) = rows.split_at(pair / 2);
                         self.gather(low, &mut hot, &mut lo);
                         self.gather(high, &mut hot, &mut hi);
-                        visit(&mut state, y, &lo, &hi);
+                        let gathered = [low, high].map(|rows| columns(&self.weights, rows));
+                        visit(&mut state, y, &lo, &hi, gathered);
                     }
                     Ok(())
                 })?;
@@ -324,7 +356,8 @@ impl<F: JoltField, S: RowIndexSource> StreamedFoldedRa<F, S> {
                     vec![F::Accumulator::default(); terms],
                 )
             },
-            |(scratch, values, total), y, lo, hi| {
+            |_, _| [],
+            |(scratch, values, total), y, lo, hi, _| {
                 pair_terms(scratch, y, lo, hi, values);
                 let weight = e_out[y / e_in.len()] * e_in[y % e_in.len()];
                 for (total, value) in total.iter_mut().zip(values.iter()) {
@@ -363,6 +396,21 @@ impl<F: JoltField, S: RowIndexSource> StreamedFoldedRa<F, S> {
         &mut self,
         challenge: F,
     ) -> Result<Option<LazyFoldedRa<F, I>>, WitnessError> {
+        Ok(self
+            .bind_with_columns(challenge, |_, _| [])?
+            .map(|(dense, [])| dense))
+    }
+
+    /// [`Self::bind`], whose materializing bind also returns the caller's `M`
+    /// columns of [`Self::fold_pairs`] as dense as the polynomials: entry `j`
+    /// of each is its `columns(weights, rows)` value at bound index `j`, for
+    /// every index that holds a cycle before the constant suffix, gathered in
+    /// the pass that gathers the polynomials.
+    pub(crate) fn bind_with_columns<I, const M: usize>(
+        &mut self,
+        challenge: F,
+        columns: impl Fn(&[F], &[S::Row]) -> [F; M] + Sync,
+    ) -> Result<Option<Materialized<F, I, M>>, WitnessError> {
         let step = match self.schedule {
             Schedule::Depth(depth) if self.depth + 1 < depth => LazyBind::Double,
             Schedule::Depth(_) => LazyBind::DoubleThenMaterialize,
@@ -375,13 +423,15 @@ impl<F: JoltField, S: RowIndexSource> StreamedFoldedRa<F, S> {
             ),
         };
         if step == LazyBind::FusedMaterialize {
-            return self.materialize(Some(challenge)).map(Some);
+            return self.materialize(Some(challenge), columns).map(Some);
         }
         self.tables = double_branches(std::mem::take(&mut self.tables), self.factors, challenge);
+        self.weights =
+            double_branches(vec![std::mem::take(&mut self.weights)], 1, challenge).concat();
         self.depth += 1;
         match step {
             LazyBind::Double => Ok(None),
-            _ => self.materialize(None).map(Some),
+            _ => self.materialize(None, columns).map(Some),
         }
     }
 
@@ -391,27 +441,38 @@ impl<F: JoltField, S: RowIndexSource> StreamedFoldedRa<F, S> {
         if self.rounds != 0 {
             return Ok(None);
         }
-        self.materialize(None).map(Some)
+        self.materialize(None, |_, _| [])
+            .map(|(dense, [])| Some(dense))
     }
 
     /// The default family's row-major dense state: every polynomial gathered
     /// at each bound index that holds a cycle before the constant suffix,
-    /// with the suffix values as its tail. With `bind`, a challenge for the
-    /// next cycle variable, each dense row is instead the pair of gathers
+    /// with the suffix values as its tail; and beside it the caller's
+    /// `columns` at those indices. With `bind`, a challenge for the next
+    /// cycle variable, each dense row is instead the pair of gathers
     /// `(lo, hi)` of the next depth's index bound once,
-    /// `lo + bind · (hi − lo)`, so the branch tables never double for it. The
-    /// storage is allocated once at its final size and split at the task
-    /// boundaries; each task visits its cycles once, serially.
-    fn materialize<I>(&self, bind: Option<F>) -> Result<LazyFoldedRa<F, I>, WitnessError> {
+    /// `lo + bind · (hi − lo)`, so the branch tables never double for it;
+    /// only the branch weights the columns read double. The storage is
+    /// allocated once at its final size and split at the task boundaries;
+    /// each task visits its cycles once, serially.
+    fn materialize<I, const M: usize>(
+        &self,
+        bind: Option<F>,
+        columns: impl Fn(&[F], &[S::Row]) -> [F; M] + Sync,
+    ) -> Result<Materialized<F, I, M>, WitnessError> {
         let polys = self.num_polys();
         let width = 1usize << self.depth;
         let unit = if bind.is_some() { 2 * width } else { width };
+        let doubled = bind
+            .map(|challenge| double_branches(vec![self.weights.clone()], 1, challenge).concat());
+        let weights = doubled.as_deref().unwrap_or(&self.weights);
         // `prefix` is at most the domain's cycles ([`Self::over`]), so these
         // are at most its `2^rounds / unit` rows.
         let len = self.prefix.div_ceil(unit);
         // A product past `usize` overflows the allocation's capacity check
         // instead of wrapping to a shorter vector.
         let mut values: Vec<F> = unsafe_allocate_zero_vec(polys.saturating_mul(len));
+        let mut gathered: [Vec<F>; M] = std::array::from_fn(|_| unsafe_allocate_zero_vec(len));
         let ranges = task_ranges(len * unit, unit);
         let mut rest = values.as_mut_slice();
         let slices: Vec<&mut [F]> = ranges
@@ -423,13 +484,23 @@ impl<F: JoltField, S: RowIndexSource> StreamedFoldedRa<F, S> {
                 head
             })
             .collect();
-        let fill = |(range, slice): (&Range<usize>, &mut [F])| {
+        let column_slices = split_at_tasks(
+            gathered.each_mut().map(Vec::as_mut_slice),
+            &ranges,
+            |cycle| cycle / unit,
+        );
+        let fill = |((range, slice), mut gathers): FillTask<'_, F, M>| {
             let mut hot = vec![None; self.tables.len()];
             let mut high = vec![F::zero(); if bind.is_some() { polys } else { 0 }];
             let mut bound_rows = slice.chunks_exact_mut(polys);
+            let mut entry = 0;
             self.rows
                 .visit(range.clone(), callback_rows(unit), |_, block| {
                     for (rows, bound_row) in block.chunks_exact(unit).zip(&mut bound_rows) {
+                        for (column, value) in gathers.iter_mut().zip(columns(weights, rows)) {
+                            column[entry] = value;
+                        }
+                        entry += 1;
                         let Some(challenge) = bind else {
                             self.gather(rows, &mut hot, bound_row);
                             continue;
@@ -445,13 +516,24 @@ impl<F: JoltField, S: RowIndexSource> StreamedFoldedRa<F, S> {
                 })
         };
         #[cfg(feature = "parallel")]
-        ranges.par_iter().zip(slices).try_for_each(fill)?;
+        ranges
+            .par_iter()
+            .zip(slices)
+            .zip(column_slices)
+            .try_for_each(fill)?;
         #[cfg(not(feature = "parallel"))]
-        ranges.iter().zip(slices).try_for_each(fill)?;
-        Ok(LazyFoldedRa::Rows {
-            values,
-            tail: self.tail.clone(),
-        })
+        ranges
+            .iter()
+            .zip(slices)
+            .zip(column_slices)
+            .try_for_each(fill)?;
+        Ok((
+            LazyFoldedRa::Rows {
+                values,
+                tail: self.tail.clone(),
+            },
+            gathered,
+        ))
     }
 }
 
@@ -574,18 +656,30 @@ mod tests {
             .collect()
     }
 
+    /// A column the caller reads from the rows: 16 bits of the lookup index,
+    /// which differ between a pair's cycles.
+    fn row_column<F: JoltField>(weights: &[F], rows: &[TestRow]) -> [F; 1] {
+        let value = |row: &TestRow| F::from_u64((row.lookup_index.0 >> 4) as u64 & 0xffff);
+        [weights
+            .iter()
+            .zip(rows)
+            .map(|(weight, row)| *weight * value(row))
+            .sum()]
+    }
+
     /// Binds `family`, whose polynomials are products of `factors` columns
     /// over [`padded_rows`] and whose constant suffix starts at cycle
-    /// `suffix`, beside dense multilinear binds of those products: the
-    /// family's suffix values are the products' at the last cycle, and before
-    /// each bind a fold visits each pair row that holds a cycle before the
-    /// suffix once, with the dense pair values, and the pair sums of two
-    /// summands, one mixing two polynomials and both halves and one reading
-    /// the pair row's index up to the first row of the suffix, equal the
-    /// dense sums over the whole domain. Bind `target`, and none before it,
-    /// returns the dense state: the bound polynomials' rows that hold a cycle
-    /// before the suffix, and their values past those from its tail. Returns
-    /// whether that bind doubled the branch tables.
+    /// `suffix`, beside dense multilinear binds of those products and of
+    /// [`row_column`]: the family's suffix values are the products' at the
+    /// last cycle, and before each bind a fold visits each pair row that
+    /// holds a cycle before the suffix once, with the dense pair values of
+    /// the products and of the column, and the pair sums of two summands, one
+    /// mixing two polynomials and both halves and one reading the pair row's
+    /// index up to the first row of the suffix, equal the dense sums over the
+    /// whole domain. Bind `target`, and none before it, returns the dense
+    /// state: the bound polynomials' rows that hold a cycle before the
+    /// suffix, their values past those from its tail, and the bound column
+    /// over those rows. Returns whether that bind doubled the branch tables.
     fn check_family<F: JoltField>(
         rounds: usize,
         prefix: usize,
@@ -613,6 +707,11 @@ mod tests {
             })
             .collect();
         let last = dense.len() - 1;
+        let mut column = Polynomial::new(
+            rows.iter()
+                .map(|row| row_column(&[F::one()], &[*row])[0])
+                .collect(),
+        );
         let point: Vec<F> = (0..rounds as u64)
             .map(|i| F::from_u64(900 + 53 * i))
             .collect();
@@ -626,7 +725,7 @@ mod tests {
                 .is_none(),
             "{case}"
         );
-        assert_eq!(family.prefix_len(), suffix, "{case}");
+        assert_eq!(family.prefix, suffix, "{case}");
         let last_cycle: Vec<F> = dense
             .iter()
             .map(|poly| poly.evals()[poly.len() - 1])
@@ -637,16 +736,20 @@ mod tests {
             let mut pairs = family
                 .fold_pairs(
                     Vec::new,
-                    |pairs, y, lo, hi| pairs.push((y, lo.to_vec(), hi.to_vec())),
+                    row_column,
+                    |pairs, y, lo, hi, column| pairs.push((y, lo.to_vec(), hi.to_vec(), column)),
                     |mut left, right| {
                         left.extend(right);
                         left
                     },
                 )
                 .unwrap();
-            pairs.sort_unstable_by_key(|(y, _, _)| *y);
+            pairs.sort_unstable_by_key(|(y, ..)| *y);
             let expected_pairs: Vec<_> = (0..suffix.div_ceil(2 << depth))
-                .map(|y| (y, at(2 * y), at(2 * y + 1)))
+                .map(|y| {
+                    let column = [2 * y, 2 * y + 1].map(|j| [column.evals()[j]]);
+                    (y, at(2 * y), at(2 * y + 1), column)
+                })
                 .collect();
             assert_eq!(pairs, expected_pairs, "{case}, depth {depth}");
             let (e_out, e_in) = (eq.e_out_current(), eq.e_in_current());
@@ -672,12 +775,14 @@ mod tests {
                 .unwrap();
             assert_eq!(sums, expected, "{case}, depth {depth}");
             let challenge = F::from_u64(31 + 17 * depth as u64);
-            let materialized = family.bind::<LookupIndexChunks>(challenge).unwrap();
+            let materialized = family
+                .bind_with_columns::<LookupIndexChunks, 1>(challenge, row_column)
+                .unwrap();
             eq.round_mut().unwrap().bind(challenge);
-            for poly in &mut dense {
+            for poly in dense.iter_mut().chain([&mut column]) {
                 poly.bind_with_order(challenge, BindingOrder::LowToHigh);
             }
-            let Some(materialized) = materialized else {
+            let Some((materialized, [gathered])) = materialized else {
                 assert!(depth + 1 < target, "{case}: lazy past bind {}", depth + 1);
                 continue;
             };
@@ -685,6 +790,11 @@ mod tests {
             assert_eq!(
                 materialized.prefix_len(),
                 suffix.div_ceil(1 << target),
+                "{case}"
+            );
+            assert_eq!(
+                gathered,
+                column.evals()[..materialized.prefix_len()],
                 "{case}"
             );
             for (poly, dense) in dense.iter().enumerate() {
