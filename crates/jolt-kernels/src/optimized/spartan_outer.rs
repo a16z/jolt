@@ -1197,14 +1197,26 @@ impl<F: JoltField> OuterRemainderKernel<F> {
         })
     }
 
+    /// `Az` and `Bz` at both stream values on the rows' constant suffix;
+    /// zero, and never read, when the trace fills its cycle domain.
+    fn suffix_groups(&self) -> Result<([F; 2], [F; 2]), WitnessError> {
+        if self.prefix_cycles < 1 << (self.challenges.total() - 1) {
+            Ok(self
+                .rows
+                .access()
+                .row(self.prefix_cycles)?
+                .folded_groups(&self.lagrange))
+        } else {
+            Ok(([F::zero(); 2], [F::zero(); 2]))
+        }
+    }
+
     fn fill_eager_tables(&mut self) -> Result<(), KernelError<F>> {
-        let log_t = self.challenges.total() - 1;
         let prefix_cycles = self.prefix_cycles;
         let rows = &self.rows;
         let split_eq = &self.split_eq;
         #[cfg(not(feature = "field-inline"))]
         let b_folds = PreparedBFolds::new(&self.derived)?;
-        let cycles = 1usize << log_t;
         let mut az: Vec<F> = unsafe_allocate_zero_vec(2 * prefix_cycles);
         let mut bz: Vec<F> = unsafe_allocate_zero_vec(2 * prefix_cycles);
         let e_out = split_eq.e_out_current();
@@ -1213,11 +1225,7 @@ impl<F: JoltField> OuterRemainderKernel<F> {
         let width = 2 * in_len;
         let access = rows.access();
         let lagrange = &self.lagrange;
-        let (az_tail, bz_tail) = if prefix_cycles < cycles {
-            access.row(prefix_cycles)?.folded_groups(lagrange)
-        } else {
-            ([F::zero(); 2], [F::zero(); 2])
-        };
+        let (az_tail, bz_tail) = self.suffix_groups()?;
         #[cfg(feature = "field-inline")]
         let field_rows_ref: &[(usize, FieldInlineSpartanRow<F>)] = &self.field_rows;
         // `try_reduce` discards every block result once one block fails, so

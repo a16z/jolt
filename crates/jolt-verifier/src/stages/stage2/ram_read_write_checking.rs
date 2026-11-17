@@ -160,7 +160,7 @@ impl<F: JoltField> ConcreteSumcheck<F> for RamReadWriteChecking<F> {
     /// masked weight occurs once in the output expression. The generic
     /// evaluator calls [`derive_output_term`](Self::derive_output_term) per
     /// leaf, and `EqCycle` weights three of the five claims, so it would
-    /// evaluate the cycle equality five times.
+    /// evaluate the cycle equality six times.
     fn expected_output(
         &self,
         _input_points: &RamReadWriteInputClaims<Vec<F>>,

@@ -176,7 +176,9 @@ fn exact_rows(pad: [u8; 2]) -> [u8; 2] {
             "sub {target}, {target}, {rows}",
             "jr {target}",
             ".rept 4096",
-            ".4byte 0x00000013", // addi x0, x0, 0: one ADDI row each
+            // `.insn`, not a data directive: the assembler maps data directives
+            // as `$d`, and jolt-program's `decode_elf` decodes no `$d` bytes.
+            ".insn 4, 0x00000013", // addi x0, x0, 0: one ADDI row each
             ".endr",
             "2:",
             target = out(reg) _,

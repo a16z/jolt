@@ -864,14 +864,19 @@ def resolve(event_name: str, event: dict, github: GitHub | None = None) -> int |
             or (run.get("repository") or {}).get("id") != repo["id"]:
         return None
     number = int(match.group(1))
-    # GitHub's run associations can omit closed PRs. Bind every proposed number to the
-    # source repository, branch and exact head through the base repository's PR API.
+    # GitHub's run associations can omit closed PRs. Bind every proposed number to the branch and
+    # exact head through the base repository's PR API, and a pull_request run to the source
+    # repository as well. A pull_request_review run reports the base repository as its head
+    # repository even for a fork's pull request (observed, not documented), so that run is bound
+    # by branch name and head alone. Another pull request sharing both can then be selected: its
+    # evaluation re-reads every input and is one that a comment on it already starts.
     source = run.get("head_repository") or {}
     if github is None or not source.get("id"):
         return None
     pull = github.get(f"/repos/{github.repo}/pulls/{number}", missing_ok=True)
     if pull and pull["base"]["repo"]["id"] == repo["id"] \
-            and (pull["head"].get("repo") or {}).get("id") == source.get("id") \
+            and (run["event"] == "pull_request_review"
+                 or (pull["head"].get("repo") or {}).get("id") == source.get("id")) \
             and pull["head"]["ref"] == run.get("head_branch") \
             and pull["head"]["sha"] == run.get("head_sha"):
         return number

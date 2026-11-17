@@ -78,7 +78,6 @@ use super::constant_suffix::ConstantSuffix;
 use super::eq_prefix::EqPrefix;
 use super::instruction_read_raf::InstructionCycleRow;
 use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa};
-use super::streaming::StreamedFoldedRa;
 use super::support::{
     bind_all, eq_table, gamma_powers, map_reduce_chunks, merge_evals, pair, par_sum_pair_groups,
     par_sum_pair_groups_reusing, repeat_hash, repeats_often, round_poly_from_skipped_evals,
@@ -88,7 +87,7 @@ use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
 
-use streaming::{rows_unavailable, BytecodePcDigits};
+use streaming::{rows_unavailable, StreamedRows};
 pub use streaming::{StreamingBytecodeReadRafAddress, StreamingBytecodeReadRafCycle};
 
 /// `row_at` serves the cycles up to `prefix_len`, whose row every later cycle
@@ -951,33 +950,74 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafCycle<F>> for OptimizedByteco
             &inputs,
             |chunk_eqs, selectors| {
                 let rows = InstructionCycleRow::shared(session, witness, cycles)?;
+                // At least 1: the coefficient tables hold cycle 0's entry
+                // term explicitly.
                 let prefix_len = rows.prefix_len().max(1);
-                Ok(CycleRows {
+                Ok(CycleRows::Lazy(LazyRows {
                     #[cfg(feature = "akita")]
                     fused_inc: LazyFusedInc::new(Arc::clone(&rows), prefix_len),
-                    ra: CycleRa::Lazy(LazyFoldedRa::new(
+                    ra: LazyFoldedRa::new(
                         chunk_eqs,
                         BytecodePcChunks {
                             rows,
                             prefix_len,
                             selectors,
                         },
-                    )),
-                    prefix_len,
-                })
+                    ),
+                }))
             },
         )?))
     }
 }
 
-/// What a cycle kernel holds of the cycle rows.
-struct CycleRows<F: JoltField> {
-    ra: CycleRa<F>,
-    /// The first cycle from which every row repeats, and at least 1: the
-    /// coefficient tables are explicit up to it, cycle 0's entry term included.
-    prefix_len: usize,
+/// The default family's state by cycle: the committed RA factors, lazy over
+/// the packed row cache until they turn dense, and in `akita` builds the
+/// fused increment on the same schedule.
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
+struct LazyRows<F: JoltField> {
+    ra: LazyFoldedRa<F, BytecodePcChunks>,
     #[cfg(feature = "akita")]
     fused_inc: LazyFusedInc<F>,
+}
+
+impl<F: JoltField> LazyRows<F> {
+    fn bind(&mut self, challenge: F) {
+        self.ra.bind(challenge);
+        #[cfg(feature = "akita")]
+        self.fused_inc.bind(challenge);
+    }
+}
+
+/// What a cycle kernel holds of the cycle rows: the default family's state,
+/// or the streaming family's until the bind that fills the default family's
+/// dense state from the rows.
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
+enum CycleRows<F: JoltField> {
+    Lazy(LazyRows<F>),
+    Streamed(StreamedRows<F>),
+}
+
+impl<F: JoltField> CycleRows<F> {
+    /// The leading cycles whose coefficients a kernel holds explicitly as
+    /// prepared, at least 1 for cycle 0's entry term: every cycle before the
+    /// constant suffix of the default family's rows, whose rounds read the
+    /// coefficient tables by pair row; cycle 0 alone under the streaming
+    /// family, whose rounds evaluate them ([`EqPrefix::entries`]).
+    fn explicit_cycles(&self) -> usize {
+        match self {
+            Self::Lazy(rows) => rows.ra.prefix_len(),
+            Self::Streamed(_) => 1,
+        }
+    }
+
+    /// The fused increment on the rows' constant suffix, at any depth.
+    #[cfg(feature = "akita")]
+    fn fused_inc_tail(&self) -> F {
+        match self {
+            Self::Lazy(rows) => rows.fused_inc.tail_value(),
+            Self::Streamed(rows) => rows.fused_inc_tail,
+        }
+    }
 }
 
 impl<F: JoltField> CycleKernel<F> {
@@ -1010,12 +1050,8 @@ impl<F: JoltField> CycleKernel<F> {
                     .map_err(KernelError::from)
             })
             .collect::<Result<Vec<_>, _>>()?;
-        let CycleRows {
-            ra,
-            prefix_len,
-            #[cfg(feature = "akita")]
-            fused_inc,
-        } = rows(chunk_eqs, selectors)?;
+        let rows = rows(chunk_eqs, selectors)?;
+        let explicit_cycles = rows.explicit_cycles();
 
         // The combined coefficient table: every non-RA factor of the summand is linear
         // in one cycle table, so   C(j) = Σ_s (γ^s·val_s + raf_s·int_r)·eq_s(j) +
@@ -1091,8 +1127,11 @@ impl<F: JoltField> CycleKernel<F> {
             }
             terms.push((point.to_vec(), weight));
         }
-        let mut combined =
-            EqPrefix::new(dimensions.log_t(), prefix_len, std::mem::take(&mut terms));
+        let mut combined = EqPrefix::new(
+            dimensions.log_t(),
+            explicit_cycles,
+            std::mem::take(&mut terms),
+        );
         let entry_scalar = eq_address[relation.entry_bytecode_index()];
         combined.add_to_first(gamma_powers[num_stages + 2] * entry_scalar);
 
@@ -1112,7 +1151,7 @@ impl<F: JoltField> CycleKernel<F> {
                     )
                 })
                 .collect();
-            EqPrefix::new(dimensions.log_t(), prefix_len, terms)
+            EqPrefix::new(dimensions.log_t(), explicit_cycles, terms)
         };
 
         let output_openings = bytecode::read_raf_output_openings(dimensions).bytecode_ra;
@@ -1125,33 +1164,12 @@ impl<F: JoltField> CycleKernel<F> {
         Ok(Self {
             progress: RoundProgress::new(relation.rounds()),
             degree: relation.degree(),
-            ra,
+            rows,
             combined,
-            #[cfg(feature = "akita")]
-            fused_inc,
             #[cfg(feature = "akita")]
             fused_combined,
             output_openings,
         })
-    }
-}
-
-/// The committed RA factors: the default family, lazy over the packed row
-/// cache until it turns dense, or the streaming family until the bind that
-/// gathers it into that family's dense state.
-#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
-enum CycleRa<F: JoltField> {
-    Lazy(LazyFoldedRa<F, BytecodePcChunks>),
-    Streamed(StreamedFoldedRa<F, BytecodePcDigits>),
-}
-
-impl<F: JoltField> CycleRa<F> {
-    /// The default family, unless the factors are still streamed.
-    fn lazy(&self) -> Option<&LazyFoldedRa<F, BytecodePcChunks>> {
-        match self {
-            Self::Lazy(ra) => Some(ra),
-            Self::Streamed(_) => None,
-        }
     }
 }
 
@@ -1259,14 +1277,12 @@ impl ChunkIndexSource for BytecodePcChunks {
 struct CycleKernel<F: JoltField> {
     progress: RoundProgress,
     degree: usize,
-    ra: CycleRa<F>,
+    rows: CycleRows<F>,
     combined: EqPrefix<F>,
-    #[cfg(feature = "akita")]
-    fused_inc: LazyFusedInc<F>,
     #[cfg(feature = "akita")]
     fused_combined: EqPrefix<F>,
     /// The produced `BytecodeRa` opening ids, in `read_raf_output_openings`
-    /// order (index-aligned with `ra`).
+    /// order (index-aligned with the RA factors).
     #[cfg_attr(feature = "allocative", allocative(visit = crate::backend::visit_heap_free_elements))]
     output_openings: Vec<JoltOpeningId>,
 }
@@ -1275,16 +1291,20 @@ impl<F: JoltField> CycleKernel<F> {
         self.combined.bind(challenge);
         #[cfg(feature = "akita")]
         self.fused_combined.bind(challenge);
-        match &mut self.ra {
-            CycleRa::Lazy(ra) => ra.bind(challenge),
-            CycleRa::Streamed(ra) => {
-                if let Some(dense) = ra.bind(challenge)? {
-                    self.ra = CycleRa::Lazy(dense);
+        match &mut self.rows {
+            CycleRows::Lazy(rows) => rows.bind(challenge),
+            CycleRows::Streamed(rows) => {
+                if let Some(dense) = rows.bind(challenge)? {
+                    // The default family's rounds read the coefficient
+                    // tables by pair row, up to its dense rows.
+                    let explicit = dense.ra.prefix_len();
+                    self.combined.extend(explicit);
+                    #[cfg(feature = "akita")]
+                    self.fused_combined.extend(explicit);
+                    self.rows = CycleRows::Lazy(dense);
                 }
             }
         }
-        #[cfg(feature = "akita")]
-        self.fused_inc.bind(challenge);
         self.progress.advance();
         Ok(())
     }
@@ -1298,33 +1318,45 @@ impl<F: JoltField> CycleKernel<F> {
     #[inline]
     fn accumulate_group(
         &self,
-        ra: &LazyFoldedRa<F, BytecodePcChunks>,
+        rows: &LazyRows<F>,
         y: usize,
         acc: &mut [F],
         ra_pairs: &mut [(F, F)],
     ) {
-        Self::accumulate_coefficient(ra, y, self.coefficient(y), acc, ra_pairs);
+        Self::accumulate_coefficient(&rows.ra, y, self.coefficient(rows, y), acc, ra_pairs);
     }
 
     /// `[C(0), C(1) - C(0), 2 * quadratic_coefficient(C)]`; each coordinate
     /// is linear in C, so adding these arrays adds coefficient polynomials.
     #[inline]
-    fn coefficient(&self, y: usize) -> [F; 3] {
+    fn coefficient(&self, rows: &LazyRows<F>, y: usize) -> [F; 3] {
         let (c_lo, c_hi) = self.combined.pair(y);
         #[cfg(not(feature = "akita"))]
         {
+            let _ = rows;
             [c_lo, c_hi - c_lo, F::zero()]
         }
         #[cfg(feature = "akita")]
-        {
-            let (fused_coefficient_lo, fused_coefficient_hi) = self.fused_combined.pair(y);
-            let (fused_inc_lo, fused_inc_hi) = self.fused_inc.lo_hi(y);
-            let at_zero = c_lo + fused_inc_lo * fused_coefficient_lo;
-            let at_one = c_hi + fused_inc_hi * fused_coefficient_hi;
-            let leading =
-                (fused_inc_hi - fused_inc_lo) * (fused_coefficient_hi - fused_coefficient_lo);
-            [at_zero, at_one - at_zero, leading + leading]
-        }
+        Self::fused_coefficient(
+            (c_lo, c_hi),
+            self.fused_combined.pair(y),
+            rows.fused_inc.lo_hi(y),
+        )
+    }
+
+    /// [`Self::coefficient`]'s array for `C = c + fused_inc · fused_c`, each
+    /// factor given by its pair at one pair row.
+    #[cfg(feature = "akita")]
+    #[inline]
+    fn fused_coefficient(
+        (c_lo, c_hi): (F, F),
+        (fused_coefficient_lo, fused_coefficient_hi): (F, F),
+        (fused_inc_lo, fused_inc_hi): (F, F),
+    ) -> [F; 3] {
+        let at_zero = c_lo + fused_inc_lo * fused_coefficient_lo;
+        let at_one = c_hi + fused_inc_hi * fused_coefficient_hi;
+        let leading = (fused_inc_hi - fused_inc_lo) * (fused_coefficient_hi - fused_coefficient_lo);
+        [at_zero, at_one - at_zero, leading + leading]
     }
 
     /// [`Self::accumulate_samples`] on group `y`'s factors of `ra`.
@@ -1387,8 +1419,8 @@ impl<F: JoltField> CycleKernel<F> {
 }
 
 impl<F: JoltField> CycleKernel<F> {
-    fn grouped_evals(&self, half: usize) -> Option<Vec<F>> {
-        let ra = self.ra.lazy()?;
+    fn grouped_evals(&self, rows: &LazyRows<F>, half: usize) -> Option<Vec<F>> {
+        let ra = &rows.ra;
         let LazyFoldedRa::Lazy { source, width, .. } = ra else {
             return None;
         };
@@ -1405,7 +1437,7 @@ impl<F: JoltField> CycleKernel<F> {
             let mut pairs = vec![(F::zero(), F::zero()); ra.num_polys()];
             for y in range {
                 let entry = cache.entry(source.group_hash(y, width));
-                let coefficients = self.coefficient(y);
+                let coefficients = self.coefficient(rows, y);
                 if let Some((old, sum)) = entry {
                     if source.same_group(*old, y, width) {
                         for (sum, value) in sum
@@ -1444,7 +1476,7 @@ impl<F: JoltField> CycleKernel<F> {
     // Pair the four linear RA factors into two quadratics. Their samples at
     // 0, 2, ..., degree need only additions after the initial products; the
     // final coefficient multiplication is accumulated before reduction.
-    fn four_ra_evals(&self, half: usize) -> Option<Vec<F>> {
+    fn four_ra_evals(&self, rows: &LazyRows<F>, half: usize) -> Option<Vec<F>> {
         fn quadratic<F: JoltField>(a: (F, F), b: (F, F)) -> [F; 4] {
             let zero = a.0 * b.0;
             let one = a.1 * b.1;
@@ -1453,7 +1485,7 @@ impl<F: JoltField> CycleKernel<F> {
             let delta = one - zero + second;
             [zero, one + delta, delta, second]
         }
-        let ra = self.ra.lazy()?;
+        let ra = &rows.ra;
         if ra.num_polys() != 4 {
             return None;
         }
@@ -1464,7 +1496,7 @@ impl<F: JoltField> CycleKernel<F> {
                 let mut acc = vec![F::Accumulator::default(); self.degree];
                 let mut pairs = [(F::zero(), F::zero()); 4];
                 for y in range {
-                    let [at_zero, mut delta, second] = self.coefficient(y);
+                    let [at_zero, mut delta, second] = self.coefficient(rows, y);
                     ra.lo_hi_all(y, &mut pairs);
                     let mut coefficient = at_zero + delta + delta + second;
                     delta += second + second;
@@ -1503,28 +1535,30 @@ impl<F: JoltField> ProveRounds<F> for CycleKernel<F> {
         if let Some(challenge) = bind {
             self.bind(challenge).map_err(rows_unavailable)?;
         }
-        let half = self.combined.prefix_len().div_ceil(2);
         let slots = self.degree;
 
-        let (mut evals, ra_tail) = match &self.ra {
-            CycleRa::Lazy(ra) => {
-                let num_ra = ra.num_polys();
+        // `half` pair rows hold a cycle before the rows' constant suffix.
+        let (mut evals, half, ra_tail) = match &self.rows {
+            CycleRows::Lazy(rows) => {
+                let half = self.combined.prefix_len().div_ceil(2);
+                let num_ra = rows.ra.num_polys();
                 let evals = self
-                    .grouped_evals(half)
-                    .or_else(|| self.four_ra_evals(half))
+                    .grouped_evals(rows, half)
+                    .or_else(|| self.four_ra_evals(rows, half))
                     .unwrap_or_else(|| {
                         par_sum_pair_groups_reusing(
                             half,
                             slots,
                             || vec![(F::zero(), F::zero()); num_ra],
-                            |acc, ra_pairs, y| self.accumulate_group(ra, y, acc, ra_pairs),
+                            |acc, ra_pairs, y| self.accumulate_group(rows, y, acc, ra_pairs),
                         )
                     });
-                (evals, ra.tail_values())
+                (evals, half, rows.ra.tail_values())
             }
-            CycleRa::Streamed(ra) => (
-                self.streamed_evals(ra).map_err(rows_unavailable)?,
-                ra.tail_values(),
+            CycleRows::Streamed(rows) => (
+                self.streamed_evals(rows).map_err(rows_unavailable)?,
+                rows.ra.prefix_pairs(),
+                rows.ra.tail_values(),
             ),
         };
 
@@ -1532,7 +1566,7 @@ impl<F: JoltField> ProveRounds<F> for CycleKernel<F> {
         #[cfg(feature = "akita")]
         let (tail_lo, tail_hi) = {
             let (fused_lo, fused_hi) = self.fused_combined.suffix_pair_sums(half);
-            let inc = self.fused_inc.tail_value();
+            let inc = self.rows.fused_inc_tail();
             (tail_lo + inc * fused_lo, tail_hi + inc * fused_hi)
         };
         let ra_tail: F = ra_tail.iter().copied().product();
@@ -1558,23 +1592,34 @@ impl<F: JoltField> SumcheckKernel<F> for CycleKernel<F> {
         _inputs: &SumcheckInputClaims<F, Self::Relation>,
     ) -> Result<SumcheckOutputClaims<F, Self::Relation>, SumcheckKernelError<F>> {
         self.progress.require_complete()?;
-        let CycleRa::Lazy(ra) = &self.ra else {
+        let CycleRows::Lazy(rows) = &self.rows else {
             return Err(SumcheckKernelError::InvariantViolation {
-                reason: "bytecode RA factors streamed after full binding",
+                reason: "bytecode cycle rows streamed after full binding",
             });
         };
         let output_openings = &self.output_openings;
         SumcheckOutputClaims::<F, Self::Relation>::from_opening_values(|id: &JoltOpeningId| {
             #[cfg(feature = "akita")]
             if *id == bytecode::fused_inc_read_raf_opening() {
-                return Some(self.fused_inc.value(0));
+                return Some(rows.fused_inc.value(0));
             }
             output_openings
                 .iter()
                 .position(|opening| opening == id)
-                .map(|index| ra.value(index, 0))
+                .map(|index| rows.ra.value(index, 0))
         })
         .map_err(SumcheckKernelError::from)
+    }
+}
+
+#[cfg(test)]
+impl<F: JoltField> CycleRows<F> {
+    /// The default family's state, unless the rows are still streamed.
+    fn lazy(&self) -> Option<&LazyRows<F>> {
+        match self {
+            Self::Lazy(rows) => Some(rows),
+            Self::Streamed(_) => None,
+        }
     }
 }
 

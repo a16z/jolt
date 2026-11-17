@@ -75,6 +75,7 @@ fn env_rows(name: &str, default: usize) -> usize {
 ///
 /// Panics if the run does not end at a halt instruction
 /// ([`TraceError::EndedWithoutHalt`]).
+#[tracing::instrument(skip_all)]
 #[expect(
     clippy::expect_used,
     reason = "the infallible trace API panics when a run does not end at a halt; TracerBackend returns TraceError::EndedWithoutHalt"
@@ -94,37 +95,6 @@ pub fn trace(
     JoltDevice,
     AdviceTape,
 ) {
-    try_trace(
-        elf_contents,
-        elf_path,
-        inputs,
-        untrusted_advice,
-        trusted_advice,
-        memory_config,
-        advice_tape,
-    )
-    .expect("a guest run must end at a halt instruction")
-}
-
-#[tracing::instrument(skip_all, name = "trace")]
-pub(crate) fn try_trace(
-    elf_contents: &[u8],
-    elf_path: Option<&PathBuf>,
-    inputs: &[u8],
-    untrusted_advice: &[u8],
-    trusted_advice: &[u8],
-    memory_config: &MemoryConfig,
-    advice_tape: Option<AdviceTape>,
-) -> Result<
-    (
-        LazyTraceIterator,
-        Vec<Cycle>,
-        Memory,
-        JoltDevice,
-        AdviceTape,
-    ),
-    TraceError,
-> {
     let mut emulator = create_emulator(
         elf_contents,
         elf_path,
@@ -162,14 +132,15 @@ pub(crate) fn try_trace(
         }
     };
 
-    let (advice_tape_result, final_memory_state, jolt_device) = finish_emulator(emulator)?;
-    Ok((
+    let (advice_tape_result, final_memory_state, jolt_device) =
+        finish_emulator(emulator).expect("a guest run must end at a halt instruction");
+    (
         lazy_trace_iter,
         trace,
         final_memory_state,
         jolt_device,
         advice_tape_result,
-    ))
+    )
 }
 
 /// Shared teardown for every execution path (eager [`trace`], execute-only
@@ -419,7 +390,7 @@ pub fn create_emulator(
         emulator.set_elf_path(elf_path);
     }
     emulator.setup_program(elf_contents);
-    emulator.protect_code_words(elf_contents);
+    emulator.protect_code(elf_contents);
     emulator
 }
 
@@ -929,7 +900,7 @@ mod tests {
         use crate::parallel::{ChunkCheckpoint, ChunkWorker, SnapshotPool};
         use std::panic::{catch_unwind, AssertUnwindSafe};
 
-        // Preserve the old code word in x2, try to zero it, then restore it.
+        // Preserve the old code doubleword in x2, try to zero it, then restore it.
         let elf = build_elf64(
             &[
                 0x0000_0097,
@@ -938,6 +909,31 @@ mod tests {
                 0x0020_b023,
                 JOLT_SUCCESS_WORD,
             ],
+            &[],
+            StrtabOrder::GnuLd,
+        );
+        let config = tiny_guest_config(&elf);
+        let mut emulator = create_emulator(&elf, None, &[], &[], &[], &config, None);
+        emulator.tick(None);
+        emulator.tick(None);
+        let checkpoint = ChunkCheckpoint::capture(&emulator);
+        let mut worker = ChunkWorker::new(&emulator);
+        let mut pool = SnapshotPool::new();
+        let image = pool.capture(&emulator.get_cpu().mmu.memory.memory);
+        worker.install_chunk(&checkpoint, image);
+        assert!(catch_unwind(AssertUnwindSafe(|| worker.run_ticks(1, &mut Vec::new()))).is_err());
+        assert!(catch_unwind(AssertUnwindSafe(|| emulator.tick(None))).is_err());
+    }
+
+    #[test]
+    fn interpreter_and_replay_reject_fetches_inside_a_decoded_instruction() {
+        use crate::parallel::{ChunkCheckpoint, ChunkWorker, SnapshotPool};
+        use std::panic::{catch_unwind, AssertUnwindSafe};
+
+        // auipc x1, 0; jalr x0, 10(x1); addi x0, x2, 0; jolt.success. The jump
+        // lands on the addi's upper halfword, which decodes as c.nop.
+        let elf = build_elf64(
+            &[0x0000_0097, 0x00a0_8067, 0x0001_0013, JOLT_SUCCESS_WORD],
             &[],
             StrtabOrder::GnuLd,
         );

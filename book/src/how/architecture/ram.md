@@ -58,8 +58,9 @@ An access misaligned for its width, such as an `LH` at an odd address or any mis
 RAM read-write checking enforces value consistency, address selection, value
 preservation on protected words and the exclusion of unmapped words.
 Let $E(j)=\widetilde{\textsf{eq}}(r_0,j)$, where $r_0$ is the outer sumcheck's
-cycle point, and let $C(k)$ select words containing real source instructions,
-program input, trusted advice, untrusted advice or the stack canary
+cycle point, and let $C(k)$ select the words of the code region (the
+doubleword holding the first source instruction through the one holding the
+last), program input, trusted advice, untrusted advice or the stack canary
 `[stack_end, stack_end + STACK_CANARY_SIZE)`.
 Let $N(k)$ select the unmapped words of the proof's domain: the padding
 `[io_end, RAM_START_ADDRESS)` between the I/O region and DRAM, and the words
@@ -97,24 +98,26 @@ construction reserves an unmapped guard word there (admission does not recheck
 this for a layout decoded from a verifier key), so $N$ starts at that word and
 an access to it fails the $\gamma^4$ identity.
 
-Preprocessing rounds each real source instruction's two- or four-byte extent
-outward to doublewords, merges adjacent intervals and excludes synthetic
-address-zero padding and intermediate virtual rows. It combines these intervals
-with the input, advice and canary extents from the public memory layout,
-rounds them outward to doublewords and merges overlaps and neighbors. $C$
-uses RAM indices relative to the lowest mapped address, including I/O below
-DRAM and index zero, and restricts the union to the proof's RAM domain. Both
-the source intervals and the memory layout enter the program digest in both
-full and committed program modes. Full preprocessing
-checks exact source coverage; committed verification trusts the authenticated
-key's coverage and checks the public interval shape and bounds. ELF admission
-rejects writable sections sharing a protected word. Read-only data sharing a
-code word is frozen with that word; text padding alone does not protect a word.
+The code region runs from the doubleword holding the first real source
+instruction through the one holding the last. It excludes synthetic
+address-zero padding and takes each expanded instruction's extent from its
+final row, which records whether the source instruction is two or four bytes.
+$C$ combines the region with the input, advice and canary extents from the
+public memory layout, rounded outward to doublewords and merged, in RAM indices
+relative to the lowest mapped address, including I/O below DRAM and index zero,
+and restricts the union to the proof's RAM domain. In full program mode the
+verifier derives the code region from the bytecode. In committed mode the key's
+metadata carries it, and admission checks that it lies in RAM and that an empty
+region is `0..0`; the authenticated key vouches for its coverage. The region
+enters the program digest through the bytecode or the metadata, together with
+the memory layout. ELF admission rejects a writable section that overlaps the
+code region. Padding and read-only data inside the region are frozen with the
+code; text padding outside it protects nothing.
 
 At the final opening point, the verifier evaluates the multilinear extensions
 of both masks, rather than testing membership at a field-valued address. For
-$s$ intervals this takes $O(s\log K)$ arithmetic; $N$ has at most two
-intervals. The optimized prover uses
+$s$ intervals this takes $O(s\log K)$ arithmetic; $C$ has at most five
+intervals and $N$ at most two. The optimized prover uses
 interval endpoints and at most two boundary weights per interval while binding
 address bits. It adds no dense mask, trace pass, commitment, opening point or
 sumcheck round; the maximum degree remains three.
@@ -132,7 +135,10 @@ constraints reject the same accesses: the $\gamma^2$ identity rejects the
 store, the $\gamma^3$ identity with RAF evaluation rejects any address outside
 the proof's domain `[lowest_address, lowest_address + 8K)`, and the
 $\gamma^4$ identity rejects any access to a word in $N$. The rest of the tracer's store-permission policy has no
-matching constraint. Host calls (prints, cycle
+matching constraint. The tracers also reject an instruction fetch at an address
+that starts no decoded source instruction, such as a jump into data, padding or
+the middle of an instruction: the native tracer compiles only the decoded
+instructions, and the interpreter checks each address before decoding it. Host calls (prints, cycle
 markers and advice writes) never stop the run: a call whose buffer has a byte
 below `lowest_address`, or any other byte a guest load would reject, is logged
 and ignored.
@@ -162,9 +168,10 @@ $$
 No instruction sets both flags (the `load_store_exclusive` test in `jolt-riscv` pins the instruction catalog, and bytecode read-checking ties each cycle's flags to its bytecode row), so the right-hand side is 0 or 1.
 The $d$ committed chunks factor the selector as $\textsf{ra}(k, j) = \prod_{i=1}^{d} \textsf{ra}_i(k_i, j)$ (as described [above](#dynamic-parameters), $d$ for RAM is dynamic), so the left-hand side is $\prod_{i=1}^{d} n_i(j)$, where $n_i(j) = \sum_{k_i} \textsf{ra}_i(k_i, j)$ sums over the values that digit $k_i$ takes in addresses of the RAM domain.
 Booleanity of every committed chunk makes each $n_i(j)$ a nonnegative integer, and the product is far below the field modulus, so the equation holds over the integers.
-On a memory row the product is 1, so every chunk's row is one-hot and $\textsf{ra}$ selects exactly one word.
-On any other row the product is 0, so some chunk's row is zero and $\textsf{ra}$ selects no word.
-Individual chunk weights are not otherwise constrained: on a non-memory row, the chunks other than a zero one may hold several ones.
+On a memory row the product is 1, so every chunk's row restricted to those digit values is one-hot and $\textsf{ra}$ selects exactly one word.
+On any other row the product is 0, so some chunk's restriction is zero and $\textsf{ra}$ selects no word.
+`committed_address_chunks` fixes unused leading address bits to zero, so entries outside that slice need only satisfy Booleanity, even on memory rows.
+Individual chunk weights are not otherwise constrained: on a non-memory row, the chunk restrictions other than a zero one may hold several ones.
 
 ### ra virtualization
 

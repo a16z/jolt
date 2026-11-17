@@ -137,8 +137,6 @@ impl<F: JoltField> Phase<F> {
 const LATE_PURGE_CYCLE_ROUNDS: usize = 6;
 
 impl<F: JoltField> RamReadWriteKernel<F> {
-    /// The kernel from its first phase, batching with the relation's γ powers
-    /// and address masks.
     fn new(
         inputs: &ProverInputs<'_, F, RamReadWriteChecking<F>>,
         phase: Phase<F>,
@@ -741,7 +739,7 @@ impl RamReadWriteBytes {
     /// Not counted: later binds, and the preparation transients other than
     /// the stored tables: the access columns' collection (the eager check
     /// reserves it separately), `val_init`'s `K` reconstruction flags,
-    /// address-first's eq-table tensor factors, and RAF's fold staging and eq
+    /// address-first's eq-table tensor factors, and RAF's fold part tables and eq
     /// factors.
     pub fn new<F: JoltField>(
         dimensions: ReadWriteDimensions,
@@ -1066,7 +1064,7 @@ mod tests {
             heap_end: lowest + 256,
             ..Default::default()
         };
-        let intervals = write_protected_word_intervals(&[(7, 9)], &layout, 32).unwrap();
+        let intervals = write_protected_word_intervals(7..9, &layout, 32).unwrap();
         assert_eq!(intervals, [(0, 5), (7, 9), (11, 27)]);
         let masks = RamWordMasks {
             write_protected: intervals,

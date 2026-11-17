@@ -608,11 +608,29 @@ mod matrix {
 
         pub fn prove_and_verify(case: &GuestCase, families: StreamingFamilies) {
             let _ = prove_and_verify_trace_ring(case, families);
+            if families != StreamingFamilies::default() {
+                // The derived configuration binds the read-write checks
+                // cycle-first, the only order in which the streaming register
+                // kernel replaces the default one.
+                let _ = prove_with_config(case, families, |_| {});
+            }
         }
 
         pub(super) fn prove_and_verify_trace_ring(
             case: &GuestCase,
             families: StreamingFamilies,
+        ) -> usize {
+            prove_with_config(case, families, |config| {
+                config.rw_config.ram_rw_phase1_num_rounds = 0;
+                config.rw_config.registers_rw_phase1_num_rounds = 0;
+            })
+        }
+
+        /// Returns the ring dimension of the verified proof's trace commitment.
+        fn prove_with_config(
+            case: &GuestCase,
+            families: StreamingFamilies,
+            configure: impl FnOnce(&mut ProverConfig),
         ) -> usize {
             let prepared = support::prepare(case);
             let mut config = ProverConfig::derive_from_dimensions::<AkitaField>(
@@ -623,11 +641,10 @@ mod matrix {
                 prepared.preprocessing.max_padded_trace_length,
             )
             .expect("derive config");
-            config.rw_config.ram_rw_phase1_num_rounds = 0;
-            config.rw_config.registers_rw_phase1_num_rounds = 0;
+            configure(&mut config);
             let untrusted_advice = !case.untrusted_advice.is_empty();
             let trusted_advice = !case.trusted_advice.is_empty();
-            let preprocessing = preprocessing::preprocess_full_with_advice(
+            let mut preprocessing = preprocessing::preprocess_full_with_advice(
                 &AkitaScheduleArtifacts::shared_from_default_directory(AkitaChunkProfile::new(
                     8, 2,
                 )),
@@ -637,6 +654,15 @@ mod matrix {
                 trusted_advice,
             )
             .expect("Akita preprocessing");
+            // A streaming selection also streams the opening's ring-switch NTT
+            // operations; the eager proof below opens on the default backends.
+            let eager_setup = preprocessing.pcs_setup.clone();
+            if families != StreamingFamilies::default() {
+                preprocessing.pcs_setup = preprocessing
+                    .pcs_setup
+                    .with_streamed_ring_switch()
+                    .expect("streamed ring-switch setup");
+            }
             let trusted = trusted_advice.then(|| {
                 preprocessing::commit_trusted_advice(&preprocessing, &case.trusted_advice)
                     .expect("trusted advice commitment")
@@ -676,6 +702,7 @@ mod matrix {
             verify(&public_io).expect("Akita proof must verify");
             super::assert_rejects_the_opposite_panic_claim(&public_io, verify);
             if families != StreamingFamilies::default() {
+                preprocessing.pcs_setup = eager_setup;
                 let eager = akita::prove::<AkitaField, AkitaScheme, AkitaVc, ProverState<Keccak>>(
                     JoltBackend::optimized().with_witness(&witness),
                     &preprocessing,

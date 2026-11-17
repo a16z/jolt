@@ -72,6 +72,16 @@ impl MemoryPlane {
         self.size
     }
 
+    /// The little-endian word at guest `address`, or `None` where the plane
+    /// does not hold all four bytes.
+    pub fn word_at(&self, address: u64) -> Option<u32> {
+        let offset = usize::try_from(address.checked_sub(RAM_START_ADDRESS)?).ok()?;
+        // SAFETY: new maps size bytes, all readable.
+        let plane = unsafe { core::slice::from_raw_parts(self.base, self.size) };
+        let bytes = plane.get(offset..offset.checked_add(4)?)?;
+        Some(u32::from_le_bytes(bytes.try_into().ok()?))
+    }
+
     /// Copy the whole plane out, for a chunk checkpoint.
     pub fn to_vec(&self) -> Vec<u8> {
         // SAFETY: new maps size bytes, all readable.

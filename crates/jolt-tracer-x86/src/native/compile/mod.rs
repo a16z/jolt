@@ -12,12 +12,13 @@ mod emit;
 pub mod emitter;
 
 use std::collections::BTreeMap;
+use std::ops::Range;
 
 use common::constants::RAM_START_ADDRESS;
 use dynasmrt::{x64::Assembler, AssemblyOffset, DynamicLabel, DynasmApi, DynasmLabelApi};
 use jolt_program::{
     execution::{JoltProgram, TraceError},
-    preprocess::{ram::bytecode_code_word_intervals, BytecodePCMapper},
+    preprocess::{ram::bytecode_code_region, BytecodePCMapper},
 };
 use jolt_riscv::SourceInstructionKind;
 
@@ -203,7 +204,7 @@ pub struct Emitter {
     group_offsets: Vec<(u64, AssemblyOffset)>,
     pub text_base: u64,
     pub text_span: u64,
-    code_word_intervals: Vec<(usize, usize)>,
+    code_region: Range<usize>,
 }
 
 impl Emitter {
@@ -273,8 +274,8 @@ impl CompiledBody {
             ));
         }
 
-        let code_word_intervals = bytecode_code_word_intervals(rows, RAM_START_ADDRESS)
-            .map_err(|_| TraceError::Backend("invalid source code-word intervals"))?;
+        let code_region = bytecode_code_region(rows, RAM_START_ADDRESS)
+            .map_err(|_| TraceError::Backend("invalid source code region"))?;
         let mut emitter = Emitter {
             mode,
             pausable,
@@ -289,16 +290,19 @@ impl CompiledBody {
             group_offsets: Vec::new(),
             text_base,
             text_span,
-            code_word_intervals,
+            code_region,
         };
 
         let entry = emitter.emit_prologue();
 
-        let mut previous_address = None;
+        let mut previous: Option<&JoltInstructionRow> = None;
         for (row_index, row) in rows.iter().enumerate() {
             emitter.row_index = row_index;
             let address = row.address as u64;
-            if previous_address != Some(address) {
+            if previous.is_none_or(|last| last.address != row.address) {
+                if let Some(last) = previous {
+                    emitter.emit_fallthrough(last, Some(address));
+                }
                 // Group start: define the branch-target label, record the jump
                 // table offset, and emit this group's advice computation (which
                 // must observe the pre-group register state) before its rows.
@@ -309,7 +313,6 @@ impl CompiledBody {
                 if emitter.pausable {
                     emitter.emit_group_pause_check(address);
                 }
-                previous_address = Some(address);
                 emitter.finish_advice_group()?;
                 emitter.advice_slot = 0;
                 emitter.advice_ready = false;
@@ -327,11 +330,13 @@ impl CompiledBody {
                 }
             }
             emitters.emit_row(&mut emitter, row)?;
+            previous = Some(row);
         }
         emitter.finish_advice_group()?;
 
-        // Execution falling off the end of the program is a bad jump.
-        emitter.emit_jump_to_bad_jump();
+        if let Some(last) = previous {
+            emitter.emit_fallthrough(last, None);
+        }
         emitter.emit_unmapped_target_stubs();
         let stubs = emitter.emit_stubs();
 

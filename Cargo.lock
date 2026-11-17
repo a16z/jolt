@@ -3597,6 +3597,8 @@ dependencies = [
  "jolt-riscv",
  "postcard",
  "serde",
+ "tempfile",
+ "thiserror 2.0.21",
  "tracer",
  "tracing",
 ]

@@ -44,9 +44,10 @@ smaller domain. The ELF decoder rejects every odd decoded instruction address
 with the bytecode admission error. These checks run at admission and add no
 per-cycle proof work.
 
-ELF admission rejects any writable section, including `.bss`, that shares a
-word with a decoded source instruction. Read-only data may share a code word,
-and writable words containing only text padding remain admissible.
+ELF admission rejects any writable section, including `.bss`, that overlaps the
+code region: the doublewords from the first decoded source instruction through
+the last. Read-only data may lie in the code region, and writable words outside
+it that contain only text padding remain admissible.
 
 ### Why now
 
@@ -172,20 +173,21 @@ input is zero, with output weight `E*N`. The three
 output openings remain Val, ra and Inc at the existing joint point, with degree
 three and unchanged round count. Clear verification and BlindFold consume this
 single relation; both masks come from authenticated preprocessing (the code
-intervals and the memory layout) in both modes.
+region and the memory layout) in both modes.
 
 `C` is the union of canonical sorted, disjoint, nonadjacent half-open intervals
-of RAM indices. Preprocessing derives its code intervals from real source
-instruction extents (two or four bytes), rounded outward to doublewords.
-Address-zero padding and intermediate expansion rows contribute no new extents.
+of RAM indices. Preprocessing derives one contiguous code region from the first
+source instruction through the last, rounded outward to doublewords. Padding
+and read-only data between instructions are part of this region. Address-zero
+padding and intermediate expansion rows contribute no new source extents.
 `write_protected_word_intervals` adds the input, trusted-advice, untrusted-advice
 and stack-canary extents from the public memory layout, rounded outward the same
-way, and clips the union to the proof's RAM domain. Full admission and
-full-preprocessing deserialization validate the code intervals' exact coverage,
-checked arithmetic, canonical shape and RAM bounds. Committed keys carry the
-same intervals and validate shape and bounds; hidden source coverage is part of
-the trusted key. The preprocessing digest domains are versioned for the added
-metadata.
+way, and clips the union to the proof's RAM domain. Full keys derive the code
+region from decoded bytecode and check its RAM bounds during admission and
+per-proof validation. Committed keys carry the region in `ProgramMetadata` and
+check its bounds and canonical empty form (`0..0`); hidden source coverage is
+part of the trusted key. The preprocessing digest domains are versioned for the
+added metadata.
 
 `N` covers the I/O padding `[io_end, RAM_START_ADDRESS)` and the heap padding
 from `heap_end` to the end of the proof's RAM domain, clipped to that domain
@@ -195,11 +197,10 @@ construction rounds every I/O region size to a multiple of eight and rounds
 `unmapped_word_intervals` rejects an unaligned bound. `RamWordMasks` carries `C`
 and `N` together and rejects masks that overlap.
 
-ELF admission rejects any writable section, including `.bss`, that shares a
-protected word. Read-only bytes sharing a real code word are also frozen. A word
-containing only text padding remains unprotected. The SDK linker aligns rodata
-and writable data to eight bytes, but arbitrary ELF inputs still require this
-check.
+ELF admission rejects any writable section, including `.bss`, that overlaps the
+code region, including gaps between instructions. Read-only bytes and text
+padding inside the region are also frozen. The SDK linker aligns rodata and
+writable data to eight bytes, but arbitrary ELF inputs still require this check.
 
 The optimized kernel fuses the count term, with `gamma^4 N(k)` folded into its
 coefficient, and the modified increment coefficient into its existing sparse

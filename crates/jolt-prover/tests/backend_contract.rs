@@ -270,44 +270,24 @@ mod tests {
         }
     }
 
-    /// Every streaming family is selected. On a trace this small the
-    /// instruction-input kernel reads the rows in rounds 0 and 1 and fills its
-    /// dense tables in round 1, and the Spartan outer and product remainders
-    /// fill their tables in the passes that yield round 0's endpoints; the
-    /// parity tests in `jolt-kernels` cover later crossovers. The RAM kernels
-    /// have no crossover: stages 2–5 read the event log and stage 6b its own
-    /// address column at every trace size. The register value evaluation
-    /// reads the trace's rows in rounds 0 and 1 and fills its two tables in
-    /// round 1; the trace does not fill its domain, so those passes stop at
-    /// the pair that holds its last row, and later rounds read the padded
-    /// suffix as the tables' tail value. The derived config binds the
-    /// register read-write check cycle-first, so its streaming kernel runs:
-    /// round 0's pass counts level 1's entries, round 1's pass fills them,
-    /// and the operand openings come from one more row walk, each ending
-    /// with the group of rows that holds the trace's last. The address-first
-    /// route, which keeps the default kernel, is the one `e2e_matrix`'s
-    /// all-families case takes. Stage 5's instruction read-RAF check scans the
-    /// rows in each of its sixteen address phases and sums its first cycle
-    /// round from them; its virtual RA polynomials turn dense at the first
-    /// cycle bind, where the default kernel's do on a trace this small, and
-    /// the parity tests cover the later binds. The booleanity address phase
-    /// (stage 6a) accumulates its masses from the rows, and the bytecode
-    /// read-RAF address phase its stage pushforwards: the guest's bytecode
-    /// table is small enough for the walk's direct path, and the unit tests
-    /// in `jolt-kernels` cover the routed one. Stage 6b's booleanity
-    /// cycle phase and instruction RA virtualization read the rows in rounds
-    /// 0–3 and hold their tables dense from the fourth bind, the earliest at
-    /// any budget; the parity tests cover later ones. Its bytecode read-RAF
-    /// cycle phase gathers its three RA factors from the rows in rounds 0–2
-    /// and holds them dense from the third bind, where the default kernel's
-    /// turn dense on a trace this small; the parity tests cover the fourth
-    /// bind, which a long trace reaches. The trace ends inside its padded
-    /// domain, so stage 5's streamed cycle round, stage 6a's walks and stage
-    /// 6b's streamed rounds each weigh a constant suffix once, and the tables
-    /// those kernels turn dense hold it as their tail.
-    /// Stage 8's joint opening collects no columns: every fold of a trace
-    /// view reads the rows before the constant suffix and weighs the suffix
-    /// by its one row.
+    /// Every streaming family is selected, and the proof must equal the
+    /// default kernels' byte for byte. The rounds a kernel streams follow
+    /// from its cap and its clamps, so this test pins none of them: the
+    /// parity tests in `jolt-kernels` cover every round at which a kernel
+    /// can turn dense. What this trace and config add:
+    /// - The trace ends inside its padded domain, so every streamed pass,
+    ///   walk and fold weighs a constant suffix once, and every table a
+    ///   kernel turns dense holds it as its tail.
+    /// - The derived config binds the register read-write check cycle-first,
+    ///   the order in which its streaming kernel runs. `e2e_matrix`'s
+    ///   all-families case binds address-first in the builds that compile
+    ///   this file, which keeps the default kernel.
+    /// - The guest's bytecode table is small enough for the direct path of
+    ///   the bytecode read-RAF address walk; the unit tests in `jolt-kernels`
+    ///   cover the routed one.
+    /// - The RAM kernels have no crossover: they read the event log, and
+    ///   stage 6b its own address column, at every trace size.
+    /// - Stage 8's joint opening collects no columns.
     #[test]
     fn streaming_kernels_reproduce_the_default_proof() {
         assert_streaming_reproduces_the_default_proof(fixture());

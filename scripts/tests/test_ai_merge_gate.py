@@ -20,6 +20,7 @@ from urllib.request import Request, urlopen
 sys.path.insert(0, str(Path(__file__).parents[1] / "ci"))
 import ai_merge_gate as GATE
 import classifier_agent as AGENT
+import diff_classifier as DIFFS
 
 REPO = "a16z/jolt"
 HEAD = "a" * 40
@@ -120,6 +121,33 @@ def trees_for(files):
 def unified_diff(path, old, new):
     return f"diff --git a/{path} b/{path}\n" + "".join(difflib.unified_diff(
         old.splitlines(keepends=True), new.splitlines(keepends=True), f"a/{path}", f"b/{path}"))
+
+
+# One path per way a `---` or `+++` line departs from the bare name: git adds a TAB after a path
+# holding a space, C-quotes a path holding a control character, `"` or `\`, and leaves U+2028,
+# a line boundary to str.splitlines(), raw unless core.quotePath escapes it.
+AWKWARD_PATHS = ("src/a b.rs", 'src/a "b" \\ \t \n é.rs', "src/a\u2028b.rs")
+
+
+def git(repo, *args):
+    # A git hook exports GIT_DIR and GIT_INDEX_FILE, which would aim these commands at its repository.
+    env = {name: value for name, value in os.environ.items() if not name.startswith("GIT_")}
+    return subprocess.run(["git", "-C", repo, *args], check=True, capture_output=True, text=True, env=env).stdout
+
+
+def edit_each(repo, paths):
+    """Create a repository at `repo`; return its trees before and after a one-line edit to each
+    of the Rust files `paths`."""
+    git(repo, "init", "-q")
+    trees = []
+    for body in ("fn old() {}\n", "fn new() {}\n"):
+        for path in paths:
+            target = Path(repo, path)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(body)
+        git(repo, "add", "-A")
+        trees.append(git(repo, "write-tree").strip())
+    return trees
 
 
 def changed_contents(base, head, **kwargs):
@@ -1299,27 +1327,39 @@ class AiMergeGateTests(unittest.TestCase):
                     self.assertEqual(apis.record("ai-merge-gate/review"), [])
 
     def test_resolve_maps_events_to_their_own_pull_request(self) -> None:
-        def events_run(title, associations=(7,), fork=True):
+        def events_run(title, associations=(7,), fork=True, event="pull_request"):
             return {"repository": {"id": 1, "full_name": REPO}, "workflow_run": {
                 "display_title": title, "path": ".github/workflows/ai-merge-gate-events.yml",
-                "event": "pull_request", "repository": {"id": 1, "full_name": REPO},
+                "event": event, "repository": {"id": 1, "full_name": REPO},
                 "head_repository": {"id": 2 if fork else 1}, "head_branch": "fix", "head_sha": HEAD,
                 "pull_requests": [{"number": n, "base": {"repo": {"id": 1}}} for n in associations]}}
 
-        github = GATE.GitHub(FakeApis(), "token", REPO)
+        fork_pull = FakeApis()
+        fork_pull.other_pulls[f"/repos/{REPO}/pulls/9"] = {
+            "base": {"repo": {"id": 1}}, "head": {"sha": OLD, "ref": "fix", "repo": {"id": 2}}}
+        github = GATE.GitHub(fork_pull, "token", REPO)
         self.assertEqual(GATE.resolve("workflow_run", events_run("AI merge gate events for PR #7"), github), 7)
         self.assertEqual(GATE.resolve("workflow_run", events_run("AI merge gate events for PR #7", ()), github), 7)
         same_repo = FakeApis()
         same_repo.head_repo_id = 1
         self.assertEqual(GATE.resolve("workflow_run", events_run("AI merge gate events for PR #7", (), False),
                                       GATE.GitHub(same_repo, "token", REPO)), 7)
+        # GitHub reports the base repository as a review run's head repository, for a fork's pull request too.
+        review = events_run("AI merge gate events for PR #7", (), False, "pull_request_review")
+        self.assertEqual(GATE.resolve("workflow_run", review, github), 7)
+        self.assertEqual(GATE.resolve("workflow_run", review, GATE.GitHub(same_repo, "token", REPO)), 7)
         # Run associations do not select a sibling or replace the exact source binding.
         self.assertEqual(GATE.resolve("workflow_run", events_run("AI merge gate events for PR #7", (9, 7)), github), 7)
         self.assertIsNone(GATE.resolve("workflow_run", events_run("AI merge gate events for PR #9")))
-        for field, value in (("head_sha", OLD), ("head_branch", "other"), ("head_repository", {"id": 3})):
-            event = events_run("AI merge gate events for PR #7", ())
+        for kind, field, value in (
+            ("pull_request", "head_sha", OLD), ("pull_request", "head_branch", "other"),
+            ("pull_request", "head_repository", {"id": 3}),
+            ("pull_request_review", "head_sha", OLD), ("pull_request_review", "head_branch", "other"),
+            ("pull_request_review", "display_title", "AI merge gate events for PR #9"),
+        ):
+            event = events_run("AI merge gate events for PR #7", (), kind == "pull_request", kind)
             event["workflow_run"][field] = value
-            self.assertIsNone(GATE.resolve("workflow_run", event, github))
+            self.assertIsNone(GATE.resolve("workflow_run", event, github), (kind, field))
         # Without the run name, GitHub titles the run after the pull request.
         self.assertIsNone(GATE.resolve("workflow_run", events_run("Fix the prover")))
         issue = {"issue": {"number": 3}, "comment": {"user": {"type": "User"}}}
@@ -1602,6 +1642,23 @@ class ClassifierAgentTests(unittest.TestCase):
                 GATE.Classifier(Path(directory), prepare=True).ask("Trusted instructions.", source, lambda: None, apis.counts)
             self.assertEqual((Path(directory) / "workspace/head" / path).read_text(), attack)
             self.assertNotIn(attack, (Path(directory) / "instructions.md").read_text())
+
+
+class DiffParserTests(unittest.TestCase):
+    def test_rust_lines_count_as_code_whatever_the_file_is_named(self) -> None:
+        with tempfile.TemporaryDirectory() as repo:
+            base, head = edit_each(repo, AWKWARD_PATHS)
+            _, per_file = DIFFS.DiffClassifier(repo, base, head).classify()
+        self.assertEqual(per_file, {path: {"code+": 1, "code-": 1} for path in AWKWARD_PATHS})
+
+    def test_parse_diff_reads_the_paths_github_quotes(self) -> None:
+        with tempfile.TemporaryDirectory() as repo:
+            base, head = edit_each(repo, AWKWARD_PATHS)
+            # GitHub's compare diff, the gate's input, octal-escapes non-ASCII bytes as core.quotePath does.
+            diff = git(repo, "-c", "core.quotepath=on", "diff", "--no-ext-diff", base, head)
+        self.assertEqual(sorted((file.old_path, file.new_path) for file in GATE.parse_diff(diff)),
+                         sorted((path, path) for path in AWKWARD_PATHS))
+
 
 if __name__ == "__main__":
     unittest.main()

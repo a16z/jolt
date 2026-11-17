@@ -240,7 +240,7 @@ fn verifier_rejects_protected_io_and_canary_changes_with_or_without_restoration(
     });
     let ram_k = layout.max_ram_k().unwrap();
     let masks = RamWordMasks {
-        write_protected: write_protected_word_intervals(&[], &layout, ram_k).unwrap(),
+        write_protected: write_protected_word_intervals(0..0, &layout, ram_k).unwrap(),
         unmapped: Vec::new(),
     };
     let log_k = ram_k.trailing_zeros() as usize;
@@ -311,7 +311,7 @@ fn verifier_rejects_loads_and_stores_on_unmapped_words() {
         heap_size: 8,
     });
     let ram_k = layout.max_ram_k().unwrap();
-    let masks = RamWordMasks::new(&[], &layout, ram_k).unwrap();
+    let masks = RamWordMasks::new(0..0, &layout, ram_k).unwrap();
     let log_k = ram_k.trailing_zeros() as usize;
     let word = |address: u64| ((address - layout.get_lowest_address()) / 8) as usize;
     let gap = (word(layout.io_end), word(RAM_START_ADDRESS));

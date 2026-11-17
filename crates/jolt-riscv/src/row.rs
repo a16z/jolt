@@ -83,6 +83,20 @@ pub struct JoltInstructionRow {
 }
 
 impl JoltInstructionRow {
+    /// Exclusive bound on [`Self::flag_class`]: one past the largest
+    /// instruction tag, shifted above the four low key bits.
+    pub const FLAG_CLASS_KEYS: usize = {
+        let mut max_tag = 0;
+        let mut kinds = JoltInstructionKind::ALL;
+        while let [kind, rest @ ..] = kinds {
+            if kind.tag().0 > max_tag {
+                max_tag = kind.tag().0;
+            }
+            kinds = rest;
+        }
+        (max_tag as usize + 1) << 4
+    };
+
     /// The row fields its decoded flags depend on.
     ///
     /// [`jolt_instruction!`](crate::jolt_instruction) derives every

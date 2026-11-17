@@ -18,6 +18,7 @@ use super::super::instruction_read_raf::{SharedInstructionRows, SharedInstructio
 use super::testing::{mixed_rows, test_challenge, with_booleanity_backend, with_trace_backend};
 use super::*;
 use crate::optimized::one_hot_histograms::HistogramRow;
+use crate::optimized::streaming::DenseCap;
 use crate::optimized::support::BundleStore;
 use crate::ReferenceBackend;
 
@@ -665,27 +666,44 @@ fn streaming_address_kernel_matches_reference() {
     }
 }
 
+/// The cap the cycle kernel's checked polynomials first fit together after
+/// `depth` binds.
+fn cap_at<F: JoltField>(
+    witness: &dyn JoltWitnessPlane<F>,
+    dimensions: BooleanityDimensions,
+    depth: usize,
+) -> DenseCap {
+    let polys = BooleanityColumns::new::<F>(witness, dimensions)
+        .unwrap()
+        .selectors
+        .len();
+    DenseCap {
+        bytes: polys * size_of::<F>(),
+        per_rows: 1 << depth,
+    }
+}
+
 /// One trace-backed cycle-phase case against the reference: the streaming
-/// kernel with each checked polynomial materialized within `bytes`, or the
-/// streaming slot at the production budget when `None`.
+/// kernel with its checked polynomials capped to first fit after `depth`
+/// binds, or the streaming slot at the production cap when `None`.
 fn streaming_cycle_case<F: JoltField>(
     backend: &TraceBackend,
     dimensions: BooleanityDimensions,
     gamma: F,
     reference_cycle: Vec<F>,
-    bytes: Option<usize>,
+    depth: Option<usize>,
 ) {
     let case = CycleCase::new(dimensions, gamma, reference_cycle);
     let mut reference = ReferenceBackend
         .prepare(&mut ProofSession::default(), backend, case.inputs())
         .unwrap();
-    let mut streaming: Box<dyn SumcheckKernel<F, Relation = Booleanity<F>>> = match bytes {
-        Some(bytes) => Box::new(
+    let mut streaming: Box<dyn SumcheckKernel<F, Relation = Booleanity<F>>> = match depth {
+        Some(depth) => Box::new(
             OptimizedBooleanityCycleKernel::streamed(
                 backend,
                 &case.inputs(),
                 BundleStore::resident::<F>(backend, dimensions.log_t, "trace rows").unwrap(),
-                bytes,
+                cap_at::<F>(backend, dimensions, depth),
             )
             .unwrap(),
         ),
@@ -699,9 +717,9 @@ fn streaming_cycle_case<F: JoltField>(
 
 /// Every round, the output claims and the eq scalar of the streaming cycle
 /// phase over a witness's resident rows, against the reference, in both
-/// fields: at every materializing bind a budget selects (the fourth through
+/// fields: at every materializing bind a cap selects (the fourth through
 /// the last, which leaves one entry per polynomial) and at the production
-/// budget through the slot, with 8-bit chunks, and on domains shorter than
+/// cap through the slot, with 8-bit chunks, and on domains shorter than
 /// four binds. The traces fill their domain, end one cycle short of it, hold
 /// no cycle, one or two, and end inside a pair and a split-eq group or on a
 /// pair boundary.
@@ -728,7 +746,7 @@ fn streaming_cycle_kernel_matches_reference_at_every_materialization() {
                     dimensions,
                     Fr::from_u64(31),
                     point(400, log_t),
-                    depth.map(|depth| size_of::<Fr>() << (log_t - depth)),
+                    depth,
                 );
                 #[cfg(feature = "akita")]
                 streaming_cycle_case::<Prime128Offset6A23801F>(
@@ -736,7 +754,7 @@ fn streaming_cycle_kernel_matches_reference_at_every_materialization() {
                     dimensions,
                     Prime128Offset6A23801F::from_u64(31),
                     point(400, log_t),
-                    depth.map(|depth| size_of::<Prime128Offset6A23801F>() << (log_t - depth)),
+                    depth,
                 );
             }
         });
@@ -750,13 +768,13 @@ fn streaming_cycle_kernel_matches_reference_at_every_materialization() {
 fn streaming_cycle_kernel_matches_reference_at_exceptional_points() {
     let log_t = 6;
     // Two entries per polynomial: every round but the last is streamed.
-    let bytes = Some(2 * size_of::<Fr>());
+    let depth = Some(log_t - 1);
     with_trace_backend(log_t, 4, mixed_rows(40), |backend, dimensions| {
-        streaming_cycle_case(backend, dimensions, Fr::zero(), point(400, log_t), bytes);
+        streaming_cycle_case(backend, dimensions, Fr::zero(), point(400, log_t), depth);
         for case in ExceptionalEq::ALL {
             for gamma in [Fr::zero(), Fr::from_u64(31)] {
                 let reference_cycle = case.point(log_t, point::<Fr>(883, 1)[0]);
-                streaming_cycle_case(backend, dimensions, gamma, reference_cycle, bytes);
+                streaming_cycle_case(backend, dimensions, gamma, reference_cycle, depth);
             }
         }
     });
@@ -823,7 +841,7 @@ fn streaming_cycle_kernel_matches_default_on_generated_rows() {
                 backend,
                 &case.inputs(),
                 BundleStore::Retained(rows.clone()),
-                size_of::<Fr>() << (log_t - depth),
+                cap_at::<Fr>(backend, dimensions, depth),
             )
             .unwrap();
             case.assert_parity(claim, default.as_mut(), &mut streaming);

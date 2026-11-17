@@ -7,7 +7,12 @@
 use common::constants::{RAM_START_ADDRESS, REGISTER_COUNT};
 use common::jolt_device::{JoltDevice, MemoryLayout};
 use jolt_program::execution::TraceError;
-use tracer::HaltKind;
+use jolt_program::expand::{expand_instruction_with_provider, ExpansionAllocator};
+use jolt_riscv::{JoltInstructionRow, RV64IMAC_JOLT_ALL_INLINES};
+use tracer::instruction::{uncompress_instruction, Instruction};
+use tracer::{HaltKind, TracerInlineExpansionProvider};
+
+use super::memory::MemoryPlane;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u64)]
@@ -34,6 +39,8 @@ pub enum ExitReason {
     HaltedSuccess = 7,
     /// A `Panic` row (EBREAK's lowering) ended the run.
     HaltedPanic = 8,
+    /// Sequential execution reached `pc`, an address with no bytecode row.
+    FaultMissingRow = 9,
 }
 
 /// Where a run stopped.
@@ -100,7 +107,11 @@ impl GuestState {
     /// Classifies the exit. A halt also sets the device's public panic bit,
     /// which claims a failure halt (EBREAK); no guest memory backs it.
     #[expect(clippy::print_stderr)]
-    pub(crate) fn check_exit(&self, host: &mut HostContext) -> Result<MachineExit, TraceError> {
+    pub(crate) fn check_exit(
+        &self,
+        host: &mut HostContext,
+        plane: &MemoryPlane,
+    ) -> Result<MachineExit, TraceError> {
         match self.exit {
             e if e == ExitReason::HaltedSuccess as u64 => {
                 host.device.panic = false;
@@ -117,6 +128,12 @@ impl GuestState {
             e if e == ExitReason::FaultBadJumpTarget as u64 => Err(TraceError::Backend(
                 "indirect jump to a non-compiled address",
             )),
+            e if e == ExitReason::FaultMissingRow as u64 => Err(TraceError::MissingBytecodePc {
+                address: self.pc,
+                virtual_sequence_remaining: plane
+                    .word_at(self.pc)
+                    .and_then(|word| first_row_sequence_position(word, self.pc)),
+            }),
             e if e == ExitReason::FaultObservationOverflow as u64 => Err(TraceError::Backend(
                 "record pass overflowed the observation buffer (row-count divergence)",
             )),
@@ -128,6 +145,32 @@ impl GuestState {
             }
         }
     }
+}
+
+/// The sequence position the interpreter reports for a missing row at
+/// `address`: that of the first row it traces for the instruction it decodes
+/// from `word`, the 32 bits it fetches there. `None` is also the answer for a
+/// word the interpreter cannot decode or expand, where it panics.
+fn first_row_sequence_position(word: u32, address: u64) -> Option<u16> {
+    let is_compressed = word & 0x3 != 0x3;
+    let word = if is_compressed {
+        uncompress_instruction(word & 0xffff)
+    } else {
+        word
+    };
+    let source = Instruction::decode(word, address, is_compressed)
+        .ok()?
+        .source_instruction();
+    // Not `Instruction::inline_sequence`: it runs this expansion and panics
+    // where the expansion fails.
+    let rows = expand_instruction_with_provider(
+        &source,
+        &mut ExpansionAllocator::new(),
+        &mut TracerInlineExpansionProvider::new(),
+        RV64IMAC_JOLT_ALL_INLINES,
+    )
+    .ok()?;
+    JoltInstructionRow::from(*rows.first()?).virtual_sequence_remaining
 }
 
 /// One row's dynamic values, written by generated code in record mode.

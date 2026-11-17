@@ -18,6 +18,7 @@ use jolt_witness::{BundleSource, JoltWitnessOracle};
 use jolt_witness::{FixedBackend, PolynomialEncoding, Shape, TraceBackend};
 
 use super::*;
+use crate::optimized::streaming::{prefix_end, DenseCap};
 use crate::reference::spartan_outer::{ReferenceOuterRemainder, SpartanOuterKernel};
 use crate::ReferenceBackend;
 
@@ -256,13 +257,17 @@ fn true_input_claim(
     kernel * total
 }
 
+/// The streaming remainder under the cap its tables first fit at round
+/// `depth`.
 fn streamed_remainder<F: JoltField>(
     session: &mut ProofSession,
     inputs: &ProverInputs<'_, F, OuterRemainder<F>>,
-    log_t: usize,
     depth: usize,
 ) -> OuterRemainderKernel<F> {
-    let cap = ((4 * size_of::<F>()) << log_t) >> depth;
+    let cap = DenseCap {
+        bytes: 4 * size_of::<F>(),
+        per_rows: 1 << depth,
+    };
     OuterRemainderKernel::prepare_streamed(take_carry(session).unwrap(), inputs, cap).unwrap()
 }
 
@@ -384,7 +389,7 @@ fn parity_case_with_eq(
     let mut optimized_kernel = match depth {
         None => OuterRemainderKernel::prepare(take_carry(&mut optimized_session).unwrap(), &inputs)
             .unwrap(),
-        Some(depth) => streamed_remainder(&mut optimized_session, &inputs, log_t, depth),
+        Some(depth) => streamed_remainder(&mut optimized_session, &inputs, depth),
     };
 
     let rounds = log_t + 1;
@@ -406,8 +411,14 @@ fn parity_case_with_eq(
             match &optimized_kernel.tables {
                 OuterTables::Dense { az, bz } => {
                     assert!(round >= depth);
-                    assert_eq!(az.values.len(), 1 << (rounds - round));
                     assert_eq!(az.values.len(), bz.values.len());
+                    if round == depth {
+                        // The fill stops at the split-eq group that holds the
+                        // last cycle before the constant suffix.
+                        let group = optimized_kernel.split_eq.e_in_current().len() << depth;
+                        let end = prefix_end(optimized_kernel.prefix_cycles, group, 1 << log_t);
+                        assert_eq!(az.values.len(), 2 * (end >> depth));
+                    }
                 }
                 OuterTables::Streamed { .. } => assert!(round < depth),
             }
@@ -527,10 +538,17 @@ fn streamed_remainder_matches_reference_at_every_crossover() {
             parity_case_with_eq(Some(depth), 4, 389, Some(case), false, None, None);
         }
         parity_case_with_eq(Some(depth), 4, 389, None, true, None, None);
-        for prefix in [0, 1, 3, 7, 16] {
+        for prefix in [0, 1, 3, 4, 7, 8, 9, 16] {
             for seed in [389, 390] {
                 parity_case_with_eq(Some(depth), 4, seed, None, false, Some(prefix), None);
             }
+        }
+    }
+    // Suffixes that start inside a split-eq group, on a group boundary and
+    // in the last group, over prefixes of several groups and tasks.
+    for depth in [0, 2, 6] {
+        for prefix in [37, 96, 250] {
+            parity_case_with_eq(Some(depth), 8, 390, None, false, Some(prefix), None);
         }
     }
     parity_case_with_eq(Some(13), 13, 389, None, false, None, None);
@@ -691,10 +709,9 @@ fn sample_trace_parity_through_the_trait_path() {
             .unwrap()
     };
     let at_one: BuildRemainder =
-        |session, _, inputs, log_t| Box::new(streamed_remainder(session, &inputs, log_t, 1));
-    let all_rounds: BuildRemainder = |session, _, inputs, log_t| {
-        Box::new(streamed_remainder(session, &inputs, log_t, log_t + 1))
-    };
+        |session, _, inputs, _| Box::new(streamed_remainder(session, &inputs, 1));
+    let all_rounds: BuildRemainder =
+        |session, _, inputs, log_t| Box::new(streamed_remainder(session, &inputs, log_t + 1));
     for build in [default, streaming, at_one, all_rounds] {
         #[cfg(not(feature = "field-inline"))]
         with_sample_backend(|backend| sample_case(backend, 2, build));

@@ -104,7 +104,7 @@ The book's R1CS page gains "Ending a run" (row 14, lane 3 and its case table, th
 
 ## Execution
 
-Fixture and digest changes: `FIXTURE_MAGIC` moves to `JVCF0016`, the program-digest goldens and the six fuzz bundles are regenerated, and the Fiat–Shamir source inventory loses `MemoryLayout.panic` and `MemoryLayout.termination`. The BlindFold shape golden is unchanged: the stage-1 hidden claims grow from 35 to 36 without adding an output-claim row.
+Fixture and digest changes: `FIXTURE_MAGIC` moves to `JVCF0018`, the program-digest goldens and the six fuzz bundles are regenerated, and the Fiat–Shamir source inventory loses `MemoryLayout.panic` and `MemoryLayout.termination`. The BlindFold shape golden is unchanged: the stage-1 hidden claims grow from 35 to 36 without adding an output-claim row.
 
 ## References
 

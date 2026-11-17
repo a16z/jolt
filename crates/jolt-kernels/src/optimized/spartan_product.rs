@@ -603,12 +603,24 @@ impl<F: JoltField> ProductRemainderKernel<F> {
         })
     }
 
+    /// The `[left, right]` factors on the rows' constant suffix; zero, and
+    /// never read, when the trace fills its cycle domain.
+    fn suffix_factors(&self) -> Result<[F; 2], WitnessError> {
+        if self.prefix_cycles < 1 << self.challenges.total() {
+            Ok(self.rows.access().row(self.prefix_cycles)?.factors(
+                #[cfg(feature = "field-inline")]
+                None,
+                &self.lagrange_weights,
+            ))
+        } else {
+            Ok([F::zero(); 2])
+        }
+    }
+
     fn fill_eager_tables(&mut self) -> Result<(), KernelError<F>> {
-        let log_t = self.challenges.total();
         let prefix_cycles = self.prefix_cycles;
         let rows = &self.rows;
         let split_eq = &self.split_eq;
-        let cycles = 1usize << log_t;
         // Keep the odd boundary pair explicit; its second row is a tail representative.
         let stored_cycles = prefix_cycles.div_ceil(2) * 2;
         let mut left: Vec<F> = unsafe_allocate_zero_vec(stored_cycles);
@@ -619,15 +631,7 @@ impl<F: JoltField> ProductRemainderKernel<F> {
         let width = 2 * in_len;
         let access = rows.access();
         let weights_ref = &self.lagrange_weights;
-        let [left_tail, right_tail] = if prefix_cycles < cycles {
-            access.row(prefix_cycles)?.factors(
-                #[cfg(feature = "field-inline")]
-                None,
-                weights_ref,
-            )
-        } else {
-            [F::zero(); 2]
-        };
+        let [left_tail, right_tail] = self.suffix_factors()?;
         #[cfg(feature = "field-inline")]
         let field_rows_ref: &[(usize, FieldInlineSpartanRow<F>)] = &self.field_rows;
         let block = |x_out: usize,
@@ -948,6 +952,7 @@ mod tests {
     use jolt_witness::{FixedBackend, PolynomialEncoding, Shape, TraceBackend};
 
     use super::*;
+    use crate::optimized::streaming::{prefix_end, DenseCap};
     use crate::reference::spartan_product::{ReferenceProductRemainder, SpartanProductKernel};
     use crate::ReferenceBackend;
 
@@ -1180,13 +1185,17 @@ mod tests {
         depth: Option<usize>,
     }
 
+    /// The streaming remainder under the cap its tables first fit at round
+    /// `depth`.
     fn streamed_remainder<F: JoltField>(
         session: &mut ProofSession,
         inputs: &ProverInputs<'_, F, ProductRemainder<F>>,
-        log_t: usize,
         depth: usize,
     ) -> ProductRemainderKernel<F> {
-        let cap = ((2 * size_of::<F>()) << log_t) >> depth;
+        let cap = DenseCap {
+            bytes: 2 * size_of::<F>(),
+            per_rows: 1 << depth,
+        };
         ProductRemainderKernel::prepare_streamed(take_carry(session).unwrap(), inputs, cap).unwrap()
     }
 
@@ -1337,7 +1346,7 @@ mod tests {
                 &inputs,
             )
             .unwrap(),
-            Some(depth) => streamed_remainder(&mut optimized_session, &inputs, log_t, depth),
+            Some(depth) => streamed_remainder(&mut optimized_session, &inputs, depth),
         };
 
         let challenges: Vec<Fr> = (0..log_t)
@@ -1358,8 +1367,15 @@ mod tests {
                 match &optimized_kernel.tables {
                     ProductTables::Dense { left, right } => {
                         assert!(round >= depth);
-                        assert_eq!(left.values.len(), 1 << (log_t - round));
                         assert_eq!(left.values.len(), right.values.len());
+                        if round == depth {
+                            // The fill stops at the split-eq group that holds
+                            // the last cycle before the constant suffix.
+                            let pair = depth + 1;
+                            let group = optimized_kernel.split_eq.e_in_current().len() << pair;
+                            let end = prefix_end(optimized_kernel.prefix_cycles, group, 1 << log_t);
+                            assert_eq!(left.values.len(), 2 * (end >> pair));
+                        }
                     }
                     ProductTables::Streamed { .. } => assert!(round < depth),
                 }
@@ -1431,10 +1447,18 @@ mod tests {
                     parity_case_with_eq(dummy, 4, 379, Some(case), false, None, Some(depth));
                 }
                 parity_case_with_eq(dummy, 4, 379, None, true, None, Some(depth));
-                for prefix in [0, 1, 3, 7, 16] {
+                for prefix in [0, 1, 3, 4, 7, 8, 9, 16] {
                     for seed in [379, 380] {
                         parity_case_with_eq(dummy, 4, seed, None, false, Some(prefix), Some(depth));
                     }
+                }
+            }
+            // Suffixes that start inside a split-eq group, on a group
+            // boundary and in the last group, over prefixes of several
+            // groups and tasks.
+            for depth in [0, 2, 6] {
+                for prefix in [37, 96, 250] {
+                    parity_case_with_eq(dummy, 8, 380, None, false, Some(prefix), Some(depth));
                 }
             }
             parity_case_with_eq(dummy, 13, 379, None, false, None, Some(12));
@@ -1716,10 +1740,9 @@ mod tests {
                 .unwrap()
         };
         let at_one: BuildRemainder =
-            |session, _, inputs, log_t| Box::new(streamed_remainder(session, &inputs, log_t, 1));
-        let all_rounds: BuildRemainder = |session, _, inputs, log_t| {
-            Box::new(streamed_remainder(session, &inputs, log_t, log_t))
-        };
+            |session, _, inputs, _| Box::new(streamed_remainder(session, &inputs, 1));
+        let all_rounds: BuildRemainder =
+            |session, _, inputs, log_t| Box::new(streamed_remainder(session, &inputs, log_t));
         for build in [default, streaming, at_one, all_rounds] {
             #[cfg(not(feature = "field-inline"))]
             with_sample_backend(|backend| sample_case(backend, 2, build));

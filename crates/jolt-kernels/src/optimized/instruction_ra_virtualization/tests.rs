@@ -27,7 +27,7 @@ use jolt_witness::{FixedBackend, PolynomialEncoding, Shape, TraceBackend};
 use jolt_witness::{JoltVmWitnessInputs, WitnessError};
 
 use crate::optimized::registers_read_write::test_support::structured_fixture;
-use crate::optimized::streaming::MATERIALIZE_BYTES;
+use crate::optimized::streaming::{DenseCap, DENSE_CAP};
 use crate::optimized::support::BundleStore;
 use crate::reference::instruction_read_raf::InstructionReadRafWitness;
 use crate::reference::views::{address_fold, eq_table};
@@ -254,8 +254,18 @@ fn assert_parity_case(
     );
 }
 
-/// [`assert_parity_case`] for the streaming family over the rows, each
-/// selector materialized within `bytes`.
+/// The cap `polys` selectors first fit together after `depth` binds, or the
+/// production cap when `None`.
+fn cap_at<F: JoltField>(polys: usize, depth: Option<usize>) -> DenseCap {
+    depth.map_or(DENSE_CAP, |depth| DenseCap {
+        bytes: polys * size_of::<F>(),
+        per_rows: 1 << depth,
+    })
+}
+
+/// [`assert_parity_case`] for the streaming family over the rows, its
+/// selectors capped to first fit after `depth` binds, or under the production
+/// cap when `None`.
 #[expect(
     clippy::too_many_arguments,
     reason = "test shape plus exceptional equality case"
@@ -269,7 +279,7 @@ fn assert_streaming_parity(
     gamma: Fr,
     exceptional: Option<ExceptionalEq>,
     prefix: Option<usize>,
-    bytes: usize,
+    depth: Option<usize>,
 ) {
     assert_parity_with(
         log_t,
@@ -292,7 +302,7 @@ fn assert_streaming_parity(
                     inputs.relation,
                     gamma,
                     BundleStore::Retained(rows),
-                    bytes,
+                    cap_at::<Fr>(num_virtual * per_virtual, depth),
                 )
                 .unwrap(),
             )
@@ -566,26 +576,25 @@ fn parity_exceptional_eq_in_lazy_and_dense_virtualization() {
 }
 
 /// The streaming family against the reference at every materializing bind a
-/// budget selects at 2^7 cycles (the fourth through the last, which leaves
-/// one entry per selector), at the production budget, with eight factors
+/// cap selects at 2^7 cycles (the fourth through the last, which leaves
+/// one entry per selector), at the production cap, with eight factors
 /// and with one, on domains shorter than four binds, under a zero batching
 /// challenge, and at exceptional eq points, where `q(0)` takes its own pass.
 #[test]
 fn streaming_parity_at_every_materialization() {
-    let entry = size_of::<Fr>();
     let gamma = fr(0xFEED_5EED);
     for depth in 4..=7 {
-        assert_streaming_parity(7, 2, 2, 4, 61, gamma, None, None, entry << (7 - depth));
+        assert_streaming_parity(7, 2, 2, 4, 61, gamma, None, None, Some(depth));
     }
-    assert_streaming_parity(4, 8, 4, 4, 42, gamma, None, None, MATERIALIZE_BYTES);
-    assert_streaming_parity(6, 4, 8, 4, 43, gamma, None, None, entry);
-    assert_streaming_parity(3, 3, 1, 2, 1337, gamma, None, None, entry);
-    assert_streaming_parity(1, 2, 2, 2, 9, gamma, None, None, entry);
-    assert_streaming_parity(6, 2, 2, 4, 7, fr(0), None, None, entry);
-    assert_streaming_parity(3, 3, 1, 2, 1337, fr(0), None, None, entry);
+    assert_streaming_parity(4, 8, 4, 4, 42, gamma, None, None, None);
+    assert_streaming_parity(6, 4, 8, 4, 43, gamma, None, None, Some(6));
+    assert_streaming_parity(3, 3, 1, 2, 1337, gamma, None, None, Some(3));
+    assert_streaming_parity(1, 2, 2, 2, 9, gamma, None, None, Some(1));
+    assert_streaming_parity(6, 2, 2, 4, 7, fr(0), None, None, Some(6));
+    assert_streaming_parity(3, 3, 1, 2, 1337, fr(0), None, None, Some(3));
     for factors in [1, 2, 4] {
         for case in ExceptionalEq::ALL {
-            assert_streaming_parity(6, 2, factors, 2, 277, fr(31), Some(case), None, 2 * entry);
+            assert_streaming_parity(6, 2, factors, 2, 277, fr(31), Some(case), None, Some(5));
         }
     }
 }
@@ -598,16 +607,14 @@ fn streaming_parity_at_every_materialization() {
 /// its own pass.
 #[test]
 fn streaming_constant_suffix_matches_reference() {
-    let entry = size_of::<Fr>();
     for prefix in [0, 1, 2, 15, 16, 17, 33, 63].map(Some) {
-        for depth in 4..=6 {
+        for depth in (4..=6).map(Some) {
             for factors in [1, 2] {
-                let bytes = entry << (6 - depth);
-                assert_streaming_parity(6, 2, factors, 2, 277, fr(31), None, prefix, bytes);
+                assert_streaming_parity(6, 2, factors, 2, 277, fr(31), None, prefix, depth);
             }
         }
         for case in ExceptionalEq::ALL {
-            assert_streaming_parity(6, 2, 2, 2, 277, fr(31), Some(case), prefix, 2 * entry);
+            assert_streaming_parity(6, 2, 2, 2, 277, fr(31), Some(case), prefix, Some(5));
         }
     }
 }
@@ -660,22 +667,24 @@ impl<F: JoltField> TraceCase<F> {
     }
 }
 
-/// One [`streaming_trace_rows_match_reference`] case: each selector
-/// materialized within `bytes`, or within the production budget through the
+/// One [`streaming_trace_rows_match_reference`] case: the selectors capped
+/// to first fit after `depth` binds, or under the production cap through the
 /// slot when `None`.
-fn trace_case<F: JoltField>(backend: &TraceBackend, log_t: usize, bytes: Option<usize>) {
+fn trace_case<F: JoltField>(backend: &TraceBackend, log_t: usize, depth: Option<usize>) {
     let case = TraceCase::<F>::new(log_t);
+    let dimensions = case.relation.dimensions();
+    let polys = dimensions.num_virtual_ra_polys() * dimensions.num_committed_per_virtual();
     let mut reference = ReferenceBackend
         .prepare(&mut ProofSession::default(), backend, case.inputs())
         .unwrap();
     let mut streaming: Box<dyn SumcheckKernel<F, Relation = InstructionRaVirtualization<F>>> =
-        match bytes {
-            Some(bytes) => Box::new(
+        match depth {
+            Some(_) => Box::new(
                 OptimizedInstructionRaVirtualizationKernel::streamed(
                     &case.relation,
                     case.challenges.gamma,
                     BundleStore::resident::<F>(backend, log_t, "trace rows").unwrap(),
-                    bytes,
+                    cap_at::<F>(polys, depth),
                 )
                 .unwrap(),
             ),
@@ -702,12 +711,12 @@ fn trace_case<F: JoltField>(backend: &TraceBackend, log_t: usize, bytes: Option<
             .output_claims(&case.claims)
             .unwrap()
             .committed_instruction_ra,
-        "output claims, log_t {log_t}, bytes {bytes:?}"
+        "output claims, log_t {log_t}, depth {depth:?}"
     );
 }
 
 /// Every round and the output claims over a witness's resident rows, at
-/// every materializing bind and at the production budget through the slot,
+/// every materializing bind and at the production cap through the slot,
 /// against the reference, in both fields. The traces fill their domain, end
 /// one cycle short of it, hold one cycle or two, and end inside a pair and a
 /// split-eq group or on a pair boundary.
@@ -727,17 +736,9 @@ fn streaming_trace_rows_match_reference() {
     ] {
         structured_fixture(cycles).with_plane(log_t, |backend| {
             for depth in (4..=log_t).map(Some).chain([None]) {
-                trace_case::<Fr>(
-                    backend,
-                    log_t,
-                    depth.map(|depth| size_of::<Fr>() << (log_t - depth)),
-                );
+                trace_case::<Fr>(backend, log_t, depth);
                 #[cfg(feature = "akita")]
-                trace_case::<AkitaField>(
-                    backend,
-                    log_t,
-                    depth.map(|depth| size_of::<AkitaField>() << (log_t - depth)),
-                );
+                trace_case::<AkitaField>(backend, log_t, depth);
             }
         });
     }

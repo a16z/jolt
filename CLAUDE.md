@@ -23,6 +23,8 @@ A pull request into `main` merges with an approving review from a person with wr
 
 The gate never approves `risk-4`; there the policy asks for a current-head approval from a maintainer other than the author.
 
+Every review checks the diff for comment bloat and test bloat. A pull request adds no comment that the [Comments](#comments) rules would delete and no test that the [Tests](#tests) rules exclude; each instance is a review finding, fixed before merge.
+
 A reviewer who finds no issues in the exact current head, posting as the Pika App bot or a maintainer, attests it with a PR comment containing this standalone line. Fill in the PR number, the full 40-character head SHA, and the skill, model and reasoning effort actually used; the model and effort must be a pair the gate guide accepts.
 
 ```text
@@ -33,17 +35,23 @@ A push voids the line. After opening a pull request and after every push, review
 
 ## Essential Commands
 
+The root `justfile` wraps the format, lint, test and CLI-install commands below and `rust.yml`'s other lint checks (taplo, typos, style invariants, machete) as recipes; `just` lists them.
+
 ### Opt-in prover benchmarks
 
 When the Pika App dispatcher and forced-command target are configured and the
 `JOLT_E2E_ENABLED` repository variable is `true` (setup in
-`scripts/bench/README.md`), a maintainer or administrator can add the `benchmark` label to a same-repository PR. The label
-persists across pushes: each admitted run builds base and candidate locally with
-release/znver4, then runs the PR suite in `scripts/bench/suites.json`. Forks
-and labels applied by write-only contributors are not admitted. While the label
+`scripts/bench/README.md`), a maintainer or administrator can add the `benchmark` label to a PR into main.
+Each admitted run builds base and candidate locally with
+release/znver4, then runs the PR suite in `scripts/bench/suites.json`. Labels
+applied by write-only contributors are not admitted. On a same-repository PR the
+label persists across pushes: while it
 remains, any later push to the branch, by anyone who can push to it, runs its code
 (including `build.rs`) on the benchmark machine's persistent account without new
-approval. Only `runner` on `jolt-bench` executes PR code; no Pika agent runs there.
+approval. On a fork PR the label admits only the head it was applied to: after a
+push, a maintainer reviews the new head, then removes and re-applies the label.
+A fork PR also needs a Pika App dispatcher that admits fork heads (contract in
+`scripts/bench/README.md`). Only `runner` on `jolt-bench` executes PR code; no Pika agent runs there.
 The App rechecks admission before dispatch and publishes an **End-to-end benchmark**
 check. Results are in the **End-to-end benchmark ingest** run's `jolt-e2e-*`
 artifact and the dashboard's **Pull requests** view at
@@ -235,6 +243,7 @@ clear, ZK, and verifier-fixture tests.
 - Use `#[inline]` judiciously in hot paths
 - Pre-allocate vectors unsafely when size is known; avoid clones in hot paths
 - Hot trace paths get one pass and one owner of trace-sized storage. Produce or share derived rows during the existing pass instead of walking or materializing the trace again.
+- A PR that adds a prover or verifier optimization states in its body, per optimization, whether it applies to the other implementations of the same work, such as the eager and streaming kernels of `jolt-kernels`' optimized tier, the Dory and Akita paths, the per-architecture field arithmetic in `jolt-algebra` (assembly, NEON, AVX-512, AVX2), the Metal runtime and field arithmetic in `jolt-metal`, and the `tracer` and `jolt-tracer-x86` execution backends. Where it applies, port it in the same PR, link an open issue that tracks the port, or state why it is not ported. A missing answer is a review finding.
 
 ### Prover Hot Paths
 

@@ -1,20 +1,17 @@
 use common::jolt_device::MemoryLayout;
 use jolt_riscv::{JoltInstructionProfile, JoltInstructionRow};
+use std::ops::Range;
 
 use crate::preprocess::{
     bytecode::BytecodePreprocessing,
-    ram::{
-        bytecode_code_word_intervals, compute_max_ram_k, validate_bytecode_code_word_intervals,
-        validate_code_word_intervals, RAMPreprocessing,
-    },
+    ram::{bytecode_code_region, compute_max_ram_k, validate_code_region, RAMPreprocessing},
     PreprocessingError,
 };
 
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(
     feature = "serialization",
-    derive(serde::Serialize, serde::Deserialize),
-    serde(try_from = "ProgramPreprocessingWire")
+    derive(serde::Serialize, serde::Deserialize)
 )]
 pub struct JoltProgramPreprocessing {
     pub bytecode: BytecodePreprocessing,
@@ -33,24 +30,25 @@ impl JoltProgramPreprocessing {
         profile: JoltInstructionProfile,
     ) -> Result<Self, PreprocessingError> {
         let _ = compute_max_ram_k(&memory_layout)?;
-        let mut ram = RAMPreprocessing::preprocess(memory_init);
-        ram.code_word_intervals =
-            bytecode_code_word_intervals(&bytecode, memory_layout.get_lowest_address())?;
-        validate_code_word_intervals(&ram.code_word_intervals, &memory_layout)?;
-        Ok(Self {
+        let program = Self {
             bytecode: BytecodePreprocessing::preprocess(bytecode, entry_address, profile)?,
-            ram,
+            ram: RAMPreprocessing::preprocess(memory_init),
             memory_layout,
             max_padded_trace_length,
-        })
+        };
+        let _ = program.code_region()?;
+        Ok(program)
     }
 
-    pub fn validate_code_word_intervals(&self) -> Result<(), PreprocessingError> {
-        validate_bytecode_code_word_intervals(
-            &self.ram.code_word_intervals,
+    /// The code region of this program's bytecode (see [`bytecode_code_region`]),
+    /// checked to lie in the RAM domain.
+    pub fn code_region(&self) -> Result<Range<usize>, PreprocessingError> {
+        let region = bytecode_code_region(
             &self.bytecode.bytecode,
-            &self.memory_layout,
-        )
+            self.memory_layout.get_lowest_address(),
+        )?;
+        validate_code_region(&region, &self.memory_layout)?;
+        Ok(region)
     }
 
     /// Bytes the bytecode table, its PC map and the RAM program image hold on
@@ -59,9 +57,9 @@ impl JoltProgramPreprocessing {
         self.bytecode.bytecode.capacity() * size_of::<JoltInstructionRow>()
             + self.bytecode.pc_map.heap_bytes()
             + self.ram.bytecode_words.capacity() * size_of::<u64>()
-            + self.ram.code_word_intervals.capacity() * size_of::<(usize, usize)>()
     }
 
+    /// `None` when the entry has no bytecode row or the code region is invalid.
     pub fn metadata(&self) -> Option<ProgramMetadata> {
         Some(ProgramMetadata {
             entry_address: self.bytecode.entry_address,
@@ -69,7 +67,7 @@ impl JoltProgramPreprocessing {
             entry_bytecode_index: self.bytecode.entry_bytecode_index()?,
             program_image_len_words: self.ram.bytecode_words.len(),
             bytecode_len: self.bytecode.code_size,
-            code_word_intervals: self.ram.code_word_intervals.clone(),
+            code_region: self.code_region().ok()?,
         })
     }
 }
@@ -88,50 +86,25 @@ pub struct ProgramMetadata {
     pub entry_bytecode_index: usize,
     pub program_image_len_words: usize,
     pub bytecode_len: usize,
-    pub code_word_intervals: Vec<(usize, usize)>,
+    /// The bytecode's code region, which the verifier cannot derive here.
+    pub code_region: Range<usize>,
 }
 
 impl ProgramMetadata {
-    /// Hidden bytecode coverage is authenticated by the committed key; admission
-    /// still checks the public mask's canonical shape and RAM bounds.
-    pub fn validate_code_word_intervals(
+    /// The committed key authenticates the region against the hidden bytecode;
+    /// admission still checks that it lies in RAM and is canonical.
+    pub fn validate_code_region(
         &self,
         memory_layout: &MemoryLayout,
     ) -> Result<(), PreprocessingError> {
-        validate_code_word_intervals(&self.code_word_intervals, memory_layout)
-    }
-}
-
-#[cfg(feature = "serialization")]
-#[derive(serde::Deserialize)]
-struct ProgramPreprocessingWire {
-    bytecode: BytecodePreprocessing,
-    ram: RAMPreprocessing,
-    memory_layout: MemoryLayout,
-    max_padded_trace_length: usize,
-}
-
-#[cfg(feature = "serialization")]
-impl TryFrom<ProgramPreprocessingWire> for JoltProgramPreprocessing {
-    type Error = PreprocessingError;
-
-    fn try_from(wire: ProgramPreprocessingWire) -> Result<Self, Self::Error> {
-        let program = Self {
-            bytecode: wire.bytecode,
-            ram: wire.ram,
-            memory_layout: wire.memory_layout,
-            max_padded_trace_length: wire.max_padded_trace_length,
-        };
-        program.validate_code_word_intervals()?;
-        Ok(program)
+        validate_code_region(&self.code_region, memory_layout)
     }
 }
 
 #[cfg(test)]
 #[expect(
     clippy::unwrap_used,
-    clippy::indexing_slicing,
-    reason = "fixture construction failures and indexing fail the tests"
+    reason = "fixture construction failures fail the tests"
 )]
 mod tests {
     use super::*;
@@ -143,11 +116,12 @@ mod tests {
             program_size: Some(64),
             ..Default::default()
         });
+        // The last source instruction is compressed and expands to two rows;
+        // only its final row records the two-byte extent.
         let instructions = [
             (RAM_START_ADDRESS as usize, None, false),
             (RAM_START_ADDRESS as usize + 6, Some(1), false),
             (RAM_START_ADDRESS as usize + 6, Some(0), true),
-            (RAM_START_ADDRESS as usize + 24, None, true),
         ]
         .into_iter()
         .map(
@@ -173,66 +147,38 @@ mod tests {
     }
 
     #[test]
-    fn protection_metadata_covers_source_extents_and_not_virtual_rows_or_padding() {
+    fn code_region_ends_at_the_anchor_of_a_compressed_expansion() {
         let program = preprocessing();
         let first_word = program
             .memory_layout
             .remapped_word_address(RAM_START_ADDRESS)
             .unwrap() as usize;
+        assert_eq!(program.code_region(), Ok(first_word..first_word + 1));
         assert_eq!(
-            program.ram.code_word_intervals,
-            vec![
-                (first_word, first_word + 1),
-                (first_word + 3, first_word + 4)
-            ]
-        );
-        assert_eq!(program.validate_code_word_intervals(), Ok(()));
-        assert_eq!(
-            program.metadata().unwrap().code_word_intervals,
-            program.ram.code_word_intervals
+            program.metadata().unwrap().code_region,
+            first_word..first_word + 1
         );
     }
 
     #[test]
-    fn admission_rejects_missing_extra_and_noncanonical_protection_metadata() {
+    fn metadata_admission_rejects_reversed_outside_and_noncanonical_regions() {
         let program = preprocessing();
-        let first_word = program.ram.code_word_intervals[0].0;
-        for intervals in [
-            vec![],
-            vec![(first_word, first_word + 4)],
-            vec![
-                (first_word, first_word + 1),
-                (first_word + 1, first_word + 4),
-            ],
-            vec![(first_word, usize::MAX)],
-        ] {
-            let mut bad = program.clone();
-            bad.ram.code_word_intervals = intervals;
-            assert!(bad.validate_code_word_intervals().is_err());
+        let layout = &program.memory_layout;
+        let metadata = program.metadata().unwrap();
+        assert_eq!(metadata.validate_code_region(layout), Ok(()));
+        let max_ram_k = compute_max_ram_k(layout).unwrap();
+        for code_region in [Range { start: 5, end: 4 }, 0..max_ram_k + 1, 5..5] {
+            let bad = ProgramMetadata {
+                code_region,
+                ..metadata.clone()
+            };
+            assert!(bad.validate_code_region(layout).is_err());
         }
-    }
-
-    #[test]
-    fn protection_coverage_accepts_unordered_sources_and_rejects_missing_words() {
-        let mut program = preprocessing();
-        program.bytecode.bytecode.swap(1, 4);
-        assert_eq!(program.validate_code_word_intervals(), Ok(()));
-        let _ = program.ram.code_word_intervals.remove(0);
-        assert!(program.validate_code_word_intervals().is_err());
-    }
-
-    #[cfg(feature = "serialization")]
-    #[test]
-    fn deserialization_rejects_tampered_protection_metadata() {
-        let program = preprocessing();
-        let encoded = serde_json::to_value(&program).unwrap();
-        assert_eq!(
-            serde_json::from_value::<JoltProgramPreprocessing>(encoded.clone()).unwrap(),
-            program
-        );
-        let mut encoded = encoded;
-        encoded["ram"]["code_word_intervals"] = serde_json::json!([]);
-        assert!(serde_json::from_value::<JoltProgramPreprocessing>(encoded).is_err());
+        let empty = ProgramMetadata {
+            code_region: 0..0,
+            ..metadata
+        };
+        assert_eq!(empty.validate_code_region(layout), Ok(()));
     }
 }
 

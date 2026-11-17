@@ -7,7 +7,7 @@ use jolt_transcript::DigestHasher;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use sha3::Digest;
-use std::sync::Arc;
+use std::{ops::Range, sync::Arc};
 
 use crate::VerifierError;
 
@@ -150,23 +150,23 @@ impl<PCS: CommitmentScheme> ProgramPreprocessing<PCS> {
         }
     }
 
-    pub fn code_word_intervals(&self) -> &[(usize, usize)] {
+    /// The code region: derived from the bytecode in full mode, and taken from
+    /// the committed key's metadata, after its admission check, otherwise.
+    pub fn code_region(&self) -> Result<Range<usize>, VerifierError> {
         match self {
-            Self::Full(full) => &full.ram.code_word_intervals,
-            Self::Committed(committed) => &committed.meta.code_word_intervals,
-        }
-    }
-
-    pub fn validate_code_word_intervals(&self) -> Result<(), VerifierError> {
-        let result = match self {
-            Self::Full(full) => full.validate_code_word_intervals(),
+            Self::Full(full) => full.code_region(),
             Self::Committed(committed) => committed
                 .meta
-                .validate_code_word_intervals(&committed.memory_layout),
-        };
-        result.map_err(|error| VerifierError::InvalidMemoryLayout {
+                .validate_code_region(&committed.memory_layout)
+                .map(|()| committed.meta.code_region.clone()),
+        }
+        .map_err(|error| VerifierError::InvalidMemoryLayout {
             reason: error.to_string(),
         })
+    }
+
+    pub fn validate_code_region(&self) -> Result<(), VerifierError> {
+        self.code_region().map(|_| ())
     }
 
     pub fn program_image_len_words(&self) -> usize {
@@ -270,7 +270,7 @@ where
         vc_setup: Option<VC::Setup>,
     ) -> Result<Self, VerifierError> {
         validate_memory_layout_admission(program.memory_layout())?;
-        program.validate_code_word_intervals()?;
+        program.validate_code_region()?;
         let preprocessing_digest = program.digest()?;
         Ok(Self {
             program,
@@ -513,7 +513,7 @@ mod tests {
             layout.stack_end += 16;
             let mask = |program: &ProgramPreprocessing<Pcs>| {
                 write_protected_word_intervals(
-                    program.code_word_intervals(),
+                    program.code_region().unwrap(),
                     program.memory_layout(),
                     program.memory_layout().max_ram_k().unwrap(),
                 )
