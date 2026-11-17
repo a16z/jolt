@@ -89,6 +89,8 @@ Unit and end-to-end tests for the prover can be run using the following command:
 
 ```cargo nextest run -p jolt-prover --features prover-fixtures```
 
+With [just](https://github.com/casey/just) installed, `just` lists recipes for this and for the format and lint checks CI runs.
+
 Examples in the [`examples`](./examples/) directory can be run using e.g.
 
 ```cargo run --release -p sha2-chain```
