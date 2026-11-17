@@ -26,6 +26,7 @@ mod kernels;
 mod ntt_commit;
 mod one_hot_ntt;
 mod source;
+mod tile_commit;
 mod traversal;
 
 #[cfg(test)]

@@ -18,13 +18,14 @@ use akita_pcs::custom_source::{
 use akita_pcs::AkitaError;
 use akita_pcs::{AkitaProverSetup, CpuBackend, OneHotPoly};
 use akita_types::{PreparedSubringCoefficientPackingPoint, SubringCoefficientPackingTables};
-use jolt_field::{Fp128x8i32, One, Ring};
+use jolt_field::{Fp128x8i32, One, Ring, Zero};
 use rayon::ThreadPoolBuilder;
 
 use super::commit::commit_columns;
 use super::digit_windows::{flush_digit_accumulators, DigitWindows};
 use super::ntt_commit::{PreparedNttCommit, MAX_NTT_POSITIONS};
 use super::source::TraceOneHotColumnBatchView;
+use super::tile_commit::PreparedTileCommit;
 use super::traversal::trace_block_task_schedule;
 use crate::{AkitaChunkProfile, AkitaField, AkitaScheduleArtifacts, AkitaScheme, AkitaSetupParams};
 use jolt_openings::CommitmentScheme;
@@ -1064,10 +1065,30 @@ fn limb_ntt_commit_preserves_signed_convolution_across_flushes() {
     let a = CyclotomicRing::from_coefficients(std::array::from_fn(|index| {
         AkitaField::from_u128(u128::MAX - (index as u128).wrapping_mul(0x0001_0001_0001_0001_0001))
     }));
-    let matrix = vec![a; POSITIONS];
-    let Some(prepared) = PreparedNttCommit::new(&columns[0], plan, &matrix) else {
-        return;
+    // Position `p` holds `a` times its own scalar: the commitment is linear
+    // in the key, so a key position paired with another position's rows
+    // changes the sum.
+    let key_scale = |position: usize| {
+        AkitaField::from_u64((position as u64 + 1).wrapping_mul(0x9e37_79b9_7f4a_7c15))
     };
+    let matrix: Vec<_> = (0..POSITIONS)
+        .map(|position| {
+            CyclotomicRing::from_coefficients(a.coeffs.map(|value| value * key_scale(position)))
+        })
+        .collect();
+    // Both prepared commitments, whichever `commit_columns` takes on this
+    // target. The pointwise one declines a kernel plan without its dot batch.
+    type CommitPart<'a> = Box<dyn Fn(Range<usize>) -> Vec<CyclotomicRing<AkitaField, D>> + 'a>;
+    let tile = PreparedTileCommit::new(&columns[0], plan, &matrix).unwrap();
+    let pointwise = PreparedNttCommit::new(&columns[0], plan, &matrix);
+    let mut commit_parts: Vec<CommitPart<'_>> = vec![Box::new(|rings| {
+        tile.commit_part(&columns[0], 0, rings).unwrap()
+    })];
+    if let Some(pointwise) = &pointwise {
+        commit_parts.push(Box::new(|rings| {
+            pointwise.commit_part(&columns[0], 0, rings).unwrap()
+        }));
+    }
     let wide = AkitaWideRing::<D>::from_ring(&a);
     let mut dense = AkitaWideRing::<D>::zero();
     for row in 0..D / K {
@@ -1081,17 +1102,20 @@ fn limb_ntt_commit_preserves_signed_convolution_across_flushes() {
         wide.shift_accumulate_into(&mut other_dense, row * K + 7);
     }
     let other_dense = other_dense.reduce::<AkitaField>();
-    for positions in [251, 252, 253, 1007, 1008, 1009, 2021] {
-        let actual = prepared
-            .commit_part(&columns[0], 0, 100..100 + positions)
-            .unwrap();
-        let dense_positions = (100..100 + positions)
-            .filter(|ring| (ring / 12).is_multiple_of(2))
-            .count();
+    for (commit_part, positions) in commit_parts
+        .iter()
+        .flat_map(|part| [251, 252, 253, 1007, 1008, 1009, 2021].map(|positions| (part, positions)))
+    {
+        let actual = commit_part(100..100 + positions);
+        let scale_sum = |dense: bool| {
+            (100..100 + positions)
+                .filter(|ring| (ring / 12).is_multiple_of(2) == dense)
+                .fold(AkitaField::zero(), |sum, ring| sum + key_scale(ring))
+        };
+        let (dense_scale, sparse_scale) = (scale_sum(true), scale_sum(false));
+        let scale = dense_scale + sparse_scale;
         let expected_mixed = std::array::from_fn(|j| {
-            per_position[0].coeffs[j] * AkitaField::from_u64(dense_positions as u64)
-                + per_position[1].coeffs[j]
-                    * AkitaField::from_u64((positions - dense_positions) as u64)
+            per_position[0].coeffs[j] * dense_scale + per_position[1].coeffs[j] * sparse_scale
         });
         assert_eq!(actual[2].coeffs, expected_mixed);
         assert_eq!(actual[3], CyclotomicRing::zero());
@@ -1099,12 +1123,9 @@ fn limb_ntt_commit_preserves_signed_convolution_across_flushes() {
         assert_eq!(actual[6], actual[2]);
         assert_eq!(
             actual[5].coeffs,
-            other_dense
-                .coeffs
-                .map(|value| value * AkitaField::from_u64(positions as u64))
+            other_dense.coeffs.map(|value| value * scale)
         );
         for (actual, expected) in actual.iter().zip(per_position) {
-            let scale = AkitaField::from_u64(positions as u64);
             assert_eq!(actual.coeffs, expected.coeffs.map(|value| value * scale));
         }
     }
