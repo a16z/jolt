@@ -181,6 +181,10 @@ impl PrepareArgs {
         let source = Packages::resolve(&workspace).stage_jeth(&guest_target_dir);
         let mut program = program();
         program.set_workspace_dir(source.join("crates/guest"));
+        // jeth's sources are another repository's, built as pinned. A caller's
+        // warning policy, such as the `CARGO_BUILD_WARNINGS=deny` that CI
+        // exports, is not theirs to meet and must not fail this build.
+        program.add_cargo_config("build.warnings=\"warn\"");
         program.build(
             guest_target_dir
                 .to_str()

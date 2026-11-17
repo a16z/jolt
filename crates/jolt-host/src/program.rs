@@ -33,6 +33,7 @@ impl Program {
         Self {
             guest: guest.to_string(),
             workspace_dir: None,
+            cargo_config: Vec::new(),
             func: None,
             profile: None,
             instruction_profile: RV64IMAC_JOLT_ALL_INLINES,
@@ -61,6 +62,13 @@ impl Program {
     /// caller's working directory.
     pub fn set_workspace_dir(&mut self, dir: PathBuf) {
         self.workspace_dir = Some(dir);
+    }
+
+    /// Pass `--config <key_value>` to the Cargo command that builds the guest.
+    /// Cargo ranks its command line above the caller's environment and
+    /// configuration files.
+    pub fn add_cargo_config(&mut self, key_value: &str) {
+        self.cargo_config.push(key_value.to_string());
     }
 
     pub fn set_func(&mut self, func: &str) {
@@ -243,6 +251,11 @@ impl Program {
             let mut cargo_features = vec!["guest".to_string()];
             cargo_features.extend(features);
             args.push(cargo_features.join(","));
+
+            for key_value in &self.cargo_config {
+                args.push("--config".to_string());
+                args.push(key_value.clone());
+            }
 
             let cmd_line = compose_command_line(
                 &jolt_cmd,

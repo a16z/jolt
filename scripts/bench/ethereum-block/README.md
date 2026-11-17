@@ -33,8 +33,12 @@ from different commits
    dependencies at this checkout. Each benchmark leg therefore builds the guest
    against its own Jolt crates.
 4. It builds `jeth-guest` with jeth's default features and the `validate_block`
-   entry point, using this repository's toolchain. It stops if the copy's
-   lockfile still takes a Jolt package from Git.
+   entry point, using this repository's toolchain. It passes
+   `--config 'build.warnings="warn"'` to that Cargo build, which outranks the
+   caller's environment: jeth's `ark-ff`, `zeth-mpt`, `jeth-core` and
+   `jeth-guest` warn under this toolchain, and a caller that denies warnings,
+   as CI does with `CARGO_BUILD_WARNINGS=deny`, would otherwise fail on them.
+   It stops if the copy's lockfile still takes a Jolt package from Git.
 5. It executes each requested block's `input.bin` and `advice.bin` in the built
    guest, and stops if the guest rejects them or outputs another block's hash.
 6. It prints each block's trace row count and writes `guest.elf`,

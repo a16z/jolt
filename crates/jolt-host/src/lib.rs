@@ -25,6 +25,7 @@ pub fn default_target_dir() -> PathBuf {
 pub struct Program {
     guest: String,
     workspace_dir: Option<PathBuf>,
+    cargo_config: Vec<String>,
     func: Option<String>,
     profile: Option<String>,
     instruction_profile: JoltInstructionProfile,
