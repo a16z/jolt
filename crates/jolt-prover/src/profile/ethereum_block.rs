@@ -9,7 +9,7 @@
 
 use std::fmt::Write as _;
 use std::fs;
-use std::path::{self, Path, PathBuf};
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use jolt_host::Program;
@@ -19,11 +19,11 @@ use super::{PrepareArgs, Workload};
 
 /// The sizes in the `#[jolt::provable]` attribute of `validate_block`, in jeth's
 /// `crates/guest/src/lib.rs` at the pinned revision. The guest computes its
-/// I/O addresses from the attribute at compile time; the linker script and
-/// the tracer compute theirs from these constants, and no check compares the
-/// two. A different input or output size moves the I/O region, and a smaller
-/// heap or stack can run out, so `prepare` executing every block exposes a
-/// difference that matters.
+/// I/O addresses from the attribute at compile time. From these constants,
+/// `jolt build` receives the heap and stack sizes and the tracer's memory
+/// layout takes all four; no check compares the two sets. A different input
+/// or output size moves the I/O region, and a smaller heap or stack can run
+/// out, so `prepare` executing every block exposes a difference that matters.
 const MAX_INPUT_SIZE: u64 = 16_777_216;
 const MAX_OUTPUT_SIZE: u64 = 4096;
 const HEAP_SIZE: u64 = 1_610_612_736;
@@ -105,8 +105,6 @@ impl Packages {
             .unwrap_or_else(|| panic!("cargo metadata lists no package {name}"))
     }
 
-    /// Copy jeth's guest sources into `guest_target_dir` and point their Jolt
-    /// dependencies at this workspace. Returns the copy's root.
     fn stage_jeth(&self, guest_target_dir: &Path) -> PathBuf {
         let checkout = self
             .dir("jeth-inlines-blake2f")
@@ -167,10 +165,20 @@ impl PrepareArgs {
         let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
             .ancestors()
             .nth(2)
+            .and_then(|root| root.canonicalize().ok())
             .expect("the workspace root");
-        let guest_target_dir =
-            path::absolute(&self.guest_target_dir).expect("resolve the guest target directory");
-        let source = Packages::resolve(workspace).stage_jeth(&guest_target_dir);
+        fs::create_dir_all(&self.guest_target_dir).expect("create the guest target directory");
+        let guest_target_dir = self
+            .guest_target_dir
+            .canonicalize()
+            .expect("resolve the guest target directory");
+        assert!(
+            guest_target_dir.starts_with(&workspace),
+            "--guest-target-dir must be inside {}: the guest builds with that checkout's \
+             toolchain, and `prepare` replaces the directory's `jeth` entry",
+            workspace.display()
+        );
+        let source = Packages::resolve(&workspace).stage_jeth(&guest_target_dir);
         let mut program = program();
         program.set_workspace_dir(source.join("crates/guest"));
         program.build(

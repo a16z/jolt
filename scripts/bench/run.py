@@ -466,7 +466,7 @@ def build_attempt(args, native_harness, fallback_reason=None):
             manifest['guest_preparer_sha256'] = sha256(prepare_binary)
             guest_env = dict(host_env, JOLT_PATH=str(guest_builder))
             blocks = {case['workload'] for spec in config['tiers'].values() for case in spec['cases']
-                      if calibration.input_parameter(case)[0] == 'block'}
+                      if not case.get('unsupported_reason') and calibration.input_parameter(case)[0] == 'block'}
             for workload, counts in inputs.items():
                 prepared = out / 'guests' / workload
                 logged([str(prepare_binary), 'prepare', '--name', workload,

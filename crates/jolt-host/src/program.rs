@@ -56,7 +56,9 @@ impl Program {
 
     /// Build the guest from `dir`, a directory inside the Cargo workspace that
     /// owns the guest package. If unset, the build runs in the caller's working
-    /// directory, which must then be inside that workspace.
+    /// directory, which must then be inside that workspace. Either way, a
+    /// relative `JOLT_PATH` or target directory names a path under the
+    /// caller's working directory.
     pub fn set_workspace_dir(&mut self, dir: PathBuf) {
         self.workspace_dir = Some(dir);
     }
@@ -150,7 +152,23 @@ impl Program {
     )]
     pub fn build_with_features(&mut self, target_dir: &str, extra_features: &[&str]) {
         if self.elf.is_none() {
-            let jolt_cmd = std::env::var("JOLT_PATH").unwrap_or_else(|_| "jolt".to_string());
+            // With `workspace_dir` the child runs in another directory, where a
+            // path relative to this process's directory names another file. A
+            // bare command name is found on PATH and stays as it is.
+            let from_here = |path: String| {
+                if self.workspace_dir.is_none() {
+                    return path;
+                }
+                std::path::absolute(&path)
+                    .ok()
+                    .and_then(|path| path.into_os_string().into_string().ok())
+                    .expect("resolve a UTF-8 path against the working directory")
+            };
+            let mut jolt_cmd = std::env::var("JOLT_PATH").unwrap_or_else(|_| "jolt".to_string());
+            if jolt_cmd.contains(std::path::is_separator) {
+                jolt_cmd = from_here(jolt_cmd);
+            }
+            let target_dir = from_here(target_dir.to_string());
             let mut args = vec!["build".to_string()];
 
             args.push("-p".to_string());

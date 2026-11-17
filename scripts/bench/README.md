@@ -766,7 +766,9 @@ count, target-directory reuse, transient free swap, random URS hashes and harnes
 Git SHA alone. Any of these that changes the prover is bound through the prover
 hash. The shared libraries that the target loads into the dynamically linked
 prover (libc, libm, libgcc_s and the dynamic loader) are neither keyed nor
-recorded.
+recorded. The advice tape that the Ethereum block guest reads is also outside
+the key. Its hash is in the build manifest, and the exact base revision fixes
+it, because the tape is a checked-in file.
 
 The management node is recorded and never compared. No measured process executes
 it, its version and file hashes do not say what it was doing, and no other host

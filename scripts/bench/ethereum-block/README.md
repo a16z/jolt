@@ -26,7 +26,9 @@ from different commits
 1. It asks `cargo metadata --locked` where Cargo checked jeth out.
 2. It copies jeth's root `Cargo.toml`, `crates/` and `library/` into the guest
    target directory. The build rewrites `crates/guest/Cargo.lock`, and Cargo's
-   checkout must stay as fetched.
+   checkout must stay as fetched. It refuses a guest target directory outside
+   this checkout: the copy takes its toolchain from this checkout, and
+   `prepare` replaces the directory's `jeth` entry.
 3. It writes a `[patch]` table into the copy that points jeth's ten Jolt
    dependencies at this checkout. Each benchmark leg therefore builds the guest
    against its own Jolt crates.
@@ -39,9 +41,10 @@ from different commits
    `input-<block>.bin` and `advice-<block>.bin`. If any block failed, it
    writes nothing.
 
-The build downloads jeth and the guest's dependencies (reth, `stateless`,
-ZeroOS, the arkworks fork and about 400 registry crates). A measurement reads
-only the prepared files.
+The build downloads jeth and the guest's dependencies: 358 registry packages
+and 40 Git packages, reth, `stateless`, ZeroOS and the arkworks fork among
+them. jeth's guest lockfile holds 427 packages with the path packages. A
+measurement reads only the prepared files.
 
 jeth's default guest features include `keccak-census`, which prints seven
 `keccak[...]` lines from inside each measured process.
@@ -83,9 +86,10 @@ cycle-count harness. Its raw files are the assets `26227673.block.rlp` (SHA-256
 both hashes.
 
 Block 26433846 is not part of jeth. Every frozen block needs a trace ceiling
-of `2^28` or more: in run 44058928966 of jeth's `Cycles` workflow, which used
-jeth's own pinned Jolt revision, block 26227673 traced 160206652 rows, above
-`2^27`, and the nine others at least 349793403. The pull-request case therefore
+of `2^28` or more: in run 44160749278 of the `Cycles` workflow of `a16z/jeth`,
+which ran at commit `54d63c4bd876fb217c6670b47100e1dc5ad856f8` with jeth's own
+pinned Jolt revision, block 26227673 traced 160206652 rows, above `2^27`, and
+the nine others at least 349793403. The pull-request case therefore
 uses a low-gas block. `jeth fetch --block 26433846` read it from jeth's default
 endpoint, `https://docs-demo.quiknode.pro/`, with `debug_getRawBlock` and
 `debug_executionWitness`. The raw files are not in

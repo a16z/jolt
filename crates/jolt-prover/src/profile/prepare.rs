@@ -29,7 +29,8 @@ pub struct PrepareArgs {
     pub out: PathBuf,
 }
 
-/// Write guest.elf and one input-N.bin per requested operation count or block.
+/// Write guest.elf and one input-N.bin per requested operation count or block,
+/// with an advice-N.bin beside each block's input.
 pub fn prepare(args: &PrepareArgs) {
     fs::create_dir_all(&args.out).expect("create prepared guest directory");
     if !args.blocks.is_empty() {
