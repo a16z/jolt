@@ -53,6 +53,27 @@ RAF evaluation ties `RamAddress` to the one-hot address: on each cycle it must e
 The verifier requires `lowest_address` to be a multiple of 8, so every admissible `RamAddress` is a multiple of 8.
 An access misaligned for its width, such as an `LH` at an odd address or any misaligned `LD`, leaves a low bit set in `RamAddress` and cannot be proven.
 
+## Tracer memory guards
+
+Protected doublewords hold program input, trusted advice, untrusted advice or
+the stack canary `[stack_end, stack_end + STACK_CANARY_SIZE)`, or lie in the
+code region: the doubleword holding the first source instruction through the
+one holding the last. The tracers round these extents outward to doublewords.
+Padding and read-only data between instructions are protected with the code,
+and ELF admission rejects a writable section that overlaps the code region.
+Same-value stores remain valid, including byte, halfword and word stores into a
+protected doubleword.
+
+The interpreter, replay tracer and native tracer reject a changed protected
+word before writing it, and reject loads below `lowest_address`. They also
+reject an instruction fetch at an address that starts no decoded source
+instruction, such as a jump into data, padding or the middle of an instruction:
+the native tracer compiles only the decoded instructions, and the interpreter
+checks each address before decoding it. Host calls
+(prints, cycle markers and advice writes) are logged and ignored when their
+buffer contains a byte below `lowest_address` or any other byte a guest load
+would reject.
+
 ## Deviations from the Twist algorithm as described in the paper
 
 Our implementation of the Twist prover algorithm differs from the description given in the Twist and Shout [paper](https://eprint.iacr.org/2025/105) in a couple of ways. One such deviation is [wv virtualization](../twist-shout.md#wv-virtualization). Other, RAM-specific deviations are described below.

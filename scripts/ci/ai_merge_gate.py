@@ -494,7 +494,7 @@ class Gate:
             self.unclassified = True
             self.records.append(Record(CLASSIFIER, "neutral", "Verifier classifier: unclassified",
                 "The agent failed, reached a cap, or its result no longer matches this head. "
-                "No classifier verdict was recorded; current-head maintainer approval is required.", None))
+                "No classifier verdict was recorded; maintainer approval is required.", None))
 
     def classify_head(self, pull: dict) -> None:
         number, head = pull["number"], pull["head"]["sha"]
@@ -506,7 +506,7 @@ class Gate:
                                        f"This head has used {self.ledger.get(head, 0)} of {MAX_HEAD_ATTEMPTS} "
                                        "paid classifier attempts. The head stays unclassified, so only a person can "
                                        "approve it. No risk label is assigned; policy requires an independent "
-                                       "current-head maintainer approval.", None))
+                                       "maintainer approval.", None))
             return
 
         def admit() -> None:
@@ -555,8 +555,9 @@ class Gate:
     def approvals(self, pull: dict) -> tuple[list[str], list[str], list[str]]:
         """From each person's latest review in `self.reviews`: the maintainers and writers whose
         change request stands, the writers other than the author who approve, and the maintainers
-        among those approvers whose approval names the current head."""
-        head, author = pull["head"]["sha"], pull["user"]["login"]
+        among those approvers. An approval counts on whichever commit it names: staleness is left
+        to GitHub, which dismisses approvals on push under the branch rule in .github/ai-merge-gate.md."""
+        author = pull["user"]["login"]
         latest = {}
         for review in self.reviews:
             login = (review.get("author") or {}).get("login")
@@ -564,13 +565,11 @@ class Gate:
                 latest[login] = review
         blocking = sorted(login for login, review in latest.items() if review["state"] == "CHANGES_REQUESTED"
                           and self.can_write(login))
-        # Risk-1 through risk-3 retain GitHub's approval freshness; risk-4 also checks commit.oid.
         approvers = sorted(login for login, review in latest.items()
                            if review["state"] == "APPROVED" and review["author"]["__typename"] == "User"
                            and login != author and self.can_write(login))
-        current = [login for login in approvers if (latest[login].get("commit") or {}).get("oid") == head
-                   and self.is_maintainer(login)]
-        return blocking, approvers, current
+        approving_maintainers = [login for login in approvers if self.is_maintainer(login)]
+        return blocking, approvers, approving_maintainers
 
     def authorized(self, pull: dict) -> bool:
         return self.is_maintainer(pull["user"]["login"])
@@ -581,7 +580,7 @@ class Gate:
         number, head, author = pull["number"], pull["head"]["sha"], pull["user"]["login"]
         self.comments = self.github.discussion(number, "comments", "fullDatabaseId")
         self.reviews = self.github.discussion(number, "reviews", REVIEW_FIELDS)
-        blocking, approvers, current = self.approvals(pull)
+        blocking, approvers, approving_maintainers = self.approvals(pull)
         if blocking:
             return Outcome("neutral", "Changes requested by " + ", ".join(blocking),
                            "A maintainer or writer requested changes; the gate does not approve until they "
@@ -590,23 +589,24 @@ class Gate:
         if not approvers and not authorized:
             return Outcome("neutral", "Human approval required",
                            f"@{author} is not a maintainer, so no classifier runs. Unclassified heads "
-                           "require an independent current-head maintainer approval.",
+                           "require an independent maintainer approval.",
                            human=True)
         # `self.records` holds this run's classification or its refusal: one paid attempt per run.
-        if authorized and not current and not self.records \
+        if authorized and not approving_maintainers and not self.records \
                 and self.recorded(head, CLASSIFIER) is None:
             if not pay:
                 return UNSETTLED
             self.classify(pull)
         risk = self.risk_level(pull)
         if risk == 4:
-            if current:
-                return Outcome("success", "Risk 4 approved by " + ", ".join(current),
-                               f"A maintainer other than the author approved the current head `{head}`.")
-            return Outcome("neutral", "Risk 4: current-head maintainer approval required",
-                           "Protocol or unclassified changes need an undismissed approval of the current "
-                           "head from a maintainer with write access, other than the PR author. The gate "
-                           "never approves risk-4 itself.", human=True)
+            if approving_maintainers:
+                return Outcome("success", "Risk 4 approved by " + ", ".join(approving_maintainers),
+                               "A maintainer other than the author approved the pull request, and GitHub "
+                               "has not dismissed the approval.")
+            return Outcome("neutral", "Risk 4: maintainer approval required",
+                           "Protocol or unclassified changes need an undismissed approval from a "
+                           "maintainer with write access, other than the PR author. The gate never "
+                           "approves risk-4 itself.", human=True)
         attested_by = self.attester(pull)
         classified = self.recorded(head, CLASSIFIER) is not None
         approve = attested_by is not None and classified and authorized
@@ -864,14 +864,19 @@ def resolve(event_name: str, event: dict, github: GitHub | None = None) -> int |
             or (run.get("repository") or {}).get("id") != repo["id"]:
         return None
     number = int(match.group(1))
-    # GitHub's run associations can omit closed PRs. Bind every proposed number to the
-    # source repository, branch and exact head through the base repository's PR API.
+    # GitHub's run associations can omit closed PRs. Bind every proposed number to the branch and
+    # exact head through the base repository's PR API, and a pull_request run to the source
+    # repository as well. A pull_request_review run reports the base repository as its head
+    # repository even for a fork's pull request (observed, not documented), so that run is bound
+    # by branch name and head alone. Another pull request sharing both can then be selected: its
+    # evaluation re-reads every input and is one that a comment on it already starts.
     source = run.get("head_repository") or {}
     if github is None or not source.get("id"):
         return None
     pull = github.get(f"/repos/{github.repo}/pulls/{number}", missing_ok=True)
     if pull and pull["base"]["repo"]["id"] == repo["id"] \
-            and (pull["head"].get("repo") or {}).get("id") == source.get("id") \
+            and (run["event"] == "pull_request_review"
+                 or (pull["head"].get("repo") or {}).get("id") == source.get("id")) \
             and pull["head"]["ref"] == run.get("head_branch") \
             and pull["head"]["sha"] == run.get("head_sha"):
         return number

@@ -37,3 +37,13 @@ Zihpm-csrrs-00
 # is exactly the bytes the LR read, so an SC wider than its LR fails. The
 # reservation set is implementation-defined, so both outcomes are legal.
 Zalrsc-sc.d-00
+
+# Execution outside Jolt's decoded program. jolt-emu applies the code guards
+# of tracing for a proof, so a fetch from bytes the ELF decoder leaves out of
+# the program stops the run. I-fence-00 writes its reserved and hint FENCE
+# encodings with .word, which the assembler marks as data (a $d mapping
+# symbol), and reaches them by falling through from fence.tso. Skipping it
+# drops every FENCE case in the suite, since no other ACT4 test uses FENCE.
+# Jolt executes FENCE as a no-op, and unit tests in jolt-program and tracer
+# still cover its decoding.
+I-fence-00

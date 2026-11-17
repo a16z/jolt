@@ -81,9 +81,12 @@ def artifact_json(run_id, attempt, prefix, filename):
 
 def trusted_plan(run_id, attempt):
     actual = ci.github(f'actions/runs/{run_id}/attempts/{attempt}')
+    head_repository = (actual['head_repository'] or {}).get('full_name')
+    # GitHub takes the pull_request_target workflow file from the default branch. A fork's
+    # pull_request run uses its merge commit's copy, which can upload same-named artifacts.
     if (actual['id'] != run_id or actual['run_attempt'] != attempt
             or actual['repository']['full_name'] != 'a16z/jolt'
-            or (actual['head_repository'] or {}).get('full_name') != 'a16z/jolt'
+            or (head_repository != 'a16z/jolt' and actual['event'] != 'pull_request_target')
             or actual['name'] != bench.WORKFLOW or actual['path'] != bench.WORKFLOW_FILE
             or actual['status'] != 'completed' or actual['conclusion'] != 'success'):
         raise ValueError('plan producer is not a successful trusted workflow attempt')
@@ -101,8 +104,10 @@ def trusted_plan(run_id, attempt):
     if plan['tier'] == 'pr':
         prs = actual['pull_requests']
         item = plan['runs'][0]
+        # A plan without head_repo comes from a planner that admitted only a16z/jolt heads.
         if (actual['event'] != 'pull_request_target' or len(plan['runs']) != 1
                 or (prs and not any(pr['number'] == prov['pr_number'] and pr['base']['ref'] == 'main' for pr in prs))
+                or head_repository != plan['admission'].get('head_repo', 'a16z/jolt')
                 or actual['head_branch'] != plan['admission']['head_ref']
                 or actual['head_sha'] != item['submitted_head']):
             raise ValueError('PR plan is not bound to the admitted head and main base')
@@ -245,7 +250,7 @@ def check_result(job_id, documents, exit_code, summary):
 
 
 def render_pr_comment(result, summary_path, details_url, exit_code=0):
-    rows = bench.render_comment(result, summary_path)
+    rows, groups = bench.render_comment(result, summary_path)
     lines = [ci.COMMENT_HEADER, '',
              f'[Full results]({details_url}) · '
              '[Benchmark history](https://a16z.github.io/jolt/dev/prover-history/)', '',
@@ -255,22 +260,29 @@ def render_pr_comment(result, summary_path, details_url, exit_code=0):
                     if any(sample['exit_code'] is not None for sample in case['samples'])})
     lines += ['Sizes run (physical cores × trace ceiling): ' +
               (', '.join(f'{cores} × 2^{scale}' for cores, scale in sizes) if sizes else 'none recorded') + '.', '']
+    rule = ("A case's reporting threshold is the larger of its trace-size threshold and that metric's observed "
+            'envelope; a missing envelope leaves the trace-size threshold alone. '
+            'A size group is the cases sharing a PCS, physical-core count and trace ceiling; for two or more '
+            'cases, the geometric mean of their head/base ratios is compared with its trace-size threshold alone, '
+            'because no envelope is observed for a group mean. '
+            'Changes are compared symmetrically using the larger of head/base and base/head. '
+            'Observed envelopes do not establish statistical significance.\n\n' + calibration.size_thresholds_text())
     if exit_code or result['status'] != 'complete':
         lines.append('Comparison unavailable; see full results for execution status.')
-    elif rows:
-        lines += ['Rows are shown when the time or peak resident set size (RSS) change exceeds its '
-                  'per-case reporting threshold: the larger of 3% and that metric\'s observed envelope. '
-                  'Changes are compared symmetrically using the larger of head/base and base/head; '
-                  'displayed changes remain signed head/base changes, with positive meaning an increase. '
-                  'Missing envelopes use 3%. Observed envelopes do not establish statistical significance. '
-                  'PCS is the polynomial commitment scheme: Akita is lattice-based; Dory is curve-based.', '',
-                  '| Workload / PCS | Physical cores | Trace ceiling | Trace rows base / head | End-to-end base / head (s) | Signed time change | Time threshold | Peak RSS base / head (bytes) | Signed RSS change | RSS threshold |',
-                  '|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|', *rows]
+    elif rows or groups:
+        lines += ['Cases and size groups are listed when their time or peak resident set size (RSS) change '
+                  'exceeds its reporting threshold. Displayed changes remain signed head/base changes, '
+                  'with positive meaning an increase. '
+                  f'PCS is the polynomial commitment scheme: Akita is lattice-based; Dory is curve-based. {rule}', '']
+        if rows:
+            lines += ['| Workload / PCS | Physical cores | Trace ceiling | Trace rows base / head | End-to-end base / head (s) | Signed time change | Time threshold | Peak RSS base / head (bytes) | Signed RSS change | RSS threshold |',
+                      '|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|', *rows]
+        if rows and groups:
+            lines.append('')
+        lines += groups
     else:
-        lines.append('No change exceeds its per-case reporting threshold in end-to-end proving time or peak RSS. '
-                     'Each metric uses the larger of 3% and its observed envelope (3% if unavailable), '
-                     'comparing head/base and base/head symmetrically. '
-                     'Observed envelopes do not establish statistical significance.')
+        lines.append('No change exceeds its reporting threshold in end-to-end proving time or peak resident set '
+                     f'size (RSS), for any case or size group. {rule}')
     return '\n'.join(lines) + '\n'
 
 

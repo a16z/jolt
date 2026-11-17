@@ -47,6 +47,8 @@ pub enum PreprocessingError {
         address: usize,
         length: usize,
     },
+    #[error("invalid code region: {0}")]
+    InvalidCodeRegion(&'static str),
     #[error("bytecode length overflows the packed PC index (u32)")]
     BytecodeTooLarge,
     #[cfg(feature = "field-inline")]

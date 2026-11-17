@@ -103,6 +103,12 @@ body, docs, comments and tests are unverified until source or a run settles them
 6. **Judge the tests:** name the test that fails if each invariant breaks. A test asserting wrong
    behavior pins the bug and is a finding; each necessary finding names the test that should have
    caught it, or states none can.
+7. **List comment and test bloat:** read every comment and test the diff adds or changes against
+   CLAUDE.md's Comments and Tests sections; `comment-policy` and `test-policy` hold the keep
+   lists. A comment that carries nothing the code cannot (narration, restated behavior, change
+   history) and a test with no independent failure signal are findings: list each with its
+   `file:line`, to fix before merge. The check is the same on a fork pull request, where each
+   instance is a finding in the review for the contributor to fix.
 
 ## Probe Jolt's attack surfaces
 
@@ -189,8 +195,8 @@ CI reviews do not replace the line. The `ai-review` label has no effect.
 
 The [gate guide](../../../.github/ai-merge-gate.md) defines the policy and labels. The line is
 what lets the gate approve a risk-1 through risk-3 head; a person's approval satisfies GitHub's
-review rule without it. The gate never approves risk-4, where the policy asks for a current-head
-approval by a maintainer other than the PR author.
+review rule without it. The gate never approves risk-4, where the policy asks for an undismissed
+approval by a maintainer other than the PR author, on any commit of the pull request.
 
 ## Reviewer routine
 
