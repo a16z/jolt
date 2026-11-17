@@ -3,6 +3,7 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::{BYTES_PER_INSTRUCTION, RAM_START_ADDRESS, STACK_CANARY_SIZE};
 use common::jolt_device::{JoltDevice, MemoryLayout, MemoryLayoutError};
 use jolt_riscv::JoltInstructionRow;
+use std::ops::Range;
 
 use super::{public_io::PublicMemorySegment, PreprocessingError};
 
@@ -19,10 +20,6 @@ use super::{public_io::PublicMemorySegment, PreprocessingError};
 pub struct RAMPreprocessing {
     pub min_bytecode_address: u64,
     pub bytecode_words: Vec<u64>,
-    /// Canonical half-open intervals of the RAM word indices that hold source
-    /// instructions: the source-instruction part of the write-protected mask C
-    /// (see [`write_protected_word_intervals`]).
-    pub code_word_intervals: Vec<(usize, usize)>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -101,48 +98,42 @@ impl RAMPreprocessing {
         Self {
             min_bytecode_address,
             bytecode_words,
-            code_word_intervals: Vec::new(),
         }
     }
 }
 
-/// Round real source-instruction extents outward to RAM doublewords and merge
-/// overlaps and neighbors. Expansion rows must be reduced to their source
-/// anchors before calling; address-zero padding is not source code.
-pub fn code_word_intervals(
+/// RAM word indices, from `lowest_address`, of the code region: the doubleword
+/// holding the first source instruction through the one holding the last.
+/// Padding and read-only data between instructions are protected with the
+/// code, so `decode_elf` rejects a writable section inside the region.
+/// Expansion rows must be reduced to their source anchors before calling;
+/// address-zero padding is not source code. Without source instructions the
+/// region is empty.
+pub fn code_region(
     source_extents: impl IntoIterator<Item = (u64, bool)>,
     lowest_address: u64,
-) -> Result<Vec<(usize, usize)>, PreprocessingError> {
-    let intervals =
-        source_word_intervals(source_extents, lowest_address)?.collect::<Result<Vec<_>, _>>()?;
-    Ok(merge_word_intervals(intervals))
-}
-
-fn merge_word_intervals(mut intervals: Vec<(usize, usize)>) -> Vec<(usize, usize)> {
-    intervals.sort_unstable();
-    let mut merged: Vec<(usize, usize)> = Vec::new();
-    for (start, end) in intervals {
-        if let Some((_, previous_end)) = merged.last_mut() {
-            if start <= *previous_end {
-                *previous_end = (*previous_end).max(end);
-                continue;
-            }
-        }
-        merged.push((start, end));
+) -> Result<Range<usize>, PreprocessingError> {
+    let mut words: Option<Range<usize>> = None;
+    for extent in source_word_intervals(source_extents, lowest_address)? {
+        let (start, end) = extent?;
+        words = Some(match words {
+            Some(words) => words.start.min(start)..words.end.max(end),
+            None => start..end,
+        });
     }
-    merged.shrink_to_fit();
-    merged
+    Ok(words.unwrap_or_default())
 }
 
-/// The value-preserving RAM mask, restricted to the proof's address domain.
-/// Layout regions and source extents round outward to doublewords; their union
-/// is sorted, disjoint and merged, including intervals starting at index zero.
+/// The value-preserving RAM mask, restricted to the proof's address domain:
+/// the code region (see [`code_region`]) and the input, advice and canary
+/// regions rounded outward to doublewords, sorted, disjoint and merged,
+/// including intervals starting at index zero.
 pub fn write_protected_word_intervals(
-    code_intervals: &[(usize, usize)],
+    code_region: Range<usize>,
     memory_layout: &MemoryLayout,
     ram_k: usize,
 ) -> Result<Vec<(usize, usize)>, PreprocessingError> {
-    validate_code_word_intervals(code_intervals, memory_layout)?;
+    validate_code_region(&code_region, memory_layout)?;
     let lowest = memory_layout.get_lowest_address();
     if !lowest.is_multiple_of(8) {
         return Err(PreprocessingError::InvalidWriteProtectedIntervals(
@@ -155,7 +146,10 @@ pub fn write_protected_word_intervals(
         .ok_or(PreprocessingError::InvalidWriteProtectedIntervals(
             "canary extent overflows",
         ))?;
-    let mut intervals = code_intervals.to_vec();
+    let mut intervals = Vec::with_capacity(5);
+    if !code_region.is_empty() {
+        intervals.push((code_region.start, code_region.end));
+    }
     for (start, end) in [
         (memory_layout.input_start, memory_layout.input_end),
         (
@@ -217,12 +211,12 @@ pub struct RamWordMasks {
 
 impl RamWordMasks {
     pub fn new(
-        code_intervals: &[(usize, usize)],
+        code_region: Range<usize>,
         memory_layout: &MemoryLayout,
         ram_k: usize,
     ) -> Result<Self, PreprocessingError> {
         let masks = Self {
-            write_protected: write_protected_word_intervals(code_intervals, memory_layout, ram_k)?,
+            write_protected: write_protected_word_intervals(code_region, memory_layout, ram_k)?,
             unmapped: unmapped_word_intervals(memory_layout, ram_k)?,
         };
         // The prover classifies a word for both masks with one search over
@@ -290,7 +284,7 @@ fn source_word_intervals(
     lowest_address: u64,
 ) -> Result<impl Iterator<Item = Result<(usize, usize), PreprocessingError>>, PreprocessingError> {
     if !lowest_address.is_multiple_of(8) {
-        return Err(PreprocessingError::InvalidCodeWordIntervals(
+        return Err(PreprocessingError::InvalidCodeRegion(
             "lowest RAM address is not doubleword aligned",
         ));
     }
@@ -300,22 +294,22 @@ fn source_word_intervals(
         .map(move |(address, is_compressed)| {
             let end = address
                 .checked_add(if is_compressed { 2 } else { 4 })
-                .ok_or(PreprocessingError::InvalidCodeWordIntervals(
+                .ok_or(PreprocessingError::InvalidCodeRegion(
                     "source instruction extent overflows",
                 ))?;
             let offset = address.checked_sub(lowest_address).ok_or(
-                PreprocessingError::InvalidCodeWordIntervals("source instruction is below RAM"),
+                PreprocessingError::InvalidCodeRegion("source instruction is below RAM"),
             )?;
             if !address.is_multiple_of(2) {
-                return Err(PreprocessingError::InvalidCodeWordIntervals(
+                return Err(PreprocessingError::InvalidCodeRegion(
                     "source instruction address is not halfword aligned",
                 ));
             }
             let start = usize::try_from(offset / 8).map_err(|_| {
-                PreprocessingError::InvalidCodeWordIntervals("source word exceeds usize range")
+                PreprocessingError::InvalidCodeRegion("source word exceeds usize range")
             })?;
             let end = usize::try_from((end - lowest_address).div_ceil(8)).map_err(|_| {
-                PreprocessingError::InvalidCodeWordIntervals("source word exceeds usize range")
+                PreprocessingError::InvalidCodeRegion("source word exceeds usize range")
             })?;
             Ok((start, end))
         }))
@@ -323,11 +317,11 @@ fn source_word_intervals(
 
 /// Expansion metadata retains the source length on the final row only.
 /// Taking each anchor avoids treating a compressed expansion as four bytes.
-pub fn bytecode_code_word_intervals(
+pub fn bytecode_code_region(
     bytecode: &[JoltInstructionRow],
     lowest_address: u64,
-) -> Result<Vec<(usize, usize)>, PreprocessingError> {
-    code_word_intervals(bytecode_source_extents(bytecode), lowest_address)
+) -> Result<Range<usize>, PreprocessingError> {
+    code_region(bytecode_source_extents(bytecode), lowest_address)
 }
 
 fn bytecode_source_extents(
@@ -339,83 +333,43 @@ fn bytecode_source_extents(
         .map(|row| (row.address as u64, row.is_compressed))
 }
 
-pub(super) fn validate_bytecode_code_word_intervals(
-    intervals: &[(usize, usize)],
-    bytecode: &[JoltInstructionRow],
+/// Checks a code region the verifier takes on trust: a committed program's
+/// metadata carries it in place of the bytecode. The region must lie in the
+/// RAM domain, and an empty region must be `0..0`, so that each program has
+/// one encoding.
+pub fn validate_code_region(
+    code_region: &Range<usize>,
     memory_layout: &MemoryLayout,
 ) -> Result<(), PreprocessingError> {
-    validate_code_word_intervals(intervals, memory_layout)?;
-    let lowest_address = memory_layout.get_lowest_address();
-    let extents = source_word_intervals(bytecode_source_extents(bytecode), lowest_address)?;
-    let mut expected = intervals.iter().copied();
-    let mut merged: Option<(usize, usize)> = None;
-    let mut previous_start = None;
-    let mut matches = true;
-    for extent in extents {
-        let (start, end) = extent?;
-        // BytecodePCMapper::try_new checks expansion runs but does not enforce
-        // address order. Only unordered word extents need the sorting fallback.
-        if previous_start.is_some_and(|previous| start < previous) {
-            return if intervals == bytecode_code_word_intervals(bytecode, lowest_address)? {
-                Ok(())
-            } else {
-                Err(PreprocessingError::InvalidCodeWordIntervals(
-                    "protected words do not match decoded source extents",
-                ))
-            };
-        }
-        previous_start = Some(start);
-        match merged.as_mut() {
-            Some((_, previous_end)) if start <= *previous_end => {
-                *previous_end = (*previous_end).max(end);
-            }
-            _ => {
-                if let Some(interval) = merged.replace((start, end)) {
-                    matches &= expected.next() == Some(interval);
-                }
-            }
-        }
+    let max_ram_k = compute_max_ram_k(memory_layout)
+        .map_err(|_| PreprocessingError::InvalidCodeRegion("RAM domain is invalid"))?;
+    if code_region.start > code_region.end || code_region.end > max_ram_k {
+        return Err(PreprocessingError::InvalidCodeRegion(
+            "code region is reversed or outside RAM",
+        ));
     }
-    if let Some(interval) = merged {
-        matches &= expected.next() == Some(interval);
-    }
-    if !matches || expected.next().is_some() {
-        return Err(PreprocessingError::InvalidCodeWordIntervals(
-            "protected words do not match decoded source extents",
+    if code_region.is_empty() && code_region.start != 0 {
+        return Err(PreprocessingError::InvalidCodeRegion(
+            "empty code region is not 0..0",
         ));
     }
     Ok(())
 }
 
-/// Membership in an admitted canonical interval list, without a RAM-sized mask.
-pub fn is_code_word(intervals: &[(usize, usize)], word_index: usize) -> bool {
-    let next = intervals.partition_point(|&(start, _)| start <= word_index);
-    next.checked_sub(1)
-        .and_then(|index| intervals.get(index))
-        .is_some_and(|&(_, end)| word_index < end)
-}
-
-pub fn validate_code_word_intervals(
-    intervals: &[(usize, usize)],
-    memory_layout: &MemoryLayout,
-) -> Result<(), PreprocessingError> {
-    let max_ram_k = compute_max_ram_k(memory_layout)
-        .map_err(|_| PreprocessingError::InvalidCodeWordIntervals("RAM domain is invalid"))?;
-    let mut previous_end = None;
-    for &(start, end) in intervals {
-        if start >= end || end > max_ram_k {
-            return Err(PreprocessingError::InvalidCodeWordIntervals(
-                "protected interval is empty or outside RAM",
-            ));
+fn merge_word_intervals(mut intervals: Vec<(usize, usize)>) -> Vec<(usize, usize)> {
+    intervals.sort_unstable();
+    let mut merged: Vec<(usize, usize)> = Vec::new();
+    for (start, end) in intervals {
+        if let Some((_, previous_end)) = merged.last_mut() {
+            if start <= *previous_end {
+                *previous_end = (*previous_end).max(end);
+                continue;
+            }
         }
-        if previous_end.is_some_and(|previous| start <= previous) {
-            return Err(PreprocessingError::InvalidCodeWordIntervals(
-                "protected intervals are not sorted, disjoint and merged",
-            ));
-        }
-        previous_end = Some(end);
+        merged.push((start, end));
     }
-    Ok(())
+    merged.shrink_to_fit();
+    merged
 }
 
 pub fn compute_min_ram_k(
@@ -534,10 +488,10 @@ mod tests {
     }
 
     #[test]
-    fn source_code_extents_round_and_merge_without_freezing_gaps() {
+    fn code_region_rounds_outward_and_spans_gaps_between_instructions() {
         let lowest = 0x8000_0000;
         assert_eq!(
-            super::code_word_intervals(
+            super::code_region(
                 [
                     (lowest + 38, false),
                     (lowest + 6, true),
@@ -547,15 +501,9 @@ mod tests {
                 ],
                 lowest
             ),
-            Ok(vec![(0, 2), (4, 6)])
+            Ok(0..6)
         );
-        let intervals = [(0, 2), (4, 6)];
-        for word in 0..8 {
-            assert_eq!(
-                super::is_code_word(&intervals, word),
-                matches!(word, 0 | 1 | 4 | 5)
-            );
-        }
+        assert_eq!(super::code_region([(0, true)], lowest), Ok(0..0));
     }
 
     #[test]
@@ -570,30 +518,30 @@ mod tests {
         layout.input_end = lowest + 40;
         // Source words overlap input and touch the rounded canary extent.
         layout.stack_end = lowest + 62;
-        let code = [(4, 8)];
-        let intervals = super::write_protected_word_intervals(&code, &layout, 16).unwrap();
+        let code = 4..8;
+        let intervals = super::write_protected_word_intervals(code.clone(), &layout, 16).unwrap();
         assert_eq!(intervals, vec![(0, 16)]);
         assert_eq!(
-            super::write_protected_word_intervals(&code, &layout, 32).unwrap(),
+            super::write_protected_word_intervals(code.clone(), &layout, 32).unwrap(),
             vec![(0, 24)]
         );
         assert_eq!(
-            super::write_protected_word_intervals(&code, &layout, 4).unwrap(),
+            super::write_protected_word_intervals(code.clone(), &layout, 4).unwrap(),
             vec![(0, 4)]
         );
         layout.stack_end = lowest + 8 * 32;
         assert_eq!(
-            super::write_protected_word_intervals(&code, &layout, 16).unwrap(),
+            super::write_protected_word_intervals(code.clone(), &layout, 16).unwrap(),
             vec![(0, 8)]
         );
     }
 
     #[test]
     fn source_code_extents_reject_overflow_low_and_unaligned_addresses() {
-        assert!(super::code_word_intervals([(u64::MAX - 1, true)], 0).is_err());
-        assert!(super::code_word_intervals([(8, false)], 16).is_err());
-        assert!(super::code_word_intervals([(17, true)], 16).is_err());
-        assert!(super::code_word_intervals([(16, false)], 1).is_err());
+        assert!(super::code_region([(u64::MAX - 1, true)], 0).is_err());
+        assert!(super::code_region([(8, false)], 16).is_err());
+        assert!(super::code_region([(17, true)], 16).is_err());
+        assert!(super::code_region([(16, false)], 1).is_err());
     }
 
     #[test]
@@ -622,7 +570,6 @@ mod tests {
         let preprocessing = RAMPreprocessing {
             min_bytecode_address: 0x8000_0000,
             bytecode_words: vec![0x0201, 0x03],
-            code_word_intervals: Vec::new(),
         };
 
         let initial = PublicInitialRam::new(&preprocessing, &device);

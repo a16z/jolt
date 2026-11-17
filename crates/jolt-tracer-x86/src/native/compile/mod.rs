@@ -12,12 +12,13 @@ mod emit;
 pub mod emitter;
 
 use std::collections::BTreeMap;
+use std::ops::Range;
 
 use common::constants::RAM_START_ADDRESS;
 use dynasmrt::{x64::Assembler, AssemblyOffset, DynamicLabel, DynasmApi, DynasmLabelApi};
 use jolt_program::{
     execution::{JoltProgram, TraceError},
-    preprocess::{ram::bytecode_code_word_intervals, BytecodePCMapper},
+    preprocess::{ram::bytecode_code_region, BytecodePCMapper},
 };
 use jolt_riscv::SourceInstructionKind;
 
@@ -203,7 +204,7 @@ pub struct Emitter {
     group_offsets: Vec<(u64, AssemblyOffset)>,
     pub text_base: u64,
     pub text_span: u64,
-    code_word_intervals: Vec<(usize, usize)>,
+    code_region: Range<usize>,
 }
 
 impl Emitter {
@@ -273,8 +274,8 @@ impl CompiledBody {
             ));
         }
 
-        let code_word_intervals = bytecode_code_word_intervals(rows, RAM_START_ADDRESS)
-            .map_err(|_| TraceError::Backend("invalid source code-word intervals"))?;
+        let code_region = bytecode_code_region(rows, RAM_START_ADDRESS)
+            .map_err(|_| TraceError::Backend("invalid source code region"))?;
         let mut emitter = Emitter {
             mode,
             pausable,
@@ -289,7 +290,7 @@ impl CompiledBody {
             group_offsets: Vec::new(),
             text_base,
             text_span,
-            code_word_intervals,
+            code_region,
         };
 
         let entry = emitter.emit_prologue();

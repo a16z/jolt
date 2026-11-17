@@ -90,6 +90,12 @@ An entry must meet one of these conditions:
   Jolt's different behavior. The entry must state the narrow difference and
   the evidence: the relevant test and Sail behavior, Jolt's behavior, and
   the ISA rule that permits both outcomes.
+- The test executes bytes that Jolt's ELF decoder leaves out of the program,
+  such as instruction encodings written with `.word`, which the assembler
+  marks as data. `jolt-emu` applies the code guards of tracing for a proof
+  (a store may not change the code region, and every fetch must start a
+  decoded instruction), so a Jolt guest doing the same could not be proved
+  either. The entry must name the bytes and how the test reaches them.
 
 A skip drops the whole test file, including cases unrelated to the reason
 for exclusion. For example, skipping `Zalrsc-sc.d-00` drops every SC.D check

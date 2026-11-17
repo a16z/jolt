@@ -492,7 +492,7 @@ where
         return Err(VerifierError::MemoryLayoutMismatch);
     }
     validate_ram_remap_base(memory_layout)?;
-    preprocessing.program.validate_code_word_intervals()?;
+    preprocessing.program.validate_code_region()?;
 
     if num::u64_from_usize(public_io.inputs.len()) > memory_layout.max_input_size {
         return Err(VerifierError::InputTooLarge {
@@ -638,7 +638,7 @@ where
         entry_address: program.entry_address(),
         preprocessing_digest: preprocessing.preprocessing_digest,
         ram_word_masks: RamWordMasks::new(
-            preprocessing.program.code_word_intervals(),
+            preprocessing.program.code_region()?,
             memory_layout,
             ram_k,
         )
@@ -1007,7 +1007,7 @@ where
         return Err(VerifierError::MemoryLayoutMismatch);
     }
     validate_ram_remap_base(memory_layout)?;
-    preprocessing.program.validate_code_word_intervals()?;
+    preprocessing.program.validate_code_region()?;
 
     if num::u64_from_usize(public_io.inputs.len()) > memory_layout.max_input_size {
         return Err(VerifierError::InputTooLarge {
@@ -1133,7 +1133,7 @@ where
         entry_address: preprocessing.program.entry_address(),
         preprocessing_digest: preprocessing.preprocessing_digest,
         ram_word_masks: RamWordMasks::new(
-            preprocessing.program.code_word_intervals(),
+            preprocessing.program.code_region()?,
             memory_layout,
             ram_k,
         )

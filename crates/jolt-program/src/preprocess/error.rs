@@ -47,8 +47,8 @@ pub enum PreprocessingError {
         address: usize,
         length: usize,
     },
-    #[error("invalid code-word protection metadata: {0}")]
-    InvalidCodeWordIntervals(&'static str),
+    #[error("invalid code region: {0}")]
+    InvalidCodeRegion(&'static str),
     #[error("invalid write-protected RAM intervals: {0}")]
     InvalidWriteProtectedIntervals(&'static str),
     #[error("bytecode length overflows the packed PC index (u32)")]

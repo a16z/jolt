@@ -128,4 +128,5 @@ approval; a push needs a new attestation; risk 4 receives no gate approval. Disa
 and its approval permission if it cannot withdraw its own approval. Existing approvals must be
 dismissed or invalidated separately when turning the gate off.
 
-The standalone `diff-classifier.yml` PR-comment tool is independent of this gate.
+The standalone PR-comment tool (`diff-classifier.yml`, `diff-classifier-comment.yml`) is
+independent of this gate.

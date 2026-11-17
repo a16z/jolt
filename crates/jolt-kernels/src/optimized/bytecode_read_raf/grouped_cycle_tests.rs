@@ -72,22 +72,25 @@ fn check<F: JoltField>(num_ra: usize, long_period: bool) {
     let mut kernel = CycleKernel {
         progress: RoundProgress::new(log_n),
         degree,
-        ra: CycleRa::Lazy(LazyFoldedRa::new(tables, source)),
+        rows: CycleRows::Lazy(LazyRows {
+            ra: LazyFoldedRa::new(tables, source),
+            #[cfg(feature = "akita")]
+            fused_inc: LazyFusedInc::Prefix {
+                values: fused_inc.evals().to_vec(),
+                tail: F::zero(),
+            },
+        }),
         combined: EqPrefix::from_evals(combined.evals().to_vec()),
-        #[cfg(feature = "akita")]
-        fused_inc: LazyFusedInc::Prefix {
-            values: fused_inc.evals().to_vec(),
-            tail: F::zero(),
-        },
         #[cfg(feature = "akita")]
         fused_combined: EqPrefix::from_evals(fused_combined.evals().to_vec()),
         output_openings: Vec::new(),
     };
     for round in 0..=4 {
         let groups = combined.len() / 2;
-        let grouped = kernel.grouped_evals(groups);
+        let rows = kernel.rows.lazy().unwrap();
+        let grouped = kernel.grouped_evals(rows, groups);
         assert_eq!(grouped.is_some(), round < if long_period { 3 } else { 4 });
-        let product = kernel.four_ra_evals(groups);
+        let product = kernel.four_ra_evals(rows, groups);
         assert_eq!(product.is_some(), num_ra == 4);
         let at = |poly: &Polynomial<F>, y: usize, t: F| {
             let (lo, hi) = pair(poly, y);

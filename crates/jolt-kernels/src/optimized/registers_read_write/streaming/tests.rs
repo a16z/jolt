@@ -66,11 +66,28 @@ fn trace_len(resident: &TraceBackend) -> usize {
     resident.random_access().unwrap().physical_cycles()
 }
 
-/// The cap that first admits round `depth`'s level: its structural entries
-/// and the increments of its rows with a trace cycle at their actual sizes,
-/// which every earlier level exceeds.
-fn cap_at_depth<F: JoltField>(resident: &TraceBackend, structure: &[usize], depth: usize) -> usize {
+/// The bytes of round `depth`'s level: its structural entries and the
+/// increments of its rows with a trace cycle at their actual sizes.
+fn level_bytes<F: JoltField>(resident: &TraceBackend, structure: &[usize], depth: usize) -> usize {
     StreamedCycleState::<F>::level_bytes(structure[depth], trace_len(resident).div_ceil(1 << depth))
+}
+
+/// A cap of `bytes` bytes over `resident`'s trace.
+fn byte_cap(resident: &TraceBackend, bytes: usize) -> DenseCap {
+    DenseCap {
+        bytes,
+        per_rows: trace_len(resident),
+    }
+}
+
+/// The cap that first admits round `depth`'s level, which every earlier
+/// level exceeds.
+fn cap_at_depth<F: JoltField>(
+    resident: &TraceBackend,
+    structure: &[usize],
+    depth: usize,
+) -> DenseCap {
+    byte_cap(resident, level_bytes::<F>(resident, structure, depth))
 }
 
 /// Inputs over `log_t` cycle variables bound cycle-first, at the cycle point
@@ -138,7 +155,7 @@ fn assert_rows_parity<F: JoltField>(
     seed: u64,
     leading: &[F],
     exceptional: Option<ExceptionalEq>,
-    cap: usize,
+    cap: DenseCap,
 ) -> usize {
     let mut round_challenges = challenge_sequence::<F>(log_t + REGISTER_ADDRESS_BITS, seed);
     round_challenges[..leading.len()].copy_from_slice(leading);
@@ -178,7 +195,7 @@ fn assert_rows_parity<F: JoltField>(
             assert_eq!(
                 expected.coefficients(),
                 actual.coefficients(),
-                "round {round}, cap {cap}"
+                "round {round}, cap {cap:?}"
             );
             let (cycle, _) = streamed(&mut streaming).unwrap();
             if round < log_t {
@@ -192,13 +209,13 @@ fn assert_rows_parity<F: JoltField>(
                                 structure[fill_round],
                                 trace_len.div_ceil(1 << round)
                             ),
-                            "round {round}, cap {cap}"
+                            "round {round}, cap {cap:?}"
                         );
                     }
                     None => assert_eq!(
                         cycle.counted(),
                         structure.get(round + 1).copied(),
-                        "round {round}, cap {cap}"
+                        "round {round}, cap {cap:?}"
                     ),
                 }
             } else {
@@ -224,14 +241,14 @@ fn assert_rows_parity<F: JoltField>(
         assert_eq!(
             streaming.output_claims(inputs.claims).unwrap(),
             reference.output_claims(inputs.claims).unwrap(),
-            "output claims, log_t {log_t}, cap {cap}"
+            "output claims, log_t {log_t}, cap {cap:?}"
         );
         filled.unwrap()
     })
 }
 
-/// Every round and the operand walk read the witness's resident rows: the
-/// production cap fills round 1, and a cap no earlier level meets fills the
+/// Every round and the operand walk read the witness's resident rows: a cap
+/// every level meets fills round 1, and a cap no earlier level meets fills the
 /// last cycle round. Traces of one and two rows, with a one-row padded suffix
 /// and filling their domain; at 2^13 cycles, across several tasks, the last
 /// round's one pair spans two 4096-row visit callbacks, the padded suffix
@@ -240,8 +257,11 @@ fn assert_rows_parity<F: JoltField>(
 fn streamed_passes_over_trace_rows_match_reference() {
     fn case(fixture: TraceFixture, log_t: usize) {
         fixture.with_plane(log_t, |resident| {
-            let parity = |cap| assert_rows_parity::<Fr>(resident, log_t, 83, &[], None, cap);
-            assert_eq!(parity(DENSE_TABLE_CAP), 1);
+            let parity = |bytes| {
+                let cap = byte_cap(resident, bytes);
+                assert_rows_parity::<Fr>(resident, log_t, 83, &[], None, cap)
+            };
+            assert_eq!(parity(usize::MAX), 1);
             assert_eq!(parity(0), log_t - 1);
         });
     }
@@ -268,10 +288,34 @@ fn streamed_frontier_matches_reference_at_every_crossover() {
                 "depth {depth}"
             );
         }
-        assert_eq!(parity(cap_at_depth::<F>(resident, &structure, 2) - 1), 3);
-        assert_eq!(parity(0), 7);
+        let below = level_bytes::<F>(resident, &structure, 2) - 1;
+        assert_eq!(parity(byte_cap(resident, below)), 3);
+        assert_eq!(parity(byte_cap(resident, 0)), 7);
     }
     x0_fixture(253).with_plane(8, |resident| {
+        case::<Fr>(resident);
+        #[cfg(feature = "akita")]
+        case::<AkitaField>(resident);
+    });
+}
+
+/// The production cap fills the first level whose bytes it admits over the
+/// trace's rows. The trace is long enough for the cap to admit a level
+/// before the last cycle round, which fills whatever the cap.
+#[test]
+fn production_cap_fills_the_first_level_it_admits() {
+    const LOG_T: usize = 10;
+    fn case<F: JoltField>(resident: &TraceBackend) {
+        let structure = structural_counts::<F>(resident, LOG_T);
+        let admitted = (1..LOG_T - 1).find(|&depth| {
+            let bytes = level_bytes::<F>(resident, &structure, depth);
+            DENSE_CAP.admits(bytes, trace_len(resident))
+        });
+        assert!(admitted.is_some(), "no level before the last cycle round");
+        let filled = assert_rows_parity::<F>(resident, LOG_T, 97, &[], None, DENSE_CAP);
+        assert_eq!(Some(filled), admitted);
+    }
+    structured_fixture(1 << LOG_T).with_plane(LOG_T, |resident| {
         case::<Fr>(resident);
         #[cfg(feature = "akita")]
         case::<AkitaField>(resident);
@@ -318,6 +362,14 @@ fn zero_one_challenges_and_degenerate_points_keep_structural_entries() {
 #[test]
 fn row_failures_and_count_divergence_are_typed_and_publish_no_entries() {
     let challenges = challenge_sequence::<Fr>(3 + REGISTER_ADDRESS_BITS, 11);
+    let slack = DenseCap {
+        bytes: usize::MAX,
+        per_rows: 1,
+    };
+    let none = DenseCap {
+        bytes: 0,
+        per_rows: 1,
+    };
     let new_kernel = |witness: &TraceBackend, cap| {
         with_inputs(3, challenge_sequence(3, 3), |inputs| {
             ReadWriteKernel::streamed(trace_rows::<Fr>(witness, 3), &inputs, cap)
@@ -340,14 +392,14 @@ fn row_failures_and_count_divergence_are_typed_and_publish_no_entries() {
     structured_fixture(7).with_plane(3, |resident| {
         structured_fixture(4).with_plane(3, |fewer| {
             foreign.with_plane(3, |foreign| {
-                let mut kernel = new_kernel(foreign, DENSE_TABLE_CAP);
+                let mut kernel = new_kernel(foreign, slack);
                 assert_eq!(failure(prove(&mut kernel, 0)), Some(ROWS));
                 assert_eq!(streamed(&mut kernel).unwrap().0.filled(), None);
             });
             for (counted, filled) in [(resident, fewer), (fewer, resident)] {
-                // The production cap fills round 1; no cap fills the last
-                // round, 2, whatever rows it then reads.
-                for (depth, cap) in [(1, DENSE_TABLE_CAP), (2, 0)] {
+                // A cap every level meets fills round 1; one no level meets
+                // fills the last round, 2, whatever rows it then reads.
+                for (depth, cap) in [(1, slack), (2, none)] {
                     let mut kernel = new_kernel(counted, cap);
                     for round in 0..depth {
                         let _ = prove(&mut kernel, round).unwrap();
@@ -363,7 +415,7 @@ fn row_failures_and_count_divergence_are_typed_and_publish_no_entries() {
                 }
             }
             let wide = with_inputs(33, challenge_sequence::<Fr>(33, 3), |inputs| {
-                ReadWriteKernel::streamed(trace_rows::<Fr>(resident, 3), &inputs, 0).map(drop)
+                ReadWriteKernel::streamed(trace_rows::<Fr>(resident, 3), &inputs, none).map(drop)
             });
             assert!(matches!(wide, Err(KernelError::InvariantViolation { .. })));
         });

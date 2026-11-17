@@ -2,9 +2,9 @@
 use jolt::VerifierField as F;
 #[cfg(feature = "akita")]
 use jolt_akita::AkitaField as F;
-use jolt_field::Field;
 #[cfg(feature = "akita")]
-use jolt_field::{PseudoMersenne, Ring};
+use jolt_field::PseudoMersenne;
+use jolt_field::{Field, Ring};
 use jolt_sdk as jolt;
 
 #[path = "../../src/kernel_cases.rs"]
@@ -26,6 +26,9 @@ fn check_field_kernels(bytes: &[u8]) -> u32 {
         bincode::serde::decode_from_slice(bytes, bincode::config::standard()).unwrap();
     assert_eq!(consumed, bytes.len());
     assert!(!cases.is_empty());
+    // Largest product plus largest addend: (-1)(-1) + (-1) = 0.
+    let minus_one = -F::from_u64(1);
+    assert_eq!(minus_one.mul_add(minus_one, minus_one), F::from_u64(0));
     for case in cases {
         for (row, expected) in case.rows.iter().zip(&case.dots) {
             assert_eq!(F::dot_product(row, &case.shared), *expected);
@@ -46,6 +49,9 @@ fn check_field_kernels(bytes: &[u8]) -> u32 {
             assert_eq!(F::sum_of_products(&case.products), case.product_sums[4]);
             let nested = F::signed_sum(case.shared.iter().enumerate().map(|(j, term)| (term, j % 2 == 0)));
             assert_eq!(nested, case.signed);
+            // A multiply-add uses the operand registers, never the lent accumulator.
+            let [a, b, c, _] = case.products[i];
+            assert_eq!(a.mul_add(b, c), case.mul_adds[i]);
             (value, i % 2 == 0)
         }));
         assert_eq!(signed, case.signed);
@@ -54,6 +60,10 @@ fn check_field_kernels(bytes: &[u8]) -> u32 {
         check_products::<2>(&case);
         check_products::<3>(&case);
         check_products::<4>(&case);
+        for ([a, b, c, _], expected) in case.products.iter().zip(&case.mul_adds) {
+            assert_eq!(a.mul_add(*b, *c), *expected, "multiply-add matches native arithmetic");
+            assert_eq!(a.mul_add(*b, *c), *a * *b + *c, "multiply-add matches guest multiply then add");
+        }
         for ((value, square), inverse) in case.shared.iter().zip(&case.squares).zip(&case.inverses) {
             assert_eq!(*value * *value, *square);
             assert_eq!(value.inverse(), *inverse);

@@ -13,7 +13,7 @@ nor a Pages-source change.
 | --- | --- |
 | Standard main | Every main push's new first-parent commits; hosted build, target run-only |
 | Nightly | Wider suite on main at 07:00 UTC; hosted build, target run-only |
-| Pull requests | Same-repository PRs with a maintainer/admin-applied `benchmark` label; local build and proof |
+| Pull requests | PRs into main with a maintainer/admin-applied `benchmark` label; local build and proof |
 | Manual previews | Explicitly labelled imported measurements, never authenticated main history |
 
 The PR workload matrix is defined in `scripts/bench/suites.json`. At 24 physical
@@ -36,14 +36,16 @@ jobs always calibrate.
 Without another matching reference, a PR based on a skipped tip keeps its
 measurements but has a neutral reference-unavailable check.
 
-The PR label persists across pushes. The trusted producer checks the actual label
-applier, current label and merge parents; a write-only collaborator or fork is
-not admitted. The merge must have exactly two parents: a commit on main's fetched
+On a same-repository PR the label persists across pushes. On a fork PR it admits
+only the head it was applied to; after a push, a maintainer removes and
+re-applies it. The trusted producer checks the actual label
+applier, current label and merge parents; a label from a write-only collaborator
+is not admitted. The merge must have exactly two parents: a commit on main's fetched
 first-parent history and the submitted PR head. A stale merge ref remains valid
 against that exact older base; it need not include the newest main commit.
 Planning refuses a PR that GitHub reports as conflicting with main; unknown
 mergeability does not block planning.
-The target rechecks the label and PR head after queue/lock waits.
+The target rechecks the label, head repository and PR head after queue/lock waits.
 The dashboard shows the PR link, submitted head, base and measured merge, source
 run/attempt, admission event, and raw result. Select a PR, workload/input/core
 count, base or head leg, host/build configuration, and metric. PR legs do not enter
@@ -56,10 +58,16 @@ The dashboard shows the raw PR measurements without bands.
 
 The sticky PR comment links to full results and benchmark history. It lists every
 core-count/trace-ceiling pair with a recorded process exit, even when no change
-exceeds its per-case reporting threshold. Its table keeps a row only when the
-time or peak-RSS change exceeds the larger of 3% and that metric's observed
-envelope, comparing head/base and base/head symmetrically. Missing envelopes use
-3%. Each metric's threshold is shown next to its signed change. Each row
+exceeds its reporting threshold. Thresholds depend on the trace ceiling; the
+[producer README](https://github.com/a16z/jolt/blob/main/scripts/bench/README.md#reporting-thresholds)
+gives the table, which `SIZE_THRESHOLDS` in `scripts/bench/calibration.py`
+defines, and the measurements behind it. The comment keeps
+a case's row only when its time or peak-RSS change exceeds the larger of the
+table value and that metric's observed envelope, comparing head/base and
+base/head symmetrically. A missing envelope leaves the table value alone. A size
+group is the cases sharing a PCS, core count and trace ceiling; a group of two or
+more cases is listed when the geometric mean of its changes exceeds the group
+column. Each threshold is shown next to its signed change. Each case row
 identifies its physical cores, `2^k` ceiling and measured base/head trace rows.
 If planning refuses a labelled PR, the same sticky comment instead gives the
 reason and links to the planning run. A dependent job in that workflow reads its
@@ -74,13 +82,32 @@ repetitions and missing metrics have no plotted value and break the line. The
 initial view loads the newest 30 records; **Load older runs** retains and reads
 earlier records. Each rerun attempt remains distinct.
 
-Inputs, PCS, core count (1/8/24), scale, tier and leg separate points. Host,
-CPU affinity, compiler, target, flags, profile and harness separate configurations.
+Inputs, PCS, core count (1/8/24), scale, tier and leg separate points. Two things
+separate configurations. The first is the machine that ran the proof: the case's
+CPU affinity and every recorded field of the run host except the two omitted
+below (machine ID, hostname, CPU model, flags and topology, kernel, microcode,
+memory size and settings). The second is the build settings that can change the
+binary: compiler, Cargo version, target triple, CPU and features, flags, profile,
+harness file hashes and the benchmark runner's hash.
+
+Three recorded fields describe one run without changing what it measures, so
+configuration identity omits them:
+
+- `swap_free_bytes` is a changing observation; swap capacity and the other
+  settings remain.
+- `control_plane` is the version and binary hashes of the Pika management node
+  and CLI on the run host. The proof process never executes them, and a version
+  does not say how busy the node was during a run.
+- The build manifest's `host` is a snapshot of the machine that built the binary.
+  On main and nightly that machine is a disposable hosted runner, which never
+  runs the proof. On pull requests it is the run host itself, which the
+  run-host fields above already identify. Whatever the build machine changes in
+  the binary shows in the per-point binary hash.
+
 Source revisions, binary/guest/lockfile/schedule hashes remain per-point metadata.
-Only the changing `swap_free_bytes` observation is omitted from configuration
-identity; capacity and other settings remain. **Build and source** retains the
-original full build manifest. Its construction time is not the current cost of
-reusing a bundle; current preparation is `wall_time.build_s`.
+**Build and source** shows each run's `control_plane` and its original full build
+manifest, including the build machine. The manifest's construction time is not
+the current cost of reusing a bundle; current preparation is `wall_time.build_s`.
 
 `e2e_s` covers prebuilt guest loading, tracing, preprocessing, setup, proving and
 serialization, excluding compilation and verification. `prove_s` covers only the
@@ -112,7 +139,12 @@ The result JSON retains the original plan run's provenance. Main/nightly plans
 are bound to the producer's main head. PR plans bind the payload PR number,
 label event/actor, base, submitted head, measured merge and harness; merge parents
 and planned native inputs are checked. GitHub's `pull_request_target` run head
-is the submitted PR head. An empty live `pull_requests` list is accepted after a PR merges; a non-empty
+is the submitted PR head, and the run's head repository and branch must equal
+the plan's admitted ones; a plan that records no head repository is bound to
+`a16z/jolt`. A fork head repository is accepted only for a
+`pull_request_target` producer, whose workflow file GitHub takes from the
+repository's default branch. An empty live `pull_requests` list is accepted: GitHub lists no
+PR for a fork head or after a PR merges. A non-empty
 list must still contain the planned PR with base `main`. Current PR state can change after a
 valid measurement; it does not rewrite archived history. Only JSON is read;
 downloaded scripts, HTML and binaries are never executed.

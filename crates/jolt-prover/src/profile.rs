@@ -52,6 +52,7 @@ use jolt_dory::DoryScheme;
 #[cfg(not(feature = "akita"))]
 use jolt_field::Fr;
 use jolt_field::JoltField;
+use jolt_host::memory::Allocatable;
 use jolt_host::{GuestElf, JoltProgramSource, Program};
 // Keep the inline libraries linked so their host-side registrations reach the tracer.
 use jolt_inlines_keccak256 as _;
@@ -321,12 +322,15 @@ pub struct ProfileArgs {
     pub backend: BackendKind,
 
     /// Comma-separated streaming kernel families: instruction-input, spartan, ram,
-    /// registers, instruction-rows.
+    /// registers, instruction-rows. An `akita` build also accepts ring-switch: the
+    /// Akita opening transforms the setup-matrix rows of its ring-switch relations
+    /// as it reads them instead of caching their NTT form, which lowers the
+    /// opening's memory and costs time on large traces.
     /// Requires --backend optimized. Uses row recomputation or sparse RAM events,
     /// not a process-memory limit. Cannot be combined with --memory-budget:
     /// its reservations price only eager kernels.
-    #[clap(long, value_parser = parse_streaming_families, conflicts_with = "memory_budget")]
-    pub streaming: Option<StreamingFamilies>,
+    #[clap(long, value_parser = parse_streaming_selection, conflicts_with = "memory_budget")]
+    pub streaming: Option<StreamingSelection>,
 
     /// Prebuilt guest ELF; bypasses guest compilation in this process.
     #[clap(long)]
@@ -345,9 +349,14 @@ pub struct ProfileArgs {
     #[clap(long, value_parser = parse_akita_chunk_profile, default_value = "w1r0")]
     pub akita_chunk_profile: AkitaChunkProfile,
 
-    /// Explicit memory budget in bytes: an integer with an optional binary
-    /// suffix (KiB, MiB, GiB or TiB; e.g. 32GiB). Requires `--backend
-    /// optimized`. The profile reserves against it in turn and returns an
+    /// Memory budget: bytes as an integer with an optional binary suffix
+    /// (KiB, MiB, GiB or TiB; e.g. 32GiB), or `auto`. Requires `--backend
+    /// optimized`. `auto` is read from the host after tracing: what it can
+    /// still give this process (the smaller of `MemAvailable` and each cgroup
+    /// v2 `memory.max` on its path less that cgroup's usage other than file
+    /// cache) plus the buffers the process already holds and reserves below.
+    /// A host whose limits cannot be read fails an `auto` run.
+    /// The profile reserves against the budget in turn and returns an
     /// error at the first reservation that does not fit. After tracing and
     /// before PCS setup, it reserves the input, the trace output, the program
     /// and program preprocessing buffers, the public-I/O clone's request,
@@ -357,11 +366,23 @@ pub struct ProfileArgs {
     /// which the matrix check does not price. Passing does not mean the whole
     /// proof fits, and the budget does not cap process memory.
     #[clap(long, value_parser = parse_memory_budget)]
-    pub memory_budget: Option<MemoryBudget>,
+    pub memory_budget: Option<MemoryBudgetArg>,
 }
 
-/// `--memory-budget`: bytes, optionally scaled by a binary suffix.
-fn parse_memory_budget(value: &str) -> StdResult<MemoryBudget, String> {
+/// `--memory-budget`'s value.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MemoryBudgetArg {
+    Bytes(MemoryBudget),
+    /// What the host can still give the process when the run reads it
+    /// ([`Allocatable::read`]), beside the owners the run already holds.
+    Auto,
+}
+
+/// `--memory-budget`: `auto`, or bytes, optionally scaled by a binary suffix.
+fn parse_memory_budget(value: &str) -> StdResult<MemoryBudgetArg, String> {
+    if value == "auto" {
+        return Ok(MemoryBudgetArg::Auto);
+    }
     let (digits, shift) = [("KiB", 10), ("MiB", 20), ("GiB", 30), ("TiB", 40)]
         .into_iter()
         .find_map(|(suffix, shift)| value.strip_suffix(suffix).map(|digits| (digits, shift)))
@@ -370,14 +391,28 @@ fn parse_memory_budget(value: &str) -> StdResult<MemoryBudget, String> {
         .parse::<usize>()
         .ok()
         .and_then(|count| count.checked_mul(1usize.checked_shl(shift)?))
-        .map(MemoryBudget::from_bytes)
+        .map(|bytes| MemoryBudgetArg::Bytes(MemoryBudget::from_bytes(bytes)))
         .ok_or_else(|| {
-            format!("expected bytes with an optional KiB, MiB, GiB or TiB suffix, got {value:?}")
+            format!(
+                "expected auto, or bytes with an optional KiB, MiB, GiB or TiB suffix, got {value:?}"
+            )
         })
 }
 
-fn parse_streaming_families(value: &str) -> StdResult<StreamingFamilies, String> {
-    let mut families = StreamingFamilies::default();
+/// `--streaming`'s value.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct StreamingSelection {
+    /// The kernel families the backend installs.
+    pub families: StreamingFamilies,
+    /// Whether the Akita prover setup streams its openings' ring-switch NTT
+    /// operations ([`jolt_akita::AkitaProverSetup::with_streamed_ring_switch`]).
+    #[cfg(feature = "akita")]
+    pub ring_switch: bool,
+}
+
+fn parse_streaming_selection(value: &str) -> StdResult<StreamingSelection, String> {
+    let mut selection = StreamingSelection::default();
+    let families = &mut selection.families;
     for family in value.split(',') {
         match family {
             "instruction-input" => families.instruction_input = true,
@@ -385,34 +420,43 @@ fn parse_streaming_families(value: &str) -> StdResult<StreamingFamilies, String>
             "ram" => families.ram = true,
             "registers" => families.registers = true,
             "instruction-rows" => families.instruction_rows = true,
+            #[cfg(feature = "akita")]
+            "ring-switch" => selection.ring_switch = true,
             _ => {
-                return Err(format!(
-                    "unknown family {family:?}; expected instruction-input, spartan, ram, \
-                     registers or instruction-rows"
-                ))
+                let expected = if cfg!(feature = "akita") {
+                    "instruction-input, spartan, ram, registers, instruction-rows or ring-switch"
+                } else {
+                    "instruction-input, spartan, ram, registers or instruction-rows"
+                };
+                return Err(format!("unknown family {family:?}; expected {expected}"));
             }
         }
     }
-    Ok(families)
+    Ok(selection)
 }
 
 impl ProfileArgs {
     fn streaming_families(&self) -> Vec<String> {
+        let selection = self.streaming.unwrap_or_default();
         let mut names = Vec::new();
-        if self.streaming.unwrap_or_default().instruction_input {
+        if selection.families.instruction_input {
             names.push("instruction-input".to_string());
         }
-        if self.streaming.unwrap_or_default().spartan {
+        if selection.families.spartan {
             names.push("spartan".to_string());
         }
-        if self.streaming.unwrap_or_default().ram {
+        if selection.families.ram {
             names.push("ram".to_string());
         }
-        if self.streaming.unwrap_or_default().registers {
+        if selection.families.registers {
             names.push("registers".to_string());
         }
-        if self.streaming.unwrap_or_default().instruction_rows {
+        if selection.families.instruction_rows {
             names.push("instruction-rows".to_string());
+        }
+        #[cfg(feature = "akita")]
+        if selection.ring_switch {
+            names.push("ring-switch".to_string());
         }
         names
     }
@@ -551,6 +595,8 @@ type ProfileResult<T> = StdResult<T, Box<dyn Error + Send + Sync>>;
 ///
 /// Returns a `--memory-budget` below what its checks reserve
 /// ([`ProverError::MemoryBudgetExceeded`](crate::ProverError::MemoryBudgetExceeded)),
+/// a host whose limits `--memory-budget auto` cannot read
+/// ([`MemoryDiscoveryError`](jolt_host::memory::MemoryDiscoveryError)),
 /// and, under Akita, a PCS setup failure, such as a budgeted setup shape the
 /// matrix limit does not price.
 /// Streaming selections require the optimized backend and cannot be combined
@@ -847,6 +893,32 @@ fn migrate_legacy_timings_csv(path: &Path) -> Result<()> {
     fs::write(path, migrated)
 }
 
+/// The budget of a run the host can still give `allocatable` bytes: those
+/// bytes plus the owners the run holds when its budget checks start, since the
+/// host's reading no longer includes them and the checks reserve each at this
+/// size: an input buffer of `input_capacity` bytes, the trace output with its
+/// trace, the program and its preprocessing. A sum past `usize` is the largest
+/// budget, which no reservation exceeds.
+fn automatic_budget(
+    allocatable: u64,
+    input_capacity: usize,
+    trace: &TraceOutput,
+    program: &JoltProgram,
+    preprocessing: &JoltProgramPreprocessing,
+) -> MemoryBudget {
+    MemoryBudget::from_bytes(
+        [
+            usize::try_from(allocatable).unwrap_or(usize::MAX),
+            input_capacity,
+            trace.heap_bytes(),
+            program.heap_bytes(),
+            preprocessing.heap_bytes(),
+        ]
+        .into_iter()
+        .fold(0, usize::saturating_add),
+    )
+}
+
 fn reserve_profile_owners<F: JoltField>(
     mut budget: MemoryBudget,
     trace: &TraceOutput,
@@ -926,7 +998,27 @@ fn run_workload(args: &ProfileArgs, scale: u32, run_dir: &Path) -> ProfileResult
     assert!(!trace_output.device.panic, "benchmark guest panicked");
     let memory_budget = args
         .memory_budget
-        .map(|budget| budget.reserve::<ProofField>(input.capacity()))
+        .map(|request| -> ProfileResult<MemoryBudget> {
+            let budget = match request {
+                MemoryBudgetArg::Bytes(budget) => budget,
+                MemoryBudgetArg::Auto => {
+                    let allocatable = Allocatable::read()?;
+                    let budget = automatic_budget(
+                        allocatable.bytes,
+                        input.capacity(),
+                        &trace_output,
+                        &jolt_program,
+                        &program_preprocessing,
+                    );
+                    println!(
+                        "modular {bench_name} (2^{scale}, {backend_label}): Memory budget auto: {} bytes, the host's {allocatable} plus the run's live owners",
+                        budget.bytes(),
+                    );
+                    budget
+                }
+            };
+            Ok(budget.reserve::<ProofField>(input.capacity())?)
+        })
         .transpose()?;
     let run = prove_workload(
         &jolt_program,
@@ -1096,7 +1188,7 @@ fn prove_workload(
     let backend = match args.backend {
         BackendKind::Reference => JoltBackend::<Fr, DoryScheme>::reference(),
         BackendKind::Optimized => JoltBackend::<Fr, DoryScheme>::optimized()
-            .with_streaming(args.streaming.unwrap_or_default()),
+            .with_streaming(args.streaming.unwrap_or_default().families),
     };
 
     // --- The measured window: the full modular prove (witness
@@ -1175,7 +1267,7 @@ fn prove_workload(
     let backend = match args.backend {
         BackendKind::Reference => JoltBackend::reference(),
         BackendKind::Optimized => {
-            JoltBackend::optimized().with_streaming(args.streaming.unwrap_or_default())
+            JoltBackend::optimized().with_streaming(args.streaming.unwrap_or_default().families)
         }
     };
 
@@ -1230,6 +1322,11 @@ fn prove_workload(
             }
         }
         None => AkitaScheme::setup(params)?,
+    };
+    let pcs_setup = if args.streaming.unwrap_or_default().ring_switch {
+        pcs_setup.with_streamed_ring_switch()?
+    } else {
+        pcs_setup
     };
     let setup_duration = setup_now.elapsed();
     drop(setup_guard);

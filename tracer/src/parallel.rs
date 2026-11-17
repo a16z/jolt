@@ -11,7 +11,7 @@
 use crate::emulator::cpu::{ChunkCpuState, Cpu, HostIo};
 use crate::emulator::decode_cache::DecodeCache;
 use crate::emulator::memory::Memory;
-use crate::emulator::mmu::ChunkMmuState;
+use crate::emulator::mmu::{ChunkMmuState, CodeGuard};
 use crate::emulator::terminal::DummyTerminal;
 use crate::emulator::Emulator;
 use crate::instruction::Cycle;
@@ -148,23 +148,23 @@ impl ChunkWorker {
         Self::from_seed(
             src.mmu.jolt_device.clone(),
             src.mmu.decode_cache.snapshot_with_empty_entries(),
-            Arc::clone(&src.mmu.code_word_intervals),
+            src.mmu.code_guard.clone(),
         )
     }
 
     /// Like [`ChunkWorker::new`], but from pre-cloned static parts — the
     /// pipeline takes the seed before pass-1 starts mutating the emulator
     /// and each worker thread builds its own CPU from it.
-    pub fn from_seed(
+    pub(crate) fn from_seed(
         jolt_device: Option<common::jolt_device::JoltDevice>,
         decode_template: DecodeCache,
-        code_word_intervals: Arc<[(usize, usize)]>,
+        code_guard: Option<CodeGuard>,
     ) -> Self {
         let mut cpu = Cpu::new(Box::new(DummyTerminal {}));
         cpu.set_host_io(HostIo::Replay);
         cpu.mmu.jolt_device = jolt_device;
         cpu.mmu.decode_cache = decode_template.clone();
-        cpu.mmu.code_word_intervals = code_word_intervals;
+        cpu.mmu.code_guard = code_guard;
         ChunkWorker {
             cpu,
             decode_template,
@@ -469,7 +469,7 @@ pub(crate) fn run_two_pass_chunks(
     let (out_tx, out_rx) = mpsc::channel::<(usize, Vec<Cycle>)>();
     let worker_panicked = std::sync::atomic::AtomicBool::new(false);
 
-    let seed_code = Arc::clone(&emulator.get_cpu().mmu.code_word_intervals);
+    let seed_code = emulator.get_cpu().mmu.code_guard.clone();
     let mut pass1 = PassOne::new(emulator);
 
     let windowed_rows = std::thread::scope(|scope| {
@@ -486,7 +486,7 @@ pub(crate) fn run_two_pass_chunks(
             let out_tx = out_tx.clone();
             let seed_device = seed_device.clone();
             let seed_decode = seed_decode.clone();
-            let seed_code = Arc::clone(&seed_code);
+            let seed_code = seed_code.clone();
             scope.spawn(move || {
                 let _panic_guard = PanicGuard(worker_panicked);
                 demote_worker_thread();

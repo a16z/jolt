@@ -44,9 +44,10 @@ smaller domain. The ELF decoder rejects every odd decoded instruction address
 with the bytecode admission error. These checks run at admission and add no
 per-cycle proof work.
 
-ELF admission rejects any writable section, including `.bss`, that shares a
-word with a decoded source instruction. Read-only data may share a code word,
-and writable words containing only text padding remain admissible.
+ELF admission rejects any writable section, including `.bss`, that overlaps the
+code region: the doublewords from the first decoded source instruction through
+the last. Read-only data may lie in the code region, and writable words outside
+it that contain only text padding remain admissible.
 
 ### Why now
 

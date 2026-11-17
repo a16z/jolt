@@ -7,7 +7,7 @@ use jolt_transcript::DigestHasher;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use sha3::Digest;
-use std::sync::Arc;
+use std::{ops::Range, sync::Arc};
 
 use crate::VerifierError;
 
@@ -130,23 +130,24 @@ impl<PCS: CommitmentScheme> ProgramPreprocessing<PCS> {
         }
     }
 
-    pub fn code_word_intervals(&self) -> &[(usize, usize)] {
+    /// The code region: derived from the bytecode in full mode, and taken from
+    /// the committed key's metadata, after its admission check, otherwise.
+    pub fn code_region(&self) -> Result<Range<usize>, VerifierError> {
         match self {
-            Self::Full(full) => &full.ram.code_word_intervals,
-            Self::Committed(committed) => &committed.meta.code_word_intervals,
-        }
-    }
-
-    pub fn validate_code_word_intervals(&self) -> Result<(), VerifierError> {
-        let result = match self {
-            Self::Full(full) => full.validate_code_word_intervals(),
+            Self::Full(full) => full.code_region(),
             Self::Committed(committed) => committed
                 .meta
-                .validate_code_word_intervals(&committed.memory_layout),
-        };
-        result.map_err(|error| VerifierError::InvalidMemoryLayout {
+                .validate_code_region(&committed.memory_layout)
+                .map(|()| committed.meta.code_region.clone()),
+        }
+        .map_err(|error| VerifierError::InvalidMemoryLayout {
             reason: error.to_string(),
         })
+    }
+
+    /// The admission check of [`code_region`](Self::code_region).
+    pub fn validate_code_region(&self) -> Result<(), VerifierError> {
+        self.code_region().map(|_| ())
     }
 
     pub fn program_image_len_words(&self) -> usize {
@@ -250,7 +251,7 @@ where
         vc_setup: Option<VC::Setup>,
     ) -> Result<Self, VerifierError> {
         validate_memory_layout_admission(program.memory_layout())?;
-        program.validate_code_word_intervals()?;
+        program.validate_code_region()?;
         let preprocessing_digest = program.digest()?;
         Ok(Self {
             program,
@@ -339,43 +340,43 @@ mod tests {
     /// digest domain for the extended instruction and proof profile.
     #[cfg(all(not(feature = "akita"), not(feature = "field-inline")))]
     const FULL_PROGRAM_DIGEST: [u8; 32] = [
-        190, 20, 58, 208, 39, 120, 197, 71, 226, 228, 155, 134, 226, 183, 150, 81, 88, 104, 168,
-        116, 150, 26, 89, 130, 189, 135, 101, 43, 241, 22, 176, 74,
+        23, 122, 87, 153, 110, 232, 141, 118, 12, 218, 209, 189, 206, 198, 99, 177, 87, 60, 161,
+        30, 70, 226, 249, 122, 184, 166, 153, 230, 177, 3, 18, 249,
     ];
     #[cfg(all(not(feature = "akita"), feature = "field-inline"))]
     const FULL_PROGRAM_DIGEST: [u8; 32] = [
-        97, 139, 232, 35, 253, 71, 164, 165, 230, 199, 199, 6, 94, 72, 111, 196, 49, 228, 40, 115,
-        212, 246, 16, 201, 157, 181, 69, 14, 33, 228, 196, 57,
+        251, 31, 23, 216, 138, 216, 194, 197, 138, 63, 68, 72, 177, 150, 8, 96, 155, 175, 220, 235,
+        199, 3, 85, 26, 85, 117, 40, 26, 71, 65, 222, 135,
     ];
     #[cfg(all(feature = "akita", not(feature = "field-inline")))]
     const FULL_PROGRAM_DIGEST: [u8; 32] = [
-        136, 139, 126, 234, 239, 166, 44, 62, 186, 29, 245, 191, 18, 39, 93, 176, 185, 83, 45, 145,
-        238, 15, 238, 77, 218, 238, 8, 114, 178, 198, 223, 76,
+        28, 231, 178, 202, 141, 29, 196, 251, 78, 7, 162, 60, 46, 243, 226, 160, 50, 84, 1, 192,
+        143, 8, 12, 118, 7, 205, 36, 177, 52, 85, 138, 8,
     ];
     #[cfg(all(feature = "akita", feature = "field-inline"))]
     const FULL_PROGRAM_DIGEST: [u8; 32] = [
-        134, 182, 54, 41, 34, 189, 101, 189, 63, 216, 45, 249, 154, 229, 11, 255, 2, 162, 145, 214,
-        233, 88, 224, 15, 212, 52, 142, 247, 183, 38, 144, 76,
+        8, 185, 214, 73, 203, 201, 101, 109, 121, 105, 231, 113, 161, 93, 74, 171, 164, 36, 61,
+        233, 121, 23, 81, 23, 133, 204, 39, 125, 20, 157, 76, 42,
     ];
     #[cfg(all(not(feature = "akita"), not(feature = "field-inline")))]
     const COMMITTED_PROGRAM_DIGEST: [u8; 32] = [
-        149, 15, 136, 149, 51, 39, 114, 8, 91, 224, 43, 83, 8, 99, 255, 161, 190, 42, 206, 150,
-        104, 12, 64, 108, 153, 206, 214, 99, 119, 145, 120, 117,
+        158, 161, 98, 135, 29, 157, 211, 232, 239, 40, 125, 170, 135, 92, 240, 183, 12, 209, 77,
+        117, 208, 74, 227, 209, 2, 203, 119, 84, 125, 244, 225, 230,
     ];
     #[cfg(all(feature = "akita", not(feature = "field-inline")))]
     const COMMITTED_PROGRAM_DIGEST: [u8; 32] = [
-        60, 232, 170, 132, 132, 131, 157, 214, 66, 192, 169, 96, 139, 169, 36, 186, 189, 96, 229,
-        207, 125, 253, 135, 101, 210, 174, 209, 225, 44, 165, 135, 149,
+        219, 246, 16, 177, 240, 252, 72, 252, 86, 153, 158, 116, 63, 226, 12, 251, 64, 189, 144,
+        17, 231, 76, 224, 109, 187, 147, 53, 44, 195, 243, 250, 53,
     ];
     #[cfg(all(not(feature = "akita"), feature = "field-inline"))]
     const COMMITTED_PROGRAM_DIGEST: [u8; 32] = [
-        149, 200, 48, 22, 221, 151, 250, 187, 206, 197, 24, 41, 33, 112, 94, 120, 50, 210, 100,
-        173, 81, 91, 250, 175, 184, 202, 0, 178, 220, 87, 173, 70,
+        169, 156, 59, 157, 38, 84, 58, 199, 168, 30, 229, 210, 47, 110, 66, 45, 120, 66, 3, 196,
+        226, 205, 145, 191, 19, 158, 23, 40, 221, 62, 93, 23,
     ];
     #[cfg(all(feature = "akita", feature = "field-inline"))]
     const COMMITTED_PROGRAM_DIGEST: [u8; 32] = [
-        48, 238, 183, 26, 51, 241, 189, 255, 92, 209, 82, 8, 61, 114, 26, 116, 153, 249, 171, 24,
-        97, 5, 85, 238, 97, 131, 110, 85, 151, 207, 127, 243,
+        214, 239, 15, 54, 77, 44, 236, 199, 201, 107, 208, 51, 231, 40, 118, 209, 34, 141, 67, 171,
+        60, 203, 110, 128, 253, 201, 3, 216, 94, 144, 198, 3,
     ];
 
     /// An empty program over a real (non-zero) memory layout, so every layout
@@ -493,7 +494,7 @@ mod tests {
             layout.stack_end += 16;
             let mask = |program: &ProgramPreprocessing<Pcs>| {
                 write_protected_word_intervals(
-                    program.code_word_intervals(),
+                    program.code_region().unwrap(),
                     program.memory_layout(),
                     program.memory_layout().max_ram_k().unwrap(),
                 )

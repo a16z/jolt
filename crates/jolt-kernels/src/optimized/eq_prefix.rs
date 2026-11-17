@@ -12,32 +12,69 @@ pub(crate) struct EqPrefix<F: JoltField> {
     num_vars: usize,
 }
 
+/// An [`EqPrefix`]'s entries past the explicit prefix at one multiplication
+/// per term, for a caller that reads many of them before the next bind: every
+/// term's weights as the product of two tables of about the square root of
+/// the domain.
+pub(crate) struct EqPrefixEntries<'a, F: JoltField> {
+    values: &'a [F],
+    tables: Vec<TensorEqTable<F>>,
+}
+
+impl<F: JoltField> EqPrefixEntries<'_, F> {
+    #[inline]
+    fn value(&self, index: usize) -> F {
+        match self.values.get(index) {
+            Some(value) => *value,
+            None if self.tables.len() < 2 => self
+                .tables
+                .iter()
+                .map(|table| table.evaluate_index(index))
+                .sum(),
+            None => TensorEqTable::sum_at_index(&self.tables, index),
+        }
+    }
+
+    /// [`EqPrefix::pair`].
+    #[inline]
+    pub(crate) fn pair(&self, row: usize) -> (F, F) {
+        (self.value(2 * row), self.value(2 * row + 1))
+    }
+}
+
 impl<F: JoltField> EqPrefix<F> {
     pub(crate) fn new(num_vars: usize, prefix_len: usize, terms: Vec<(Vec<F>, F)>) -> Self {
-        assert!(prefix_len <= 1usize << num_vars);
         assert!(terms.iter().all(|(point, _)| point.len() == num_vars));
-        let terms: Vec<_> = terms
-            .into_iter()
-            .filter(|(_, weight)| !weight.is_zero())
-            .collect();
-        let tables: Vec<_> = terms
-            .iter()
-            .map(|(point, weight)| TensorEqTable::new_with_scaling(point, *weight))
-            .collect();
-        let values = if tables.len() < 2 {
-            map_indices(prefix_len, |index| {
-                tables.iter().map(|table| table.evaluate_index(index)).sum()
-            })
-        } else {
-            map_indices(prefix_len, |index| {
-                TensorEqTable::sum_at_index(&tables, index)
-            })
-        };
-        Self {
-            values,
-            terms,
+        let mut prefix = Self {
+            values: Vec::new(),
+            terms: terms
+                .into_iter()
+                .filter(|(_, weight)| !weight.is_zero())
+                .collect(),
             num_vars,
+        };
+        prefix.extend(prefix_len);
+        prefix
+    }
+
+    pub(crate) fn entries(&self) -> EqPrefixEntries<'_, F> {
+        EqPrefixEntries {
+            values: &self.values,
+            tables: self
+                .terms
+                .iter()
+                .map(|(point, weight)| TensorEqTable::new_with_scaling(point, *weight))
+                .collect(),
         }
+    }
+
+    /// Makes the first `prefix_len` entries explicit, which must be no fewer
+    /// than already are.
+    pub(crate) fn extend(&mut self, prefix_len: usize) {
+        assert!(self.values.len() <= prefix_len && prefix_len <= 1usize << self.num_vars);
+        let entries = self.entries();
+        let values = map_indices(prefix_len, |index| entries.value(index));
+        self.values = values;
     }
 
     pub(crate) fn add_to_first(&mut self, value: F) {
@@ -141,19 +178,27 @@ mod tests {
                 });
             for prefix in [0, 1, 3, len / 4, len / 4 + 1, len / 2 + 1, len - 1, len] {
                 let mut actual = EqPrefix::new(bits, prefix, terms.clone());
+                // Explicit at its first entry alone until the bind after
+                // which it extends to `actual`'s prefix.
+                let mut late = EqPrefix::new(bits, prefix.min(1), terms.clone());
                 let mut expected_values = full.clone();
                 if prefix > 0 {
                     actual.add_to_first(F::from_u64(19));
+                    late.add_to_first(F::from_u64(19));
                     expected_values[0] += F::from_u64(19);
                 }
                 let mut expected = Polynomial::new(expected_values);
                 for round in 0..bits {
                     let half = expected.len() / 2;
+                    if round == bits / 3 {
+                        late.extend(actual.prefix_len());
+                        assert_eq!(late.values, actual.values);
+                    }
+                    let late_entries = late.entries();
                     for row in 0..half {
-                        assert_eq!(
-                            actual.pair(row),
-                            (expected.evals()[2 * row], expected.evals()[2 * row + 1])
-                        );
+                        let pair = (expected.evals()[2 * row], expected.evals()[2 * row + 1]);
+                        assert_eq!(actual.pair(row), pair);
+                        assert_eq!(late_entries.pair(row), pair);
                     }
                     let start = actual.prefix_len().div_ceil(2);
                     let lo: F = (start..half).map(|row| expected.evals()[2 * row]).sum();
@@ -161,6 +206,7 @@ mod tests {
                     assert_eq!(actual.suffix_pair_sums(start), (lo, hi));
                     let challenge = F::from_u64([0, 1, 23, 41, 17, 99][round % 6]);
                     actual.bind(challenge);
+                    late.bind(challenge);
                     expected.bind_with_order(challenge, BindingOrder::LowToHigh);
                 }
                 let final_value = actual

@@ -19,7 +19,7 @@ use super::{
     SelectedValues,
 };
 use crate::optimized::one_hot_histograms::{pushforward_access, HistogramRow};
-use crate::optimized::streaming::{RowIndexSource, StreamedFoldedRa, MATERIALIZE_BYTES};
+use crate::optimized::streaming::{DenseCap, RowIndexSource, StreamedFoldedRa, DENSE_CAP};
 use crate::optimized::support::{eq_round_error, BundleStore, GruenRoundMessage};
 use crate::{KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel};
 
@@ -96,10 +96,7 @@ impl<F: JoltField> PrepareKernel<F, Booleanity<F>> for StreamingBooleanityCycle 
             "booleanity cycle trace rows",
         )?;
         Ok(Box::new(OptimizedBooleanityCycleKernel::streamed(
-            witness,
-            &inputs,
-            rows,
-            MATERIALIZE_BYTES,
+            witness, &inputs, rows, DENSE_CAP,
         )?))
     }
 }
@@ -132,24 +129,18 @@ pub(super) fn rows_unavailable<F: JoltField>(_: WitnessError) -> SumcheckError<F
 
 impl<F: JoltField> OptimizedBooleanityCycleKernel<F> {
     /// The kernel over address-folded rows gathered from `rows`, which span
-    /// the relation's cycle domain; each checked polynomial materializes
-    /// within `materialize_bytes`, and production passes
-    /// [`MATERIALIZE_BYTES`].
+    /// the relation's cycle domain; the checked polynomials materialize once
+    /// they fit `cap` together, and production passes [`DENSE_CAP`].
     pub(super) fn streamed(
         witness: &dyn JoltWitnessPlane<F>,
         inputs: &ProverInputs<'_, F, Booleanity<F>>,
         rows: BundleStore<HistogramRow>,
-        materialize_bytes: usize,
+        cap: DenseCap,
     ) -> Result<Self, KernelError<F>> {
         let log_t = inputs.relation.dimensions().log_t;
         Self::prepare(witness, inputs, |selectors, tables| {
-            let selectors = StreamedFoldedRa::new(
-                tables,
-                ResidentChunks { selectors },
-                rows,
-                log_t,
-                materialize_bytes,
-            )?;
+            let selectors =
+                StreamedFoldedRa::new(tables, ResidentChunks { selectors }, rows, log_t, cap)?;
             // A one-cycle domain has no bind to materialize at.
             Ok(match selectors.single_cycle()? {
                 Some(dense) => CycleTables::Lazy(dense),

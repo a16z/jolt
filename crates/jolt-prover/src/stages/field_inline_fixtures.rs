@@ -418,7 +418,7 @@ pub(crate) fn test_checked_inputs(program: &JoltProgramPreprocessing) -> Checked
         entry_address: ENTRY,
         preprocessing_digest: [0u8; 32],
         ram_word_masks: RamWordMasks::new(
-            &program.ram.code_word_intervals,
+            program.code_region().unwrap(),
             &program.memory_layout,
             1 << RAM_LOG_K,
         )

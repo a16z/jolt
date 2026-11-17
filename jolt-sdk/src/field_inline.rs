@@ -127,7 +127,7 @@ pub fn load_accumulate_from_register<const REGISTER: u32>(value: u64) {
     // the operand constraint provides. No memory is touched.
     unsafe {
         asm!(
-            ".word {word}",
+            ".insn 4, {word}",
             word = const field_inline_r_word(
                 FIELD_INLINE_R_TYPE_FUNCT7,
                 FIELD_INLINE_LOAD_ACCUMULATE_FROM_REGISTER_FUNCT3,
@@ -154,7 +154,7 @@ fn advice_limb<const REGISTER: u32>() -> u64 {
     // touched.
     unsafe {
         asm!(
-            ".word {advice}",
+            ".insn 4, {advice}",
             advice = const advice_limb_word(REGISTER),
             out("x10") limb,
             options(nostack),
@@ -176,8 +176,8 @@ fn last_advice_limb<const REGISTER: u32>() -> u64 {
     // writes nothing. No memory is touched.
     unsafe {
         asm!(
-            ".word {advice}",
-            ".word {assert_zero}",
+            ".insn 4, {advice}",
+            ".insn 4, {assert_zero}",
             advice = const advice_limb_word(REGISTER),
             assert_zero = const assert_zero_word(REGISTER),
             out("x10") limb,
@@ -194,7 +194,7 @@ fn load_zero<const REGISTER: u32>() {
     // field register REGISTER. No memory is touched.
     unsafe {
         asm!(
-            ".word {load_imm}",
+            ".insn 4, {load_imm}",
             load_imm = const field_inline_i_word(
                 FIELD_INLINE_LOAD_IMM_FUNCT3,
                 field_register(REGISTER),
@@ -225,11 +225,11 @@ fn bind_modulus<const REGISTER: u32>() {
     unsafe {
         match MODULUS {
             FieldInlineModulus::Bn254 => asm!(
-                ".word {limb3}",
-                ".word {limb2}",
-                ".word {limb1}",
-                ".word {limb0}",
-                ".word {assert_zero}",
+                ".insn 4, {limb3}",
+                ".insn 4, {limb2}",
+                ".insn 4, {limb1}",
+                ".insn 4, {limb0}",
+                ".insn 4, {assert_zero}",
                 limb3 = const memory_accumulate_word(REGISTER, 3),
                 limb2 = const memory_accumulate_word(REGISTER, 2),
                 limb1 = const memory_accumulate_word(REGISTER, 1),
@@ -240,9 +240,9 @@ fn bind_modulus<const REGISTER: u32>() {
                 options(nostack, readonly),
             ),
             FieldInlineModulus::Fp128 => asm!(
-                ".word {limb1}",
-                ".word {limb0}",
-                ".word {assert_zero}",
+                ".insn 4, {limb1}",
+                ".insn 4, {limb0}",
+                ".insn 4, {assert_zero}",
                 limb1 = const memory_accumulate_word(REGISTER, 1),
                 limb0 = const memory_accumulate_word(REGISTER, 0),
                 assert_zero = const assert_zero_word(REGISTER),

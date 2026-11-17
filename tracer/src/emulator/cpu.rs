@@ -690,6 +690,8 @@ impl Cpu {
     }
 
     fn decode_and_cache(&mut self) -> Result<Instruction, Trap> {
+        // Only this path fills the decode cache, so a cache hit was checked here.
+        self.mmu.assert_instruction_fetch(self.pc);
         let original_word = self.fetch()?;
         let instruction_address = self.pc;
         let is_compressed = (original_word & 0x3) != 0x3;
