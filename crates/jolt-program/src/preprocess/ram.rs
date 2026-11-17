@@ -1,6 +1,6 @@
 #[cfg(feature = "serialization")]
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use common::constants::{BYTES_PER_INSTRUCTION, RAM_START_ADDRESS};
+use common::constants::{BYTES_PER_INSTRUCTION, RAM_START_ADDRESS, STACK_CANARY_SIZE};
 use common::jolt_device::{JoltDevice, MemoryLayout, MemoryLayoutError};
 use jolt_riscv::JoltInstructionRow;
 use std::ops::Range;
@@ -124,6 +124,161 @@ pub fn code_region(
     Ok(words.unwrap_or_default())
 }
 
+/// The value-preserving RAM mask, restricted to the proof's address domain:
+/// the code region (see [`code_region`]) and the input, advice and canary
+/// regions rounded outward to doublewords, sorted, disjoint and merged,
+/// including intervals starting at index zero.
+pub fn write_protected_word_intervals(
+    code_region: Range<usize>,
+    memory_layout: &MemoryLayout,
+    ram_k: usize,
+) -> Result<Vec<(usize, usize)>, PreprocessingError> {
+    validate_code_region(&code_region, memory_layout)?;
+    let lowest = memory_layout.get_lowest_address();
+    if !lowest.is_multiple_of(8) {
+        return Err(PreprocessingError::InvalidWriteProtectedIntervals(
+            "lowest RAM address is not doubleword aligned",
+        ));
+    }
+    let canary_end = memory_layout
+        .stack_end
+        .checked_add(STACK_CANARY_SIZE)
+        .ok_or(PreprocessingError::InvalidWriteProtectedIntervals(
+            "canary extent overflows",
+        ))?;
+    let mut intervals = Vec::with_capacity(5);
+    if !code_region.is_empty() {
+        intervals.push((code_region.start, code_region.end));
+    }
+    for (start, end) in [
+        (memory_layout.input_start, memory_layout.input_end),
+        (
+            memory_layout.trusted_advice_start,
+            memory_layout.trusted_advice_end,
+        ),
+        (
+            memory_layout.untrusted_advice_start,
+            memory_layout.untrusted_advice_end,
+        ),
+        (memory_layout.stack_end, canary_end),
+    ] {
+        if start > end {
+            return Err(PreprocessingError::InvalidWriteProtectedIntervals(
+                "region is reversed",
+            ));
+        }
+        if start == end {
+            continue;
+        }
+        let start =
+            start
+                .checked_sub(lowest)
+                .ok_or(PreprocessingError::InvalidWriteProtectedIntervals(
+                    "region is below lowest RAM address",
+                ))?;
+        let end =
+            end.checked_sub(lowest)
+                .ok_or(PreprocessingError::InvalidWriteProtectedIntervals(
+                    "region is below lowest RAM address",
+                ))?;
+        let start = usize::try_from(start / 8).map_err(|_| {
+            PreprocessingError::InvalidWriteProtectedIntervals("region exceeds usize range")
+        })?;
+        let end = usize::try_from(end.div_ceil(8)).map_err(|_| {
+            PreprocessingError::InvalidWriteProtectedIntervals("region exceeds usize range")
+        })?;
+        intervals.push((start, end));
+    }
+    let mut intervals = merge_word_intervals(intervals);
+    intervals.retain_mut(|(start, end)| {
+        *end = (*end).min(ram_k);
+        *start < *end
+    });
+    Ok(intervals)
+}
+
+/// The public RAM word masks of one proof's address domain, the `ram_K` words
+/// from the lowest mapped address. The RAM read-write sumcheck weights one claim
+/// by each mask.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RamWordMasks {
+    /// Mask C: code, canary, input and advice words, whose value every access
+    /// must preserve. See [`write_protected_word_intervals`].
+    pub write_protected: Vec<(usize, usize)>,
+    /// Mask N: words no access may touch. See [`unmapped_word_intervals`].
+    pub unmapped: Vec<(usize, usize)>,
+}
+
+impl RamWordMasks {
+    pub fn new(
+        code_region: Range<usize>,
+        memory_layout: &MemoryLayout,
+        ram_k: usize,
+    ) -> Result<Self, PreprocessingError> {
+        let masks = Self {
+            write_protected: write_protected_word_intervals(code_region, memory_layout, ram_k)?,
+            unmapped: unmapped_word_intervals(memory_layout, ram_k)?,
+        };
+        // The prover classifies a word for both masks with one search over
+        // their merged intervals, which requires the masks to be disjoint.
+        let overlaps = masks.write_protected.iter().any(|&(start, end)| {
+            masks
+                .unmapped
+                .iter()
+                .any(|&(other_start, other_end)| start < other_end && other_start < end)
+        });
+        if overlaps {
+            return Err(PreprocessingError::InvalidUnmappedIntervals(
+                "unmapped words overlap write-protected words",
+            ));
+        }
+        Ok(masks)
+    }
+}
+
+/// The words of the proof's domain that every tracer refuses to access: the
+/// padding between `io_end` and `RAM_START_ADDRESS`, and the words from
+/// `heap_end` to the end of the domain. The tracers fault on an access starting
+/// at or above `io_end` below RAM, or at or above `heap_end` in RAM (see
+/// `tracer::emulator::mmu::address_fault` and the x86 helpers' guest-load
+/// bounds). Both bounds are doubleword aligned, so each tracer bound falls on a
+/// word boundary of this mask. The panic and termination flag words lie below
+/// `io_end` and are outside the mask.
+pub fn unmapped_word_intervals(
+    memory_layout: &MemoryLayout,
+    ram_k: usize,
+) -> Result<Vec<(usize, usize)>, PreprocessingError> {
+    let lowest = memory_layout.get_lowest_address();
+    let word = |address: u64| -> Result<usize, PreprocessingError> {
+        let offset =
+            address
+                .checked_sub(lowest)
+                .ok_or(PreprocessingError::InvalidUnmappedIntervals(
+                    "bound is below lowest RAM address",
+                ))?;
+        if !offset.is_multiple_of(8) {
+            return Err(PreprocessingError::InvalidUnmappedIntervals(
+                "bound is not doubleword aligned",
+            ));
+        }
+        usize::try_from(offset / 8)
+            .map_err(|_| PreprocessingError::InvalidUnmappedIntervals("bound exceeds usize range"))
+    };
+    let io_gap = (word(memory_layout.io_end)?, word(RAM_START_ADDRESS)?);
+    let heap_padding = (word(memory_layout.heap_end)?, ram_k);
+    if io_gap.0 > io_gap.1 || io_gap.1 > heap_padding.0 {
+        return Err(PreprocessingError::InvalidUnmappedIntervals(
+            "regions are out of order",
+        ));
+    }
+    let mut intervals = merge_word_intervals(vec![io_gap, heap_padding]);
+    intervals.retain_mut(|(start, end)| {
+        *end = (*end).min(ram_k);
+        *start < *end
+    });
+    Ok(intervals)
+}
+
 fn source_word_intervals(
     source_extents: impl IntoIterator<Item = (u64, bool)>,
     lowest_address: u64,
@@ -176,6 +331,45 @@ fn bytecode_source_extents(
         .iter()
         .filter(|row| row.virtual_sequence_remaining.unwrap_or(0) == 0)
         .map(|row| (row.address as u64, row.is_compressed))
+}
+
+/// Checks a code region the verifier takes on trust: a committed program's
+/// metadata carries it in place of the bytecode. The region must lie in the
+/// RAM domain, and an empty region must be `0..0`, so that each program has
+/// one encoding.
+pub fn validate_code_region(
+    code_region: &Range<usize>,
+    memory_layout: &MemoryLayout,
+) -> Result<(), PreprocessingError> {
+    let max_ram_k = compute_max_ram_k(memory_layout)
+        .map_err(|_| PreprocessingError::InvalidCodeRegion("RAM domain is invalid"))?;
+    if code_region.start > code_region.end || code_region.end > max_ram_k {
+        return Err(PreprocessingError::InvalidCodeRegion(
+            "code region is reversed or outside RAM",
+        ));
+    }
+    if code_region.is_empty() && code_region.start != 0 {
+        return Err(PreprocessingError::InvalidCodeRegion(
+            "empty code region is not 0..0",
+        ));
+    }
+    Ok(())
+}
+
+fn merge_word_intervals(mut intervals: Vec<(usize, usize)>) -> Vec<(usize, usize)> {
+    intervals.sort_unstable();
+    let mut merged: Vec<(usize, usize)> = Vec::new();
+    for (start, end) in intervals {
+        if let Some((_, previous_end)) = merged.last_mut() {
+            if start <= *previous_end {
+                *previous_end = (*previous_end).max(end);
+                continue;
+            }
+        }
+        merged.push((start, end));
+    }
+    merged.shrink_to_fit();
+    merged
 }
 
 pub fn compute_min_ram_k(
@@ -270,7 +464,11 @@ impl PublicInitialRam {
 }
 
 #[cfg(test)]
-#[expect(clippy::indexing_slicing, reason = "tests index fixture data")]
+#[expect(
+    clippy::indexing_slicing,
+    clippy::unwrap_used,
+    reason = "tests index fixture data and fail on construction errors"
+)]
 mod tests {
     use super::{
         compute_max_ram_k, compute_min_ram_k, PublicInitialRam, RAMPreprocessing, RamDomainError,
@@ -306,6 +504,35 @@ mod tests {
             Ok(0..6)
         );
         assert_eq!(super::code_region([(0, true)], lowest), Ok(0..0));
+    }
+
+    #[test]
+    fn protected_regions_merge_at_zero_and_clip_to_the_proof_domain() {
+        let mut layout = bounded_device().memory_layout;
+        let lowest = layout.get_lowest_address();
+        layout.untrusted_advice_start = lowest;
+        layout.untrusted_advice_end = lowest + 8;
+        layout.trusted_advice_start = lowest + 8;
+        layout.trusted_advice_end = lowest + 24;
+        layout.input_start = lowest + 24;
+        layout.input_end = lowest + 40;
+        layout.stack_end = lowest + 62;
+        let code = 4..8;
+        let intervals = super::write_protected_word_intervals(code.clone(), &layout, 16).unwrap();
+        assert_eq!(intervals, vec![(0, 16)]);
+        assert_eq!(
+            super::write_protected_word_intervals(code.clone(), &layout, 32).unwrap(),
+            vec![(0, 24)]
+        );
+        assert_eq!(
+            super::write_protected_word_intervals(code.clone(), &layout, 4).unwrap(),
+            vec![(0, 4)]
+        );
+        layout.stack_end = lowest + 8 * 32;
+        assert_eq!(
+            super::write_protected_word_intervals(code.clone(), &layout, 16).unwrap(),
+            vec![(0, 8)]
+        );
     }
 
     #[test]
