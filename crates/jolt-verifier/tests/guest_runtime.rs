@@ -37,7 +37,7 @@ fn size_class_heap_serves_musl_mappings() {
     program.add_guest_feature("size-class-alloc");
     program.set_heap_size(16_777_216);
     program.set_stack_size(1_048_576);
-    let (_, io_device) = program.execute_with_output(&[], &[], &[]);
+    let (_, io_device) = program.execute_with_output(&[], &[], &[], None);
     assert!(
         !io_device.panic,
         "shared-heap guest panicked: musl could not map memory beside the Rust heap"
