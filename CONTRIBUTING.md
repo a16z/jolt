@@ -79,7 +79,7 @@ not an attestation of the
 current PR head; replace the number, full SHA and review details with the actual reviewed values.
 
 ```text
-This pull request #2203 has been reviewed at commit f316de7b96be3846a36713175d9536d27d256855 using skill ci-code-review and model GPT-6 Astra with max reasoning effort, and no issues were found.
+This pull request #2203 has been reviewed at commit f316de7b96be3846a36713175d9536d27d256855 using skill ci-code-review and model GPT-6.2 Astra with max reasoning effort, and no issues were found.
 ```
 
 The skill name is free text; the model and effort must be a pair that
