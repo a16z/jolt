@@ -21,7 +21,7 @@ A pull request into `main` merges with an approving review from a person with wr
 - the highest per-path risk returned by the classifier is `risk-1`, `risk-2` or `risk-3`;
 - the Pika App bot or a maintainer posted a PR comment attesting a clean review of that head.
 
-The gate never approves `risk-4`; there the policy asks for a current-head approval from a maintainer other than the author.
+The gate never approves `risk-4`; there the policy asks for an undismissed approval from a maintainer other than the author, on any commit of the pull request.
 
 Every review checks the diff for comment bloat and test bloat. A pull request adds no comment that the [Comments](#comments) rules would delete and no test that the [Tests](#tests) rules exclude; each instance is a review finding, fixed before merge.
 
