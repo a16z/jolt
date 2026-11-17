@@ -598,30 +598,19 @@ class FileDiff:
 
 
 _HUNK_HEADER = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
+_QUOTED_PATH = re.compile(r'"((?:[^"\\]|\\.)*)"')
 
 
 def _unquote_git_path(path: str) -> str:
-    if not (path.startswith('"') and path.endswith('"')):
-        return path
-    body = path[1:-1]
-    out = []
-    i = 0
-    escapes = {"n": "\n", "t": "\t", "r": "\r", '"': '"', "\\": "\\"}
-    while i < len(body):
-        c = body[i]
-        if c == "\\" and i + 1 < len(body):
-            nxt = body[i + 1]
-            if nxt in escapes:
-                out.append(escapes[nxt])
-                i += 2
-                continue
-            if body[i + 1 : i + 4].isdigit() and len(body) >= i + 4:
-                out.append(chr(int(body[i + 1 : i + 4], 8)))
-                i += 4
-                continue
-        out.append(c)
-        i += 1
-    return "".join(out)
+    """The path in a `---`, `+++` or `rename` line. Git ends a `---` or `+++` line with a TAB
+    after a path that holds a space, and C-quotes a path that holds a control character, `"`
+    or `\\` (with core.quotePath, also any non-ASCII byte). Each escape it writes stands for
+    one byte and reads the same under unicode_escape, so Latin-1 turns the decoded text back
+    into the path's bytes."""
+    quoted = _QUOTED_PATH.match(path)
+    if quoted is None:
+        return path.partition("\t")[0]
+    return quoted[1].encode().decode("unicode_escape").encode("latin-1").decode(errors="replace")
 
 
 def _strip_prefix(path: str, prefix: str) -> str | None:
@@ -639,7 +628,9 @@ def parse_diff(diff_text: str) -> list[FileDiff]:
     old_line = new_line = 0
     in_hunk = False
 
-    for line in diff_text.splitlines():
+    # Git ends a line with LF alone; splitlines() also breaks one at a form feed, a lone CR or
+    # U+2028 inside a path or a changed line.
+    for line in diff_text.split("\n"):
         if line.startswith("diff --git "):
             current = FileDiff(old_path=None, new_path=None)
             files.append(current)

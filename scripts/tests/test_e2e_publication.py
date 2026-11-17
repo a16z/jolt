@@ -167,14 +167,13 @@ class E2ePublicationTests(unittest.TestCase):
                 if sample['leg'] == 'head':
                     sample['metrics']['trace_rows'] = 6
             calibration = {
-                'status': 'measured', 'reason': None, 'method': 'null-median3-symmetric-envelope-v2',
+                'status': 'measured', 'reason': None, 'method': 'null-median3-symmetric-envelope-v3',
                 'metric_contract': 1, 'window_pairs': 3, 'windows_overlap': True, 'independent_windows': False,
-                'floor_pct': {'e2e_s': 3.0, 'peak_rss_bytes': 2.0}, 'envelope_multiplier': 1.5, 'rounding_pp': 0.5,
+                'envelope_multiplier': 1.5, 'rounding_pp': 0.5,
                 'source': {'run_id': 'synthetic-null-fixture', 'result_sha256': '0' * 64,
                     'started_at': '2026-01-01T00:00:00Z', 'finished_at': '2026-01-01T00:01:00Z',
                     'revision': 'a' * 40, 'native_harness_revision': 'e' * 40, 'collector_sha256': '5' * 64,
                     'host_id': 'fixture-host', 'kernel': 'fixture-kernel', 'microcode': 'fixture-microcode',
-                    'control_plane': copy.deepcopy(result['host']['control_plane']),
                     'toolchain': 'rustc fixture', 'target_cpu': 'znver4', 'target_triple': 'x86_64-unknown-linux-gnu',
                     'rustflags': '-C target-cpu=znver4', 'profile': 'release', 'cargo_lock_sha256': '4' * 64,
                     'settings': copy.deepcopy(result['host']['settings'])},
@@ -183,8 +182,8 @@ class E2ePublicationTests(unittest.TestCase):
                     'backend': 'optimized', 'physical_cores': 1, 'cpu_ids': [2], 'scale_log2': 3,
                     'input_sha256': '1' * 64, 'guest_elf_sha256': '8' * 64, 'base_binary_sha256': '6' * 64,
                     'trace_rows': 4, 'padded_trace_rows': 8, 'n_pairs': 10, 'n_windows': 8,
-                    'metrics': {'e2e_s': {'unit': 'seconds', 'threshold_pct': 3.0, 'max_symmetric_window_delta_pct': 1.0},
-                                'peak_rss_bytes': {'unit': 'bytes', 'threshold_pct': 2.0,
+                    'metrics': {'e2e_s': {'unit': 'seconds', 'envelope_pct': 3.0, 'max_symmetric_window_delta_pct': 1.0},
+                                'peak_rss_bytes': {'unit': 'bytes', 'envelope_pct': 2.0,
                                                    'max_symmetric_window_delta_pct': 0.5}}}}}
             calibration_path = Path(directory) / 'synthetic-calibration.json'
             calibration_path.write_text(json.dumps(calibration))
@@ -212,9 +211,6 @@ class E2ePublicationTests(unittest.TestCase):
             self.assertIn('not statistical significance', text)
             for reason, keys, value in [
                     ('missing host.microcode', ['host', 'microcode'], None),
-                    ('mismatch: host.control_plane.version', ['host', 'control_plane', 'version'], 'changed'),
-                    ('missing host.control_plane.cli_sha256', ['host', 'control_plane', 'cli_sha256'], None),
-                    ('mismatch: host.control_plane.node_sha256', ['host', 'control_plane', 'node_sha256'], '4' * 64),
                     ('mismatch: collector_sha256', ['builds', 0, 'runner', 'sha256'], 'f' * 64),
                     ('mismatch: base.binary_sha256', ['builds', 0, 'binaries', 'dory', 'sha256'], 'f' * 64),
                     ('mismatch: base.trace_rows', ['cases', 0, 'samples', 2, 'metrics', 'trace_rows'], 5),
@@ -234,6 +230,10 @@ class E2ePublicationTests(unittest.TestCase):
                     self.assertIn(f'| +100.00% | unavailable: {reason}', text)
                     self.assertIn('| +50.00% | unavailable:', text)
                     self.assertNotIn('3.00% (max symmetric null', text)
+            updated_node = copy.deepcopy(result)
+            updated_node['host']['control_plane'] = {'version': 'updated', 'cli_sha256': None, 'node_sha256': '4' * 64}
+            publication.bench.render_comment(updated_node, output)
+            self.assertIn('| +100.00% | 3.00% (max symmetric null 1.00%) |', output.read_text())
             ten_pairs = copy.deepcopy(result)
             ten_pairs['suite']['repetitions'] = 10
             for repetition in range(3, 10):

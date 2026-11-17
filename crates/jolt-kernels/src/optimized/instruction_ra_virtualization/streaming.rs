@@ -14,7 +14,7 @@ use jolt_witness::{JoltWitnessPlane, WitnessError};
 
 use super::{OptimizedInstructionRaVirtualizationKernel, Selectors};
 use crate::optimized::instruction_read_raf::{LookupIndexDigits, LookupIndexRow};
-use crate::optimized::streaming::{StreamedFoldedRa, MATERIALIZE_BYTES};
+use crate::optimized::streaming::{DenseCap, StreamedFoldedRa, DENSE_CAP};
 use crate::optimized::support::{
     accumulate_product_grid, eq_round_error, product_grid_scratch_len, BundleStore,
     GruenRoundMessage,
@@ -45,7 +45,7 @@ impl<F: JoltField> PrepareKernel<F, InstructionRaVirtualization<F>>
                 relation,
                 inputs.challenges.gamma,
                 rows,
-                MATERIALIZE_BYTES,
+                DENSE_CAP,
             )?,
         ))
     }
@@ -59,23 +59,18 @@ pub(super) fn rows_unavailable<F: JoltField>(_: WitnessError) -> SumcheckError<F
 
 impl<F: JoltField> OptimizedInstructionRaVirtualizationKernel<F> {
     /// The kernel over selectors gathered from `rows`, which span the
-    /// relation's cycle domain; each selector materializes within
-    /// `materialize_bytes`, and production passes [`MATERIALIZE_BYTES`].
+    /// relation's cycle domain; the selectors materialize once they fit `cap`
+    /// together, and production passes [`DENSE_CAP`].
     pub(super) fn streamed(
         relation: &InstructionRaVirtualization<F>,
         gamma: F,
         rows: BundleStore<LookupIndexRow>,
-        materialize_bytes: usize,
+        cap: DenseCap,
     ) -> Result<Self, KernelError<F>> {
         Self::with_selectors(relation, gamma, |tables| {
             let source = LookupIndexDigits::new(tables.len(), relation.committed_chunk_bits());
-            let selectors = StreamedFoldedRa::new(
-                tables,
-                source,
-                rows,
-                relation.dimensions().log_t(),
-                materialize_bytes,
-            )?;
+            let selectors =
+                StreamedFoldedRa::new(tables, source, rows, relation.dimensions().log_t(), cap)?;
             // A one-cycle domain has no bind to materialize at.
             Ok(match selectors.single_cycle()? {
                 Some(dense) => Selectors::Lazy(dense),

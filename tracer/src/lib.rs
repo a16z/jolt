@@ -75,6 +75,7 @@ fn env_rows(name: &str, default: usize) -> usize {
 ///
 /// Panics if the run does not end at a halt instruction
 /// ([`TraceError::EndedWithoutHalt`]).
+#[tracing::instrument(skip_all)]
 #[expect(
     clippy::expect_used,
     reason = "the infallible trace API panics when a run does not end at a halt; TracerBackend returns TraceError::EndedWithoutHalt"
@@ -94,37 +95,6 @@ pub fn trace(
     JoltDevice,
     AdviceTape,
 ) {
-    try_trace(
-        elf_contents,
-        elf_path,
-        inputs,
-        untrusted_advice,
-        trusted_advice,
-        memory_config,
-        advice_tape,
-    )
-    .expect("a guest run must end at a halt instruction")
-}
-
-#[tracing::instrument(skip_all, name = "trace")]
-pub(crate) fn try_trace(
-    elf_contents: &[u8],
-    elf_path: Option<&PathBuf>,
-    inputs: &[u8],
-    untrusted_advice: &[u8],
-    trusted_advice: &[u8],
-    memory_config: &MemoryConfig,
-    advice_tape: Option<AdviceTape>,
-) -> Result<
-    (
-        LazyTraceIterator,
-        Vec<Cycle>,
-        Memory,
-        JoltDevice,
-        AdviceTape,
-    ),
-    TraceError,
-> {
     let mut emulator = create_emulator(
         elf_contents,
         elf_path,
@@ -162,14 +132,15 @@ pub(crate) fn try_trace(
         }
     };
 
-    let (advice_tape_result, final_memory_state, jolt_device) = finish_emulator(emulator)?;
-    Ok((
+    let (advice_tape_result, final_memory_state, jolt_device) =
+        finish_emulator(emulator).expect("a guest run must end at a halt instruction");
+    (
         lazy_trace_iter,
         trace,
         final_memory_state,
         jolt_device,
         advice_tape_result,
-    ))
+    )
 }
 
 /// Shared teardown for every execution path (eager [`trace`], execute-only

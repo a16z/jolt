@@ -17,10 +17,13 @@ The `jolt-algebra/asm` feature opts into these architecture kernels. A `solinas`
 build without `asm` uses portable Rust even on AArch64 and x86-64. The
 inspection-only `fp128-proof-linkage` feature implies `asm`.
 
-No product crate in this workspace enables `jolt-algebra/asm` in this change.
-The benchmark, fuzz, and proof workflows enable it explicitly to validate the
-library option. A product that adopts the Solinas backend must make a separate
-rollout decision and forward `asm` from its own feature configuration.
+No product crate in this workspace requests `asm` in its own manifest. The
+`akita` builds enable it all the same, through the pinned `akita-algebra`
+dependency, as [Trust boundary](#trust-boundary) explains.
+`cargo tree -p jolt-prover --features akita -e features,no-dev -i jolt-algebra`
+lists both `asm` and `solinas`, while the default `jolt-prover` build enables
+neither. The benchmark, fuzz, and proof workflows enable `asm` explicitly to
+validate the library option.
 
 For an offset `C`, the modulus is
 
