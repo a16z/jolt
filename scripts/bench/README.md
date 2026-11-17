@@ -79,19 +79,18 @@ parameter, a mainnet block number, where the other workloads have `operations`.
 manifest records it under the guest's `advice` key. Block 26433846 (five
 transactions, 1967936 gas) measured 35411563 trace rows and runs under a `2^26`
 ceiling. Block 26227673 (135 transactions, 10026232 gas) measured 154776297
-rows and runs under `2^28`, in nightly only. Every case runs at 24 cores, the
-fewest cases that cover the large program. The guest embeds jeth's
+rows and runs under `2^28`, in nightly only. Every case runs with Akita at 24
+cores, the fewest cases that cover the large program. The guest embeds jeth's
 contract-code library, and its expanded bytecode measured 1467296 instructions.
 That `2^21` bytecode domain gives the bytecode read-address polynomial six
-factors under Akita, whose chunks are four bits wide, and three under Dory,
-whose chunks are eight bits wide from `2^25` rows. The five other guests
+factors under Akita, whose chunks are four bits wide. The five other guests
 measured at most 22718 instructions and four factors under Akita.
 
 | Tier | Cases | Warmups / measured repetitions per leg |
 |---|---|---:|
 | `pr` | The matrix above: 34 supported points, 272 fresh processes across both legs | 1 / 3 |
 | `main` | All five workloads, all three core counts, both PCS, plus the PR tier's Ethereum block point: 31 points | 1 / 3 |
-| `nightly` | Two larger inputs per main point of the five workloads, plus 24-core Fibonacci/Akita and Fibonacci/Dory at `2^28`, Fibonacci/Akita at `2^30`, and three Ethereum block points (block 26433846 with Akita and with Dory at `2^26`, block 26227673 with Akita at `2^28`): 66 points | 1 / 5 |
+| `nightly` | Two larger inputs per main point of the five workloads, plus 24-core Fibonacci/Akita and Fibonacci/Dory at `2^28`, Fibonacci/Akita at `2^30`, and two Ethereum block points (block 26433846 at `2^26` and block 26227673 at `2^28`, both with Akita): 65 points | 1 / 5 |
 
 Nightly Fibonacci inputs use 16000000 operations at `2^28` and 64000000 at
 `2^30`, all at 24 cores. Main still runs the five one-core `2^18` Akita cases.
@@ -99,9 +98,9 @@ Unchanged definitions retain their IDs; new definitions receive new IDs. The
 six `ethereum-block` rows that main and nightly each reserved never ran and are
 removed: the Ethereum block points are new definitions under their own IDs.
 
-Main and nightly launch 124 and 396 proof processes respectively, before a
+Main and nightly launch 124 and 390 proof processes respectively, before a
 calibration refresh. A refresh adds 748 processes; a one-commit main job with a
-refresh launches 872 and nightly launches 1144.
+refresh launches 872 and nightly launches 1138.
 
 The historical sub-600-second interval below excludes compilation. The PR
 route includes local builds and has no measured sub-600-second promise. A warm
@@ -182,16 +181,26 @@ such pushes plus nightly would exceed 24 hours. These are capacity scenarios,
 not measured daily throughput.
 
 The model's minutes predate the Ethereum block points, which add 22 processes
-to a refresh, 4 to a main-history commit and 18 to nightly. On shared CherryPika
+to a refresh, 4 to a main-history commit and 12 to nightly. On shared CherryPika
 under load, not on jolt-bench, one process took 32.1 to 32.3 seconds for block
-26433846 with Akita (four samples), 155.8 seconds for the same block with Dory
-and 82.7 seconds for block 26227673 with Akita (one sample each). At those
-times a refresh grows by 11.8 minutes, a main-history commit by 2.1 minutes and
-nightly by 27.1 minutes plus its refresh. On jolt-bench, the nightlies of
-November 15 to 17, 2026 took 189.6 to 198.0 minutes from the start of the
-refresh to the end of the run. Adding 38.8 minutes at CherryPika's times gives
-228.5 to 236.9 minutes, close to nightly's 240-minute limit. No jolt-bench run
-has measured these points.
+26433846 (four samples) and 82.7 seconds for block 26227673 (one sample), both
+with Akita. At those times a refresh grows by 11.8 minutes, a main-history
+commit by 2.1 minutes and nightly by 11.5 minutes plus its refresh. No
+jolt-bench run has measured these points. The comparisons below use jolt-bench
+records published from November 15 to 17, 2026.
+
+A pull-request job has 120 minutes for its builds and its run. The four latest
+took 24.4 to 33.7 minutes, and the block point adds 4.3 minutes of proof
+processes and one guest preparation per leg. A main-push job has 180 minutes.
+The one job among the eight latest that ran its refresh took 56.5 minutes for
+one commit, and the block point adds 13.9. Nightly has 240 minutes. Its last
+three runs took 189.6 to 198.0 minutes from the start of the refresh to the end
+of the run, and the block points add 23.3, which gives 212.9 to 221.3.
+
+No case proves this workload with Dory. One Dory process took 155.8 seconds for
+block 26433846 at `2^26` and 381 seconds for block 26227673 at `2^28` on
+CherryPika. Nightly's six processes per case would turn those into 15.6 and 38
+minutes per night.
 
 After acquiring the host lock, a main-push job checks the live main head before
 calibration. If its planned tip has already been superseded, it skips only the
@@ -262,7 +271,7 @@ Main trace ceilings are `2^18`, `2^20`, and `2^22` at 1, 8, and 24 cores.
 Nightly retains twice and four times each main operation count and raises the trace
 ceiling by one and two bits respectively, plus the three large Fibonacci cases
 listed above. The Ethereum block points are the exception: their inputs are
-fixed blocks, so nightly repeats main's point and adds two of its own. These
+fixed blocks, so nightly repeats main's point and adds one of its own. These
 are ceilings, not invented row measurements. An input that exceeds its ceiling
 fails visibly.
 

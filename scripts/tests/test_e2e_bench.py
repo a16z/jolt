@@ -337,7 +337,7 @@ path.write_text(json.dumps(dict(workload='fibonacci', pcs='dory', backend='optim
         expected = {'fibonacci', 'sha2-chain', 'sha3-chain', 'btreemap', 'secp256k1-batch',
                     'ethereum-block'}
         blocks = {'main': [('akita', 26, 26433846)],
-                  'nightly': [('dory', 26, 26433846), ('akita', 26, 26433846), ('akita', 28, 26227673)]}
+                  'nightly': [('akita', 26, 26433846), ('akita', 28, 26227673)]}
         for tier in ('main', 'nightly'):
             _, cases = bench.config_cases(bench.DEFAULT_CONFIG, tier)
             supported = [case for case in cases if not case.get('unsupported_reason')]
