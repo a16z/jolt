@@ -27,8 +27,9 @@ bakes a BLAKE2b-512 digest of the complete setup section into the guest image.
 The guest authenticates the setup record and every detached key, catalog, and
 terminal-cache body before decoding or trusting them; a missing pin or mismatch
 returns `0`. Consumers must pin the intended guest image, including this digest
-(see [`specs/recursion-guest.md`](../../specs/recursion-guest.md)). The spec's row
-counts are for embedded mode.
+(see [`specs/recursion-guest.md`](../../specs/recursion-guest.md)). The spec's
+measurement history is for embedded mode; its setup-transport table compares
+embedded, input, and advice mode.
 
 ### Advice mode
 
@@ -51,7 +52,7 @@ outer proof of the Akita guest exists yet, so nothing checks the commitment in
 this flow.
 
 The trusted advice keeps embedded mode's savings. Its preprocessing record
-omits the bytecode rows, which follow the baked preprocessing digest in a
+omits the bytecode rows, which follow the precomputed preprocessing digest in a
 fixed-width layout (`guest/src/compiled_rows.rs`), so the guest neither decodes
 the rows with bincode nor re-hashes the program.
 

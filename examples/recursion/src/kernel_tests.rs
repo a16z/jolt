@@ -94,7 +94,7 @@ pub(super) fn run() {
     let output_dir = super::get_guest_src_dir();
     super::generate_provable_macro(
         &config,
-        GuestProgram::Fibonacci.get_max_trace_length(true),
+        GuestProgram::Fibonacci.recursion_max_trace_length(SetupTransport::Image),
         &output_dir,
         RecordLimits::default(),
     );

@@ -373,22 +373,20 @@ impl GuestProgram {
         }
     }
 
-    fn get_max_trace_length(&self, use_embed: bool) -> usize {
+    fn inner_max_trace_length(&self) -> usize {
         match self {
-            GuestProgram::Fibonacci => {
-                if use_embed {
-                    67108864
-                } else {
-                    5000000
-                }
-            }
-            GuestProgram::Muldiv => {
-                if use_embed {
-                    800000
-                } else {
-                    3000000
-                }
-            }
+            GuestProgram::Fibonacci => 5000000,
+            GuestProgram::Muldiv => 3000000,
+        }
+    }
+
+    fn recursion_max_trace_length(&self, transport: SetupTransport) -> usize {
+        if transport == SetupTransport::Input {
+            return self.inner_max_trace_length();
+        }
+        match self {
+            GuestProgram::Fibonacci => 67108864,
+            GuestProgram::Muldiv => 800000,
         }
     }
 }
@@ -527,7 +525,6 @@ fn schedule_artifacts() -> Arc<AkitaScheduleArtifacts> {
 fn collect_guest_proofs(
     guest: GuestProgram,
     target_dir: &str,
-    _use_embed: bool,
     mode: ProgramPreprocessingMode,
     proofs: usize,
 ) -> Vec<u8> {
@@ -539,7 +536,7 @@ fn collect_guest_proofs(
     use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
     use tracer::execution_backend::TracerBackend;
 
-    let max_trace_length = guest.get_max_trace_length(false);
+    let max_trace_length = guest.inner_max_trace_length();
     let mut memory_config = MemoryConfig {
         heap_size: 32768u64,
         ..Default::default()
@@ -691,12 +688,11 @@ fn collect_guest_proofs(
 fn collect_guest_proofs(
     guest: GuestProgram,
     target_dir: &str,
-    use_embed: bool,
     mode: ProgramPreprocessingMode,
     proofs: usize,
 ) -> Vec<u8> {
     info!("Starting collect_guest_proofs for {}", guest.name());
-    let max_trace_length = guest.get_max_trace_length(use_embed);
+    let max_trace_length = guest.inner_max_trace_length();
 
     // This should match the example being run, it can cause layout issues if the guest's macro and our assumption here differ
     let memory_config = MemoryConfig {
@@ -1067,7 +1063,7 @@ fn generate_proofs(
 
     let target_dir = "/tmp/jolt-guest-targets";
 
-    let all_groups_data = collect_guest_proofs(guest, target_dir, false, mode, proofs);
+    let all_groups_data = collect_guest_proofs(guest, target_dir, mode, proofs);
 
     save_proof_data(guest, &all_groups_data, workdir);
 
@@ -1422,7 +1418,7 @@ fn verify_proofs(
         .and_then(|bytes| u64::try_from(bytes).ok())
         .expect("recursion decode heap size overflow");
     memory_config.heap_size = memory_config.heap_size.max(decode_heap);
-    let max_trace_length = guest.get_max_trace_length(transport != SetupTransport::Input);
+    let max_trace_length = guest.recursion_max_trace_length(transport);
     generate_provable_macro(&memory_config, max_trace_length, output_dir, layout.limits);
     let regions = streams.frame(&memory_config);
     info!(

@@ -104,8 +104,10 @@ and are not decoded records. Embedded and advice setups remove the bytecode
 vector before encoding, so using the full input-mode setup to size their cap is
 conservative. The additional digest record is only 32 bytes, and advice mode's
 fixed-width rows are a raw body that decodes to the rows the full record's
-charge already covers. Each advice region's capacity is the next power of two
-of its framed stream, as the input's is.
+charge already covers. Each region's capacity, the input's and each advice
+region's, is the next power of two of its stream length plus 26 bytes: the pad
+record's prefix and at most seven pad bytes, postcard's length of at most ten
+bytes, and one byte that keeps the framed stream strictly below capacity.
 
 A trace of `2^20` rows does not bound the size of the program image, bytecode,
 public I/O, or schedule catalog. There is consequently no universal largest
@@ -199,7 +201,8 @@ for one row verifies only proofs for that row of its flavor.
 `detach_prepared_payloads` / `attach_prepared_payloads` move the multi-megabyte
 payloads out of the bincode record. Each detached body is self-aligning: a skew
 byte puts the key's coefficients on an 8-byte boundary. The guest then views
-them where they lie, either in its image or its input, instead of copying them.
+them where they lie, in its image, its input, or its trusted advice, instead of
+copying them.
 
 With `--embed` the host also:
 
@@ -361,8 +364,8 @@ holds 93,640 bytes of proof in a 128 KiB region.
 
 An outer Akita proof of the advice-mode trace would commit a 2^27-row trace:
 44 one-hot columns of 31 variables at K = 16, a 2^21-row recursion bytecode, a
-2^21-word trusted-advice group, and the 2^14-variable floor for the untrusted
-group. At this revision, grouped schedule planning
+2^21-word trusted-advice group, and the 14-variable (2^14-word) floor for the
+untrusted group. At this revision, grouped schedule planning
 (`AkitaScheme::verifier_setup_from_params` on the parameters
 `preprocess_full_with_advice` builds) admits both advice groups, alone or
 together, with full program preprocessing and the default single-chunk witness

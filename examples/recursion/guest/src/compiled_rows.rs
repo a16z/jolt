@@ -20,7 +20,6 @@ const FIRST_IN_SEQUENCE: u64 = 1 << 60;
 const COMPRESSED: u64 = 1 << 61;
 const UNUSED: u64 = 0b11 << 62;
 
-/// Host only: the guest image just decodes.
 #[cfg(not(target_arch = "riscv64"))]
 pub(crate) fn encode(rows: &[JoltInstructionRow]) -> Vec<u64> {
     let operand = |value: Option<u8>, present: u64, shift: u32| {
