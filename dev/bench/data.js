@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794942961382,
+  "lastUpdate": 1794946011094,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -263098,6 +263098,270 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 888656,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "centelles.alberto@gmail.com",
+            "name": "Alberto Centelles",
+            "username": "Acentelles"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "6cfae744861bce72d9f6383986001028fdc3bf6f",
+          "message": "perf(verifier,recursion): read the proof argument as one byte string in the guest (#2448)\n\n`JoltProof::narg` is a `Vec<u8>`, which serde decodes as a sequence: one\ncall into the decoder and one push per byte. A verifier running as a\nguest pays that in trace rows for every byte of the argument, and in\nAkita proofs the argument is about 75 KB.\n\nAsking every decoder for a byte string instead would be unsafe on\nhosts: a decoder asked for an owned byte buffer may allocate the length\nthe input announces before it reads. So the field keeps its encoding\nand its element-wise decoding, and only names itself: it is read as a\nnewtype struct called `PROOF_ARGUMENT_NEWTYPE` around the same byte\nsequence. bincode, postcard and serde_json decode such a newtype as its\ncontent, with the errors they gave before, and a deserializer that\nforwards it as a sequence is accepted as well. One difference remains\nfor a deserializer that forwards a newtype struct and presents a byte\nstring: it is now accepted where a `Vec<u8>` refuses it.\n\nThe recursion example's size-limiting adapter recognises the name and\nasks its decoder for borrowed bytes. That decoder reads from a slice,\nso it checks the announced length against the bytes that remain before\nborrowing them. The adapter charges the argument as the sequence it\nstands for, so its budget accepts exactly what it accepted before.\n\nTests: a proof announcing 2^46, 2^62 or 2^64-1 argument bytes is a\ndecode error in bincode's slice and reader decoders, in postcard and in\na decoder that recognises the name; the proof type round-trips through\nsuch a decoder; a forwarded sequence decodes; the example's adapter\ntakes the byte string at the sequence charge.",
+          "timestamp": "2026-11-17T11:07:13-08:00",
+          "tree_id": "b14bde9f2aa8d71afa338d9c615d04b6f82152ec",
+          "url": "https://github.com/a16z/jolt/commit/6cfae744861bce72d9f6383986001028fdc3bf6f"
+        },
+        "date": 1794946002516,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 3.0504,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 889804,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.2114,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 464132,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 464112,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 464312,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.6846,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 463628,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-mem",
+            "value": 888708,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 1.5229,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 463744,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 3.9382,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 464064,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 4.3665,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 132568,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.6323,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 889208,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.5266,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 464164,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.3903,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 464296,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 20.773,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 464096,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 4.4802,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 463732,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 29.7936,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 727876,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 14.4408,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 609024,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 59.6699,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 628180,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.502,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 464152,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.7377,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 464324,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 15.8824,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 892880,
             "unit": "KB",
             "extra": ""
           }
