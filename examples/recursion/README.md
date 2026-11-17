@@ -78,7 +78,8 @@ proof record per device. The guest returns `1` only if each proof verifies
 against the device at its position. Untrusted advice is not public, so the
 verdict covers the statements in the input, not particular proof bytes. Advice
 alone does not hide those bytes: confidentiality needs a zero-knowledge outer
-proof, and Akita proofs are transparent.
+proof, and the Akita build has no ZK mode (`akita` and `zk` are mutually
+exclusive).
 
 `trace` requires the guest's verdict to match `--expect` (default `accept`); a
 guest panic is neither verdict. `tamper-opening` requires the Akita build and
@@ -103,7 +104,6 @@ return value. Other guests retain
 the default decoding behavior. With `--advice` the same input checks apply to
 the statements, and the untrusted advice must also reject an overflowing or
 oversize length prefix, a missing proof record, and a trailing proof record.
-The tampered fixtures reject the same way under `trace --advice --expect reject`.
 
 These commands test guest verification, not an Akita outer recursive proof.
 
@@ -112,7 +112,9 @@ Stage1 round coefficient changed, one Stage1 opening claim changed, one device
 output byte flipped, the panic bit flipped, or a zero-proof batch. Run each
 through `trace --embed --expect reject`. Generate with `--proofs 2` and trace
 normally to test batch acceptance; `tamper --target claim --proof-index 1`
-then changes only the second proof, and the batch must return `0`.
+then changes only the second proof, and the batch must return `0`. The
+opening fixture and these fixtures reject the same way under
+`trace --advice --expect reject`.
 The Dory lane also checks framing and rejects a changed claim. Input-mode
 traces authenticate the setup
 against the digest baked into the newly built guest.

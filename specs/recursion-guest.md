@@ -28,14 +28,15 @@ The guest distinguishes two kinds of input.
   seed-derived without re-expanding it, and uses the NTT residues where they lie
   without a range pass.
 
-Trusted setup data must be bound to the program identity. With `--embed` the
-host bakes it into the guest image, so the ELF digest is the binding. In input
-mode the host bakes a BLAKE2b-512 digest into the image at build time. It covers
-the entire framed setup section: the preprocessing record, detached-body count,
-and every detached body (key matrix, catalog view, and terminal NTT cache),
-including their lengths and padding. The leading input-alignment record is
-excluded. The guest checks this pin before decoding setup or constructing any
-`TrustedBytes`; a missing digest or mismatch returns verdict `0`. Rebuilding
+Trusted setup data must be bound to something the consumer pins: the program
+identity in embedded and input mode, a commitment in advice mode (below). With
+`--embed` the host bakes it into the guest image, so the ELF digest is the
+binding. In input mode the host bakes a BLAKE2b-512 digest into the image at
+build time. It covers the entire framed setup section: the preprocessing
+record, detached-body count, and every detached body (key matrix, catalog view,
+and terminal NTT cache), including their lengths and padding. The leading
+input-alignment record is excluded. The guest checks this pin before decoding
+setup or constructing any `TrustedBytes`; a missing digest or mismatch returns verdict `0`. Rebuilding
 with a different setup changes the image identity, which the consumer must pin.
 The preprocessing digest alone does not cover the detached payloads. Embedded mode is the configuration the row count
 refers to.
@@ -90,7 +91,8 @@ The untrusted-advice slice must hold exactly one proof record per device; a
 missing or extra record returns `0`. Bytes after an advice region's postcard
 envelope are not read. The public I/O therefore binds the statements, not the
 proof bytes. Moving the proofs to advice does not hide them: that needs a
-zero-knowledge outer proof, and Akita is transparent.
+zero-knowledge outer proof, and the Akita build has no ZK mode (`akita` and
+`zk` are mutually exclusive).
 
 ## Record limits
 
@@ -310,7 +312,7 @@ totals at this revision.
 | **Merge `main`: Akita `cf95fd05` (BlockDigits dense commit, #236-#242), whole-table bytecode (#2030), fresh proof** (76,947,621 verification cycles) | **79,032,888** |
 
 The first row was rebuilt and re-measured from its archived sources and
-reproduces its recorded numbers exactly. At the last row's revision, input
+reproduces its recorded numbers exactly. At the 79,032,888-row revision, input
 mode, which then had no setup pin, accepted at 86,461,879 rows, and a proof
 with one bit flipped in its Akita opening proof was rejected after 60,136,155
 rows, inside the PCS verifier.
@@ -321,8 +323,8 @@ fold (`verify_root`, 14.56M to 24.46M rows): its relation-matrix evaluation
 and direct setup-contribution scan run over the natively batched trace
 columns. The terminal checks are unchanged.
 
-The last row's 452,194-row increase nets two measured effects, besides the
-boot-time modulus binding. Replacing the
+The Akita review revisions row's 452,194-row increase nets two measured
+effects, besides the boot-time modulus binding. Replacing the
 hand-written transcript sponge, which reused each phase's compressed mask block,
 with spongefish's sponge over the inline adapter costs about 1.16M rows, and the
 remaining review revisions save about 0.71M. The `signed_sum` accumulator guard
@@ -334,9 +336,9 @@ recognizes the mask blocks cost more rows (0.36M) than it saved, because the
 
 Fibonacci, one inner proof, the same features, at this revision: one freshly
 generated proof, traced in each transport. Setup decode is the
-`deserialize preprocessing` span. The other spans agree across transports to
-within 0.1%: about 2.17M rows of proof and device decoding and 82.9M rows of
-verification. Setup bytes count the setup stream before region framing; input
+`deserialize preprocessing` span. Proof and device decoding (about 2.17M rows
+together) and verification (about 82.9M rows) agree across transports to within
+0.1%. Setup bytes count the setup stream before region framing; input
 bytes are the framed public input.
 
 | Transport | Setup bytes | Setup location | Input bytes | Setup decode | Total rows |
@@ -346,26 +348,26 @@ bytes are the framed public input.
 | Advice (`--advice`) | 15,638,184 | trusted advice | 144 | 1,437,934 | 86,503,398 |
 | Advice, input mode's setup record | 15,578,168 | trusted advice | 144 | 11,905,988 | 97,020,145 |
 
-Input mode spends 144.8M rows outside the spans, almost all of it to
-authenticate the setup: the BLAKE2b-512 pin over the 15.6 MB section, plus the
+Input mode spends 144.8M rows outside the spans: about 137M on the BLAKE2b-512
+pin that authenticates the 15.6 MB setup section, and about 7.7M on the
 zero-suffix scan of its 16 MiB input region at about 7 rows per byte. Advice
 mode needs no pin, because the commitment binds the setup, and its input
 region shrinks to 256 bytes. It lands 358,550 rows (0.42%) above embedded
 mode. Decoding the 4,096 fixed-width rows costs 631,583 more rows than copying
 embedded mode's static table, and the smaller input region saves about 260,000
-rows of zero-suffix scan. The last row puts input mode's setup record in the
-trusted advice instead, measured with a temporary patch: decoding the rows with
+rows of zero-suffix scan. The record-layout row puts input mode's setup record
+in the trusted advice instead, measured with a temporary patch: decoding the rows with
 bincode and re-hashing the program costs 10.5M rows more than the compiled
 layout.
 
 A proof with one bit flipped in its Akita opening is rejected after 85,820,939
-rows embedded and 86,179,483 rows in advice mode, where the untrusted advice
-holds 93,640 bytes of proof in a 128 KiB region.
+rows embedded and 86,179,483 rows in advice mode, where the untrusted advice is a
+93,640-byte framed stream (a 93,614-byte proof record) in a 128 KiB region.
 
-An outer Akita proof of the advice-mode trace would commit a 2^27-row trace:
-44 one-hot columns of 31 variables at K = 16, a 2^21-row recursion bytecode, a
-2^21-word trusted-advice group, and the 14-variable (2^14-word) floor for the
-untrusted group. At this revision, grouped schedule planning
+An outer Akita proof of the advice-mode trace would cover a 2^27-row trace: 44
+one-hot columns of 31 variables at K = 16 over a 2^21-row recursion bytecode.
+Its batch would also open the 2^21-word trusted-advice group and the untrusted
+group at the 14-variable (2^14-word) floor. At this revision, grouped schedule planning
 (`AkitaScheme::verifier_setup_from_params` on the parameters
 `preprocess_full_with_advice` builds) admits both advice groups, alone or
 together, with full program preprocessing and the default single-chunk witness
