@@ -57,6 +57,11 @@ impl<const XLEN: usize, const ROTATION: u32> PrefixSuffixDecomposition<XLEN>
             63 => &[Prefixes::XorRot63],
             2 => &[Prefixes::XorRot2],
             61 => &[Prefixes::XorRot61],
+            3 => &[Prefixes::XorRot3],
+            8 => &[Prefixes::XorRot8],
+            9 => &[Prefixes::XorRot9],
+            19 => &[Prefixes::XorRot19],
+            20 => &[Prefixes::XorRot20],
             _ => unreachable!("unsupported rotation {ROTATION}"),
         }
     }
@@ -70,6 +75,11 @@ impl<const XLEN: usize, const ROTATION: u32> PrefixSuffixDecomposition<XLEN>
             63 => &[Suffixes::One, Suffixes::XorRot63],
             2 => &[Suffixes::One, Suffixes::XorRot2],
             61 => &[Suffixes::One, Suffixes::XorRot61],
+            3 => &[Suffixes::One, Suffixes::XorRot3],
+            8 => &[Suffixes::One, Suffixes::XorRot8],
+            9 => &[Suffixes::One, Suffixes::XorRot9],
+            19 => &[Suffixes::One, Suffixes::XorRot19],
+            20 => &[Suffixes::One, Suffixes::XorRot20],
             _ => unreachable!("unsupported rotation {ROTATION}"),
         }
     }
@@ -86,6 +96,11 @@ impl<const XLEN: usize, const ROTATION: u32> PrefixSuffixDecomposition<XLEN>
             63 => prefixes[Prefixes::XorRot63] * one + xor_rot,
             2 => prefixes[Prefixes::XorRot2] * one + xor_rot,
             61 => prefixes[Prefixes::XorRot61] * one + xor_rot,
+            3 => prefixes[Prefixes::XorRot3] * one + xor_rot,
+            8 => prefixes[Prefixes::XorRot8] * one + xor_rot,
+            9 => prefixes[Prefixes::XorRot9] * one + xor_rot,
+            19 => prefixes[Prefixes::XorRot19] * one + xor_rot,
+            20 => prefixes[Prefixes::XorRot20] * one + xor_rot,
             _ => unreachable!("unsupported rotation {ROTATION}"),
         }
     }
@@ -152,10 +167,25 @@ mod tests {
     fn keccak_rotations_match_mle_and_decomposition() {
         mle_full_hypercube_test::<8, Fr, VirtualXORROTTable<8, 2>>();
         mle_full_hypercube_test::<8, Fr, VirtualXORROTTable<8, 61>>();
+        mle_full_hypercube_test::<8, Fr, VirtualXORROTTable<8, 3>>();
+        mle_full_hypercube_test::<8, Fr, VirtualXORROTTable<8, 8>>();
+        mle_full_hypercube_test::<8, Fr, VirtualXORROTTable<8, 9>>();
+        mle_full_hypercube_test::<8, Fr, VirtualXORROTTable<8, 19>>();
+        mle_full_hypercube_test::<8, Fr, VirtualXORROTTable<8, 20>>();
         mle_random_test::<XLEN, Fr, VirtualXORROTTable<XLEN, 2>>();
         mle_random_test::<XLEN, Fr, VirtualXORROTTable<XLEN, 61>>();
+        mle_random_test::<XLEN, Fr, VirtualXORROTTable<XLEN, 3>>();
+        mle_random_test::<XLEN, Fr, VirtualXORROTTable<XLEN, 8>>();
+        mle_random_test::<XLEN, Fr, VirtualXORROTTable<XLEN, 9>>();
+        mle_random_test::<XLEN, Fr, VirtualXORROTTable<XLEN, 19>>();
+        mle_random_test::<XLEN, Fr, VirtualXORROTTable<XLEN, 20>>();
         prefix_suffix_test::<XLEN, Fr, VirtualXORROTTable<XLEN, 2>>();
         prefix_suffix_test::<XLEN, Fr, VirtualXORROTTable<XLEN, 61>>();
+        prefix_suffix_test::<XLEN, Fr, VirtualXORROTTable<XLEN, 3>>();
+        prefix_suffix_test::<XLEN, Fr, VirtualXORROTTable<XLEN, 8>>();
+        prefix_suffix_test::<XLEN, Fr, VirtualXORROTTable<XLEN, 9>>();
+        prefix_suffix_test::<XLEN, Fr, VirtualXORROTTable<XLEN, 19>>();
+        prefix_suffix_test::<XLEN, Fr, VirtualXORROTTable<XLEN, 20>>();
     }
 
     #[test]
@@ -176,6 +206,26 @@ mod tests {
                 assert_eq!(
                     VirtualXORROTTable::<64, 61>.materialize_entry(index),
                     (x ^ y).rotate_right(61),
+                );
+                assert_eq!(
+                    VirtualXORROTTable::<64, 3>.materialize_entry(index),
+                    (x ^ y).rotate_right(3),
+                );
+                assert_eq!(
+                    VirtualXORROTTable::<64, 8>.materialize_entry(index),
+                    (x ^ y).rotate_right(8),
+                );
+                assert_eq!(
+                    VirtualXORROTTable::<64, 9>.materialize_entry(index),
+                    (x ^ y).rotate_right(9),
+                );
+                assert_eq!(
+                    VirtualXORROTTable::<64, 19>.materialize_entry(index),
+                    (x ^ y).rotate_right(19),
+                );
+                assert_eq!(
+                    VirtualXORROTTable::<64, 20>.materialize_entry(index),
+                    (x ^ y).rotate_right(20),
                 );
             }
         }

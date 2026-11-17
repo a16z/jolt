@@ -33,3 +33,8 @@ declare_xorrot!(VirtualXORROT16, 16);
 declare_xorrot!(VirtualXORROT63, 63);
 declare_xorrot!(VirtualXORROT2, 2);
 declare_xorrot!(VirtualXORROT61, 61);
+declare_xorrot!(VirtualXORROT3, 3);
+declare_xorrot!(VirtualXORROT8, 8);
+declare_xorrot!(VirtualXORROT9, 9);
+declare_xorrot!(VirtualXORROT19, 19);
+declare_xorrot!(VirtualXORROT20, 20);

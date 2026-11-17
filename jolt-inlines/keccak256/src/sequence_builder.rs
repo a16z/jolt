@@ -133,6 +133,11 @@ impl Keccak256SequenceBuilder {
                     1 => Some(Kind::VirtualXORROT63),
                     3 => Some(Kind::VirtualXORROT61),
                     62 => Some(Kind::VirtualXORROT2),
+                    61 => Some(Kind::VirtualXORROT3),
+                    56 => Some(Kind::VirtualXORROT8),
+                    55 => Some(Kind::VirtualXORROT9),
+                    45 => Some(Kind::VirtualXORROT19),
+                    44 => Some(Kind::VirtualXORROT20),
                     _ => None,
                 };
                 if let Some(kind) = fused {

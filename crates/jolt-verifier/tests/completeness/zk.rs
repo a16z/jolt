@@ -147,7 +147,8 @@ fn zk_muldiv_blindfold_shape_audit_matches_modular_protocol() {
     assert_eq!(modular.coefficient_rows, 221);
     assert_eq!(modular.output_claim_rows, 16);
     assert_eq!(modular.eval_commitments, 1);
-    assert_eq!(modular.auxiliary_rows, 37);
+    // Seven appended XOR-rotate tables enlarge the auxiliary lookup witness.
+    assert_eq!(modular.auxiliary_rows, 39);
     assert_eq!(modular.error_row_count, 64);
 }
 
