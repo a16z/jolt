@@ -248,7 +248,10 @@ fn lean_instr(
         | "VirtualXORROTW22" | "VirtualXORROTW19" | "VirtualXORROTW6" => {
             format!("{rd} {rs1} {rs2}")
         }
-        "VirtualShiftDataB" | "VirtualShiftDataH" | "VirtualShiftDataW" => {
+        "VirtualShiftDataB"
+        | "VirtualShiftDataH"
+        | "VirtualShiftDataW"
+        | "VirtualExtractByteUnsigned" => {
             format!("{rd} {rs1} {rs2} {imm}")
         }
         "ADDI" | "ADDIW" | "ANDI" | "ORI" | "XORI" | "SLTI" | "SLTIU" | "VirtualMULI"

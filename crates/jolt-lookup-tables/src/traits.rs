@@ -417,7 +417,8 @@ mod tests {
             /// lookup output, which is an offset rather than a result. An
             /// `AddressOffset` load therefore leaves its RAM word unchecked; its
             /// sequence must read the loaded doubleword only as an interleaved operand
-            /// (jolt-program's `LaneWindow`), which this per-row registry cannot check.
+            /// (`Pext`, `PextSigned`, `ANDN`, or `ExtractByteUnsigned` in jolt-program),
+            /// which this per-row registry cannot check.
             #[test]
             fn memory_rows_look_up_only_address_offsets() {
                 let mut floor_rows = 0;

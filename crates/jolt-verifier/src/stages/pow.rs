@@ -32,20 +32,20 @@ use crate::VerifierError;
 ///
 /// | Site | Loss | 64-bit extreme (`B = R = 16`) |
 /// |---|---|---|
-/// | Stage 6a | `165 + 2(B + R)` | 229 |
+/// | Stage 6a | `166 + 2(B + R)` | 230 |
 /// | Stage 7 | `82 + 3R + 2B` | 162 |
 /// | Stage 2 | `ℓR + 8` | 69 |
 /// | Stage 1 `tau` | `ℓT + 15` | 55 at `ℓT = 40` |
 /// | Stages 1, 2 `tau_high`, 3, 4, 5, 6b | at most 15 | |
 /// | Stage 8 | `Σ log₂(slot capacity)` over at most 4 objects | a few |
 ///
-/// Stage 6a is the bytecode read-RAF's 64, up to 4 fresh booleanity
+/// Stage 6a is the bytecode read-RAF's 65, up to 4 fresh booleanity
 /// coordinates, `2(N − 1)` for the `N = 32 + B + R + 16 + 1` boolean-checked
 /// openings, and 1 for the batching coefficients. Stage 7 is 3 `γ` powers per
 /// RAM chunk, 2 per instruction and bytecode chunk, 1 per increment digit,
 /// plus 2.
 ///
-/// 1023 is 4.5 times the extreme and still covers 2-bit chunks (about 383).
+/// 1023 is 4.4 times the extreme and still covers 2-bit chunks (about 383).
 /// It is `2^10 − 1` rather than `2^10`: the field order is below `2^128`, so a
 /// power-of-two loss would cost one more bit.
 pub const SITE_LOSS: u64 = 1023;

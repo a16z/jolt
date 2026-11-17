@@ -86,7 +86,8 @@ impl AccessWidth {
 /// instruction read-RAF proves is a `u64` (`merge`'s later `ADD` reads the
 /// `ANDN` output, a table value). A RAM word outside `[0, 2^64)`, such as a
 /// malformed untrusted-advice word, therefore has no accepting proof. Any other
-/// read of the loaded word must also take it as an interleaved operand.
+/// read of the loaded word must also take it as an interleaved operand, as
+/// `LBU` does with `VirtualExtractByteUnsigned` instead of opening a lane mask.
 #[derive(Clone, Copy)]
 pub(in crate::expand) struct LaneWindow {
     width: AccessWidth,
@@ -161,7 +162,7 @@ impl LaneWindow {
     }
 }
 
-/// Lowers `LB`/`LBU`/`LH`/`LHU`/`LW`/`LWU`: the floor-addressed `VirtualLoad`
+/// Lowers `LB`/`LH`/`LHU`/`LW`/`LWU`: the floor-addressed `VirtualLoad`
 /// row loads the doubleword containing `ea = rs1 + imm`, `VirtualWindowMask`
 /// turns `ea` into the byte mask of the addressed lane, and a parallel-extract
 /// lookup pulls the lane out of the doubleword.
