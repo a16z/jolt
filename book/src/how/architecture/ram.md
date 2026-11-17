@@ -166,9 +166,10 @@ $$
 No instruction sets both flags (the `load_store_exclusive` test in `jolt-riscv` pins the instruction catalog, and bytecode read-checking ties each cycle's flags to its bytecode row), so the right-hand side is 0 or 1.
 The $d$ committed chunks factor the selector as $\textsf{ra}(k, j) = \prod_{i=1}^{d} \textsf{ra}_i(k_i, j)$ (as described [above](#dynamic-parameters), $d$ for RAM is dynamic), so the left-hand side is $\prod_{i=1}^{d} n_i(j)$, where $n_i(j) = \sum_{k_i} \textsf{ra}_i(k_i, j)$ sums over the values that digit $k_i$ takes in addresses of the RAM domain.
 Booleanity of every committed chunk makes each $n_i(j)$ a nonnegative integer, and the product is far below the field modulus, so the equation holds over the integers.
-On a memory row the product is 1, so every chunk's row is one-hot and $\textsf{ra}$ selects exactly one word.
-On any other row the product is 0, so some chunk's row is zero and $\textsf{ra}$ selects no word.
-Individual chunk weights are not otherwise constrained: on a non-memory row, the chunks other than a zero one may hold several ones.
+On a memory row the product is 1, so every chunk's row restricted to those digit values is one-hot and $\textsf{ra}$ selects exactly one word.
+On any other row the product is 0, so some chunk's restriction is zero and $\textsf{ra}$ selects no word.
+`committed_address_chunks` fixes unused leading address bits to zero, so entries outside that slice need only satisfy Booleanity, even on memory rows.
+Individual chunk weights are not otherwise constrained: on a non-memory row, the chunk restrictions other than a zero one may hold several ones.
 
 ### ra virtualization
 

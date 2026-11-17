@@ -145,7 +145,6 @@ impl<PCS: CommitmentScheme> ProgramPreprocessing<PCS> {
         })
     }
 
-    /// The admission check of [`code_region`](Self::code_region).
     pub fn validate_code_region(&self) -> Result<(), VerifierError> {
         self.code_region().map(|_| ())
     }

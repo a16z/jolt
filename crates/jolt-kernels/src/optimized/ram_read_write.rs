@@ -137,8 +137,6 @@ impl<F: JoltField> Phase<F> {
 const LATE_PURGE_CYCLE_ROUNDS: usize = 6;
 
 impl<F: JoltField> RamReadWriteKernel<F> {
-    /// The kernel from its first phase, batching with the relation's γ powers
-    /// and address masks.
     fn new(
         inputs: &ProverInputs<'_, F, RamReadWriteChecking<F>>,
         phase: Phase<F>,

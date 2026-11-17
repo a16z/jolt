@@ -516,7 +516,6 @@ mod tests {
         layout.trusted_advice_end = lowest + 24;
         layout.input_start = lowest + 24;
         layout.input_end = lowest + 40;
-        // Source words overlap input and touch the rounded canary extent.
         layout.stack_end = lowest + 62;
         let code = 4..8;
         let intervals = super::write_protected_word_intervals(code.clone(), &layout, 16).unwrap();

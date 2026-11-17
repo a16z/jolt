@@ -273,7 +273,6 @@ impl<F: JoltField> AddressMasks<F> {
 struct MaskInterval<F: JoltField> {
     start: usize,
     end: usize,
-    /// Whether the interval belongs to `N` rather than `C`.
     unmapped: bool,
     #[cfg_attr(feature = "allocative", allocative(skip))]
     first: F,
@@ -510,7 +509,6 @@ mod tests {
             let bindings: Vec<_> = (0..log_k).map(|bit| Fr::from_u64(3 + bit as u64)).collect();
             for start in 0..size {
                 for end in start + 1..=size {
-                    // The same interval as `C` alone and as `N` alone.
                     let mut masks = [
                         AddressMasks::new(&[(start, end)], &[]).unwrap(),
                         AddressMasks::new(&[], &[(start, end)]).unwrap(),
@@ -542,9 +540,6 @@ mod tests {
         assert_eq!(mask.value(0).unmapped(), Fr::zero());
     }
 
-    /// With interleaved intervals of both masks in one list, each mask keeps
-    /// its own value: membership before any bind, and the brute-force block sum
-    /// after every bind and after the address phase ends.
     #[test]
     fn interleaved_masks_match_brute_force_sums() {
         use jolt_field::Ring;
