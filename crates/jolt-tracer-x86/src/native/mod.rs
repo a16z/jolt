@@ -189,7 +189,7 @@ impl X86TracerBackend {
         });
 
         compiled.run_record(&mut guest)?;
-        guest.check_exit(&mut host)?.require_halt()?;
+        guest.check_exit(&mut host, &plane)?.require_halt()?;
 
         let recorded =
             (guest.obs_cursor as usize - obs_start as usize) / core::mem::size_of::<Observation>();
@@ -256,7 +256,7 @@ impl X86TracerBackend {
         });
 
         compiled.run(&mut guest)?;
-        let exit = guest.check_exit(&mut host)?;
+        let exit = guest.check_exit(&mut host, &plane)?;
 
         Ok(RunOutput {
             trace_len: guest.trace_len as usize,
@@ -607,7 +607,7 @@ impl ChunkedExecutionBackend for X86TracerBackend {
                 ));
                 continue;
             }
-            guest.check_exit(&mut host)?.require_halt()?;
+            guest.check_exit(&mut host, &plane)?.require_halt()?;
             break;
         }
         let trace_len = guest.trace_len as usize;
@@ -684,7 +684,7 @@ impl ChunkedExecutionBackend for X86TracerBackend {
 
         checkpoint.compiled.run_record_pausable(&mut guest)?;
         if guest.exit != ExitReason::Paused as u64 {
-            guest.check_exit(&mut host)?.require_halt()?;
+            guest.check_exit(&mut host, &plane)?.require_halt()?;
         }
 
         let recorded =
