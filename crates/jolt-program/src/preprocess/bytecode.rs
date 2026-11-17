@@ -40,7 +40,6 @@ impl BytecodePreprocessing {
                     instruction.instruction_kind,
                 ));
             }
-            instruction.validate_branch_offset()?;
             check_store_rd_disjoint(instruction)?;
             #[cfg(feature = "field-inline")]
             validate_field_inline_instruction(instruction)?;
@@ -140,7 +139,7 @@ impl BytecodePCMapper {
     }
 
     pub fn try_new(bytecode: &[JoltInstructionRow]) -> Result<Self, PreprocessingError> {
-        let mut slots = vec![PcSlot::default(); Self::index_count(bytecode)?];
+        let mut slots = vec![PcSlot::default(); Self::validate_offsets_and_count_slots(bytecode)?];
         if let Some(first) = slots.first_mut() {
             first.virtual_sequence_length = 1;
         }
@@ -282,12 +281,14 @@ impl BytecodePCMapper {
         (address - RAM_START_ADDRESS as usize) / ALIGNMENT_FACTOR_BYTECODE + 1
     }
 
-    fn index_count(bytecode: &[JoltInstructionRow]) -> Result<usize, PreprocessingError> {
-        let max_address = bytecode
-            .iter()
-            .map(|instruction| instruction.address)
-            .max()
-            .unwrap_or(0);
+    fn validate_offsets_and_count_slots(
+        bytecode: &[JoltInstructionRow],
+    ) -> Result<usize, PreprocessingError> {
+        let mut max_address = 0;
+        for row in bytecode {
+            row.validate_branch_offset()?;
+            max_address = max_address.max(row.address);
+        }
         if max_address == 0 {
             Ok(1)
         } else {
