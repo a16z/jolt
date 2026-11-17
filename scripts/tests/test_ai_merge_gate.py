@@ -1327,27 +1327,39 @@ class AiMergeGateTests(unittest.TestCase):
                     self.assertEqual(apis.record("ai-merge-gate/review"), [])
 
     def test_resolve_maps_events_to_their_own_pull_request(self) -> None:
-        def events_run(title, associations=(7,), fork=True):
+        def events_run(title, associations=(7,), fork=True, event="pull_request"):
             return {"repository": {"id": 1, "full_name": REPO}, "workflow_run": {
                 "display_title": title, "path": ".github/workflows/ai-merge-gate-events.yml",
-                "event": "pull_request", "repository": {"id": 1, "full_name": REPO},
+                "event": event, "repository": {"id": 1, "full_name": REPO},
                 "head_repository": {"id": 2 if fork else 1}, "head_branch": "fix", "head_sha": HEAD,
                 "pull_requests": [{"number": n, "base": {"repo": {"id": 1}}} for n in associations]}}
 
-        github = GATE.GitHub(FakeApis(), "token", REPO)
+        fork_pull = FakeApis()
+        fork_pull.other_pulls[f"/repos/{REPO}/pulls/9"] = {
+            "base": {"repo": {"id": 1}}, "head": {"sha": OLD, "ref": "fix", "repo": {"id": 2}}}
+        github = GATE.GitHub(fork_pull, "token", REPO)
         self.assertEqual(GATE.resolve("workflow_run", events_run("AI merge gate events for PR #7"), github), 7)
         self.assertEqual(GATE.resolve("workflow_run", events_run("AI merge gate events for PR #7", ()), github), 7)
         same_repo = FakeApis()
         same_repo.head_repo_id = 1
         self.assertEqual(GATE.resolve("workflow_run", events_run("AI merge gate events for PR #7", (), False),
                                       GATE.GitHub(same_repo, "token", REPO)), 7)
+        # GitHub reports the base repository as a review run's head repository, for a fork's pull request too.
+        review = events_run("AI merge gate events for PR #7", (), False, "pull_request_review")
+        self.assertEqual(GATE.resolve("workflow_run", review, github), 7)
+        self.assertEqual(GATE.resolve("workflow_run", review, GATE.GitHub(same_repo, "token", REPO)), 7)
         # Run associations do not select a sibling or replace the exact source binding.
         self.assertEqual(GATE.resolve("workflow_run", events_run("AI merge gate events for PR #7", (9, 7)), github), 7)
         self.assertIsNone(GATE.resolve("workflow_run", events_run("AI merge gate events for PR #9")))
-        for field, value in (("head_sha", OLD), ("head_branch", "other"), ("head_repository", {"id": 3})):
-            event = events_run("AI merge gate events for PR #7", ())
+        for kind, field, value in (
+            ("pull_request", "head_sha", OLD), ("pull_request", "head_branch", "other"),
+            ("pull_request", "head_repository", {"id": 3}),
+            ("pull_request_review", "head_sha", OLD), ("pull_request_review", "head_branch", "other"),
+            ("pull_request_review", "display_title", "AI merge gate events for PR #9"),
+        ):
+            event = events_run("AI merge gate events for PR #7", (), kind == "pull_request", kind)
             event["workflow_run"][field] = value
-            self.assertIsNone(GATE.resolve("workflow_run", event, github))
+            self.assertIsNone(GATE.resolve("workflow_run", event, github), (kind, field))
         # Without the run name, GitHub titles the run after the pull request.
         self.assertIsNone(GATE.resolve("workflow_run", events_run("Fix the prover")))
         issue = {"issue": {"number": 3}, "comment": {"user": {"type": "User"}}}
