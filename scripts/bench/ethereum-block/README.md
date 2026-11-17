@@ -78,9 +78,9 @@ Block 26227673 is the smallest of the ten blocks jeth freezes for its
 cycle-count harness. Its raw files are the assets `26227673.block.rlp` (SHA-256
 `ce00f79ec21a277514ad47469dd4b40d7ea85c1715840e144e87e9c40ca9bd95`) and
 `26227673.witness.json` (SHA-256
-`8ad5801de9708d2e0252f638d3c7d6fde8c74bf701a0eda3afc3539f08f58f53`) of jeth's
-release `cycles-blocks-v1`. jeth's `fixtures/cycles-blocks.json` records both
-hashes.
+`8ad5801de9708d2e0252f638d3c7d6fde8c74bf701a0eda3afc3539f08f58f53`) of release
+`cycles-blocks-v1` of `a16z/jeth`. jeth's `fixtures/cycles-blocks.json` records
+both hashes.
 
 Block 26433846 is not part of jeth. Every frozen block needs a trace ceiling
 of `2^28` or more: in run 44058928966 of jeth's `Cycles` workflow, which used
