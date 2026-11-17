@@ -15,6 +15,7 @@ field-inline = ["jolt-sdk/field-inline"]
 akita = [
   "jolt-sdk/akita",
   "dep:jolt-akita",
+  "dep:jolt-claims",
   "dep:jolt-program",
   "dep:jolt-witness",
   "dep:tracer",
@@ -25,6 +26,7 @@ jolt-field.workspace = true
 jolt-poly.workspace = true
 jolt-sumcheck.workspace = true
 jolt-akita = { path = "../../crates/jolt-akita", optional = true }
+jolt-claims = { path = "../../crates/jolt-claims", optional = true }
 jolt-program = { path = "../../crates/jolt-program", optional = true }
 jolt-witness = { path = "../../crates/jolt-witness", optional = true }
 tracer = { path = "../../tracer", optional = true }

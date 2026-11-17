@@ -1,5 +1,5 @@
 use super::kernel_cases::KernelCase;
-use super::{GuestField as F, GuestProgram, RecordLimits};
+use super::{GuestField as F, GuestProgram, GuestStreams, RecordLimits, SetupTransport};
 use jolt_field::{CanonicalEncoding, Field, Ring};
 
 fn next_field(seed: &mut u64, index: usize) -> F {
@@ -9,11 +9,11 @@ fn next_field(seed: &mut u64, index: usize) -> F {
         2 => -F::from_u64(1),
         _ => {
             let mut bytes = [0; 32];
-            for chunk in bytes.chunks_exact_mut(8) {
+            for chunk in bytes.as_chunks_mut::<8>().0 {
                 *seed ^= *seed << 13;
                 *seed ^= *seed >> 7;
                 *seed ^= *seed << 17;
-                chunk.copy_from_slice(&seed.to_le_bytes());
+                *chunk = seed.to_le_bytes();
             }
             F::from_bytes_le_reduced(&bytes)
         }
@@ -86,18 +86,20 @@ pub(super) fn run() {
     }
     let encoded = bincode::serde::encode_to_vec(&cases, bincode::config::standard()).unwrap();
     let input = postcard::to_stdvec(&encoded.as_slice()).unwrap();
-    let config = GuestProgram::Fibonacci.get_memory_config(true, input.len());
+    let streams = GuestStreams {
+        input: input.clone(),
+        ..GuestStreams::default()
+    };
+    let config = GuestProgram::Fibonacci.get_memory_config(SetupTransport::Image, &streams);
     let output_dir = super::get_guest_src_dir();
     super::generate_provable_macro(
-        GuestProgram::Fibonacci,
-        true,
         &config,
+        GuestProgram::Fibonacci.get_max_trace_length(true),
         &output_dir,
         RecordLimits::default(),
     );
-    super::clear_embedded_bytes(&output_dir, &[]);
-    let mut program = super::configured_recursion_program(config);
-    program.set_func("check_field_kernels");
+    super::clear_embedded_bytes(&output_dir, None);
+    let mut program = super::configured_recursion_program(config, "check_field_kernels");
     program.add_guest_feature("kernel-tests");
     program.build("/tmp/jolt-guest-targets");
     let (rows, device) = program.execute_with_output(&input, &[], &[]);

@@ -5608,6 +5608,7 @@ dependencies = [
  "bincode 2.0.1",
  "clap",
  "jolt-akita",
+ "jolt-claims",
  "jolt-field",
  "jolt-inlines-blake2",
  "jolt-inlines-ntt",
@@ -5629,6 +5630,7 @@ name = "recursion-guest"
 version = "0.1.0"
 dependencies = [
  "bincode 2.0.1",
+ "bytemuck",
  "jolt-akita",
  "jolt-crypto",
  "jolt-field",

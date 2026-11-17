@@ -81,12 +81,14 @@ impl<'a> Records<'a> {
         Ok(value)
     }
 
-    pub(crate) fn proof_count(&mut self) -> Result<u32, RecordError> {
+    /// A nonzero proof count whose records, `records_per_proof` each, can
+    /// still fit in this stream.
+    pub(crate) fn proof_count(&mut self, records_per_proof: usize) -> Result<u32, RecordError> {
         let count: u32 = self.record()?;
         if count == 0 {
             return Err(RecordError);
         }
-        self.check_count(count, 2)?;
+        self.check_count(count, records_per_proof)?;
         Ok(count)
     }
 
@@ -275,18 +277,19 @@ mod tests {
     #[test]
     fn batch_requires_a_proof_and_exact_end_of_input() {
         let empty = frame(&[0]);
-        assert!(parse_records(&empty).unwrap().proof_count().is_err());
+        assert!(parse_records(&empty).unwrap().proof_count(2).is_err());
         let mut batch = frame(&[1]);
         // A count followed by two minimal records exercises the framing contract.
         batch.extend_from_slice(&[0; 16]);
+        assert!(parse_records(&batch).unwrap().proof_count(3).is_err());
         let mut records = parse_records(&batch).unwrap();
-        assert_eq!(records.proof_count().unwrap(), 1);
+        assert_eq!(records.proof_count(2).unwrap(), 1);
         records.raw().unwrap();
         records.raw().unwrap();
         assert!(records.finish().is_ok());
         batch.push(0);
         let mut records = parse_records(&batch).unwrap();
-        records.proof_count().unwrap();
+        records.proof_count(2).unwrap();
         records.raw().unwrap();
         records.raw().unwrap();
         assert!(records.finish().is_err());

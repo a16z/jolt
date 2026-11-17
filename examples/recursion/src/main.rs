@@ -1,13 +1,18 @@
 #[path = "../guest/src/bounded.rs"]
 mod bounded;
 use bounded::RecordLimits;
+#[cfg(any(feature = "akita", test))]
+#[path = "../guest/src/compiled_rows.rs"]
+mod compiled_rows;
 
 use clap::{Parser, Subcommand, ValueEnum};
 #[cfg(feature = "akita")]
 use jolt_akita::{
-    AkitaChunkProfile, AkitaField, AkitaProverTranscript, AkitaScheme, AkitaVerifierTranscript,
-    TrustedBytes,
+    AkitaChunkProfile, AkitaField, AkitaProverTranscript, AkitaScheduleArtifacts, AkitaScheme,
+    AkitaVerifierTranscript, TrustedBytes,
 };
+#[cfg(feature = "akita")]
+use jolt_claims::protocols::jolt::JoltAdviceKind;
 use jolt_field::Ring;
 use jolt_inlines_blake2::Blake2b;
 #[cfg(feature = "ntt-inline")]
@@ -19,6 +24,8 @@ use jolt_sdk::host::JoltProgramSource;
 use jolt_sdk::host::Program;
 #[cfg(feature = "akita")]
 use jolt_sdk::jolt_prover::akita::preprocessing::AkitaVc;
+#[cfg(feature = "akita")]
+use jolt_sdk::jolt_prover::akita::witness::commit_advice;
 use jolt_sdk::jolt_verifier::preprocessing::ProgramPreprocessing as VerifierProgramPreprocessing;
 use jolt_sdk::jolt_verifier::proof::JoltProofClaims;
 #[cfg(feature = "akita")]
@@ -178,6 +185,10 @@ enum Commands {
         workdir: PathBuf,
         #[arg(long)]
         embed: bool,
+        /// Supply the setup as trusted advice and the proofs as untrusted advice
+        #[cfg(feature = "akita")]
+        #[arg(long, conflicts_with = "embed")]
+        advice: bool,
     },
     /// Compare compiled field kernels with native software results under the tracer.
     #[cfg(feature = "field-inline")]
@@ -231,6 +242,11 @@ enum Commands {
         /// Embed proof data to specified directory
         #[arg(long, value_name = "DIRECTORY", num_args = 0..=1)]
         embed: Option<Option<PathBuf>>,
+        /// Supply the setup as trusted advice and the proofs as untrusted
+        /// advice; the input carries only the proof count and devices
+        #[cfg(feature = "akita")]
+        #[arg(long, conflicts_with = "embed")]
+        advice: bool,
         /// Store trace rows on disk instead of executing without row storage
         #[arg(short = 'd', long = "disk", default_value_t = false)]
         trace_to_file: bool,
@@ -252,6 +268,46 @@ enum RunConfig {
     Trace(ExpectedVerification),
     TraceToFile(ExpectedVerification),
     CheckInputFraming,
+}
+
+/// Where the recursion guest reads the inner verifier setup from.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SetupTransport {
+    /// Baked into the guest image; the input carries the proofs and devices.
+    Image,
+    /// The input, ahead of the proofs and devices; the image pins its digest.
+    Input,
+    /// Trusted advice, with the proofs as untrusted advice; the input carries
+    /// only the statements, the proof count and devices.
+    #[cfg(feature = "akita")]
+    Advice,
+}
+
+impl SetupTransport {
+    fn guest_function(self) -> &'static str {
+        match self {
+            Self::Image | Self::Input => "verify",
+            #[cfg(feature = "akita")]
+            Self::Advice => "verify_advice",
+        }
+    }
+}
+
+/// Record streams for the guest's input and advice regions. The input region
+/// always exists; an advice region exists only for a `Some` stream.
+#[derive(Clone, Default)]
+struct GuestStreams {
+    input: Vec<u8>,
+    untrusted_advice: Option<Vec<u8>>,
+    trusted_advice: Option<Vec<u8>>,
+}
+
+/// [`GuestStreams`] as the tracer writes them into the guest's regions.
+#[derive(Clone)]
+struct GuestRegions {
+    input: Vec<u8>,
+    untrusted_advice: Vec<u8>,
+    trusted_advice: Vec<u8>,
 }
 
 impl GuestProgram {
@@ -290,20 +346,24 @@ impl GuestProgram {
             .collect()
     }
 
-    fn get_memory_config(&self, use_embed: bool, input_section_len: usize) -> MemoryConfig {
+    fn get_memory_config(&self, transport: SetupTransport, streams: &GuestStreams) -> MemoryConfig {
         // Eight bytes for the pad prefix, at most seven pad bytes, ten for
-        // postcard's length, and one byte for the strict input-size bound.
-        let max_input_size = input_section_len
-            .checked_add(26)
-            .and_then(usize::checked_next_power_of_two)
-            .and_then(|size| u64::try_from(size).ok())
-            .expect("recursion input size overflow");
+        // postcard's length, and one byte for the strict size bound `frame`
+        // asserts.
+        let capacity = |stream: &[u8]| {
+            stream
+                .len()
+                .checked_add(26)
+                .and_then(usize::checked_next_power_of_two)
+                .and_then(|size| u64::try_from(size).ok())
+                .expect("recursion region size overflow")
+        };
         MemoryConfig {
-            max_input_size,
+            max_input_size: capacity(&streams.input),
             max_output_size: 4096,
-            max_untrusted_advice_size: 0,
-            max_trusted_advice_size: 0,
-            heap_size: if *self == GuestProgram::Muldiv && !use_embed {
+            max_untrusted_advice_size: streams.untrusted_advice.as_deref().map_or(0, capacity),
+            max_trusted_advice_size: streams.trusted_advice.as_deref().map_or(0, capacity),
+            heap_size: if *self == GuestProgram::Muldiv && transport == SetupTransport::Input {
                 33554432
             } else {
                 134217728
@@ -334,14 +394,11 @@ impl GuestProgram {
 }
 
 fn generate_provable_macro(
-    guest: GuestProgram,
-    use_embed: bool,
     memory_config: &MemoryConfig,
+    max_trace_length: usize,
     output_dir: &Path,
     limits: RecordLimits,
 ) {
-    let max_trace_length = guest.get_max_trace_length(use_embed);
-
     let macro_content = format!(
         r#"const RECORD_LIMITS: bounded::RecordLimits = bounded::RecordLimits {{
     bytes: {record_bytes},
@@ -457,6 +514,12 @@ fn preprocess_guest_prover(
     jolt_sdk::preprocess_program(guest_prog, memory_config, max_trace_length, mode).unwrap()
 }
 
+/// The Akita schedule catalogs for the inner proofs and the setup commitment.
+#[cfg(feature = "akita")]
+fn schedule_artifacts() -> Arc<AkitaScheduleArtifacts> {
+    AkitaScheduleArtifacts::shared_from_default_directory(AkitaChunkProfile::new(8, 2))
+}
+
 /// The packed (Akita) inner proofs use the modular prover over fp128 and the
 /// packed verifier preprocessing from
 /// the host's own verification of each proof.
@@ -468,7 +531,6 @@ fn collect_guest_proofs(
     mode: ProgramPreprocessingMode,
     proofs: usize,
 ) -> Vec<u8> {
-    use jolt_akita::AkitaScheduleArtifacts;
     use jolt_program::execution::{ExecutionBackend, TraceInputs};
     use jolt_program::preprocess::JoltProgramPreprocessing;
     use jolt_sdk::jolt_prover::akita;
@@ -504,8 +566,7 @@ fn collect_guest_proofs(
         )
         .expect("inner program preprocessing"),
     );
-    let schedule_artifacts =
-        AkitaScheduleArtifacts::shared_from_default_directory(AkitaChunkProfile::new(8, 2));
+    let schedule_artifacts = schedule_artifacts();
     let mut all_groups_data = Vec::new();
     let n = inputs.len() as u32;
     let mut verifier_preprocessing = None;
@@ -722,38 +783,61 @@ fn collect_guest_proofs(
     all_groups_data
 }
 
-/// Bake the setup section of the stream into the guest image: `embedded.bin`
-/// next to the guest sources, included 8-byte aligned by the generated
-/// `embedded_bytes.rs`. The guest then takes its verifier setup from its own
-/// image and only the proofs from its input.
-fn generate_embedded_bytes(guest: GuestProgram, setup_section: &[u8], output_dir: &Path) {
+/// A setup section with the full program's bytecode rows compiled out of its
+/// preprocessing record.
+struct CompiledSetup<'a> {
+    /// The record without the rows, then the preprocessing digest computed
+    /// over the complete program. The image or the committed trusted advice
+    /// fixes both, so the guest assembles the preprocessing from them instead
+    /// of re-encoding and hashing the program.
+    preprocessing: Vec<u8>,
+    rows: Vec<JoltInstructionRow>,
+    /// The payload count and detached payloads, unchanged.
+    payloads: &'a [u8],
+}
+
+fn compile_setup(setup_section: &[u8]) -> CompiledSetup<'_> {
     let mut offset = 0;
     let mut preprocessing: GuestVerifierPreprocessing =
         read_record(setup_section, &mut offset).unwrap();
-    let bytecode = match &mut preprocessing.program {
+    let rows = match &mut preprocessing.program {
         VerifierProgramPreprocessing::Full(program) => {
             std::mem::take(&mut Arc::make_mut(program).bytecode.bytecode)
         }
         VerifierProgramPreprocessing::Committed(_) => Vec::new(),
     };
-    // The image fixes the program, so it fixes the digest too: bake it in
-    // rather than have the guest re-encode and hash the program.
     let digest = preprocessing.preprocessing_digest;
-    let mut compiled_setup = Vec::new();
-    push_record(&mut compiled_setup, &preprocessing);
-    push_record(&mut compiled_setup, &digest);
-    compiled_setup.extend_from_slice(&setup_section[offset..]);
-    let setup_section = compiled_setup.as_slice();
+    let mut records = Vec::new();
+    push_record(&mut records, &preprocessing);
+    push_record(&mut records, &digest);
+    CompiledSetup {
+        preprocessing: records,
+        rows,
+        payloads: &setup_section[offset..],
+    }
+}
+
+/// Bake the setup section of the stream into the guest image: `embedded.bin`
+/// next to the guest sources, included 8-byte aligned by the generated
+/// `embedded_bytes.rs`. The guest then takes its verifier setup from its own
+/// image and only the proofs from its input.
+fn generate_embedded_bytes(guest: GuestProgram, setup_section: &[u8], output_dir: &Path) {
+    let CompiledSetup {
+        preprocessing,
+        rows: bytecode,
+        payloads,
+    } = compile_setup(setup_section);
 
     info!(
         "Generating embedded setup for {} guest program ({} bytes)...",
         guest.name(),
-        setup_section.len()
+        preprocessing.len() + payloads.len()
     );
-    let mut image = Vec::with_capacity(setup_section.len() + RECORD_ALIGN);
+    let mut image = Vec::with_capacity(preprocessing.len() + payloads.len() + RECORD_ALIGN);
     // The static is 8-byte aligned, so no leading pad is needed.
     push_alignment_pad(&mut image, 0);
-    image.extend_from_slice(setup_section);
+    image.extend_from_slice(&preprocessing);
+    image.extend_from_slice(payloads);
 
     std::fs::create_dir_all(output_dir).unwrap();
     let bin_path = output_dir.join("embedded.bin");
@@ -797,9 +881,10 @@ fn render_embedded_bytecode(rows: &[JoltInstructionRow]) -> String {
     source
 }
 
-/// Undo [`generate_embedded_bytes`]: an input-mode build must not carry a
-/// stale baked setup.
-fn clear_embedded_bytes(output_dir: &Path, setup_section: &[u8]) {
+/// Undo [`generate_embedded_bytes`]: an input-mode or advice-mode build must
+/// not carry a stale baked setup. Input mode pins the digest of its setup
+/// section; an advice-mode image bakes no setup data.
+fn clear_embedded_bytes(output_dir: &Path, setup_digest: Option<[u8; 64]>) {
     std::fs::create_dir_all(output_dir).unwrap();
     std::fs::write(
         output_dir.join("embedded_bytecode.rs"),
@@ -809,49 +894,125 @@ fn clear_embedded_bytes(output_dir: &Path, setup_section: &[u8]) {
     std::fs::write(
         output_dir.join("embedded_bytes.rs"),
         format!(
-            "pub static EMBEDDED_BYTES: &[u8] = &[];\npub const SETUP_DIGEST: Option<[u8; 64]> = Some({:?});\n",
-            Blake2b::digest(setup_section),
+            "pub static EMBEDDED_BYTES: &[u8] = &[];\npub const SETUP_DIGEST: Option<[u8; 64]> = {setup_digest:?};\n",
         ),
     )
     .unwrap();
     let _ = std::fs::remove_file(output_dir.join("embedded.bin"));
 }
 
-/// Frame `section` as the guest's input: `postcard` prefixes the byte slice
-/// with a varint length, so a leading pad record lands every body 8-byte
-/// aligned at the address the guest reads it from.
-fn frame_guest_input(section: &[u8], memory_config: &MemoryConfig) -> Vec<u8> {
+/// The streams for advice mode. The trusted advice carries the compiled
+/// setup with its rows in [`compiled_rows`]' fixed-width layout. The proofs
+/// become untrusted advice, and the input keeps the statements: the proof
+/// count, then each proof's device.
+#[cfg(feature = "akita")]
+fn advice_streams(setup_section: &[u8], proof_section: &[u8]) -> GuestStreams {
+    let CompiledSetup {
+        preprocessing,
+        rows,
+        payloads,
+    } = compile_setup(setup_section);
+    let words = compiled_rows::encode(&rows);
+    assert_eq!(
+        compiled_rows::decode(&words).as_ref(),
+        Some(&rows),
+        "compiled bytecode rows must decode to the setup's rows"
+    );
+    let mut trusted_advice = preprocessing;
+    let bytes: Vec<u8> = words.iter().flat_map(|word| word.to_le_bytes()).collect();
+    push_raw(&mut trusted_advice, &bytes);
+    trusted_advice.extend_from_slice(payloads);
+
+    let mut offset = 0;
+    let count: u32 = read_record(proof_section, &mut offset).unwrap();
+    let mut input = Vec::new();
+    push_record(&mut input, &count);
+    let mut untrusted_advice = Vec::new();
+    for _ in 0..count {
+        push_raw(
+            &mut untrusted_advice,
+            read_raw(proof_section, &mut offset).unwrap(),
+        );
+        push_raw(&mut input, read_raw(proof_section, &mut offset).unwrap());
+    }
+    assert_eq!(offset, proof_section.len(), "trailing proof stream bytes");
+    GuestStreams {
+        input,
+        untrusted_advice: Some(untrusted_advice),
+        trusted_advice: Some(trusted_advice),
+    }
+}
+
+/// Frame `stream` for a region starting at `region_start`: `postcard`
+/// prefixes the byte slice with a varint length, so a leading pad record
+/// lands every body 8-byte aligned at the address the guest reads it from.
+fn frame_guest_region(stream: &[u8], region_start: u64) -> Vec<u8> {
     fn varint_len(value: usize) -> usize {
         postcard::to_stdvec(&value).unwrap().len()
     }
-    // The I/O region does not depend on the program size, which the layout
-    // insists on knowing (as the SDK's own macro does, pass a placeholder).
-    let layout = MemoryLayout::new(&MemoryConfig {
-        program_size: Some(0),
-        ..*memory_config
-    });
-    let input_start = usize::try_from(layout.input_start).unwrap();
+    let region_start = usize::try_from(region_start).unwrap();
     let mut pad = 0;
     // The varint width depends on the total length, which depends on the pad;
     // iterate to the fixpoint (the width changes only at 2^(7k) boundaries).
     for _ in 0..4 {
-        let total = 8 + pad + section.len();
-        let body_start = input_start + varint_len(total) + 8;
+        let total = 8 + pad + stream.len();
+        let body_start = region_start + varint_len(total) + 8;
         let next = body_start.next_multiple_of(RECORD_ALIGN) - body_start;
         if next == pad {
             break;
         }
         pad = next;
     }
-    let mut stream = Vec::with_capacity(8 + pad + section.len());
-    push_alignment_pad(&mut stream, pad);
-    stream.extend_from_slice(section);
+    let mut framed = Vec::with_capacity(8 + pad + stream.len());
+    push_alignment_pad(&mut framed, pad);
+    framed.extend_from_slice(stream);
     assert_eq!(
-        (input_start + varint_len(stream.len()) + 8 + pad) % RECORD_ALIGN,
+        (region_start + varint_len(framed.len()) + 8 + pad) % RECORD_ALIGN,
         0,
-        "guest input bodies must be 8-byte aligned"
+        "guest region bodies must be 8-byte aligned"
     );
-    postcard::to_stdvec(&stream.as_slice()).unwrap()
+    postcard::to_stdvec(&framed.as_slice()).unwrap()
+}
+
+impl GuestStreams {
+    fn frame(&self, memory_config: &MemoryConfig) -> GuestRegions {
+        // The I/O region does not depend on the program size, which the layout
+        // insists on knowing (as the SDK's own macro does, pass a placeholder).
+        let layout = MemoryLayout::new(&MemoryConfig {
+            program_size: Some(0),
+            ..*memory_config
+        });
+        let advice = |stream: Option<&[u8]>, region_start| {
+            stream.map_or_else(Vec::new, |stream| frame_guest_region(stream, region_start))
+        };
+        let regions = GuestRegions {
+            input: frame_guest_region(&self.input, layout.input_start),
+            untrusted_advice: advice(
+                self.untrusted_advice.as_deref(),
+                layout.untrusted_advice_start,
+            ),
+            trusted_advice: advice(self.trusted_advice.as_deref(), layout.trusted_advice_start),
+        };
+        for (name, bytes, capacity) in [
+            ("input", &regions.input, layout.max_input_size),
+            (
+                "untrusted advice",
+                &regions.untrusted_advice,
+                layout.max_untrusted_advice_size,
+            ),
+            (
+                "trusted advice",
+                &regions.trusted_advice,
+                layout.max_trusted_advice_size,
+            ),
+        ] {
+            assert!(
+                (bytes.len() as u64) < capacity || (capacity == 0 && bytes.is_empty()),
+                "{name} does not fit its region"
+            );
+        }
+        regions
+    }
 }
 
 fn save_proof_data(guest: GuestProgram, all_groups_data: &[u8], workdir: &Path) {
@@ -934,9 +1095,9 @@ fn decode_verifier_output(bytes: &[u8]) -> u32 {
     output
 }
 
-fn configured_recursion_program(memory_config: MemoryConfig) -> Program {
+fn configured_recursion_program(memory_config: MemoryConfig, func: &str) -> Program {
     let mut program = Program::new("recursion-guest");
-    program.set_func("verify");
+    program.set_func(func);
     program.set_std(true);
     // The verifier guest computes its field arithmetic through the
     // field-inline instructions, so it decodes under the field-inline profile, and
@@ -1057,36 +1218,79 @@ fn tamper_proof(
     save_proof_data(guest, &tampered, output);
 }
 
+/// Transport inputs `check-input-framing` runs against one image, with the
+/// verdict each must produce: malformed framing rejects without a panic.
+fn framing_cases(
+    streams: &GuestStreams,
+    honest: &GuestRegions,
+    memory_config: &MemoryConfig,
+) -> Vec<(&'static str, GuestRegions, u32)> {
+    let with_input = |input: Vec<u8>| GuestRegions {
+        input,
+        ..honest.clone()
+    };
+    let oversized = postcard::to_stdvec(&memory_config.max_input_size).unwrap();
+    let mut suffix = honest.input.clone();
+    suffix.push(1);
+    let mut zero_padding = honest.input.clone();
+    zero_padding.resize(memory_config.max_input_size as usize, 0);
+    let mut last_byte = zero_padding.clone();
+    *last_byte.last_mut().unwrap() = 1;
+    let mut cases = vec![
+        ("honest", honest.clone(), 1),
+        ("overflowing length", with_input(vec![0xff; 10]), 0),
+        ("oversize length", with_input(oversized), 0),
+        ("nonzero suffix", with_input(suffix), 0),
+        ("zero transport padding", with_input(zero_padding), 1),
+        ("nonzero final capacity byte", with_input(last_byte), 0),
+    ];
+    if let Some(proofs) = &streams.untrusted_advice {
+        let with_proofs = |untrusted_advice: Vec<u8>| GuestRegions {
+            untrusted_advice,
+            ..honest.clone()
+        };
+        let with_stream = |proofs: Vec<u8>| {
+            GuestStreams {
+                untrusted_advice: Some(proofs),
+                ..streams.clone()
+            }
+            .frame(memory_config)
+        };
+        let oversized = postcard::to_stdvec(&memory_config.max_untrusted_advice_size).unwrap();
+        let mut trailing = proofs.clone();
+        push_raw(&mut trailing, &[]);
+        cases.extend([
+            ("overflowing advice length", with_proofs(vec![0xff; 10]), 0),
+            ("oversize advice length", with_proofs(oversized), 0),
+            ("missing proof record", with_stream(Vec::new()), 0),
+            ("trailing proof record", with_stream(trailing), 0),
+        ]);
+    }
+    cases
+}
+
 fn run_recursion_proof(
     guest: GuestProgram,
     run_config: RunConfig,
-    input_bytes: Vec<u8>,
+    transport: SetupTransport,
+    streams: &GuestStreams,
+    regions: GuestRegions,
     memory_config: MemoryConfig,
     max_trace_length: usize,
 ) {
     let target_dir = "/tmp/jolt-guest-targets";
 
-    let mut program = configured_recursion_program(memory_config);
+    let mut program = configured_recursion_program(memory_config, transport.guest_function());
     program.build(target_dir);
     match run_config {
         RunConfig::CheckInputFraming => {
             // Build once: malformed inputs must not change the image or its capacity.
-            let oversized = postcard::to_stdvec(&memory_config.max_input_size).unwrap();
-            let mut suffix = input_bytes.clone();
-            suffix.push(1);
-            let mut zero_padding = input_bytes.clone();
-            zero_padding.resize(memory_config.max_input_size as usize, 0);
-            let mut last_byte = zero_padding.clone();
-            *last_byte.last_mut().unwrap() = 1;
-            for (name, input, expected) in [
-                ("honest", input_bytes, 1),
-                ("overflowing length", vec![0xff; 10], 0),
-                ("oversize length", oversized, 0),
-                ("nonzero suffix", suffix, 0),
-                ("zero transport padding", zero_padding, 1),
-                ("nonzero final capacity byte", last_byte, 0),
-            ] {
-                let (rows, device) = program.execute_with_output(&input, &[], &[]);
+            for (name, regions, expected) in framing_cases(streams, &regions, &memory_config) {
+                let (rows, device) = program.execute_with_output(
+                    &regions.input,
+                    &regions.untrusted_advice,
+                    &regions.trusted_advice,
+                );
                 assert!(!device.panic, "{name}: recursion verifier guest panicked");
                 assert_eq!(decode_verifier_output(&device.outputs), expected, "{name}");
                 info!("  {name}: verdict {expected}, trace length {rows}");
@@ -1094,12 +1298,23 @@ fn run_recursion_proof(
         }
         RunConfig::Trace(expected) | RunConfig::TraceToFile(expected) => {
             let io_device = if matches!(run_config, RunConfig::Trace(_)) {
-                let (rows, device) = program.execute_with_output(&input_bytes, &[], &[]);
+                let (rows, device) = program.execute_with_output(
+                    &regions.input,
+                    &regions.untrusted_advice,
+                    &regions.trusted_advice,
+                );
                 info!("  trace length: {rows}");
                 device
             } else {
                 let trace_path = PathBuf::from(format!("/tmp/{}-recursion.trace", guest.name()));
-                program.trace_to_file(&input_bytes, &[], &[], &trace_path).1
+                program
+                    .trace_to_file(
+                        &regions.input,
+                        &regions.untrusted_advice,
+                        &regions.trusted_advice,
+                        &trace_path,
+                    )
+                    .1
             };
             assert!(!io_device.panic, "Recursion verifier guest panicked");
             let rv = decode_verifier_output(&io_device.outputs);
@@ -1128,7 +1343,7 @@ fn run_recursion_proof(
                 let (proof, io_device): (RV64IMACProof, _) = jolt_sdk::prove_program(
                     &program,
                     &preprocessing,
-                    &input_bytes,
+                    &regions.input,
                     &[],
                     &[],
                     None,
@@ -1150,33 +1365,55 @@ fn run_recursion_proof(
     }
 }
 
+#[cfg(feature = "akita")]
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
 fn verify_proofs(
     guest: GuestProgram,
-    use_embed: bool,
+    transport: SetupTransport,
     workdir: &Path,
     output_dir: &Path,
     run_config: RunConfig,
 ) {
     info!("Verifying proofs for {} guest program...", guest.name());
-    info!("Using embed mode: {use_embed}");
 
     let all_groups_data = load_proof_data(guest, workdir);
     let layout = check_data_integrity(&all_groups_data);
+    let (setup_section, proof_section) = all_groups_data.split_at(layout.setup_len);
 
-    let input_section = if use_embed {
-        info!(
-            "Running {} recursion with the setup baked into the guest image...",
-            guest.name()
-        );
-        let (setup_section, proof_section) = all_groups_data.split_at(layout.setup_len);
-        generate_embedded_bytes(guest, setup_section, output_dir);
-        proof_section
-    } else {
-        info!("Running {} recursion with input data...", guest.name());
-        clear_embedded_bytes(output_dir, &all_groups_data[..layout.setup_len]);
-        all_groups_data.as_slice()
+    let streams = match transport {
+        SetupTransport::Image => {
+            info!(
+                "Running {} recursion with the setup baked into the guest image...",
+                guest.name()
+            );
+            generate_embedded_bytes(guest, setup_section, output_dir);
+            GuestStreams {
+                input: proof_section.to_vec(),
+                ..GuestStreams::default()
+            }
+        }
+        SetupTransport::Input => {
+            info!("Running {} recursion with input data...", guest.name());
+            clear_embedded_bytes(output_dir, Some(Blake2b::digest(setup_section)));
+            GuestStreams {
+                input: all_groups_data.clone(),
+                ..GuestStreams::default()
+            }
+        }
+        #[cfg(feature = "akita")]
+        SetupTransport::Advice => {
+            info!(
+                "Running {} recursion with the setup as trusted advice...",
+                guest.name()
+            );
+            clear_embedded_bytes(output_dir, None);
+            advice_streams(setup_section, proof_section)
+        }
     };
-    let mut memory_config = guest.get_memory_config(use_embed, input_section.len());
+    let mut memory_config = guest.get_memory_config(transport, &streams);
     // Setup, proof, and device coexist; retain space for geometric growth and verification.
     let decode_heap = layout
         .limits
@@ -1185,24 +1422,58 @@ fn verify_proofs(
         .and_then(|bytes| u64::try_from(bytes).ok())
         .expect("recursion decode heap size overflow");
     memory_config.heap_size = memory_config.heap_size.max(decode_heap);
-    generate_provable_macro(guest, use_embed, &memory_config, output_dir, layout.limits);
-    let input_bytes = frame_guest_input(input_section, &memory_config);
+    let max_trace_length = guest.get_max_trace_length(transport != SetupTransport::Input);
+    generate_provable_macro(&memory_config, max_trace_length, output_dir, layout.limits);
+    let regions = streams.frame(&memory_config);
     info!(
-        "Serialized input size: {} bytes ({} proofs)",
-        input_bytes.len(),
+        "Serialized input size: {} bytes, untrusted advice: {} bytes, trusted advice: {} bytes ({} proofs)",
+        regions.input.len(),
+        regions.untrusted_advice.len(),
+        regions.trusted_advice.len(),
         layout.proof_count
     );
-    assert!(
-        input_bytes.len() < memory_config.max_input_size as usize,
-        "Input size is too large"
-    );
+    // An outer proof of an advice-mode run binds the setup through this
+    // commitment, which the consumer pins as `trusted_advice_commitment`, and
+    // its public input carries the inner statements.
+    #[cfg(feature = "akita")]
+    if transport == SetupTransport::Advice {
+        let commitment = commit_advice::<AkitaScheme>(
+            &schedule_artifacts(),
+            JoltAdviceKind::Trusted,
+            &regions.trusted_advice,
+            usize::try_from(memory_config.max_trusted_advice_size).unwrap(),
+        )
+        .expect("commit the setup as trusted advice")
+        .commitment;
+        let encoded =
+            bincode::serde::encode_to_vec(&commitment, bincode::config::standard()).unwrap();
+        info!(
+            "Setup commitment over {} of {} trusted-advice bytes: {}",
+            regions.trusted_advice.len(),
+            memory_config.max_trusted_advice_size,
+            hex(&encoded)
+        );
+        let mut offset = 0;
+        let count: u32 = read_record(&streams.input, &mut offset).unwrap();
+        for index in 0..count {
+            let device: JoltDevice = read_record(&streams.input, &mut offset).unwrap();
+            info!(
+                "Inner statement {index}: inputs 0x{}, outputs 0x{}, panic {}",
+                hex(&device.inputs),
+                hex(&device.outputs),
+                device.panic
+            );
+        }
+    }
 
     run_recursion_proof(
         guest,
         run_config,
-        input_bytes,
+        transport,
+        &streams,
+        regions,
         memory_config,
-        guest.get_max_trace_length(use_embed),
+        max_trace_length,
     );
 }
 
@@ -1216,11 +1487,24 @@ fn main() {
             example,
             workdir,
             embed,
+            #[cfg(feature = "akita")]
+            advice,
         }) => {
             let guest = GuestProgram::from_str(example).expect("supported guest example");
+            let transport = if *embed {
+                SetupTransport::Image
+            } else {
+                SetupTransport::Input
+            };
+            #[cfg(feature = "akita")]
+            let transport = if *advice {
+                SetupTransport::Advice
+            } else {
+                transport
+            };
             verify_proofs(
                 guest,
-                *embed,
+                transport,
                 workdir,
                 &get_guest_src_dir(),
                 RunConfig::CheckInputFraming,
@@ -1288,18 +1572,19 @@ fn main() {
                 .and_then(|inner| inner.as_ref())
                 .cloned()
                 .unwrap_or_else(get_guest_src_dir);
-            verify_proofs(
-                guest,
-                embed.is_some(),
-                workdir,
-                &output_dir,
-                RunConfig::Prove,
-            );
+            let transport = if embed.is_some() {
+                SetupTransport::Image
+            } else {
+                SetupTransport::Input
+            };
+            verify_proofs(guest, transport, workdir, &output_dir, RunConfig::Prove);
         }
         Some(Commands::Trace {
             example,
             workdir,
             embed,
+            #[cfg(feature = "akita")]
+            advice,
             trace_to_file,
             expect,
         }) => {
@@ -1320,7 +1605,18 @@ fn main() {
             } else {
                 RunConfig::Trace(*expect)
             };
-            verify_proofs(guest, embed.is_some(), workdir, &output_dir, run_config);
+            let transport = if embed.is_some() {
+                SetupTransport::Image
+            } else {
+                SetupTransport::Input
+            };
+            #[cfg(feature = "akita")]
+            let transport = if *advice {
+                SetupTransport::Advice
+            } else {
+                transport
+            };
+            verify_proofs(guest, transport, workdir, &output_dir, run_config);
         }
         None => {
             info!("No subcommand specified. Available commands:");
@@ -1384,11 +1680,16 @@ mod input_size_tests {
     #[test]
     fn framed_proof_sections_fit_every_example() {
         for guest in [GuestProgram::Fibonacci, GuestProgram::Muldiv] {
-            for embed in [false, true] {
+            for transport in [SetupTransport::Image, SetupTransport::Input] {
                 for len in [0, 1, 127, 128, 1120, 16383, 16384, 32768] {
-                    let config = guest.get_memory_config(embed, len);
-                    let input = frame_guest_input(&vec![0; len], &config);
-                    assert!(input.len() < config.max_input_size as usize);
+                    let streams = GuestStreams {
+                        input: vec![0; len],
+                        untrusted_advice: Some(vec![0; len]),
+                        trusted_advice: Some(vec![0; len]),
+                    };
+                    let config = guest.get_memory_config(transport, &streams);
+                    // `frame` asserts that every stream fits its region.
+                    streams.frame(&config);
                 }
             }
         }

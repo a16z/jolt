@@ -12,7 +12,7 @@ field-inline = ["jolt_sdk/field-inline"]
 # Fp128 protocol prime under Akita. The host selects the one its tracer uses.
 field-inline-bn254 = ["field-inline", "jolt-field/field-inline-guest-bn254"]
 field-inline-fp128 = ["field-inline", "jolt-field/field-inline-guest-fp128"]
-akita = ["jolt_sdk/akita", "dep:jolt-akita", "dep:jolt-crypto"]
+akita = ["jolt_sdk/akita", "dep:jolt-akita", "dep:jolt-crypto", "dep:bytemuck"]
 fast-alloc = ["jolt_sdk/guest-size-class-alloc"]
 hash-inlines = ["jolt_sdk/blake2-inline"]
 
@@ -31,6 +31,7 @@ jolt_sdk = { package = "jolt-sdk", path = "../../../jolt-sdk", features = [
   "random",
 ] }
 bincode.workspace = true
+bytemuck = { workspace = true, optional = true }
 serde.workspace = true
 jolt-field = { path = "../../../crates/jolt-field" }
 jolt-akita = { path = "../../../crates/jolt-akita", optional = true, default-features = false }
