@@ -74,7 +74,6 @@ mod tests {
     use super::JoltSharedPreprocessing;
     use crate::PreprocessingError;
 
-    /// `bytecode` loaded under a small real layout, entering at `entry_address`.
     fn program_with_entry(
         bytecode: Vec<JoltInstructionRow>,
         entry_address: u64,

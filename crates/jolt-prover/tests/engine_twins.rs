@@ -751,7 +751,6 @@ mod halting {
         })
     }
 
-    /// `stage1::verify`'s clear body over `stage1`.
     fn replay_stage1(
         stage1: &Stage1,
         transcript: &mut ProverState<Keccak>,
@@ -800,13 +799,11 @@ mod halting {
         Ok(transcript.verifier_message::<[u8; 32]>())
     }
 
-    /// Stage 2's product virtualization alone.
     #[derive(SumcheckBatch)]
     struct LaneSumchecks<F: JoltField> {
         product_remainder: ProductRemainder<F>,
     }
 
-    /// The product uni-skip round and remainder after an honest stage 1.
     struct LaneProof {
         uniskip_proof: SumcheckProof<Fr, Bn254G1>,
         uniskip_output_claim: Fr,
@@ -905,8 +902,6 @@ mod halting {
         Ok((stage1, lane, transcript.verifier_message::<[u8; 32]>()))
     }
 
-    /// `stage1::verify`, then `stage2::verify`'s clear product uni-skip and
-    /// the remainder's batch, under `claimed_panic`.
     fn replay_lane(
         stage1: &Stage1,
         lane: &LaneProof,
@@ -951,8 +946,6 @@ mod halting {
         Ok(transcript.verifier_message::<[u8; 32]>())
     }
 
-    /// The Dory pipeline of `dory::prove` through stage 5, each stage
-    /// succeeding, then stage 6a's result.
     fn prove_through_stage6a(
         witness: &TraceBackend,
         config: &ProverConfig,

@@ -186,6 +186,31 @@ class BenchmarkProfileTests(unittest.TestCase):
                  "Fibonacci (optimized)": ([20], [2.25])},
             )
 
+    def test_memory_plot_keeps_protocols_in_separate_series(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            for run, protocol, peak in [
+                ("latest_modular_fibonacci_20_optimized", "dory", 2.25),
+                ("latest_modular_fibonacci_akita_20_optimized", "akita", 1.5),
+            ]:
+                run_dir = Path(directory) / run
+                run_dir.mkdir()
+                (run_dir / "summary.json").write_text(json.dumps({
+                    "run": {"workload": "fibonacci", "scale_log2": 20,
+                            "backend": "optimized", "protocol": protocol},
+                    "peak_rss_gib": peak,
+                }))
+            result = run_report_script(
+                MEMORY_PLOT_SCRIPT, "--traces-dir", directory,
+                "--output-dir", directory)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            traces = json.loads(
+                (Path(directory) / "memory_usage_plot.html").read_text())
+            self.assertEqual(
+                {trace["name"]: (trace["x"], trace["y"]) for trace in traces},
+                {"Fibonacci (dory, optimized)": ([20], [2.25]),
+                 "Fibonacci (akita, optimized)": ([20], [1.5])},
+            )
+
     def test_chunked_profile_requires_akita_protocol(self) -> None:
         result = subprocess.run(
             [sys.executable, str(SUMMARY_SCRIPT), "--akita-chunk-profile", "w4r2"],

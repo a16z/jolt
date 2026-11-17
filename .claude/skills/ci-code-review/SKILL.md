@@ -195,8 +195,8 @@ CI reviews do not replace the line. The `ai-review` label has no effect.
 
 The [gate guide](../../../.github/ai-merge-gate.md) defines the policy and labels. The line is
 what lets the gate approve a risk-1 through risk-3 head; a person's approval satisfies GitHub's
-review rule without it. The gate never approves risk-4, where the policy asks for a current-head
-approval by a maintainer other than the PR author.
+review rule without it. The gate never approves risk-4, where the policy asks for an undismissed
+approval by a maintainer other than the PR author, on any commit of the pull request.
 
 ## Reviewer routine
 

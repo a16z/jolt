@@ -909,7 +909,6 @@ mod tests {
             max_output_size: output,
             ..Default::default()
         };
-        // (config, lowest address, io_end)
         for (config, lowest, io_end) in [
             (MemoryConfig::default(), 0x7FFF_8000, 0x7FFF_C000),
             (config(0, 4096, 4096), 0x7FFF_C000, 0x7FFF_E000),

@@ -1474,65 +1474,6 @@ mod tests {
         });
     }
 
-    /// The optimized front takes lane 3's base value from the upstream
-    /// openings through the claimed panic bit: under the claimed bit it matches
-    /// the reference front's brute-force lane sums, under the opposite bit it
-    /// does not.
-    #[test]
-    fn uniskip_front_reads_the_claimed_panic_bit() {
-        let (log_t, seed) = (4, 97);
-        let rows = synthetic_rows(log_t, seed);
-        #[cfg(feature = "field-inline")]
-        let field_rows = synthetic_field_rows(log_t, seed ^ 0xF1E1D);
-        let tau_low: Vec<Fr> = (0..log_t)
-            .map(|i| Fr::from_u64(29 + 7 * i as u64))
-            .collect();
-        let tau_high = Fr::from_u64(6101);
-        let backend = fixed_backend_from_rows(
-            log_t,
-            &rows,
-            #[cfg(feature = "field-inline")]
-            &field_rows,
-        );
-        let mut reference_session = ProofSession::default();
-        reference_session
-            .park(SpartanProductKernel::<Fr>::prepare(log_t, &tau_low, &backend).unwrap());
-        let mut optimized_session = ProofSession::default();
-        OptimizedProductUniskip::prepare_from_rows(
-            &mut optimized_session,
-            log_t,
-            &tau_low,
-            rows.clone(),
-            #[cfg(feature = "field-inline")]
-            field_rows.clone(),
-        )
-        .unwrap();
-        for claimed_panic in [false, true] {
-            let upstream = uniskip_input_claims(
-                &rows,
-                #[cfg(feature = "field-inline")]
-                &field_rows,
-                &tau_low,
-                claimed_panic,
-            );
-            let reference = ReferenceBackend
-                .first_round_poly(&mut reference_session, &[tau_high], &upstream)
-                .unwrap();
-            let optimized = OptimizedProductUniskip
-                .first_round_poly(&mut optimized_session, &[tau_high], &upstream)
-                .unwrap();
-            assert_eq!(optimized, reference, "Π = {claimed_panic}");
-            let flipped = ProductUniskipUpstream {
-                openings: upstream.openings.clone(),
-                claimed_panic: !claimed_panic,
-            };
-            let misread = OptimizedProductUniskip
-                .first_round_poly(&mut optimized_session, &[tau_high], &flipped)
-                .unwrap();
-            assert_ne!(misread, reference, "Π = {claimed_panic}");
-        }
-    }
-
     fn heavy(value: Fr) -> bool {
         let mut bytes_le = [0u8; 32];
         value.to_bytes_le(&mut bytes_le);

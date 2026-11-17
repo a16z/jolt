@@ -348,8 +348,7 @@ fn selected_product_uniskip_input_expr<F: JoltField>(
     bake_product_weights(
         map_expr(relation.input_expression()),
         weights,
-        None,
-        Some(claimed_panic),
+        ProductCoefficient::ClaimedPanic(claimed_panic),
     )
 }
 
@@ -363,16 +362,19 @@ fn selected_product_remainder_output_expr<F: JoltField>(
     bake_product_weights(
         map_expr(relation.output_expression()),
         weights,
-        Some(tau_kernel),
-        None,
+        ProductCoefficient::TauKernel(tau_kernel),
     )
+}
+
+enum ProductCoefficient<F> {
+    TauKernel(F),
+    ClaimedPanic(F),
 }
 
 fn bake_product_weights<F: JoltField>(
     mut expr: VerifierExpr<F>,
     weights: &[F],
-    tau_kernel: Option<F>,
-    claimed_panic: Option<F>,
+    coefficient: ProductCoefficient<F>,
 ) -> Result<VerifierExpr<F>, VerifierError> {
     use jolt_claims::protocols::jolt::SpartanProductVirtualizationPublic;
     if weights.len() != SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE {
@@ -387,13 +389,28 @@ fn bake_product_weights<F: JoltField>(
                 JoltDerivedId::SpartanProductVirtualization(public),
             )) = &factor
             {
-                let value = match public {
-                    SpartanProductVirtualizationPublic::UniskipLagrangeWeight(i)
-                    | SpartanProductVirtualizationPublic::LagrangeWeight(i) => {
-                        weights.get(*i).copied()
-                    }
-                    SpartanProductVirtualizationPublic::TauKernel => tau_kernel,
-                    SpartanProductVirtualizationPublic::ClaimedPanic => claimed_panic,
+                let value = match (public, &coefficient) {
+                    (
+                        SpartanProductVirtualizationPublic::UniskipLagrangeWeight(i)
+                        | SpartanProductVirtualizationPublic::LagrangeWeight(i),
+                        _,
+                    ) => weights.get(*i).copied(),
+                    (
+                        SpartanProductVirtualizationPublic::TauKernel,
+                        ProductCoefficient::TauKernel(value),
+                    )
+                    | (
+                        SpartanProductVirtualizationPublic::ClaimedPanic,
+                        ProductCoefficient::ClaimedPanic(value),
+                    ) => Some(*value),
+                    (
+                        SpartanProductVirtualizationPublic::TauKernel,
+                        ProductCoefficient::ClaimedPanic(_),
+                    )
+                    | (
+                        SpartanProductVirtualizationPublic::ClaimedPanic,
+                        ProductCoefficient::TauKernel(_),
+                    ) => None,
                 }
                 .ok_or_else(|| VerifierError::BlindFoldConstructionFailed {
                     reason: "missing product coefficient".to_string(),

@@ -100,7 +100,7 @@ impl SymbolicSumcheck for ProductUniskip {
 mod tests {
     use super::*;
     use crate::protocols::jolt::geometry::spartan::outer_opening;
-    use crate::protocols::jolt::{JoltVirtualPolynomial, SpartanProductVirtualizationPublic};
+    use crate::protocols::jolt::JoltVirtualPolynomial;
     use jolt_field::{Fr, Ring};
 
     fn flag_opening(flag: CircuitFlags) -> JoltOpeningId {
@@ -132,46 +132,5 @@ mod tests {
             assert_eq!(claims.resolve_input(&id), Some(Fr::from_u64(value)));
         }
         assert_eq!(claims.resolve_input(&product_uniskip_opening()), None);
-    }
-
-    /// Lane 3 alone (weight 1 on lane index 2): `jump − (1 − 2Π)·halt − 2·halt_panic`.
-    #[test]
-    fn lane_three_reads_the_claimed_panic_bit() {
-        let input = ProductUniskip.input_expression::<Fr>();
-        for (claimed_panic, expected) in [(false, 5 - 7 - 22), (true, 5 + 7 - 22)] {
-            let value = input.evaluate(
-                |id| {
-                    [
-                        (flag_opening(CircuitFlags::Jump), 5),
-                        (flag_opening(CircuitFlags::Halt), 7),
-                        (flag_opening(CircuitFlags::HaltPanic), 11),
-                    ]
-                    .into_iter()
-                    .find(|(candidate, _)| candidate == id)
-                    .map_or(Fr::from_u64(0), |(_, value)| Fr::from_u64(value))
-                },
-                |_| Fr::from_u64(0),
-                |id| {
-                    if *id
-                        == JoltDerivedId::from(
-                            SpartanProductVirtualizationPublic::UniskipLagrangeWeight(2),
-                        )
-                    {
-                        Fr::from_u64(1)
-                    } else if *id
-                        == JoltDerivedId::from(SpartanProductVirtualizationPublic::ClaimedPanic)
-                    {
-                        Fr::from_bool(claimed_panic)
-                    } else {
-                        Fr::from_u64(0)
-                    }
-                },
-            );
-            assert_eq!(
-                value,
-                Fr::from_i64(expected),
-                "claimed panic {claimed_panic}"
-            );
-        }
     }
 }

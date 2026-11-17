@@ -391,8 +391,8 @@ fn bytecode_phases_match_reference_on_runs_that_end_at_a_halt() {
         for (log_t, len) in [(6, 37), (4, 16), (11, 1500)] {
             with_halting_backend(log_t, 4, len, halt, |backend, _| {
                 for committed_program in [false, true] {
-                    for streaming in [false, true] {
-                        run_pair_on(backend, committed_program, streaming);
+                    for slots in [Slots::Default, Slots::Streaming] {
+                        run_pair_on(backend, committed_program, slots);
                     }
                 }
             });

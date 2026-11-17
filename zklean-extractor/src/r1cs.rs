@@ -182,8 +182,6 @@ mod tests {
     use super::*;
     use crate::constants::RV64IParameterSet;
 
-    /// The extracted constraints carry both halt flags and branch on the
-    /// claimed panic bit only in the jump lane.
     #[test]
     fn extracted_constraints_branch_only_the_jump_lane() {
         let mut output = Vec::new();

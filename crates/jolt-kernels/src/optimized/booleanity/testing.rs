@@ -158,7 +158,6 @@ pub(crate) fn with_booleanity_backend<R>(
     with_trace_backend(log_t, log_k_chunk, rows, f)
 }
 
-/// The halt that ends a run.
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum Halt {
     /// `jolt.success`.

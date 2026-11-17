@@ -28,7 +28,6 @@ use crate::ReferenceBackend;
 
 type AddressSlot = dyn PrepareKernel<Fr, BytecodeReadRafAddressPhase<Fr>>;
 
-/// The read-RAF dimensions of a backend's bytecode table and cycle domain.
 fn read_raf_dimensions(
     backend: &TraceBackend,
     base_dimensions: BooleanityDimensions,
