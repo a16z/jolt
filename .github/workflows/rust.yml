@@ -471,6 +471,15 @@ jobs:
         run: cargo nextest run --cargo-profile ci -p jolt-prover --features akita,prover-fixtures
       - name: Test Akita profiling artifact and CSV names
         run: cargo nextest run --cargo-profile ci -p jolt-prover --features akita,profiling --lib -E 'test(profile::tests)' --cargo-quiet
+      # jeth's guest is built from another repository against this checkout. This
+      # step shows a change that breaks it, or that makes it reject a checked-in
+      # input, on the pull request that makes the change.
+      # scripts/bench/ethereum-block/README.md has the remedy.
+      - name: Prepare the ethereum-block benchmark guest
+        run: >-
+          cargo run --profile ci -p jolt-prover --features akita,profiling --bin jolt-prover --
+          prepare --name ethereum-block --blocks 26227673,26433846
+          --guest-target-dir target/bench-guests --out target/ethereum-block
 
   # NOTE: the profiling smoke test (`cargo nextest run -p jolt-prover
   # --features profiling -E 'binary(profiling_smoke)'`) is deliberately not
@@ -1004,14 +1013,6 @@ jobs:
         run: bash jolt-sdk/tests/gen-fixtures.sh
       - name: Run SDK verifier tests
         run: cargo nextest run --cargo-profile ci -p jolt-sdk --features host
-      # The prover benchmark suite (scripts/bench) builds and proves this guest
-      # for every main push, where a guest that fails to build stops that push's
-      # history and calibration. No other pull-request check compiles it for
-      # RISC-V or runs its tests.
-      - name: Build the ethereum-transaction guest
-        run: jolt build -p ethereum-transaction-guest -- --locked --release --features guest
-      - name: Run the ethereum-transaction guest tests
-        run: cargo nextest run --cargo-profile ci -p ethereum-transaction-guest --cargo-quiet
 
   test-tracer:
     runs-on: ubuntu-latest

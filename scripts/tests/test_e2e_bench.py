@@ -295,7 +295,7 @@ path.write_text(json.dumps(dict(workload='fibonacci', pcs='dory', backend='optim
         pr = config['tiers']['pr']
         self.assertEqual((pr['warmups'], pr['repetitions']), (1, 3))
         self.assertEqual([(c['workload'], c['pcs'], c['backend'], c['physical_cores'],
-                           c['scale_log2'], c['input']['parameters']['operations']) for c in pr['cases']],
+                           c['scale_log2'], bench.calibration.input_parameter(c)[1]) for c in pr['cases']],
                          [('fibonacci', 'akita', 'optimized', 1, 16, 4000),
                           ('fibonacci', 'akita', 'optimized', 8, 20, 64000),
                           ('sha2-chain', 'akita', 'optimized', 8, 20, 256),
@@ -321,12 +321,12 @@ path.write_text(json.dumps(dict(workload='fibonacci', pcs='dory', backend='optim
                           ('sha3-chain', 'akita', 'optimized', 24, 22, 768),
                           ('btreemap', 'akita', 'optimized', 24, 22, 2048),
                           ('secp256k1-batch', 'akita', 'optimized', 24, 22, 16),
-                          ('ethereum-transaction', 'akita', 'optimized', 24, 23, 1),
                           ('fibonacci', 'akita', 'optimized', 24, 24, 1000000),
                           ('sha2-chain', 'akita', 'optimized', 24, 24, 4096),
                           ('sha3-chain', 'akita', 'optimized', 24, 24, 3072),
                           ('btreemap', 'akita', 'optimized', 24, 24, 8192),
                           ('secp256k1-batch', 'akita', 'optimized', 24, 24, 64),
+                          ('ethereum-block', 'akita', 'optimized', 24, 26, 26433846),
                           ('sha2-chain', 'akita', 'optimized', 24, 27, 32768),
                           ('sha2-chain', 'dory', 'optimized', 24, 22, 1024),
                           ('btreemap', 'dory', 'optimized', 24, 22, 2048)])
@@ -335,21 +335,23 @@ path.write_text(json.dumps(dict(workload='fibonacci', pcs='dory', backend='optim
             'fibonacci-akita-c1-s18-n16000-v1', 'sha2-chain-akita-c8-s20-n256-v1',
             'btreemap-akita-c24-s22-n2048-v1'])
         expected = {'fibonacci', 'sha2-chain', 'sha3-chain', 'btreemap', 'secp256k1-batch',
-                    'ethereum-transaction'}
+                    'ethereum-block'}
+        blocks = {'main': [('akita', 26, 26433846)],
+                  'nightly': [('dory', 26, 26433846), ('akita', 26, 26433846), ('akita', 28, 26227673)]}
         for tier in ('main', 'nightly'):
             _, cases = bench.config_cases(bench.DEFAULT_CONFIG, tier)
             supported = [case for case in cases if not case.get('unsupported_reason')]
             self.assertEqual({case['workload'] for case in supported}, expected)
-            self.assertEqual([(case['pcs'], case['physical_cores'], case['scale_log2'])
-                              for case in cases if case['workload'] == 'ethereum-transaction'],
-                             [('dory', 24, 23), ('akita', 24, 23)])
+            self.assertEqual([(case['pcs'], case['scale_log2'], case['input']['parameters']['block'])
+                              for case in cases if case['workload'] == 'ethereum-block'], blocks[tier])
             self.assertEqual({case['physical_cores'] for case in supported}, {1, 8, 24})
             self.assertEqual({case['pcs'] for case in supported}, {'dory', 'akita'})
         self.assertGreater(config['tiers']['nightly']['repetitions'], config['tiers']['main']['repetitions'])
         self.assertEqual([(c['id'], c['pcs'], c['physical_cores'], c['scale_log2'],
-                           c['input']['parameters']['operations'])
+                           bench.calibration.input_parameter(c)[1])
                           for c in config['tiers']['nightly']['cases'] if c['scale_log2'] in (28, 30)],
-                         [('fibonacci-akita-c24-s28-n16000000-v1', 'akita', 24, 28, 16000000),
+                         [('ethereum-block-akita-c24-s28-b26227673-v1', 'akita', 24, 28, 26227673),
+                          ('fibonacci-akita-c24-s28-n16000000-v1', 'akita', 24, 28, 16000000),
                           ('fibonacci-dory-c24-s28-n16000000-v1', 'dory', 24, 28, 16000000),
                           ('fibonacci-akita-c24-s30-n64000000-v1', 'akita', 24, 30, 64000000)])
 
@@ -432,8 +434,11 @@ class BuildCacheTests(unittest.TestCase):
             out = Path(argv[argv.index('--out') + 1])
             out.mkdir(parents=True)
             (out / 'guest.elf').write_bytes(b'owned ELF fixture')
-            for count in argv[argv.index('--operations') + 1].split(','):
+            parameter = '--blocks' if '--blocks' in argv else '--operations'
+            for count in argv[argv.index(parameter) + 1].split(','):
                 (out / f'input-{count}.bin').write_text(count)
+                if parameter == '--blocks':
+                    (out / f'advice-{count}.bin').write_text(count)
 
         self.enterContext(patch.object(bench, 'capture', side_effect=capture))
         self.enterContext(patch.object(bench, 'logged', side_effect=logged))
@@ -695,6 +700,22 @@ Path(sys.argv[sys.argv.index('--result-json') + 1]).write_text(json.dumps({
         self.assertEqual(receipt['mode'], 'built')
         self.assertIn('lacks required inputs', receipt['cache_misses'][0]['reason'])
         self.assertEqual(len(self.compiles), 5)
+
+    def test_block_inputs_are_requested_as_blocks_and_bundled_with_their_advice_tapes(self):
+        config = json.loads(self.config.read_text())
+        config['tiers']['pr']['cases'].append({'id': 'pr-akita-block', 'workload': 'ethereum-block',
+                                               'pcs': 'akita', 'input': {'parameters': {'block': 7}}})
+        self.config.write_text(json.dumps(config))
+        self.git('add', 'scripts/bench/suites.json')
+        self.commit()
+        self.revision = self.git('rev-parse', 'HEAD')
+        manifest, _ = self.build('pr', tier='pr')
+        flags = {argv[argv.index('--name') + 1]: argv[4:6] for argv, _ in self.prepares}
+        self.assertEqual(flags, {'fibonacci': ['--operations', '2'], 'ethereum-block': ['--blocks', '7']})
+        self.assertNotIn('advice', manifest['guests']['fibonacci'])
+        advice = manifest['guests']['ethereum-block']['advice']
+        self.assertEqual(advice, {'7': bench.bundle_file(self.root / 'pr/guests/ethereum-block/advice-7.bin',
+                                                         self.root / 'pr')})
 
     def test_requested_pcs_builds_only_its_executable_and_keeps_distinct_cache_variants(self):
         partial, _ = self.build('pr', tier='pr')

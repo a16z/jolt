@@ -576,9 +576,9 @@ const github = {
             config_path = root / 'scripts/bench/suites.json'
             config = {'schema_version': 1, 'metric_contract': 1, 'id': 'owned-fixture',
                 'tiers': {'pr': {'warmups': 0, 'repetitions': 1, 'cases': [{
-                    'id': 'owned-case', 'workload': 'fibonacci', 'pcs': 'akita', 'backend': 'optimized',
+                    'id': 'owned-case', 'workload': 'ethereum-block', 'pcs': 'akita', 'backend': 'optimized',
                     'physical_cores': 1, 'scale_log2': 3,
-                    'input': {'parameters': {'operations': 1}, 'seed': None}}]}}}
+                    'input': {'parameters': {'block': 1}, 'seed': None}}]}}}
             ci.bench.write_json(config_path, config)
             script = Path(ci.bench.__file__)
             common = {'schema_version': 1, 'harness_revision': 'c' * 40,
@@ -597,8 +597,9 @@ const github = {
             original = {}
             for revision in ('a' * 40, 'b' * 40):
                 bundle = root / 'bundles' / revision
-                files = {'guests/fibonacci/guest.elf': b'owned guest',
-                         'guests/fibonacci/input-1.bin': b'\x01',
+                files = {'guests/ethereum-block/guest.elf': b'owned guest',
+                         'guests/ethereum-block/input-1.bin': b'\x01',
+                         'guests/ethereum-block/advice-1.bin': b'owned tape',
                          'scripts/bench/run.py': script.read_bytes(),
                          'scripts/bench/calibration.py': Path(ci.bench.calibration.__file__).read_bytes(),
                          'scripts/bench/suites.json': config_path.read_bytes()}
@@ -611,8 +612,9 @@ const github = {
 from pathlib import Path
 assert not any(key in os.environ for key in ('GH_TOKEN', 'PIKA_CLI_TOKEN', 'ACTIONS_RUNTIME_TOKEN'))
 assert '--guest-elf' in sys.argv and '--input-file' in sys.argv
+assert Path(sys.argv[sys.argv.index('--advice-file') + 1]).read_bytes() == b'owned tape'
 Path(sys.argv[sys.argv.index('--result-json') + 1]).write_text(json.dumps({
-    'workload': 'fibonacci', 'pcs': 'akita', 'backend': 'optimized', 'scale_log2': 3,
+    'workload': 'ethereum-block', 'pcs': 'akita', 'backend': 'optimized', 'scale_log2': 3,
     'e2e_s': 0.003, 'prove_s': 0.001, 'setup_s': 0.001, 'verify_s': 0.0001,
     'verify_single_s': 0.0001, 'proof_bytes': 12, 'trace_rows': 4, 'padded_trace_rows': 8,
     'public_output': [42]}))
@@ -620,9 +622,10 @@ Path(sys.argv[sys.argv.index('--result-json') + 1]).write_text(json.dumps({
                 binary.chmod(0o644)
                 manifest = dict(common, revision=revision,
                     binaries={'akita': ci.bench.bundle_file(binary, bundle)},
-                    guests={'fibonacci': {
-                        'elf': ci.bench.bundle_file(bundle / 'guests/fibonacci/guest.elf', bundle),
-                        'inputs': {'1': ci.bench.bundle_file(bundle / 'guests/fibonacci/input-1.bin', bundle)}}})
+                    guests={'ethereum-block': {
+                        'elf': ci.bench.bundle_file(bundle / 'guests/ethereum-block/guest.elf', bundle),
+                        'inputs': {'1': ci.bench.bundle_file(bundle / 'guests/ethereum-block/input-1.bin', bundle)},
+                        'advice': {'1': ci.bench.bundle_file(bundle / 'guests/ethereum-block/advice-1.bin', bundle)}}})
                 expected[revision] = {key: manifest[key] for key in (
                     'revision', 'harness_revision', 'status', 'profile', 'profile_config', 'target_cpu',
                     'rustflags', 'source_cargo_lock_sha256', 'harness_files', 'runner', 'suite_config_sha256')}
@@ -670,7 +673,7 @@ Path(sys.argv[sys.argv.index('--result-json') + 1]).write_text(json.dumps({
                 ci.bench.write_json(manifest_path, original['b' * 40])
                 ci.bench.write_json(index_path, index)
                 args.index_sha256 = ci.bench.sha256(index_path)
-                input_path = manifest_path.parent / 'guests/fibonacci/input-1.bin'
+                input_path = manifest_path.parent / 'guests/ethereum-block/input-1.bin'
                 input_path.write_bytes(b'wrong input')
                 with patch.object(ci.bench, 'run') as run:
                     with self.assertRaisesRegex(ValueError, 'hash mismatch'):

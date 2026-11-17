@@ -24,6 +24,7 @@ pub fn default_target_dir() -> PathBuf {
 #[derive(Clone)]
 pub struct Program {
     guest: String,
+    workspace_dir: Option<PathBuf>,
     func: Option<String>,
     profile: Option<String>,
     instruction_profile: JoltInstructionProfile,

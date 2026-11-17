@@ -1086,7 +1086,7 @@ fn run_recursion_proof(
                 ("zero transport padding", zero_padding, 1),
                 ("nonzero final capacity byte", last_byte, 0),
             ] {
-                let (rows, device) = program.execute_with_output(&input, &[], &[]);
+                let (rows, device) = program.execute_with_output(&input, &[], &[], None);
                 assert!(!device.panic, "{name}: recursion verifier guest panicked");
                 assert_eq!(decode_verifier_output(&device.outputs), expected, "{name}");
                 info!("  {name}: verdict {expected}, trace length {rows}");
@@ -1094,7 +1094,7 @@ fn run_recursion_proof(
         }
         RunConfig::Trace(expected) | RunConfig::TraceToFile(expected) => {
             let io_device = if matches!(run_config, RunConfig::Trace(_)) {
-                let (rows, device) = program.execute_with_output(&input_bytes, &[], &[]);
+                let (rows, device) = program.execute_with_output(&input_bytes, &[], &[], None);
                 info!("  trace length: {rows}");
                 device
             } else {

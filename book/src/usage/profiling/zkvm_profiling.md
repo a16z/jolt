@@ -51,7 +51,6 @@ Workloads and default scales (`--scale <log2 trace length>` overrides):
 | `sha2-chain` | 2^22 |
 | `sha3-chain` | 2^22 |
 | `btreemap` | 2^20 |
-| `ethereum-transaction` | 2^23 |
 
 `--backend` selects the kernel implementation for either Dory or Akita
 (both subcommands): `reference`

@@ -16,6 +16,7 @@ import tomllib
 import urllib.request
 from urllib.parse import quote
 
+import calibration
 import run as bench
 
 
@@ -321,6 +322,8 @@ def verified_bundles(args, plan, revisions):
                 raise ValueError('bundle does not contain the complete planned input set')
             files.append((guest['elf'], f'guests/{workload}/guest.elf'))
             files.extend((guest['inputs'][str(count)], f'guests/{workload}/input-{count}.bin') for count in counts)
+            files.extend((file, f'guests/{workload}/advice-{count}.bin')
+                         for count, file in guest.get('advice', {}).items())
         for file, expected_path in files:
             if file['path'] != expected_path:
                 raise ValueError('artifact file is not the expected binary or guest input')
@@ -329,7 +332,7 @@ def verified_bundles(args, plan, revisions):
             if case.get('unsupported_reason'):
                 continue
             if (case['pcs'] not in required_pcs or
-                    case['input']['parameters']['operations'] not in inputs.get(case['workload'], set())):
+                    calibration.input_parameter(case)[1] not in inputs.get(case['workload'], set())):
                 raise ValueError('measurement suite requires an input absent from the planned inventory')
         for file in {entry['path']: entry for entry in entries}.values():
             bench.checked_file(path, file)

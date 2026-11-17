@@ -154,7 +154,7 @@ def validate(result, expected, config_bytes):
                 if metrics['process_s'] < metrics['e2e_s']:
                     raise ValueError('process duration is shorter than the proving pipeline')
                 inputs = builds[leg]['guests'][case['workload']]['inputs']
-                if inputs[str(case['input']['parameters']['operations'])]['sha256'] != case['input']['sha256']:
+                if inputs[str(calibration.input_parameter(case)[1])]['sha256'] != case['input']['sha256']:
                     raise ValueError('sample input hash differs from its build manifest')
             elif sample['metrics'] is not None:
                 raise ValueError('failed or missing sample contains fabricated metrics')

@@ -100,7 +100,7 @@ pub(super) fn run() {
     program.set_func("check_field_kernels");
     program.add_guest_feature("kernel-tests");
     program.build("/tmp/jolt-guest-targets");
-    let (rows, device) = program.execute_with_output(&input, &[], &[]);
+    let (rows, device) = program.execute_with_output(&input, &[], &[], None);
     assert!(!device.panic, "field kernel differential guest panicked");
     assert_eq!(super::decode_verifier_output(&device.outputs), 1);
     tracing::info!("{} field kernel cases passed in {rows} rows", cases.len());

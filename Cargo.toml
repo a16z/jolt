@@ -136,8 +136,6 @@ members = [
   "examples/advice-consumer/guest",
   "examples/sig-recovery/host",
   "examples/sig-recovery/guest",
-  "examples/ethereum-transaction",
-  "examples/ethereum-transaction/guest",
   "zklean-extractor",
   "z3-verifier",
   "jolt-eval",
@@ -215,11 +213,14 @@ ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "de
 # Akita consumes jolt-field, jolt-poly, jolt-transcript and, under
 # `ntt-inline`, jolt-inlines-ntt from this Git source. Redirect them to the workspace members so Cargo resolves one shared
 # identity for each: Akita then runs on Jolt's own transcript states.
+# jeth's inline crates consume jolt-inlines-sdk from it, and must register
+# with the workspace's tracer.
 [patch."https://github.com/a16z/jolt"]
 jolt-field = { path = "crates/jolt-field" }
 jolt-poly = { path = "crates/jolt-poly" }
 jolt-transcript = { path = "crates/jolt-transcript" }
 jolt-inlines-ntt = { path = "jolt-inlines/ntt" }
+jolt-inlines-sdk = { path = "jolt-inlines/sdk" }
 
 [workspace.metadata.cargo-machete]
 ignored = ["jolt-sdk"]
@@ -498,3 +499,9 @@ jolt-inlines-bigint = { path = "./jolt-inlines/bigint", default-features = false
 jolt-inlines-secp256k1 = { path = "./jolt-inlines/secp256k1", default-features = false }
 jolt-inlines-grumpkin = { path = "./jolt-inlines/grumpkin", default-features = false }
 jolt-inlines-p256 = { path = "./jolt-inlines/p256", default-features = false }
+# The host side of jeth's own inline instructions. `jolt-prover prepare` builds the
+# `ethereum-block` benchmark guest from Cargo's checkout of this revision, so the three
+# lines move together: scripts/bench/ethereum-block/README.md has the bump procedure.
+jeth-inlines-blake2f = { git = "https://github.com/a16z/jeth", rev = "54d63c4bd876fb217c6670b47100e1dc5ad856f8", default-features = false }
+jeth-inlines-bls12-381 = { git = "https://github.com/a16z/jeth", rev = "54d63c4bd876fb217c6670b47100e1dc5ad856f8", default-features = false }
+jeth-inlines-bn254 = { git = "https://github.com/a16z/jeth", rev = "54d63c4bd876fb217c6670b47100e1dc5ad856f8", default-features = false }

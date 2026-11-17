@@ -38,8 +38,8 @@ used; no protocol parameter is adjusted for the benchmark.
 | 24 | `2^18` | All five | — |
 | 24 | `2^20` | All five | — |
 | 24 | `2^22` | All five | SHA2, BTreeMap |
-| 24 | `2^23` | Ethereum transaction only | — |
 | 24 | `2^24` | All five | — |
+| 24 | `2^26` | Ethereum block only | — |
 | 24 | `2^27` | SHA2 only | — |
 
 ### PR and main inputs
@@ -69,34 +69,39 @@ the existing single-signature program. The signature vector comes from
 Input bytes and guest ELF hashes are recorded for each build. `seed: null` means
 the input generator uses no PRNG.
 
-The Ethereum transaction workload has one input, with operation count 1: the
-checked-in witness for the first transaction of mainnet block 26429593, which
-`examples/ethereum-transaction/README.md` describes. The guest verifies the
-transaction's state against the parent block's state root, executes it in revm
-and recomputes the state root. Its trace measured 5318508 rows, so it runs
-under a `2^23` ceiling. It runs only at 24 cores, the fewest cases that cover
-the large program: on CherryPika, a shared EPYC 9354P that is not jolt-bench,
-one 8-core Dory proof took 63 seconds end to end under other load. Its expanded
-bytecode measured 679691 instructions, which gives the bytecode read-address
-polynomial five factors under both PCS. The five other guests measured at most
-22718 instructions and four factors.
+The Ethereum block workload proves the guest of
+[jeth](https://github.com/a16z/jeth), whose `validate_block` function validates
+one mainnet block statelessly. jeth is not part of this repository:
+[`ethereum-block/README.md`](ethereum-block/README.md) describes the pinned
+commit, the guest build and the inputs. A case names its input by a `block`
+parameter, a mainnet block number, where the other workloads have `operations`.
+`prepare` writes an advice tape beside each block's input, and the build
+manifest records it under the guest's `advice` key. Block 26433846 (five
+transactions, 1967936 gas) measured 35411563 trace rows and runs under a `2^26`
+ceiling. Block 26227673 (135 transactions, 10026232 gas) measured 154776297
+rows and runs under `2^28`, in nightly only. Every case runs at 24 cores, the
+fewest cases that cover the large program. The guest embeds jeth's
+contract-code library, and its expanded bytecode measured 1467296 instructions.
+That `2^21` bytecode domain gives the bytecode read-address polynomial six
+factors under Akita, whose chunks are four bits wide, and three under Dory,
+whose chunks are eight bits wide from `2^25` rows. The five other guests
+measured at most 22718 instructions and four factors under Akita.
 
 | Tier | Cases | Warmups / measured repetitions per leg |
 |---|---|---:|
 | `pr` | The matrix above: 34 supported points, 272 fresh processes across both legs | 1 / 3 |
-| `main` | All five workloads, all three core counts, both PCS, plus the Ethereum transaction at 24 cores for both PCS: 32 points | 1 / 3 |
-| `nightly` | Two larger inputs per main point, plus 24-core Fibonacci/Akita and Fibonacci/Dory at `2^28`, Fibonacci/Akita at `2^30`, and main's two Ethereum transaction points: 65 points | 1 / 5 |
+| `main` | All five workloads, all three core counts, both PCS, plus the PR tier's Ethereum block point: 31 points | 1 / 3 |
+| `nightly` | Two larger inputs per main point of the five workloads, plus 24-core Fibonacci/Akita and Fibonacci/Dory at `2^28`, Fibonacci/Akita at `2^30`, and three Ethereum block points (block 26433846 with Akita and with Dory at `2^26`, block 26227673 with Akita at `2^28`): 66 points | 1 / 5 |
 
 Nightly Fibonacci inputs use 16000000 operations at `2^28` and 64000000 at
 `2^30`, all at 24 cores. Main still runs the five one-core `2^18` Akita cases.
 Unchanged definitions retain their IDs; new definitions receive new IDs. The
 six `ethereum-block` rows that main and nightly each reserved never ran and are
-removed: the Ethereum transaction points are a different definition under
-their own IDs.
+removed: the Ethereum block points are new definitions under their own IDs.
 
-Main and nightly launch 128 and 390 proof processes respectively, before a
+Main and nightly launch 124 and 396 proof processes respectively, before a
 calibration refresh. A refresh adds 748 processes; a one-commit main job with a
-refresh launches 876 and nightly launches 1138.
+refresh launches 872 and nightly launches 1144.
 
 The historical sub-600-second interval below excludes compilation. The PR
 route includes local builds and has no measured sub-600-second promise. A warm
@@ -176,13 +181,6 @@ would occupy 18.84 host-hours per day (about 78%) before any PR jobs; nineteen
 such pushes plus nightly would exceed 24 hours. These are capacity scenarios,
 not measured daily throughput.
 
-The model's minutes predate the Ethereum transaction points, which add 22
-processes to a refresh, 8 to a main-history commit and 12 to nightly. On shared
-CherryPika under load, not on jolt-bench, one such process took 6.3 to 12.0
-seconds with Akita (six samples) and 26.6 to 44.2 seconds with Dory (three
-samples). At those times a refresh grows by 2.3 to 4.4 minutes, a main-history
-commit by 2.2 to 3.7 minutes and nightly by 3.3 to 5.6 minutes.
-
 After acquiring the host lock, a main-push job checks the live main head before
 calibration. If its planned tip has already been superseded, it skips only the
 null and records the reason and both revisions in `calibration/skipped.json`.
@@ -251,16 +249,17 @@ hardware speed difference. The temporary replay job was removed after capture.
 Main trace ceilings are `2^18`, `2^20`, and `2^22` at 1, 8, and 24 cores.
 Nightly retains twice and four times each main operation count and raises the trace
 ceiling by one and two bits respectively, plus the three large Fibonacci cases
-listed above. The Ethereum transaction is the exception: it has one input, so
-nightly repeats main's two points. These are ceilings, not invented row
-measurements. An input that exceeds its ceiling fails visibly.
+listed above. The Ethereum block points are the exception: their inputs are
+fixed blocks, so nightly repeats main's point and adds two of its own. These
+are ceilings, not invented row measurements. An input that exceeds its ceiling
+fails visibly.
 
-The `ethereum-transaction` guest executes one mainnet transaction on its parent
-block's state. It does not execute a block: it skips the block's system calls,
-the other transactions and withdrawals, so this suite makes no block-execution
-claim. Its input is a checked-in witness that no run regenerates. The tracked
-`examples/sig-recovery` guest, whose host generates its input with
-`rand::rng()`, is not a suite workload.
+The `ethereum-block` guest is jeth's `validate_block`, which validates a whole
+mainnet block and outputs its hash and gas used. `prepare` checks that output
+against the block's mainnet hash; the suite itself claims no more about block
+execution than that guest does. Its inputs are checked-in files that no run
+regenerates. The tracked `examples/sig-recovery` guest, whose host generates
+its input with `rand::rng()`, is not a suite workload.
 `akita,zk` is rejected by the compile-time feature gate in
 `crates/jolt-prover/src/lib.rs`; this suite does not claim that combination.
 
@@ -673,9 +672,9 @@ four rows, by nulls of 4.22% at 8-core 2^20, 2.48% at 2^22, 1.53% at 2^24 and
 whose null reached 2.32%, share the value that the 8-core cases require. The
 suite has no group of two or more cases at 2^27, so no null stands behind that
 group value, and the single 2^27 case does not reach the sensitivity requested
-there. These nulls measured PR cases, and no PR case had a 2^23 ceiling before
-the Ethereum transaction case, so that case takes its row's values from the
-2^22 nulls.
+there. These nulls measured PR cases, and no PR case had a 2^26 ceiling before
+the Ethereum block case, so that case takes its row's values from the 2^24
+nulls.
 
 The values do not clear every published null. Of the 51 references published
 from November 6 to 16, 2026 (44 main revisions), 13 references (12 revisions)

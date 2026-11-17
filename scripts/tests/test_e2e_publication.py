@@ -109,7 +109,7 @@ class E2ePublicationTests(unittest.TestCase):
             build['guests'] = {}
             for case in result['cases']:
                 guest = build['guests'].setdefault(case['workload'], {'inputs': {}})
-                guest['inputs'][str(case['input']['parameters']['operations'])] = {'sha256': '1' * 64}
+                guest['inputs'][str(publication.calibration.input_parameter(case)[1])] = {'sha256': '1' * 64}
         expected['manifest_digests'] = {build['revision']: publication.ci.manifest_digest(
             {key: value for key, value in build.items() if key != 'leg'}) for build in result['builds']}
         self.assertIs(publication.validate(result, expected, config), result)

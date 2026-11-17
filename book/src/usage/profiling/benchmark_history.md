@@ -26,7 +26,7 @@ lists all core counts, operation counts and nightly cases.
 | `2^16` | All except secp256k1 | — |
 | `2^18`, `2^20`, `2^24` | All five | — |
 | `2^22` | All five | SHA2, BTreeMap |
-| `2^23` | Ethereum transaction only | — |
+| `2^26` | Ethereum block only | — |
 | `2^27` | SHA2 only | — |
 
 The [capacity model](https://github.com/a16z/jolt/blob/main/scripts/bench/README.md#capacity)

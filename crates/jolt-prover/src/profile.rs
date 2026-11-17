@@ -43,6 +43,9 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use clap::ValueEnum;
+use jeth_inlines_blake2f as _;
+use jeth_inlines_bls12_381 as _;
+use jeth_inlines_bn254 as _;
 #[cfg(feature = "akita")]
 use jolt_akita::{AkitaChunkProfile, AkitaField};
 #[cfg(not(feature = "akita"))]
@@ -55,7 +58,10 @@ use jolt_field::JoltField;
 use jolt_host::memory::Allocatable;
 use jolt_host::{GuestElf, JoltProgramSource, Program};
 // Keep the inline libraries linked so their host-side registrations reach the tracer.
+use jolt_inlines_bigint as _;
+use jolt_inlines_blake2 as _;
 use jolt_inlines_keccak256 as _;
+use jolt_inlines_p256 as _;
 use jolt_inlines_secp256k1 as _;
 use jolt_inlines_sha2 as _;
 use jolt_kernels::optimized::StreamingFamilies;
@@ -92,13 +98,6 @@ const CYCLES_PER_SHA3: f64 = 4330.0;
 const CYCLES_PER_BTREEMAP_OP: f64 = 1550.0;
 const CYCLES_PER_FIBONACCI_UNIT: f64 = 12.0;
 const SAFETY_MARGIN: f64 = 0.9;
-const ETHEREUM_TRANSACTION_WITNESS: &[u8] =
-    include_bytes!("../../../examples/ethereum-transaction/fixtures/mainnet-26429593-0.rlp");
-// Must equal the guest's `#[jolt::provable]` attributes. The guest's entry
-// point locates its input and output from them at compile time; this harness
-// builds the `Program` without reading them, and nothing checks the two agree.
-const ETHEREUM_TRANSACTION_STACK_SIZE: u64 = 1 << 20;
-const ETHEREUM_TRANSACTION_MAX_INPUT_SIZE: u64 = 1 << 18;
 const LEGACY_TIMINGS_HEADER: &str = "benchmark_name,scale,prover_time_s,trace_length,proving_hz,proof_size,proof_size_compressed,backend";
 const TIMINGS_HEADER: &str = "benchmark_name,scale,prover_time_s,trace_length,proving_hz,proof_size,proof_size_compressed,backend,setup_time_s,verifier_parallel_time_s,verifier_single_thread_time_s,verifier_parallel_threads";
 
@@ -146,9 +145,10 @@ pub enum Workload {
     #[value(name = "btreemap")]
     BTreeMap,
     Secp256k1Batch,
-    /// One mainnet transaction (`examples/ethereum-transaction`). Its input is
-    /// a checked-in witness, so it has one size.
-    EthereumTransaction,
+    /// jeth's guest validating one mainnet block. It is not a workspace
+    /// member: `prepare` builds it and writes its inputs, and `profile` runs
+    /// only from those files.
+    EthereumBlock,
     /// The eq-MLE field-inline guest (`examples/field-ops`): the workload
     /// that exercises the field-inline columns and kernels. Fixed-size (its input does
     /// not scale), so it is not in the default sweep list.
@@ -166,7 +166,7 @@ impl Workload {
             Self::Sha3Chain => "sha3-chain",
             Self::BTreeMap => "btreemap",
             Self::Secp256k1Batch => "secp256k1-batch",
-            Self::EthereumTransaction => "ethereum-transaction",
+            Self::EthereumBlock => "ethereum-block",
             #[cfg(feature = "field-inline")]
             Self::FieldOps => "field-ops",
         }
@@ -180,12 +180,7 @@ impl Workload {
                 program.set_func("verify_batch");
                 program
             }
-            Self::EthereumTransaction => {
-                let mut program = Program::new("ethereum-transaction-guest");
-                program.set_stack_size(ETHEREUM_TRANSACTION_STACK_SIZE);
-                program.set_max_input_size(ETHEREUM_TRANSACTION_MAX_INPUT_SIZE);
-                program
-            }
+            Self::EthereumBlock => ethereum_block::program(),
             _ => Program::new(&format!("{}-guest", self.as_str())),
         }
     }
@@ -205,29 +200,30 @@ impl Workload {
             Self::Sha3Chain => 22,
             Self::BTreeMap => 20,
             Self::Secp256k1Batch => 20,
-            Self::EthereumTransaction => 23,
+            Self::EthereumBlock => 26,
             #[cfg(feature = "field-inline")]
             Self::FieldOps => 16,
         }
     }
 
-    fn input(self, target: usize) -> Vec<u8> {
+    /// `None` for a workload whose inputs are files that `prepare` writes.
+    fn input(self, target: usize) -> Option<Vec<u8>> {
         let cycles_per_op = match self {
             Self::Fibonacci => CYCLES_PER_FIBONACCI_UNIT,
             Self::Sha2Chain => CYCLES_PER_SHA256,
             Self::Sha3Chain => CYCLES_PER_SHA3,
             Self::BTreeMap => CYCLES_PER_BTREEMAP_OP,
-            Self::Secp256k1Batch | Self::EthereumTransaction => {
-                return self.input_for_operations(1)
-            }
+            Self::Secp256k1Batch => return self.input_for_operations(1),
+            Self::EthereumBlock => return None,
             #[cfg(feature = "field-inline")]
-            Self::FieldOps => return eqpoly_inputs(),
+            Self::FieldOps => return Some(eqpoly_inputs()),
         };
         self.input_for_operations(scale_to_target_ops(target, cycles_per_op))
     }
 
-    fn input_for_operations(self, operations: u32) -> Vec<u8> {
-        match self {
+    /// `None` for a workload whose inputs are not sized by an operation count.
+    fn input_for_operations(self, operations: u32) -> Option<Vec<u8>> {
+        Some(match self {
             Self::Fibonacci | Self::BTreeMap => {
                 postcard::to_stdvec(&operations).expect("serialize input")
             }
@@ -237,13 +233,10 @@ impl Workload {
             ]
             .concat(),
             Self::Secp256k1Batch => prepare::secp256k1_inputs(operations),
-            Self::EthereumTransaction => {
-                assert_eq!(operations, 1, "the witness holds one transaction");
-                postcard::to_stdvec(ETHEREUM_TRANSACTION_WITNESS).expect("serialize input")
-            }
+            Self::EthereumBlock => return None,
             #[cfg(feature = "field-inline")]
             Self::FieldOps => eqpoly_inputs(),
-        }
+        })
     }
 }
 
@@ -343,8 +336,7 @@ pub struct ProfileArgs {
     pub name: Workload,
 
     /// log2 of the max (padded) trace length; per-workload default when
-    /// omitted (fibonacci 16, sha2-chain 22, sha3-chain 22, btreemap 20,
-    /// ethereum-transaction 23, field-ops 16).
+    /// omitted (fibonacci 16, sha2-chain 22, sha3-chain 22, btreemap 20, field-ops 16).
     #[clap(long)]
     pub scale: Option<u32>,
 
@@ -372,6 +364,11 @@ pub struct ProfileArgs {
     /// Exact postcard input bytes, prepared separately from measurement.
     #[clap(long)]
     pub input_file: Option<PathBuf>,
+
+    /// Runtime advice tape for a guest that reads one, prepared separately from
+    /// measurement.
+    #[clap(long, requires_all = ["guest_elf", "input_file"])]
+    pub advice_file: Option<PathBuf>,
 
     /// Full-resolution metrics, written only after both verifications pass.
     #[clap(long, requires_all = ["guest_elf", "input_file"])]
@@ -992,9 +989,20 @@ fn run_workload(args: &ProfileArgs, scale: u32, run_dir: &Path) -> ProfileResult
     }
     let e2e_start = Instant::now();
     let input = args.input_file.as_ref().map_or_else(
-        || workload.input(bench_target),
+        || {
+            workload.input(bench_target).unwrap_or_else(|| {
+                panic!(
+                    "{bench_name} proves only files that `prepare` wrote: \
+                     pass --guest-elf, --input-file and --advice-file"
+                )
+            })
+        },
         |path| fs::read(path).expect("read fixed guest input"),
     );
+    let advice_tape = args
+        .advice_file
+        .as_ref()
+        .map(|path| fs::read(path).expect("read fixed advice tape"));
 
     let mut program = workload.program();
     if let Some(path) = &args.guest_elf {
@@ -1010,7 +1018,7 @@ fn run_workload(args: &ProfileArgs, scale: u32, run_dir: &Path) -> ProfileResult
     // preliminary legacy trace duplicates execution and can leave large
     // allocator-retained buffers in the measured process.
     let trace_output = program
-        .trace_with_backend(&mut TracerBackend::new(), &input, &[], &[])
+        .trace_with_backend(&mut TracerBackend::new(), &input, &[], &[], advice_tape)
         .expect("modular trace");
     let trace_length = trace_output.trace.proof_len();
     assert!(
@@ -1456,5 +1464,6 @@ fn profile_witness(config: JoltVmWitnessConfig, inputs: JoltVmWitnessInputs) -> 
 #[path = "profile/tests.rs"]
 mod tests;
 
+mod ethereum_block;
 mod prepare;
 pub use prepare::{prepare, PrepareArgs};
