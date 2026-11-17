@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794873076223,
+  "lastUpdate": 1794874042969,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -260458,6 +260458,270 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 888268,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "atretyakov@a16z.com",
+            "name": "Andrew Tretyakov",
+            "username": "0xAndoroid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "fb647391dfc171ed158f00d0d686ee8af4fb8ff3",
+          "message": "docs: cut restating comments and correct stale passages in the recursion docs (#2477)\n\n* docs(jolt-algebra): cut restating comments and correct two stale passages\n\nFollow-up to #2455, whose merged diff was checked for comment bloat\nafter the merge. Comments and docs only; no code or test changes.\n\n- Cut three comments that restate the code beside them: the doc of the\n  `out_add_a` emitter and two lines narrating assertions in\n  `fp128_serde_decodes_canonical_byte_tuples_only`.\n- `word_decode.rs` module doc: say why `Fp128` does not use\n  `impl_serde_bytes!` (fewer guest rows) instead of restating the file.\n- `CanonicalEncoding` doc: `Fp128`'s decoder calls `from_u128_checked`,\n  the check its `from_bytes_le_checked` calls, not\n  `from_bytes_le_checked` itself.\n- `specs/recursion-guest.md`: list multiply-adds among the operations\n  the routed field runs through field-inline instructions.\n\n* docs(recursion): say the field-kernel check is run by hand, not in CI\n\nThe recursion README said CI runs `check-field-kernels` in both builds.\nNo workflow has run it since #2242 removed the recursion guest verdicts\njob from rust.yml, so the sentence now tells the reader to run it by\nhand.\n\n* docs(recursion): correct two stale statements in the guest spec\n\nspecs/recursion-guest.md, \"Levers not taken here\": the proof field\ndecoding bullet described the decoder that #2455 replaced (a `[u8; 16]`\nbuffer, about 100 rows per element) and said any faster path changes\nthe bincode wire format. Since #2455 the decoder assembles two 64-bit\nwords from the same 16 bytes, with the same wire format. The bullet now\nstates that, and names the remaining lever exactly: decoding an element\nas `u64`/`u128` integers or as a byte string, which bincode's standard\nconfiguration encodes differently. No per-element row count is given,\nbecause none has been measured for the current decoder.\n\nSame file, \"Reproduction\": the spec said CI runs the flow and the\ntampered-opening rejection. No workflow has run the recursion example\nsince #2242 removed its job, so the sentence now says both are run by\nhand.",
+          "timestamp": "2026-11-16T18:16:28-05:00",
+          "tree_id": "167d5bb017917c84a9edbe0c44b8b31a9202354e",
+          "url": "https://github.com/a16z/jolt/commit/fb647391dfc171ed158f00d0d686ee8af4fb8ff3"
+        },
+        "date": 1794874035759,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 2.1046,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 911120,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 0.8406,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 463800,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 464348,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 464152,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.5051,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 464092,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-mem",
+            "value": 903516,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 1.0451,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 463824,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 2.6689,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 464088,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 2.6916,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 131836,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.127,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 917560,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.3862,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 464160,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.2732,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 463912,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 14.7135,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 463716,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 3.0592,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 464496,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 21.5448,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 702836,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 10.3126,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 606280,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 41.5346,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 632112,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.0313,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 464204,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.1758,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 464124,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 9.9476,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 917176,
             "unit": "KB",
             "extra": ""
           }
