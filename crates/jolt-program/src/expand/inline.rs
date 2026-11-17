@@ -267,7 +267,7 @@ impl InlineExpansionBuilder {
         );
     }
 
-    /// Emit or expand a B-format row with a signed branch offset.
+    /// Emit or expand a B-format row with an even signed 13-bit byte offset.
     pub fn emit_b(
         &mut self,
         instruction_kind: impl Into<SourceInstructionKind>,

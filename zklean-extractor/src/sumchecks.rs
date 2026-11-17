@@ -49,6 +49,13 @@ impl Display for ZkLeanVarRef {
 
 impl ZkLeanVarRef {
     pub fn new(relation: JoltRelationId, polynomial: JoltPolynomialId) -> Self {
+        // The full-trace R1CS contains the jump product, so its successor bit is also
+        // the witness read by the shift relation.
+        let relation = if polynomial == JoltVirtualPolynomial::NextIsNoop.into() {
+            JoltRelationId::SpartanOuter
+        } else {
+            relation
+        };
         Self {
             relation,
             polynomial,
@@ -70,19 +77,20 @@ impl ZkLeanSumchecks {
     pub fn extract<const XLEN: usize>() -> Self {
         let claims = extracted_claims();
         let mut vars = BTreeMap::<JoltRelationId, BTreeSet<String>>::new();
+        let mut declare = |relation, polynomial| {
+            let field = ZkLeanVarRef::new(relation, polynomial);
+            vars.entry(field.relation)
+                .or_default()
+                .insert(polynomial_ident(field.polynomial));
+        };
 
         for relation_claims in &claims {
-            vars.entry(relation_claims.output_relation).or_default();
             for claim in &relation_claims.claims {
-                claim.input.visit_polynomials(&mut |polynomial| {
-                    vars.entry(claim.input_relation)
-                        .or_default()
-                        .insert(polynomial_ident(polynomial));
-                });
+                claim
+                    .input
+                    .visit_polynomials(&mut |polynomial| declare(claim.input_relation, polynomial));
                 claim.output.visit_polynomials(&mut |polynomial| {
-                    vars.entry(relation_claims.output_relation)
-                        .or_default()
-                        .insert(polynomial_ident(polynomial));
+                    declare(relation_claims.output_relation, polynomial)
                 });
             }
         }
@@ -313,5 +321,20 @@ impl AsModule for ZkLeanSumchecks {
             imports: vec![String::from("zkLean"), String::from("Jolt.R1CS")],
             contents,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shift_binds_the_r1cs_successor_bit_to_the_next_rows_noop_flag() {
+        let module = ZkLeanSumchecks::extract::<64>().as_module().unwrap();
+        let lean = String::from_utf8(module.contents).unwrap();
+        assert!(lean.contains(
+            "(1 - cycle.JoltR1CSInputs.NextIsNoop)\n    (1 - next_cycle.SpartanShift_Vars.InstructionFlags_IsNoop)"
+        ));
+        assert!(!lean.contains("NextIsNoop : ZKExpr f"));
     }
 }

@@ -1,7 +1,9 @@
 use jolt_claims::protocols::jolt::TracePolynomialOrder;
 use jolt_crypto::VectorCommitment;
 use jolt_openings::CommitmentScheme;
-use jolt_program::preprocess::JoltProgramPreprocessing;
+use jolt_program::preprocess::{
+    JoltProgramPreprocessing, PreprocessingError as ProgramPreprocessingError,
+};
 use jolt_verifier::JoltVerifierPreprocessing;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -21,6 +23,10 @@ pub(crate) fn validate_committed_mode(
             reason: "declared bytecode size differs from padded rows".to_owned(),
         });
     }
+    program
+        .bytecode
+        .validate_branch_offsets()
+        .map_err(ProgramPreprocessingError::from)?;
     Ok(())
 }
 
@@ -120,6 +126,40 @@ mod tests {
             bincode::serde::decode_from_slice(&encoded, bincode::config::standard()).unwrap();
         assert_eq!(consumed, encoded.len());
         assert_eq!(*decoded.program, program);
+    }
+
+    #[cfg(all(not(feature = "akita"), not(feature = "field-inline")))]
+    #[test]
+    fn key_builders_recheck_branch_offsets_in_existing_preprocessing() {
+        use crate::dory;
+        use jolt_program::preprocess::PreprocessingError as ProgramPreprocessingError;
+        use jolt_verifier::VerifierError;
+
+        let branch = JoltInstructionRow {
+            instruction_kind: JoltInstructionKind::BEQ,
+            address: RAM_START_ADDRESS as usize,
+            operands: NormalizedOperands {
+                rs1: Some(1),
+                rs2: Some(2),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mut program = program_with_entry(vec![branch], RAM_START_ADDRESS);
+        program.bytecode.bytecode[1].operands.imm = 4096;
+        let shared = JoltSharedPreprocessing::new(program.clone()).unwrap();
+        assert!(matches!(
+            dory::from_shared(shared),
+            Err(PreprocessingError::Verifier(
+                VerifierError::InvalidBranchOffset(_)
+            ))
+        ));
+        assert!(matches!(
+            dory::preprocess_committed(program),
+            Err(PreprocessingError::Program(
+                ProgramPreprocessingError::InvalidBranchOffset(_)
+            ))
+        ));
     }
 
     #[test]

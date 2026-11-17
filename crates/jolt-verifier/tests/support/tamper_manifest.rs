@@ -1386,6 +1386,7 @@ pub fn observed_rejection_phase(error: &VerifierError) -> Option<VerifierPhase> 
         | VerifierError::MissingPreprocessingPayload { .. }
         | VerifierError::UnsupportedInstruction { .. }
         | VerifierError::EntryNotInstruction { .. }
+        | VerifierError::InvalidBranchOffset(_)
         | VerifierError::InvalidFieldInlineBytecode { .. }
         | VerifierError::PreprocessingDigestFailed { .. } => Some(VerifierPhase::Preamble),
         // The difficulty depends only on the challenge set, so the first site

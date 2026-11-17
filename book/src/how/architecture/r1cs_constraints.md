@@ -80,13 +80,13 @@ Under either value of $\Pi$, the lane also rejects every flag combination that n
 This form keeps lane 3's coefficients in the full-trace matrix in $\{\pm 1, -2\}$.
 
 Only a halt can precede padding.
-A padding row has address 0, and the shifted columns are 0 at the last cycle, so a real row followed by padding, or at $T-1$, has $\textsf{NextUnexpandedPC} = 0$.
+A padding row has address 0. A real row followed by padding, or at $T-1$, has $\textsf{NextUnexpandedPC} = 0$.
 If that row is not a jump, row 15 (a taken branch) or row 16 sets its $\textsf{NextUnexpandedPC}$ from its own address: its own address plus the branch offset, the next sequential address, or its own address inside an expanded sequence.
-None of these is 0, because bytecode addresses are at least `RAM_START_ADDRESS` ($2^{31}$) and a branch offset is a 13-bit immediate, so the row is a jump, and lane 3 makes it a halt.
+None of these is 0. Bytecode addresses are at least `RAM_START_ADDRESS` ($2^{31}$), and bytecode admission checks that every conditional branch has an even signed 13-bit displacement, including branches emitted by registered inlines. The row must therefore be a jump, and lane 3 makes it a halt.
 A padding row keeps the next address at 0 (row 16), so no real row follows padding.
 The real rows therefore form a prefix that ends at exactly one halt: a proof with $\Pi = 0$ attests a run that ended at `jolt.success`, and one with $\Pi = 1$ a run that ended at `EBREAK`.
 
-Two admission checks complete the rule:
+Halt placement and the entry row have separate admission checks.
 
 - A halt is a whole source instruction. A halt as the last row of a longer expansion would end the proof in the middle of an instruction, so bytecode preprocessing rejects such a sequence (`PreprocessingError::HaltInSequence`) and expansion rejects a halt among the final rows of a multi-row sequence (`ExpansionError::HaltInSequence`).
 - The entry row is a real instruction. Bytecode read-RAF pins cycle 0 to the key's entry row; if that row were padding, an all-padding trace would verify under either value of $\Pi$. Full-mode verification under such a key fails with `VerifierError::EntryNotInstruction`. A committed key carries no rows: the verifier rejects only entry index 0 and trusts the key for the rest, as it does for the committed rows themselves. The prover refuses a padding entry and a trace that is empty or does not end at a halt.

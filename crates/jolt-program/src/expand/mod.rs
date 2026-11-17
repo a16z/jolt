@@ -183,6 +183,7 @@ fn final_rows_to_instructions(
                     row.instruction_kind,
                 ));
             }
+            row.validate_branch_offset()?;
             Ok(JoltInstruction::from(row))
         })
         .collect()

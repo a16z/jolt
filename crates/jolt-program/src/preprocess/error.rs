@@ -1,3 +1,5 @@
+use jolt_riscv::InvalidBranchOffset;
+
 use super::ram::RamDomainError;
 #[cfg(feature = "field-inline")]
 use crate::field_inline::FieldInlineInstructionError;
@@ -62,6 +64,8 @@ pub enum PreprocessingError {
         bytecode_index: usize,
         address: usize,
     },
+    #[error(transparent)]
+    InvalidBranchOffset(#[from] InvalidBranchOffset),
     #[cfg(feature = "field-inline")]
     #[error("invalid field-inline instruction: {0}")]
     InvalidFieldInlineInstruction(#[from] FieldInlineInstructionError),

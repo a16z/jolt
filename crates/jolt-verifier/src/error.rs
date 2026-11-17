@@ -1,5 +1,5 @@
 use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, JoltRelationId};
-use jolt_riscv::JoltInstructionKind;
+use jolt_riscv::{InvalidBranchOffset, JoltInstructionKind};
 use jolt_transcript::VerificationError;
 
 use crate::config::JoltProtocolConfig;
@@ -131,6 +131,9 @@ pub enum VerifierError {
     UnsupportedInstruction { kind: JoltInstructionKind },
     #[error("program entry {entry_address:#x} does not name an instruction row")]
     EntryNotInstruction { entry_address: u64 },
+
+    #[error(transparent)]
+    InvalidBranchOffset(#[from] InvalidBranchOffset),
     #[error("invalid field-inline bytecode: {reason}")]
     InvalidFieldInlineBytecode { reason: String },
 

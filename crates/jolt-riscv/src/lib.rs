@@ -434,7 +434,10 @@ pub use profile::{
     JoltTargetExtension, ProfileInstructionIndex, SourceExtension, RV64IMAC_JOLT,
     RV64IMAC_JOLT_ALL_INLINES, RV64IM_JOLT,
 };
-pub use row::{JoltInstructionRow, NormalizedOperands, SourceInlineKey, SourceInstructionRow};
+pub use row::{
+    InvalidBranchOffset, JoltInstructionRow, NormalizedOperands, SourceInlineKey,
+    SourceInstructionRow,
+};
 pub use row_data::JoltInstructionRowData;
 pub use trace::JoltCycle;
 pub use trace_row::{

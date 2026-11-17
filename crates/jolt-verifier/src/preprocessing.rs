@@ -271,6 +271,9 @@ where
     ) -> Result<Self, VerifierError> {
         validate_memory_layout_admission(program.memory_layout())?;
         program.validate_code_region()?;
+        if let Some(full) = program.as_full() {
+            full.bytecode.validate_branch_offsets()?;
+        }
         let preprocessing_digest = program.digest()?;
         Ok(Self {
             program,
