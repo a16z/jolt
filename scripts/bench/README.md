@@ -181,6 +181,18 @@ would occupy 18.84 host-hours per day (about 78%) before any PR jobs; nineteen
 such pushes plus nightly would exceed 24 hours. These are capacity scenarios,
 not measured daily throughput.
 
+The model's minutes predate the Ethereum block points, which add 22 processes
+to a refresh, 4 to a main-history commit and 18 to nightly. On shared CherryPika
+under load, not on jolt-bench, one process took 32.1 to 32.3 seconds for block
+26433846 with Akita (four samples), 155.8 seconds for the same block with Dory
+and 82.7 seconds for block 26227673 with Akita (one sample each). At those
+times a refresh grows by 11.8 minutes, a main-history commit by 2.1 minutes and
+nightly by 27.1 minutes plus its refresh. On jolt-bench, the nightlies of
+November 15 to 17, 2026 took 189.6 to 198.0 minutes from the start of the
+refresh to the end of the run. Adding 38.8 minutes at CherryPika's times gives
+228.5 to 236.9 minutes, close to nightly's 240-minute limit. No jolt-bench run
+has measured these points.
+
 After acquiring the host lock, a main-push job checks the live main head before
 calibration. If its planned tip has already been superseded, it skips only the
 null and records the reason and both revisions in `calibration/skipped.json`.
