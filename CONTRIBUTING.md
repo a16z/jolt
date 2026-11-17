@@ -68,8 +68,9 @@ The gate approves as `github-actions[bot]` when a maintainer listed in
 an allowed account attested a review of its current head, and the verifier classifier rated it
 `risk-1`, `risk-2` or `risk-3`. The head's risk is the highest per-path level the classifier
 returns, using the [verifier-classifier skill](.claude/skills/verifier-classifier/SKILL.md).
-It never approves `risk-4` or an unclassified head; those need a current-head approval from a
-maintainer other than the PR author. The classifier is the only model the gate calls.
+It never approves `risk-4` or an unclassified head; those need an undismissed approval from a
+maintainer other than the PR author, on any commit of the pull request. The classifier is the
+only model the gate calls.
 
 Run code review outside CI. Once it finds no issues, the Pika App bot or a maintainer listed in
 the repository variable `AI_MERGE_GATE_MAINTAINERS`, with current write access, posts the exact
@@ -98,6 +99,8 @@ approval policy, limits, admin setup and turning the gate off.
 - [cargo-audit](https://github.com/rustsec/rustsec/tree/main/cargo-audit) for the dependency-advisory check
 
 ### Key Commands
+
+The root [`justfile`](justfile) wraps the lint, format and test commands, and CI's other lint checks, as [just](https://github.com/casey/just) recipes; `just` lists them.
 
 ```bash
 # Lint (must pass in both modes)

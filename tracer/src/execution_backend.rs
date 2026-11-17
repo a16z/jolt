@@ -15,6 +15,7 @@ use common::jolt_device::JoltDevice;
 
 use crate::emulator::cpu::AdviceTape;
 use crate::emulator::decode_cache::DecodeCache;
+use crate::emulator::mmu::CodeGuard;
 use crate::emulator::Emulator;
 use crate::instruction::Cycle;
 #[cfg(feature = "field-inline")]
@@ -346,6 +347,7 @@ pub struct TracerChunkCheckpoint {
 struct WorkerSeed {
     device: Option<JoltDevice>,
     decode: DecodeCache,
+    code_guard: Option<CodeGuard>,
     bytecode: BytecodePreprocessing,
 }
 
@@ -396,6 +398,7 @@ impl TracerBackend {
                 .mmu
                 .decode_cache
                 .snapshot_with_empty_entries(),
+            code_guard: emulator.get_cpu().mmu.code_guard.clone(),
             bytecode,
         });
 
@@ -476,6 +479,7 @@ impl ChunkedExecutionBackend for TracerBackend {
         let mut worker = ChunkWorker::from_seed(
             checkpoint.seed.device.clone(),
             checkpoint.seed.decode.clone(),
+            checkpoint.seed.code_guard.clone(),
         );
         let _previous =
             worker.install_chunk(&checkpoint.boundary, checkpoint.image.as_ref().clone());

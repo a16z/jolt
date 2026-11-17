@@ -1,6 +1,6 @@
 use crate::{AkitaScheduleArtifacts, AkitaVerificationContext};
 use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
-use akita_params::PrecommittedGroupProfiles;
+use akita_params::{PrecommittedGroupProfiles, SUPPORTED_COMMITMENT_RING_DIMS};
 use akita_pcs::custom_source::RootPolyMeta;
 use akita_pcs::{AkitaError, CommitOutput, CpuBackend, GroupContext, SourceHandle};
 use akita_transcript::TranscriptSponge;
@@ -813,7 +813,15 @@ impl TransparentObjectSetup for AkitaScheme {
             invalid_setup("full-width object arity was not admitted during preprocessing")
         })?;
         let dense = vec![match poly.dense_evaluation_prefix() {
-            Some(prefix) => AkitaBackendDensePoly::from_field_prefix(num_vars, prefix.to_vec()),
+            Some(prefix) => {
+                // `from_field_prefix` pads to a multiple of the largest supported
+                // commitment ring dimension (Akita's private `MIN_FLAT_COEFF_LEN`);
+                // this capacity keeps that padding from growing the copy.
+                let [.., alignment] = SUPPORTED_COMMITMENT_RING_DIMS;
+                let mut values = Vec::with_capacity(prefix.len().next_multiple_of(alignment));
+                values.extend_from_slice(prefix);
+                AkitaBackendDensePoly::from_field_prefix(num_vars, values)
+            }
             None => {
                 AkitaBackendDensePoly::from_field_evals(num_vars, akita_ordered_evaluations(poly)?)
             }
