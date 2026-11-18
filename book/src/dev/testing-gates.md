@@ -2,7 +2,7 @@
 
 ## Guest × mode acceptance matrix
 
-`crates/jolt-prover/tests/e2e_matrix.rs` holds one guest table per instruction
+`crates/jolt-prover/tests/integration/e2e_matrix.rs` holds one guest table per instruction
 profile. The ordinary profile has fourteen cases: muldiv, fibonacci, memory-ops,
 heap-top, stdlib, memory-copy, sha2, sha3 through both its unaligned and aligned
 entry points, advice-consumer, rounded-advice, btreemap, exact-domain, and
@@ -45,14 +45,14 @@ row its proof selected in the verifier's catalog and asserts that the trace
 group was committed at dimension 512.
 
 ```bash
-cargo nextest run -p jolt-prover --features prover-fixtures -E 'binary(e2e_matrix)' --cargo-quiet
-cargo nextest run -p jolt-prover --features prover-fixtures,zk -E 'binary(e2e_matrix)' --cargo-quiet
-cargo nextest run -p jolt-prover --features akita,prover-fixtures -E 'binary(e2e_matrix)' --cargo-quiet
+cargo nextest run -p jolt-prover --features prover-fixtures -E 'test(/^e2e_matrix::/)' --cargo-quiet
+cargo nextest run -p jolt-prover --features prover-fixtures,zk -E 'test(/^e2e_matrix::/)' --cargo-quiet
+cargo nextest run -p jolt-prover --features akita,prover-fixtures -E 'test(/^e2e_matrix::/)' --cargo-quiet
 
 # Field-inline profile
-cargo nextest run -p jolt-prover --features prover-fixtures,field-inline -E 'binary(e2e_matrix)' --cargo-quiet
-cargo nextest run -p jolt-prover --features prover-fixtures,field-inline,zk -E 'binary(e2e_matrix)' --cargo-quiet
-cargo nextest run -p jolt-prover --features prover-fixtures,field-inline,akita -E 'binary(e2e_matrix)' --cargo-quiet
+cargo nextest run -p jolt-prover --features prover-fixtures,field-inline -E 'test(/^e2e_matrix::/)' --cargo-quiet
+cargo nextest run -p jolt-prover --features prover-fixtures,field-inline,zk -E 'test(/^e2e_matrix::/)' --cargo-quiet
+cargo nextest run -p jolt-prover --features prover-fixtures,field-inline,akita -E 'test(/^e2e_matrix::/)' --cargo-quiet
 ```
 
 Add a guest by appending a row to its profile table: the example crate name,

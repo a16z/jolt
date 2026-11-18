@@ -93,18 +93,18 @@ cargo nextest run --cargo-quiet
 # Run specific test in specific package
 cargo nextest run -p [package_name] [test_name] --cargo-quiet
 
-# Guest x mode acceptance matrix (crates/jolt-prover/tests/e2e_matrix.rs): one
+# Guest x mode acceptance matrix (crates/jolt-prover/tests/integration/e2e_matrix.rs): one
 # table per instruction profile, proven in clear, ZK, and Akita modes in CI.
 # Ordinary profile: fourteen guest cases. Akita builds of both profiles also prove
 # fibonacci_ring_512, which asserts a ring-dimension-512 trace commitment.
-cargo nextest run -p jolt-prover --features prover-fixtures -E 'binary(e2e_matrix)' --cargo-quiet
-cargo nextest run -p jolt-prover --features prover-fixtures,zk -E 'binary(e2e_matrix)' --cargo-quiet
-cargo nextest run -p jolt-prover --features akita,prover-fixtures -E 'binary(e2e_matrix)' --cargo-quiet
+cargo nextest run -p jolt-prover --features prover-fixtures -E 'test(/^e2e_matrix::/)' --cargo-quiet
+cargo nextest run -p jolt-prover --features prover-fixtures,zk -E 'test(/^e2e_matrix::/)' --cargo-quiet
+cargo nextest run -p jolt-prover --features akita,prover-fixtures -E 'test(/^e2e_matrix::/)' --cargo-quiet
 
 # Field-inline profile: field_ops, field_limbs, muldiv, exact_domain, and panic_halt.
-cargo nextest run -p jolt-prover --features prover-fixtures,field-inline -E 'binary(e2e_matrix)' --cargo-quiet
-cargo nextest run -p jolt-prover --features prover-fixtures,field-inline,zk -E 'binary(e2e_matrix)' --cargo-quiet
-cargo nextest run -p jolt-prover --features prover-fixtures,field-inline,akita -E 'binary(e2e_matrix)' --cargo-quiet
+cargo nextest run -p jolt-prover --features prover-fixtures,field-inline -E 'test(/^e2e_matrix::/)' --cargo-quiet
+cargo nextest run -p jolt-prover --features prover-fixtures,field-inline,zk -E 'test(/^e2e_matrix::/)' --cargo-quiet
+cargo nextest run -p jolt-prover --features prover-fixtures,field-inline,akita -E 'test(/^e2e_matrix::/)' --cargo-quiet
 
 # Full prover suites and the verifier fixtures (mirror CI)
 cargo nextest run -p jolt-verifier standard_muldiv --features prover-fixtures --cargo-quiet

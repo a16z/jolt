@@ -47,7 +47,7 @@ test *args:
 
 # Guest x mode acceptance matrix under one feature set (CLAUDE.md lists them), e.g. prover-fixtures,zk
 e2e-matrix features="prover-fixtures":
-    cargo nextest run -p jolt-prover --features "$1" -E 'binary(e2e_matrix)' --cargo-quiet
+    cargo nextest run -p jolt-prover --features "$1" -E 'test(/^e2e_matrix::/)' --cargo-quiet
 
 # Install the jolt CLI that guest builds call; rerun after pulling changes
 install-cli:

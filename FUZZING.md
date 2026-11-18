@@ -108,10 +108,10 @@ ignored test and committed under `fuzz/fixtures/` or `fuzz/seeds/`:
 # jolt-verifier tamper fixture (needs the host/prover build):
 JOLT_VERIFIER_REGENERATE_VERIFIER_FIXTURES=1 \
 cargo nextest run -p jolt-verifier --features prover-fixtures \
-    --test generate_fuzz_fixture --run-ignored ignored-only --cargo-quiet
+    -E 'test(/^generate_fuzz_fixture::/)' --run-ignored ignored-only --cargo-quiet
 JOLT_VERIFIER_REGENERATE_VERIFIER_FIXTURES=1 \
 cargo nextest run -p jolt-verifier --features prover-fixtures,zk \
-    --test generate_fuzz_fixture --run-ignored ignored-only --cargo-quiet
+    -E 'test(/^generate_fuzz_fixture::/)' --run-ignored ignored-only --cargo-quiet
 # crypto/PCS real serialized seeds:
 cargo nextest run --manifest-path crates/jolt-crypto/fuzz/Cargo.toml \
     --run-ignored ignored-only --cargo-quiet

@@ -114,9 +114,9 @@ The main implementation paths are:
 The modular prover's end-to-end suite covers arithmetic execution, both one-hot chunk sizes, advice, committed programs, and rejection of modified claims. Run it with:
 
 ```bash
-cargo nextest run -p jolt-prover --features prover-fixtures,akita --test akita_e2e --cargo-quiet
+cargo nextest run -p jolt-prover --features prover-fixtures,akita -E 'test(/^akita_e2e::/)' --cargo-quiet
 ```
 
 Plain prove-and-verify acceptance of the example guests under Akita runs in
-the guest × mode matrix (`crates/jolt-prover/tests/e2e_matrix.rs`, see
+the guest × mode matrix (`crates/jolt-prover/tests/integration/e2e_matrix.rs`, see
 [Testing gates](../dev/testing-gates.md)).
