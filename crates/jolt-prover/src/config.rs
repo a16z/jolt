@@ -74,7 +74,7 @@ impl ProverConfig {
         program_image_len_words: usize,
         max_padded_trace_length: usize,
     ) -> Result<Self, ProverError<F>> {
-        if !dimensions.ends_in_halt {
+        if dimensions.trace_length == 0 || !dimensions.ends_in_halt {
             return Err(ProverError::TraceDoesNotEndInHalt);
         }
         let trace_length = Self::padded_trace_length::<F>(dimensions.trace_length)?;
