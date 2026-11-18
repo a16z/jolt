@@ -8,7 +8,7 @@
 use std::ops::Range;
 
 use akita_algebra::ntt::butterfly::inverse_ntt;
-use akita_algebra::ntt::tile_dot;
+use akita_algebra::ntt::tile_dot::{self, SLOTS};
 use akita_algebra::tables::q128_primes;
 use akita_algebra::{CrtNttParamSet, CyclotomicRing, DigitMontLut, MontCoeff};
 use akita_error::AkitaError;
@@ -27,7 +27,7 @@ use super::traversal::{row_is_committed, visit_segment_ring_row_range};
 use crate::AkitaField;
 
 /// Key positions one dot pass covers.
-const DOT_BATCH: usize = tile_dot::SLOTS;
+const DOT_BATCH: usize = SLOTS;
 /// Positions whose digit windows a sparse pass keeps loaded. Half a dot
 /// batch: the windows of twelve positions overflow the first-level cache.
 const SPARSE_SLOTS: usize = DOT_BATCH / 2;
@@ -39,18 +39,17 @@ const SPARSE_SLOTS: usize = DOT_BATCH / 2;
 /// uses them, so the choice is made per batch: the columns the windows would
 /// serve cheaper take them only if together they save more than loading the
 /// windows costs.
-mod cost {
-    /// One position of one column in a dot pass (all limbs).
-    pub(super) const DOT: usize = 830;
-    /// One transform, before its rows.
-    pub(super) const TRANSFORM: usize = 540;
-    /// One committed row of a transform.
-    pub(super) const TRANSFORM_ROW: usize = 8;
-    /// One committed row through the digit windows.
-    pub(super) const WINDOW_ROW: usize = 262;
-    /// Loading one position's digit windows.
-    pub(super) const WINDOW_LOAD: usize = 4450;
-}
+///
+/// One position of one column in a dot pass (all limbs).
+const DOT_COST: usize = 830;
+/// One transform, before its rows.
+const TRANSFORM_COST: usize = 540;
+/// One committed row of a transform.
+const TRANSFORM_ROW_COST: usize = 8;
+/// One committed row through the digit windows.
+const WINDOW_ROW_COST: usize = 262;
+/// Loading one position's digit windows.
+const WINDOW_LOAD_COST: usize = 4450;
 
 /// A column with committed rows in the batch: its shifts are `lens[slot]`
 /// entries per slot, in slot order, from `start` on.
@@ -71,8 +70,8 @@ impl BatchColumn {
         let selected = self.selected();
         let transforms = self.lens.iter().filter(|&&len| len != 0).count();
         let dense =
-            DOT_BATCH * cost::DOT + transforms * cost::TRANSFORM + selected * cost::TRANSFORM_ROW;
-        dense.checked_sub(selected * cost::WINDOW_ROW)
+            DOT_BATCH * DOT_COST + transforms * TRANSFORM_COST + selected * TRANSFORM_ROW_COST;
+        dense.checked_sub(selected * WINDOW_ROW_COST)
     }
 }
 const _: () = assert!(MAX_NTT_POSITIONS.is_multiple_of(DOT_BATCH));
@@ -377,7 +376,7 @@ impl<const D: usize> TileCommitScratch<D> {
             }
         }
         let loads = loaded.iter().filter(|&&group| group).count() * SPARSE_SLOTS;
-        if saving <= loads * cost::WINDOW_LOAD {
+        if saving <= loads * WINDOW_LOAD_COST {
             self.sparse.clear();
         }
     }
