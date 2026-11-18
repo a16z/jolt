@@ -713,14 +713,6 @@ jobs:
       - name: Build and install jolt CLI
         run: cargo install --path . --locked --force --profile ci --target-dir target
 
-      - name: Guest function selection invalidates cached builds
-        if: matrix.variant == 'default'
-        run: python3 jolt-sdk/tests/guest_function_cache.py
-
-      - name: Guest memory layout invalidates cached builds
-        if: matrix.variant == 'default'
-        run: python3 jolt-sdk/tests/guest_layout_cache.py
-
       - name: Use the `jolt` binary to generate code
         run: jolt new sample_project
 
@@ -731,17 +723,40 @@ jobs:
         working-directory: ./sample_project
         run: ${{ matrix.run }}
 
-  # Join gate so the check name "jolt binary check" still covers every variant.
+  test-sdk-guest-cache:
+    name: jolt binary check (guest cache)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions-rust-lang/setup-rust-toolchain@a188e68d0fd2bd36ad51dccb2b07ba6e75105f30 # v2
+        with:
+          cache: false
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          shared-key: release-tests
+          save-if: false
+          cache-directories: ~/.cache/dory
+      - name: Build and install jolt CLI
+        run: cargo install --path . --locked --force --profile ci --target-dir target
+
+      - name: Guest function selection invalidates cached builds
+        run: python3 jolt-sdk/tests/guest_function_cache.py
+
+      - name: Guest memory layout invalidates cached builds
+        run: python3 jolt-sdk/tests/guest_layout_cache.py
+
+  # Join gate so the check name "jolt binary check" still covers the jobs split from it.
   test-sdk-gate:
     name: jolt binary check
     runs-on: ubuntu-latest
-    needs: test-sdk
+    needs: [test-sdk, test-sdk-guest-cache]
     if: always()
     steps:
-      - name: Check variant results
+      - name: Check results
         run: |
-          if [ "${{ needs.test-sdk.result }}" != "success" ]; then
-            echo "Variant result: ${{ needs.test-sdk.result }}"
+          if [ "${{ needs.test-sdk.result }}" != "success" ] || [ "${{ needs.test-sdk-guest-cache.result }}" != "success" ]; then
+            echo "Sample project result: ${{ needs.test-sdk.result }}"
+            echo "Guest cache result: ${{ needs.test-sdk-guest-cache.result }}"
             exit 1
           fi
 
