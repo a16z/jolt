@@ -72,8 +72,9 @@
 //!
 //! - Proof/wire serialization is serde + bincode over canonical
 //!   little-endian bytes (see [`impl_serde_bytes!`]); deserialization
-//!   rejects non-canonical encodings uniformly via
-//!   [`CanonicalEncoding::from_bytes_le_checked`].
+//!   rejects non-canonical encodings uniformly, via
+//!   [`CanonicalEncoding::from_bytes_le_checked`] or, for `Fp128`, the
+//!   equivalent check on two 64-bit words assembled from the same bytes.
 //! - Fiat-Shamir transcript bytes use the explicit little-endian encoding
 //!   ([`CanonicalBytes::to_bytes_le`]) and never go through a serialization
 //!   library.

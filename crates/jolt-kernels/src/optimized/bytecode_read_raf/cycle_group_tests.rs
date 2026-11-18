@@ -30,17 +30,20 @@ fn check_group_samples<F: JoltField>() {
         let kernel = CycleKernel {
             progress: RoundProgress::new(GROUPS.ilog2() as usize + 1),
             degree,
-            ra: CycleRa::Lazy(LazyFoldedRa::Dense(ra.clone())),
+            rows: CycleRows::Lazy(LazyRows {
+                ra: LazyFoldedRa::Dense(ra.clone()),
+                #[cfg(feature = "akita")]
+                fused_inc: LazyFusedInc::Prefix {
+                    values: fused_inc.evals().to_vec(),
+                    tail: F::zero(),
+                },
+            }),
             combined: EqPrefix::from_evals(combined.evals().to_vec()),
-            #[cfg(feature = "akita")]
-            fused_inc: LazyFusedInc::Prefix {
-                values: fused_inc.evals().to_vec(),
-                tail: F::zero(),
-            },
             #[cfg(feature = "akita")]
             fused_combined: EqPrefix::from_evals(fused_combined.evals().to_vec()),
             output_openings: Vec::new(),
         };
+        let rows = kernel.rows.lazy().unwrap();
         if num_ra == 4 {
             let expected: Vec<F> = (0..degree)
                 .map(|slot| {
@@ -56,13 +59,13 @@ fn check_group_samples<F: JoltField>() {
                         .sum()
                 })
                 .collect();
-            assert_eq!(kernel.four_ra_evals(GROUPS), Some(expected));
+            assert_eq!(kernel.four_ra_evals(rows, GROUPS), Some(expected));
         }
         let mut pairs = vec![(F::zero(), F::zero()); num_ra];
         for y in 0..GROUPS {
             let start: Vec<F> = (0..degree).map(|_| F::random(&mut rng)).collect();
             let mut acc = start.clone();
-            kernel.accumulate_group(kernel.ra.lazy().unwrap(), y, &mut acc, &mut pairs);
+            kernel.accumulate_group(rows, y, &mut acc, &mut pairs);
             for (slot, (acc, start)) in acc.iter().zip(&start).enumerate() {
                 let t = F::from_u64(if slot == 0 { 0 } else { slot as u64 + 1 });
                 let coefficient = at(&combined, y, t);

@@ -17,6 +17,7 @@ use super::{
 };
 use crate::optimized::prefix_product::PrefixColumn;
 use crate::optimized::registers_read_write::rows::StreamedRows;
+use crate::optimized::streaming::DenseCap;
 
 mod pass;
 
@@ -34,14 +35,20 @@ const _: () = assert!(
         && lut_saturated(lut_len(READ_SEED_VALUES, LUT_LEVELS as u32))
 );
 
-/// Whether a level of `entries` field-coefficient entries and `rows`
-/// increments fits `cap` bytes; a size past `usize` does not.
-fn level_fits<F: JoltField>(entries: usize, rows: usize, cap: usize) -> bool {
+/// Whether a level of `entries` field-coefficient entries and `increments`
+/// increments fits `cap` over a trace of `trace_rows` rows before its
+/// padding; a size past `usize` does not.
+fn level_fits<F: JoltField>(
+    entries: usize,
+    increments: usize,
+    trace_rows: usize,
+    cap: DenseCap,
+) -> bool {
     entries
         .checked_mul(size_of::<SparseEntry<F, F>>())
-        .zip(rows.checked_mul(size_of::<F>()))
+        .zip(increments.checked_mul(size_of::<F>()))
         .and_then(|(entries, increments)| entries.checked_add(increments))
-        .is_some_and(|bytes| bytes <= cap)
+        .is_some_and(|bytes| cap.admits(bytes, trace_rows))
 }
 
 /// Cycle rounds before the fill: each pass regenerates its round's level
@@ -54,21 +61,26 @@ struct Frontier<F: JoltField> {
     /// last pass: one per column of either row of each of its pairs, whatever
     /// the coefficients. `None` before round 0's pass.
     counts: Option<Vec<usize>>,
-    /// Bytes the filled entries and increments may take.
-    cap: usize,
+    /// The cap on the filled entries and increments.
+    #[cfg_attr(feature = "allocative", allocative(skip))]
+    cap: DenseCap,
 }
 
 impl<F: JoltField> Frontier<F> {
     /// The last pass's counts when round `depth`'s level of `rows` rows,
-    /// `increments` of them with a prefix cycle, is the one to fill: from
-    /// level 1 on, the first that fits the cap ([`level_fits`]), or the last
-    /// cycle round's two rows, which hold at most `2K` entries.
-    fn admitted(&self, depth: usize, rows: usize, increments: usize) -> Option<&[usize]> {
+    /// over a trace of `prefix_len` rows that can hold an operand, is the
+    /// one to fill: from level 1 on, the first whose entries and increments,
+    /// one for each of its rows with such a trace row, fit the cap
+    /// ([`level_fits`]), or the last cycle round's two rows, which hold at
+    /// most `2K` entries.
+    fn admitted(&self, depth: usize, rows: usize, prefix_len: usize) -> Option<&[usize]> {
         let counts = self.counts.as_deref()?;
         let entries = counts
             .iter()
             .try_fold(0usize, |sum, &count| sum.checked_add(count));
-        let fits = entries.is_some_and(|entries| level_fits::<F>(entries, increments, self.cap));
+        let increments = prefix_len.div_ceil(1 << depth);
+        let fits = entries
+            .is_some_and(|entries| level_fits::<F>(entries, increments, prefix_len, self.cap));
         (depth >= 1 && (rows == 2 || fits)).then_some(counts)
     }
 }
@@ -95,9 +107,9 @@ fn pass_failed<F: JoltField>(error: PassError) -> SumcheckError<F> {
 }
 
 impl<F: JoltField> StreamedCycleState<F> {
-    /// `gamma` builds the level-0 coefficient tables; `cap` bounds the bytes
-    /// of the filled entries and increments.
-    pub(in crate::optimized::registers_read_write) fn new(gamma: F, cap: usize) -> Self {
+    /// `gamma` builds the level-0 coefficient tables; `cap` bounds the
+    /// filled entries and increments.
+    pub(in crate::optimized::registers_read_write) fn new(gamma: F, cap: DenseCap) -> Self {
         Self(Phase::Streamed(Frontier {
             luts: vec![CycleState::seed_luts(gamma)],
             counts: None,
@@ -119,11 +131,7 @@ impl<F: JoltField> StreamedCycleState<F> {
             Phase::Filled(cycle) => return Ok(cycle.quadratic(e_in, e_out)),
             Phase::Streamed(frontier) => frontier,
         };
-        let admitted = frontier.admitted(
-            r.len(),
-            2 * e_out.len() * e_in.len(),
-            rows.prefix_len.div_ceil(1 << r.len()),
-        );
+        let admitted = frontier.admitted(r.len(), 2 * e_out.len() * e_in.len(), rows.prefix_len);
         let Some(counts) = admitted else {
             let (quadratic, counts) =
                 pass::count(rows, e_in, e_out, r, &frontier.luts).map_err(pass_failed)?;
@@ -235,22 +243,27 @@ mod tests {
 
     use super::*;
 
-    /// A level is admitted exactly at the cap, priced with the increments
-    /// its prefix holds, never at level 0 or before a pass counted it, always
-    /// at the last cycle round's two rows, and not when its bytes or its
-    /// counts' sum pass `usize`.
+    /// A level is admitted exactly at the cap over its trace's rows, priced
+    /// with the increments its prefix holds, never at level 0 or before a
+    /// pass counted it, always at the last cycle round's two rows, and not
+    /// when its bytes or its counts' sum pass `usize`.
     #[test]
     fn level_admission_is_exact_at_the_cap_and_past_usize_bytes() {
         let entry = size_of::<SparseEntry<Fr, Fr>>();
         let field = size_of::<Fr>();
-        assert!(level_fits::<Fr>(6, 4, 6 * entry + 4 * field));
-        assert!(!level_fits::<Fr>(6, 4, 6 * entry + 4 * field - 1));
-        assert!(!level_fits::<Fr>(usize::MAX / entry + 1, 0, usize::MAX));
-        assert!(!level_fits::<Fr>(0, usize::MAX / field + 1, usize::MAX));
+        let over = |bytes, per_rows| DenseCap { bytes, per_rows };
+        let level = 6 * entry + 4 * field;
+        assert!(level_fits::<Fr>(6, 4, 9, over(level, 9)));
+        assert!(!level_fits::<Fr>(6, 4, 9, over(level - 1, 9)));
+        assert!(level_fits::<Fr>(6, 4, 18, over(level.div_ceil(2), 9)));
+        let max = over(usize::MAX, 1);
+        assert!(!level_fits::<Fr>(usize::MAX / entry + 1, 0, 1, max));
+        assert!(!level_fits::<Fr>(0, usize::MAX / field + 1, 1, max));
         assert!(!level_fits::<Fr>(
             usize::MAX / entry,
             usize::MAX / field,
-            usize::MAX
+            1,
+            max
         ));
 
         let frontier = |counts: Option<Vec<usize>>, cap| Frontier::<Fr> {
@@ -258,23 +271,32 @@ mod tests {
             counts,
             cap,
         };
-        let cap = 3 * entry + 8 * field;
+        let level = 3 * entry + 8 * field;
         let counts = || Some(vec![1, 2]);
-        assert_eq!(frontier(counts(), cap).admitted(1, 8, 8), Some(&[1, 2][..]));
-        assert_eq!(frontier(counts(), cap - 1).admitted(1, 8, 8), None);
         assert_eq!(
-            frontier(counts(), cap - 3 * field).admitted(1, 8, 5),
+            frontier(counts(), over(level, 16)).admitted(1, 8, 16),
             Some(&[1, 2][..])
         );
         assert_eq!(
-            frontier(counts(), cap - 3 * field - 1).admitted(1, 8, 5),
+            frontier(counts(), over(level - 1, 16)).admitted(1, 8, 16),
             None
         );
-        assert_eq!(frontier(counts(), usize::MAX).admitted(0, 8, 8), None);
-        assert_eq!(frontier(None, usize::MAX).admitted(1, 8, 8), None);
-        assert_eq!(frontier(counts(), 0).admitted(3, 2, 2), Some(&[1, 2][..]));
         assert_eq!(
-            frontier(Some(vec![usize::MAX, 2]), usize::MAX).admitted(1, 8, 8),
+            frontier(counts(), over(level - 3 * field, 10)).admitted(1, 8, 10),
+            Some(&[1, 2][..])
+        );
+        assert_eq!(
+            frontier(counts(), over(level - 3 * field - 1, 10)).admitted(1, 8, 10),
+            None
+        );
+        assert_eq!(frontier(counts(), max).admitted(0, 8, 8), None);
+        assert_eq!(frontier(None, max).admitted(1, 8, 16), None);
+        assert_eq!(
+            frontier(counts(), over(0, 1)).admitted(3, 2, 16),
+            Some(&[1, 2][..])
+        );
+        assert_eq!(
+            frontier(Some(vec![usize::MAX, 2]), max).admitted(1, 8, 16),
             None
         );
     }

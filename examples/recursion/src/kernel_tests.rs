@@ -66,6 +66,7 @@ pub(super) fn run() {
                     product_sum::<3>(&products),
                     product_sum::<4>(&products),
                 ];
+                let mul_adds = products.iter().map(|[a, b, c, _]| *a * *b + *c).collect();
                 let squares = shared.iter().map(|value| *value * *value).collect();
                 let inverses = shared.iter().map(Field::inverse).collect();
                 cases.push(KernelCase {
@@ -77,6 +78,7 @@ pub(super) fn run() {
                     weighted,
                     signed,
                     product_sums,
+                    mul_adds,
                     squares,
                     inverses,
                 });

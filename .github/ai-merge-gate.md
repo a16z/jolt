@@ -15,15 +15,19 @@ all changed paths exactly once; the PR's risk is the highest returned level.
 | --- | --- | --- |
 | Draft, closed or not targeting the default branch | Inactive | Withdrawn unless merged |
 | A writer has an undismissed change request | Neutral | Withdrawn |
-| Risk 4 or unclassified | Success only with a current-head maintainer approval from someone other than the author | Never supplied |
+| Risk 4 or unclassified | Success only with an undismissed approval from a maintainer other than the author | Never supplied |
 | Risk 1–3 and a writer other than the author approved | Success | Supplied only if also attested |
 | Risk 1–3 and an authorized current-head review attestation | Success | Supplied for that exact head |
 | Otherwise | Neutral | Withdrawn |
 
-An unclassified head needs an independent current-head maintainer approval, including when
+An unclassified head needs an independent maintainer approval, including when
 its author is not a maintainer. No risk label is assigned without a classifier result.
 Failure, timeout, an invalid answer or exhausted resource/attempt limits leaves it unclassified.
 Input integrity failures produce a failed gate check and no gate approval.
+
+The gate counts a person's undismissed approval on whichever commit of the pull request it
+names; it never compares that approval with the head. Staleness is left to GitHub, which
+dismisses approvals on push under the branch rule in [Installation](#installation).
 
 ## Review attestation
 
@@ -33,7 +37,7 @@ The Pika App bot (`BOT_kgDOFAtqNQ`) or a maintainer must post this standalone PR
 This pull request #<number> has been reviewed at commit <40-character lowercase head SHA> using skill <skill name> and model <model name> with <effort> reasoning effort, and no issues were found.
 ```
 
-The model must be `GPT-6 Astra`, `Claude Opus 5.5` or `Claude Fable 5.2`; effort must be `max` or `xhigh`.
+The model must be `GPT-6.2 Astra`, `Claude Opus 5.5` or `Claude Fable 5.2`; effort must be `max` or `xhigh`.
 For edited comments, both the author and last editor must qualify. Review bodies and labels
 cannot replace the comment. A new head needs a new attestation.
 
@@ -128,4 +132,5 @@ approval; a push needs a new attestation; risk 4 receives no gate approval. Disa
 and its approval permission if it cannot withdraw its own approval. Existing approvals must be
 dismissed or invalidated separately when turning the gate off.
 
-The standalone `diff-classifier.yml` PR-comment tool is independent of this gate.
+The standalone PR-comment tool (`diff-classifier.yml`, `diff-classifier-comment.yml`) is
+independent of this gate.

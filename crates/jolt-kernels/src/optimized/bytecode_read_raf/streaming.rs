@@ -2,17 +2,17 @@
 //! witness's resident rows instead of the packed row cache the default
 //! kernels share. The address phase accumulates its stage pushforwards from
 //! the rows in the default kernel's walk, which stops at the rows' constant
-//! suffix and weighs that suffix once. The cycle phase gathers its committed
-//! RA factors from the rows ([`StreamedFoldedRa`]): until the bind at which
-//! the default kernel's factors turn dense, every round evaluates the default
-//! kernel's summand on each pair row that holds a cycle before the rows'
-//! constant suffix; the suffix term, the coefficient tables and every later
-//! round are the default kernel's.
+//! suffix and weighs that suffix once. The cycle phase holds no table by
+//! cycle until the default kernel's dense tables fit its [`DenseCap`]: every
+//! round before that evaluates the default kernel's summand on each pair row
+//! that holds a cycle before the rows' constant suffix, gathering the
+//! committed RA factors and, in `akita` builds, the fused increment from the
+//! rows ([`StreamedFoldedRa`]) and evaluating the coefficient tables from
+//! their eq terms. The bind at which the tables fit fills them; the suffix
+//! term and every later round are the default kernel's.
 
 use jolt_field::JoltField;
 use jolt_sumcheck::SumcheckError;
-#[cfg(all(feature = "akita", feature = "parallel"))]
-use jolt_utils::par_collect_windows;
 use jolt_verifier::stages::stage6a::bytecode_read_raf::BytecodeReadRafAddressPhase;
 use jolt_verifier::stages::stage6b::bytecode_read_raf::BytecodeReadRafCycle;
 use jolt_witness::witnesses::{BytecodePc, RaChunkSelector};
@@ -22,13 +22,17 @@ use jolt_witness::{JoltWitnessPlane, WitnessBundle, WitnessError};
 
 #[cfg(feature = "akita")]
 use super::LazyFusedInc;
-use super::{AddressKernel, CycleKernel, CycleRa, CycleRows};
-use crate::optimized::lazy_ra::DEFAULT_MAX_WIDTH;
-use crate::optimized::streaming::{RowIndexSource, StreamedFoldedRa};
+use super::{AddressKernel, CycleKernel, CycleRows, LazyRows};
+use crate::optimized::streaming::{DenseCap, RowIndexSource, StreamedFoldedRa, DENSE_CAP};
 use crate::optimized::support::{merge_evals, BundleStore};
 use crate::{KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel};
 
 const ROWS: &str = "bytecode read-RAF trace rows";
+
+/// The dense tables a cycle kernel holds by cycle beside its RA factors, one
+/// field element per cycle each before any bind: the coefficient table and,
+/// in `akita` builds, the fused increment and its coefficient table.
+const NON_RA_TABLES: usize = if cfg!(feature = "akita") { 3 } else { 1 };
 
 /// What the bytecode read-RAF kernels read of a cycle.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, WitnessBundle)]
@@ -101,7 +105,9 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafCycle<F>> for StreamingByteco
         inputs: ProverInputs<'_, F, BytecodeReadRafCycle<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = BytecodeReadRafCycle<F>>>, KernelError<F>>
     {
-        Ok(Box::new(CycleKernel::streaming(witness, &inputs)?))
+        Ok(Box::new(CycleKernel::streaming(
+            witness, &inputs, DENSE_CAP,
+        )?))
     }
 }
 
@@ -132,48 +138,117 @@ impl RowIndexSource for BytecodePcDigits {
     }
 }
 
+/// The fused increment at the bound index whose cycles are `rows`, the
+/// cycles' branch weights being `weights`: a column of
+/// [`StreamedFoldedRa::fold_pairs`].
+#[cfg(feature = "akita")]
+#[inline]
+fn bound_fused_inc<F: JoltField>(weights: &[F], rows: &[BytecodeRow]) -> [F; 1] {
+    [weights
+        .iter()
+        .zip(rows)
+        .map(|(weight, row)| weight.mul_i128(row.fused_inc.0))
+        .sum()]
+}
+
+/// The streaming family's state by cycle until the kernel's dense tables
+/// fill: the RA factors' branch tables and, in `akita` builds, the fused
+/// increment on the rows' constant suffix. Every round gathers the factors
+/// and the increment before that suffix from the rows.
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
+pub(super) struct StreamedRows<F: JoltField> {
+    pub(super) ra: StreamedFoldedRa<F, BytecodePcDigits>,
+    #[cfg(feature = "akita")]
+    pub(super) fused_inc_tail: F,
+}
+
+impl<F: JoltField> StreamedRows<F> {
+    /// Binds the next cycle variable. The family's materializing bind returns
+    /// the default family's dense state, gathered in one pass over the rows,
+    /// and this state is spent.
+    pub(super) fn bind(&mut self, challenge: F) -> Result<Option<LazyRows<F>>, WitnessError> {
+        #[cfg(not(feature = "akita"))]
+        let dense = self.ra.bind(challenge)?.map(|ra| LazyRows { ra });
+        #[cfg(feature = "akita")]
+        let dense = self
+            .ra
+            .bind_with_columns(challenge, bound_fused_inc)?
+            .map(|(ra, [values])| LazyRows {
+                ra,
+                fused_inc: LazyFusedInc::Prefix {
+                    values,
+                    tail: self.fused_inc_tail,
+                },
+            });
+        Ok(dense)
+    }
+}
+
 impl<F: JoltField> CycleKernel<F> {
-    /// The kernel over the witness's resident rows. Its RA factors follow
-    /// the default kernel's schedule, and every table it holds by cycle stops
-    /// where the rows' constant suffix starts, or at cycle 1 where that is
-    /// later: the coefficient tables hold cycle 0's entry term explicitly.
+    /// The kernel over the witness's resident rows. It fills the default
+    /// kernel's dense tables, one per RA factor and [`NON_RA_TABLES`] more,
+    /// at the first bind at which they fit `cap` together
+    /// ([`StreamedFoldedRa::with_columns`]); production passes [`DENSE_CAP`].
+    /// Until then it holds one coefficient, cycle 0's, for its entry term.
     pub(super) fn streaming(
         witness: &dyn JoltWitnessPlane<F>,
         inputs: &ProverInputs<'_, F, BytecodeReadRafCycle<F>>,
+        cap: DenseCap,
     ) -> Result<Self, KernelError<F>> {
         let log_t = inputs.relation.dimensions().log_t();
         Self::new(inputs, |chunk_eqs, selectors| {
-            let ra = StreamedFoldedRa::factored(
+            let rows = BundleStore::<BytecodeRow>::resident(witness, log_t, ROWS)?;
+            // The rows span `2^log_t` cycles, so the shift cannot overflow.
+            #[cfg(feature = "akita")]
+            let fused_inc_tail = rows
+                .access()
+                .row((1usize << log_t) - 1)?
+                .fused_inc
+                .to_field::<F>();
+            // The suffix term sums eq terms only and cycle 0's coefficient
+            // also holds the entry term, so the rounds visit its pair row
+            // even where the rows' constant suffix starts at cycle 0.
+            let ra = StreamedFoldedRa::with_columns(
                 chunk_eqs,
-                1,
-                DEFAULT_MAX_WIDTH,
                 BytecodePcDigits { selectors },
-                BundleStore::resident(witness, log_t, ROWS)?,
+                rows,
                 log_t,
+                cap,
+                NON_RA_TABLES,
                 1,
             )?;
-            let prefix_len = ra.prefix_len();
-            Ok(CycleRows {
-                #[cfg(feature = "akita")]
-                fused_inc: LazyFusedInc::resident(witness, log_t, prefix_len)?,
-                // A one-cycle domain has no bind to materialize at.
-                ra: match ra.single_cycle()? {
-                    Some(dense) => CycleRa::Lazy(dense),
-                    None => CycleRa::Streamed(ra),
-                },
-                prefix_len,
+            // A one-cycle domain has no bind to materialize at, and its
+            // cycle is the last one, whose increment the tail holds.
+            Ok(match ra.single_cycle()? {
+                Some(ra) => CycleRows::Lazy(LazyRows {
+                    ra,
+                    #[cfg(feature = "akita")]
+                    fused_inc: LazyFusedInc::Prefix {
+                        values: Vec::new(),
+                        tail: fused_inc_tail,
+                    },
+                }),
+                None => CycleRows::Streamed(StreamedRows {
+                    ra,
+                    #[cfg(feature = "akita")]
+                    fused_inc_tail,
+                }),
             })
         })
     }
 
     /// The summand's samples summed over the pair rows that hold a cycle
-    /// before the rows' constant suffix: the default kernel's group
-    /// arithmetic on factors gathered from the rows, without its merging of
-    /// repeated groups.
-    pub(super) fn streamed_evals(
-        &self,
-        ra: &StreamedFoldedRa<F, BytecodePcDigits>,
-    ) -> Result<Vec<F>, WitnessError> {
+    /// before the rows' constant suffix: the default kernel's arithmetic for
+    /// one pair row, on RA factors and a fused increment gathered from the
+    /// rows and on coefficients evaluated from their eq terms, without its
+    /// merging of repeated groups.
+    pub(super) fn streamed_evals(&self, rows: &StreamedRows<F>) -> Result<Vec<F>, WitnessError> {
+        let ra = &rows.ra;
+        let combined = self.combined.entries();
+        #[cfg(not(feature = "akita"))]
+        let columns = |_: &[F], _: &[BytecodeRow]| [];
+        #[cfg(feature = "akita")]
+        let (columns, fused_combined) = (bound_fused_inc::<F>, self.fused_combined.entries());
         ra.fold_pairs(
             || {
                 (
@@ -181,8 +256,24 @@ impl<F: JoltField> CycleKernel<F> {
                     vec![(F::zero(), F::zero()); ra.num_polys()],
                 )
             },
-            |(acc, ra_pairs), y, lo, hi| {
-                Self::accumulate_samples(self.coefficient(y), acc, ra_pairs, |pairs| {
+            columns,
+            |(acc, ra_pairs), y, lo, hi, gathered| {
+                let (c_lo, c_hi) = combined.pair(y);
+                #[cfg(not(feature = "akita"))]
+                let coefficient = {
+                    let [[], []] = gathered;
+                    [c_lo, c_hi - c_lo, F::zero()]
+                };
+                #[cfg(feature = "akita")]
+                let coefficient = {
+                    let [[fused_inc_lo], [fused_inc_hi]] = gathered;
+                    Self::fused_coefficient(
+                        (c_lo, c_hi),
+                        fused_combined.pair(y),
+                        (fused_inc_lo, fused_inc_hi),
+                    )
+                };
+                Self::accumulate_samples(coefficient, acc, ra_pairs, |pairs| {
                     for ((pair, lo), hi) in pairs.iter_mut().zip(lo).zip(hi) {
                         *pair = (*lo, *hi);
                     }
@@ -191,31 +282,5 @@ impl<F: JoltField> CycleKernel<F> {
             |(left, ra_pairs), (right, _)| (merge_evals(left, right), ra_pairs),
         )
         .map(|(evals, _)| evals)
-    }
-}
-
-#[cfg(feature = "akita")]
-impl<F: JoltField> LazyFusedInc<F> {
-    /// The default kernel's dense state from the start, since its lazy one
-    /// reads the packed row cache: the fused increment of every cycle before
-    /// `prefix_len`, from which the rows of the `2^log_t`-cycle domain
-    /// repeat.
-    fn resident(
-        witness: &dyn JoltWitnessPlane<F>,
-        log_t: usize,
-        prefix_len: usize,
-    ) -> Result<Self, WitnessError> {
-        let rows = BundleStore::<BytecodeRow>::resident(witness, log_t, ROWS)?;
-        let access = rows.access();
-        let value = |cycle: usize| access.row(cycle).map(|row| row.fused_inc.to_field::<F>());
-        #[cfg(feature = "parallel")]
-        let values = par_collect_windows(prefix_len, value)?;
-        #[cfg(not(feature = "parallel"))]
-        let values = (0..prefix_len).map(value).collect::<Result<_, _>>()?;
-        Ok(Self::Prefix {
-            values,
-            // The rows span `2^log_t` cycles, so the shift cannot overflow.
-            tail: value((1usize << log_t) - 1)?,
-        })
     }
 }

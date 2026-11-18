@@ -14,6 +14,7 @@ use jolt_openings::CommitmentScheme;
 use jolt_openings::GroupBatchOpening;
 #[cfg(not(feature = "akita"))]
 use jolt_openings::{AdditivelyHomomorphic, ZkOpeningScheme};
+use jolt_program::preprocess::ram::RamWordMasks;
 use jolt_program::preprocess::{compute_max_ram_k, compute_min_ram_k};
 use jolt_sumcheck::SumcheckProof;
 #[cfg(feature = "akita")]
@@ -455,6 +456,7 @@ pub struct CheckedInputs {
     pub ram_K: usize,
     pub entry_address: u64,
     pub preprocessing_digest: [u8; 32],
+    pub ram_word_masks: RamWordMasks,
     pub untrusted_advice_commitment_present: bool,
     pub trusted_advice_commitment_present: bool,
     pub vc_capacity: Option<usize>,
@@ -490,6 +492,7 @@ where
         return Err(VerifierError::MemoryLayoutMismatch);
     }
     validate_ram_remap_base(memory_layout)?;
+    preprocessing.program.validate_code_region()?;
 
     if num::u64_from_usize(public_io.inputs.len()) > memory_layout.max_input_size {
         return Err(VerifierError::InputTooLarge {
@@ -634,6 +637,14 @@ where
         ram_K: ram_k,
         entry_address: program.entry_address(),
         preprocessing_digest: preprocessing.preprocessing_digest,
+        ram_word_masks: RamWordMasks::new(
+            preprocessing.program.code_region()?,
+            memory_layout,
+            ram_k,
+        )
+        .map_err(|error| VerifierError::InvalidMemoryLayout {
+            reason: error.to_string(),
+        })?,
         untrusted_advice_commitment_present,
         trusted_advice_commitment_present,
         vc_capacity,
@@ -996,6 +1007,7 @@ where
         return Err(VerifierError::MemoryLayoutMismatch);
     }
     validate_ram_remap_base(memory_layout)?;
+    preprocessing.program.validate_code_region()?;
 
     if num::u64_from_usize(public_io.inputs.len()) > memory_layout.max_input_size {
         return Err(VerifierError::InputTooLarge {
@@ -1120,6 +1132,14 @@ where
         ram_K: ram_k,
         entry_address: preprocessing.program.entry_address(),
         preprocessing_digest: preprocessing.preprocessing_digest,
+        ram_word_masks: RamWordMasks::new(
+            preprocessing.program.code_region()?,
+            memory_layout,
+            ram_k,
+        )
+        .map_err(|error| VerifierError::InvalidMemoryLayout {
+            reason: error.to_string(),
+        })?,
         untrusted_advice_commitment_present,
         trusted_advice_commitment_present,
         vc_capacity,
@@ -1136,15 +1156,24 @@ where
     )
 )]
 mod tests {
+    use bincode::error::DecodeError;
     use jolt_claims::protocols::jolt::relations::booleanity::BooleanityOutputClaims;
-    use std::sync::Arc;
+    use postcard::Error as PostcardError;
+    use serde::de::{DeserializeSeed, Deserializer, Error as DeError, SeqAccess, Visitor};
+    use std::{
+        fmt::{Formatter, Result as FmtResult},
+        marker::PhantomData,
+        sync::Arc,
+    };
 
     use common::constants::RAM_START_ADDRESS;
 
     use super::*;
     #[cfg(not(feature = "akita"))]
     use crate::proof::JoltCommitments;
-    use crate::proof::{ClearProofClaims, JoltProofClaims, JoltStageProofs};
+    use crate::proof::{
+        ClearProofClaims, JoltProofClaims, JoltStageProofs, PROOF_ARGUMENT_NEWTYPE,
+    };
     #[cfg(all(not(feature = "akita"), feature = "field-inline"))]
     use crate::proof::{FieldInlineCommitments, FieldRegistersCommitments};
     use crate::stages::pow::StagePowNonces;
@@ -1516,6 +1545,12 @@ mod tests {
                 )
                 .unwrap();
             }),
+            // Derived during validation from the code intervals and memory
+            // layout, which the preprocessing digest binds, and from ram_K,
+            // which is bound.
+            ("ram_word_masks", |c, _| {
+                c.ram_word_masks.unmapped.push((0, 1));
+            }),
         ];
         for (field, edit) in unbound {
             let (mut edited, mut edited_config) = (checked.clone(), config);
@@ -1591,7 +1626,10 @@ mod tests {
         let mut memory_layout = test_memory_layout();
         memory_layout.trusted_advice_start -= 4;
         memory_layout.untrusted_advice_start -= 4;
-        let preprocessing = test_preprocessing_with_layout(memory_layout);
+        let mut preprocessing = test_preprocessing();
+        if let ProgramPreprocessing::Full(full) = &mut preprocessing.program {
+            Arc::make_mut(full).memory_layout = memory_layout;
+        }
         let public_io = JoltDevice {
             memory_layout: preprocessing.program.memory_layout().clone(),
             ..JoltDevice::default()
@@ -1928,9 +1966,6 @@ mod tests {
                     bytecode_ra: Vec::new(),
                     ram_ra: Vec::new(),
                 },
-                ram_hamming_booleanity: stage6b::outputs::RamHammingBooleanityOutputClaims {
-                    ram_hamming_weight: zero,
-                },
                 ram_ra_virtualization: stage6b::outputs::RamRaVirtualizationOutputClaims {
                     ram_ra: Vec::new(),
                 },
@@ -2111,5 +2146,141 @@ mod tests {
             decoded.preprocessing_digest,
             preprocessing.program.digest().unwrap()
         );
+    }
+
+    /// Test wrapper standing where a guest's length-checking adapter stands.
+    /// Over the proof struct it wraps the last field, the argument; over that
+    /// field it answers only a request under the argument's name, with one
+    /// byte string from the decoder beneath.
+    struct ArgumentAsBytes<T>(T);
+
+    impl<'de, D: Deserializer<'de>> Deserializer<'de> for ArgumentAsBytes<D> {
+        type Error = D::Error;
+
+        fn deserialize_struct<V: Visitor<'de>>(
+            self,
+            name: &'static str,
+            fields: &'static [&'static str],
+            visitor: V,
+        ) -> Result<V::Value, D::Error> {
+            self.0
+                .deserialize_struct(name, fields, ArgumentAsBytes(visitor))
+        }
+
+        fn deserialize_newtype_struct<V: Visitor<'de>>(
+            self,
+            name: &'static str,
+            visitor: V,
+        ) -> Result<V::Value, D::Error> {
+            if name == PROOF_ARGUMENT_NEWTYPE {
+                self.0.deserialize_bytes(visitor)
+            } else {
+                self.deserialize_any(visitor)
+            }
+        }
+
+        fn deserialize_any<V: Visitor<'de>>(self, _: V) -> Result<V::Value, D::Error> {
+            Err(DeError::custom("not requested under the argument's name"))
+        }
+
+        serde::forward_to_deserialize_any! {
+            bool i8 i16 i32 i64 i128 u8 u16 u32 u64 u128 f32 f64 char str string bytes
+            byte_buf option unit unit_struct seq tuple tuple_struct map enum identifier
+            ignored_any
+        }
+    }
+
+    impl<'de, V: Visitor<'de>> Visitor<'de> for ArgumentAsBytes<V> {
+        type Value = V::Value;
+
+        fn expecting(&self, formatter: &mut Formatter<'_>) -> FmtResult {
+            self.0.expecting(formatter)
+        }
+
+        fn visit_seq<A: SeqAccess<'de>>(self, seq: A) -> Result<V::Value, A::Error> {
+            self.0.visit_seq(ArgumentAsBytes(seq))
+        }
+    }
+
+    impl<'de, A: SeqAccess<'de>> SeqAccess<'de> for ArgumentAsBytes<A> {
+        type Error = A::Error;
+
+        fn next_element_seed<T: DeserializeSeed<'de>>(
+            &mut self,
+            seed: T,
+        ) -> Result<Option<T::Value>, A::Error> {
+            // The argument is the proof's last field.
+            if self.0.size_hint() == Some(1) {
+                self.0.next_element_seed(ArgumentAsBytes(seed))
+            } else {
+                self.0.next_element_seed(seed)
+            }
+        }
+    }
+
+    impl<'de, S: DeserializeSeed<'de>> DeserializeSeed<'de> for ArgumentAsBytes<S> {
+        type Value = S::Value;
+
+        fn deserialize<D: Deserializer<'de>>(self, deserializer: D) -> Result<S::Value, D::Error> {
+            self.0.deserialize(ArgumentAsBytes(deserializer))
+        }
+    }
+
+    fn decode_recognising_the_argument(bytes: &[u8]) -> Result<(TestProof, usize), DecodeError> {
+        let seed = ArgumentAsBytes(PhantomData::<TestProof>);
+        bincode::serde::seed_decode_from_slice(seed, bytes, bincode::config::standard())
+    }
+
+    /// The proof type through a decoder that recognises the argument's name:
+    /// the argument is taken as one byte string and the proof that was
+    /// encoded comes back.
+    #[test]
+    #[expect(clippy::unwrap_used, reason = "test fixture")]
+    fn proof_argument_round_trips_as_one_byte_string_when_its_name_is_recognised() {
+        let mut proof = proof_with_zk(false, clear_claims());
+        // A length whose prefix takes more than one byte.
+        proof.narg = (0..=u8::MAX).chain(0..44).collect();
+        let encoded = bincode::serde::encode_to_vec(&proof, bincode::config::standard()).unwrap();
+        let decoded = decode_recognising_the_argument(&encoded).unwrap();
+        assert_eq!(decoded, (proof, encoded.len()));
+    }
+
+    /// A proof whose argument announces far more bytes than the input holds
+    /// is a decode error in every decoder, without a panic and without
+    /// allocating the announced length.
+    #[test]
+    #[expect(clippy::unwrap_used, reason = "test fixture")]
+    fn oversized_proof_argument_length_is_a_decode_error() {
+        let proof = proof_with_zk(false, clear_claims());
+        let config = bincode::config::standard();
+        // The argument is the last field; empty, it is the one length byte 0.
+        let encoded = bincode::serde::encode_to_vec(&proof, config).unwrap();
+        let (_, bincode_fields) = encoded.split_last().unwrap();
+        let encoded = postcard::to_stdvec(&proof).unwrap();
+        let (_, postcard_fields) = encoded.split_last().unwrap();
+
+        for announced in [1u64 << 46, 1 << 62, u64::MAX] {
+            let mut malformed = bincode_fields.to_vec();
+            malformed.extend(bincode::serde::encode_to_vec(announced, config).unwrap());
+            assert!(matches!(
+                bincode::serde::decode_from_slice::<TestProof, _>(&malformed, config),
+                Err(DecodeError::UnexpectedEnd { .. })
+            ));
+            let mut reader = malformed.as_slice();
+            let from_reader: Result<TestProof, DecodeError> =
+                bincode::serde::decode_from_std_read(&mut reader, config);
+            assert!(matches!(from_reader, Err(DecodeError::Io { .. })));
+            assert!(matches!(
+                decode_recognising_the_argument(&malformed),
+                Err(DecodeError::UnexpectedEnd { .. })
+            ));
+
+            let mut malformed = postcard_fields.to_vec();
+            malformed.extend(postcard::to_stdvec(&announced).unwrap());
+            assert_eq!(
+                postcard::from_bytes::<TestProof>(&malformed).map(|_| ()),
+                Err(PostcardError::DeserializeUnexpectedEnd)
+            );
+        }
     }
 }

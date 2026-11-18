@@ -75,27 +75,48 @@ Stage 5 scans the resident trace once per address phase and gathers its
 virtual RA polynomials from it until the bind at which the eager kernel's
 tables turn dense. The stage-6a address phases accumulate their tables from
 the resident trace. The stage-6b booleanity and instruction RA
-virtualization kernels gather their one-hot selectors from it until each
-fits 64 MiB dense, and not before the eager kernels' fourth bind; the
-stage-6b bytecode read-RAF cycle phase gathers its RA factors from it until
-the bind at which the eager kernel's turn dense. These passes and the tables
+virtualization kernels gather their one-hot selectors from it until their
+dense polynomials fit the cap described below, and not before the eager
+kernels' fourth bind. The stage-6b bytecode read-RAF cycle phase follows the
+same rule for all of its per-cycle tables: until they fit the cap together,
+it gathers its RA factors and, under Akita, the fused increment from the
+resident trace and evaluates its coefficient tables from their eq terms.
+These passes and the tables
 they fill stop at the trace's constant padding suffix, as the eager kernels'
 tables do. With the family selected, no kernel collects the packed per-cycle
 instruction rows that the eager kernels share from stage 5 on. Under Dory the
 family also selects a stage-8 joint opening whose trace views read the
 resident trace in each of their passes, where the eager opening's share
 packed per-cycle columns (64 bytes per cycle before the padding suffix)
-through the PCS opening. Combine
+through the PCS opening. An Akita build also accepts `ring-switch`, which
+selects no kernel: the prover's Akita backends are built with a ring-switch
+cache limit of zero (`AkitaProverSetup::with_streamed_ring_switch`), so the
+stage-8 opening transforms the setup-matrix rows of its ring-switch relations
+as it reads them, where the default backends keep their NTT form until the
+opening returns. The opening's peak memory falls, its time rises on large
+traces, and the proof bytes are the same. Combine
 families with `--streaming instruction-input,spartan,ram,registers`.
 Instruction-input, Spartan and register
 early rounds recompute from the resident trace until the dense tables, or for
-the register read-write check one level of sparse entries, fit a fixed 4 GiB
-cap; the full trace remains resident. This is not a process-memory cap, and
-streaming can use more memory than eager kernels on small or padded traces.
+the register read-write check one level of sparse entries, fit the same cap.
+The cap is one density for these kernels, for the two stage-6b selector
+kernels and for the stage-6b bytecode read-RAF cycle phase: 4 bytes of dense
+state per trace row before the padding suffix, a
+sixteenth of what a resident row takes. Dense tables halve with every bind,
+so the round at which a kernel's tables fit depends on how many field
+elements they hold per cycle and on the element's size (16 bytes under
+Akita, 32 under Dory), not on the trace length, and every round before it
+costs one pass over the resident rows. The Spartan and instruction-input
+tables stop at the padding suffix, as the eager kernels' do. The full trace
+remains resident, and the cap bounds the dense state of each kernel that
+takes it, not the process. The stage-5 instruction read-RAF kernel takes no
+cap: its tables turn dense where the eager kernel's do and are sized by the
+trace. Stages whose tables
+no streaming kernel replaces keep their size.
 Streaming workload, CSV and trace names append `_streaming_<families>` in
 canonical order (`instruction_input`, `spartan`, `ram`, `registers`,
-`instruction_rows`), so their run directories and `latest_` links stay separate
-from eager runs.
+`instruction_rows`, then `ring_switch` under Akita), so their run directories
+and `latest_` links stay separate from eager runs.
 The option belongs to `profile` only: `benchmark` sweeps have no streaming
 selection, and a resumed sweep ignores streaming profile artifacts.
 `summary.json` records the selection in `run.streaming_families`;
@@ -217,14 +238,30 @@ Existing CSVs using the previous header are migrated in place with empty
 values for these new fields. Render them with:
 
 ```bash
-python3 scripts/benchmark_summary.py     # per-scale table
-python3 scripts/benchmark_summary.py --protocol akita \
+python3 scripts/benchmark_summary.py     # per-scale table, reference kernels
+python3 scripts/benchmark_summary.py --backend optimized
+python3 scripts/benchmark_summary.py --protocol akita --backend optimized \
     --metric verifier_single_thread_time_s
-python3 scripts/benchmark_summary.py --protocol akita \
+python3 scripts/benchmark_summary.py --protocol akita --backend optimized \
     --akita-chunk-profile w4r2 --metric prover_time_s
 python3 scripts/plot_benchmarks.py       # speed + proof-size plots
+python3 scripts/plot_benchmarks.py --backend optimized
 python3 scripts/plot_memory_usage.py     # peak memory per run (from summary.json)
 ```
+
+The CSV summary and plots select `--backend reference` by default; pass
+`--backend optimized` for optimized kernel measurements. `--backend` accepts
+any value in the CSV's backend column; when the CSV has rows but none for the
+selected backend, the command exits with an error that lists the backends
+present. Both label the selected backend and exclude rows from every other
+kernel implementation.
+CSV rows without a backend column or with an empty backend value are treated
+as reference measurements. For repeated measurements of the same workload,
+scale, and backend, the summary keeps the last non-empty metric value;
+the plots retain all samples. The memory plot reads the newest `summary.json`
+of each run (the `latest_*` links) and draws one series per workload,
+protocol (`run.protocol`), and backend; a summary written before
+`run.protocol` existed joins a series named for its backend alone.
 
 Mind the machine: the reference backend retains ~18 GiB regardless of scale
 and grows steeply with it — large-scale sweeps on the reference backend are

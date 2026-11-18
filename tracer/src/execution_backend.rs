@@ -15,6 +15,8 @@ use common::jolt_device::JoltDevice;
 
 use crate::emulator::cpu::AdviceTape;
 use crate::emulator::decode_cache::DecodeCache;
+use crate::emulator::mmu::CodeGuard;
+use crate::emulator::Emulator;
 use crate::instruction::Cycle;
 #[cfg(feature = "field-inline")]
 use crate::instruction::RISCVCycle;
@@ -37,61 +39,83 @@ impl TracerBackend {
         }
     }
 
-    fn trace_execution(
+    /// [`ExecutionBackend::trace`] with an explicit bound on the cycles the
+    /// serial tracer buffers between conversions to rows. The trait method
+    /// passes [`SERIAL_CHUNK_CYCLES`]; tests pass smaller bounds so that a
+    /// short guest's trace spans several conversions.
+    fn trace_in_chunks(
         &self,
         program: &JoltProgram,
         inputs: TraceInputs,
-    ) -> Result<TraceExecution, TraceError> {
+        chunk_cycles: usize,
+    ) -> Result<TraceOutput, TraceError> {
+        let bytecode = BytecodePreprocessing::preprocess(
+            program.expanded_bytecode.clone(),
+            program.entry_address,
+            program.profile,
+        )?;
         if program.elf_bytes().is_empty() {
             return Err(TraceError::MissingElfBytes);
         }
-
-        let (cycles, final_memory, device, advice_tape) =
+        let _span = tracing::info_span!("trace").entered();
+        let mut emulator = crate::create_emulator(
+            program.elf_bytes(),
+            self.elf_path.as_ref(),
+            &inputs.inputs,
+            &inputs.untrusted_advice,
+            &inputs.trusted_advice,
+            &inputs.memory_config,
+            inputs.advice_tape.map(AdviceTape::from_bytes),
+        );
+        let ((data, dimensions), (advice_tape, final_memory, device)) =
             if let Some(config) = crate::parallel_config_from_env() {
-                let _span = tracing::info_span!("trace").entered();
-                let emulator = crate::create_emulator(
-                    program.elf_bytes(),
-                    self.elf_path.as_ref(),
-                    &inputs.inputs,
-                    &inputs.untrusted_advice,
-                    &inputs.trusted_advice,
-                    &inputs.memory_config,
-                    inputs.advice_tape.map(AdviceTape::from_bytes),
-                );
                 let (chunks, finished) = crate::parallel::run_two_pass_chunks(emulator, &config);
-                let (advice_tape, final_memory, device) = crate::finish_emulator(finished)?;
+                let finished = crate::finish_emulator(finished)?;
                 let chunks = std::iter::once(chunks.prefix)
                     .chain(chunks.suffix)
                     .collect();
-                (chunks, final_memory, device, advice_tape)
+                (collect_owned_chunks(chunks, &bytecode)?, finished)
             } else {
-                let (_lazy_trace, cycles, final_memory, device, advice_tape) = crate::try_trace(
-                    program.elf_bytes(),
-                    self.elf_path.as_ref(),
-                    &inputs.inputs,
-                    &inputs.untrusted_advice,
-                    &inputs.trusted_advice,
-                    &inputs.memory_config,
-                    inputs.advice_tape.map(AdviceTape::from_bytes),
-                )?;
-                (vec![cycles], final_memory, device, advice_tape)
+                let mut rows = Vec::with_capacity(crate::trace_capacity_reserve());
+                let mut batches = Vec::new();
+                // Twice the bound: the step that crosses it emits a whole
+                // instruction's cycles, and a buffer that grew for them would
+                // be moved.
+                let mut ring: [Vec<Cycle>; SERIAL_BUFFERS] =
+                    std::array::from_fn(|_| Vec::with_capacity(2 * chunk_cycles));
+                let mut ended = fill_cycles(&mut emulator, &mut ring[0], chunk_cycles);
+                // `ring[0]` is the buffer filled last. Each round converts it on
+                // the pool while this thread fills `ring[1]`, the buffer whose
+                // conversion lies furthest back.
+                while !ring[0].is_empty() {
+                    let (full, rested) = ring.split_at_mut(1);
+                    let mut converted = Ok(());
+                    rayon::in_place_scope(|scope| {
+                        scope.spawn(|_| {
+                            converted = append_rows(&mut rows, &mut batches, &full[0], &bytecode);
+                        });
+                        ended = ended || fill_cycles(&mut emulator, &mut rested[0], chunk_cycles);
+                    });
+                    converted?;
+                    ring[0].clear();
+                    ring.rotate_left(1);
+                }
+                // `TraceData::heap_bytes` counts the rows at capacity, and the
+                // prover's memory budget reserves that many bytes.
+                rows.shrink_to_fit();
+                let finished = crate::finish_emulator(emulator)?;
+                (finish_rows(rows, batches)?, finished)
             };
-        Ok(TraceExecution {
-            cycles,
-            final_memory: MemoryImage {
-                bytes: final_memory.materialized_nonzero_bytes(),
-            },
+        Ok(TraceOutput::with_dimensions(
+            dimensions,
+            Arc::new(data),
             device,
-            advice_tape: advice_tape.into_bytes(),
-        })
+            Some(MemoryImage {
+                bytes: final_memory.materialized_nonzero_bytes(),
+            }),
+            Some(advice_tape.into_bytes()),
+        ))
     }
-}
-
-struct TraceExecution {
-    cycles: Vec<Vec<Cycle>>,
-    final_memory: MemoryImage,
-    device: JoltDevice,
-    advice_tape: Vec<u8>,
 }
 
 impl ExecutionBackend for TracerBackend {
@@ -102,24 +126,44 @@ impl ExecutionBackend for TracerBackend {
         program: &JoltProgram,
         inputs: TraceInputs,
     ) -> Result<TraceOutput, TraceError> {
-        let bytecode = BytecodePreprocessing::preprocess(
-            program.expanded_bytecode.clone(),
-            program.entry_address,
-            program.profile,
-        )?;
-        let execution = self.trace_execution(program, inputs)?;
-        let (data, dimensions) = collect_owned_chunks(execution.cycles, &bytecode)?;
-        Ok(TraceOutput::with_dimensions(
-            dimensions,
-            Arc::new(data),
-            execution.device,
-            Some(execution.final_memory),
-            Some(execution.advice_tape),
-        ))
+        self.trace_in_chunks(program, inputs, SERIAL_CHUNK_CYCLES)
     }
 }
 
 const PARALLEL_ROW_CONVERSION_THRESHOLD: usize = 1 << 14;
+
+/// Cycles the serial tracer buffers before their conversion to rows starts
+/// (192 MiB of [`Cycle`]s).
+const SERIAL_CHUNK_CYCLES: usize = 1 << 21;
+
+/// Buffers of [`SERIAL_CHUNK_CYCLES`] cycles the serial tracer rotates through,
+/// so that the rows and about 1.1 GiB of cycles are resident instead of the
+/// whole run's cycles.
+///
+/// One reused buffer would hold less, but the emulator is slow to refill a
+/// buffer while caches still hold it from the conversion. On an EPYC 9354P
+/// (eight L3 domains, 288 MiB of cache) with huge pages behind the heap, the
+/// emulator took 0.80 s for 37 million cycles when it refilled one 2^22-cycle
+/// buffer after each conversion, and 0.37 s when that buffer's cache lines
+/// were flushed (CLFLUSH) in between. With 4 KiB pages the one buffer still
+/// beat converting the whole run at once, because fresh memory costs a page
+/// fault per page; with huge pages it lost. With six buffers, four other
+/// buffers are converted between a buffer's conversion and its refill.
+const SERIAL_BUFFERS: usize = 6;
+
+/// Steps the emulator until `cycles` holds `bound` cycles and returns whether
+/// the run ended first. Termination matches `crate::trace`: the run ends on
+/// the first step that emits no rows.
+fn fill_cycles(emulator: &mut Emulator, cycles: &mut Vec<Cycle>, bound: usize) -> bool {
+    while cycles.len() < bound {
+        let buffered = cycles.len();
+        crate::step_emulator(emulator, Some(cycles));
+        if cycles.len() == buffered {
+            return true;
+        }
+    }
+    false
+}
 
 struct ConvertedChunk {
     bounds: RamAddressBounds,
@@ -127,10 +171,14 @@ struct ConvertedChunk {
     fields: Vec<FieldEvent>,
 }
 
-fn collect_rows(
+/// Converts `cycles` into rows appended to `rows`, whose length on entry is
+/// the absolute index of the first cycle (field events record it).
+fn append_rows(
+    rows: &mut Vec<JoltTraceRow>,
+    batches: &mut Vec<ConvertedChunk>,
     cycles: &[Cycle],
     bytecode: &BytecodePreprocessing,
-) -> Result<(TraceData, ExecutionDimensions), TraceError> {
+) -> Result<(), TraceError> {
     let parallel = cycles.len() > PARALLEL_ROW_CONVERSION_THRESHOLD;
     let _span = tracing::info_span!(
         "trace_rows_from_cycles",
@@ -138,28 +186,40 @@ fn collect_rows(
         mode = if parallel { "parallel" } else { "serial" }
     )
     .entered();
-    let mut rows = Vec::<JoltTraceRow>::with_capacity(cycles.len());
+    let start = rows.len();
+    rows.reserve(cycles.len());
     let slots = &mut rows.spare_capacity_mut()[..cycles.len()];
-    let batches = if parallel {
-        slots
+    if parallel {
+        let converted = slots
             .par_chunks_mut(PARALLEL_ROW_CONVERSION_THRESHOLD)
             .zip(cycles.par_chunks(PARALLEL_ROW_CONVERSION_THRESHOLD))
             .enumerate()
             .map(|(batch, (slots, cycles))| {
                 fill_rows(
-                    batch * PARALLEL_ROW_CONVERSION_THRESHOLD,
+                    start + batch * PARALLEL_ROW_CONVERSION_THRESHOLD,
                     slots,
                     cycles,
                     bytecode,
                 )
             })
-            .collect::<Result<Vec<_>, _>>()?
+            .collect::<Result<Vec<_>, _>>()?;
+        batches.extend(converted);
     } else {
-        vec![fill_rows(0, slots, cycles, bytecode)?]
-    };
+        batches.push(fill_rows(start, slots, cycles, bytecode)?);
+    }
     // SAFETY: successful workers initialized every slot. JoltTraceRow is Copy,
     // so partially written rows need no cleanup on error or unwinding.
-    unsafe { rows.set_len(cycles.len()) };
+    unsafe { rows.set_len(start + cycles.len()) };
+    Ok(())
+}
+
+fn collect_rows(
+    cycles: &[Cycle],
+    bytecode: &BytecodePreprocessing,
+) -> Result<(TraceData, ExecutionDimensions), TraceError> {
+    let mut rows = Vec::with_capacity(cycles.len());
+    let mut batches = Vec::new();
+    append_rows(&mut rows, &mut batches, cycles, bytecode)?;
     finish_rows(rows, batches)
 }
 
@@ -287,6 +347,7 @@ pub struct TracerChunkCheckpoint {
 struct WorkerSeed {
     device: Option<JoltDevice>,
     decode: DecodeCache,
+    code_guard: Option<CodeGuard>,
     bytecode: BytecodePreprocessing,
 }
 
@@ -337,6 +398,7 @@ impl TracerBackend {
                 .mmu
                 .decode_cache
                 .snapshot_with_empty_entries(),
+            code_guard: emulator.get_cpu().mmu.code_guard.clone(),
             bytecode,
         });
 
@@ -417,6 +479,7 @@ impl ChunkedExecutionBackend for TracerBackend {
         let mut worker = ChunkWorker::from_seed(
             checkpoint.seed.device.clone(),
             checkpoint.seed.decode.clone(),
+            checkpoint.seed.code_guard.clone(),
         );
         let _previous =
             worker.install_chunk(&checkpoint.boundary, checkpoint.image.as_ref().clone());
@@ -586,6 +649,51 @@ mod chunked_tests {
             }
             let concat: Vec<JoltTraceRow> = replayed.into_iter().flatten().collect();
             assert_eq!(concat.as_slice(), eager_rows, "chunk_size {chunk_size}");
+        }
+    }
+
+    /// The serial tracer converts a cycle buffer to rows each time one
+    /// reaches the chunk bound, and fills the next of its buffers. Every
+    /// bound, from one that converts after each tick to one the whole run
+    /// stays under, yields the rows, dimensions and exact-capacity row buffer
+    /// of one conversion of the whole trace.
+    #[test]
+    fn serial_tracing_composes_across_conversion_chunks() {
+        let (program, inputs) = muldiv_setup();
+        let bytecode = BytecodePreprocessing::preprocess(
+            program.expanded_bytecode.clone(),
+            program.entry_address,
+            program.profile,
+        )
+        .expect("bytecode preprocessing failed");
+        let (_, cycles, _, _, _) = crate::trace(
+            program.elf_bytes(),
+            None,
+            &inputs.inputs,
+            &inputs.untrusted_advice,
+            &inputs.trusted_advice,
+            &inputs.memory_config,
+            None,
+        );
+        let (whole, dimensions) = collect_rows(&cycles, &bytecode).expect("conversion failed");
+        assert!(cycles.len() > 100);
+
+        let backend = TracerBackend::new();
+        for chunk_cycles in [1, 100, cycles.len(), cycles.len() + 1] {
+            let output = backend
+                .trace_in_chunks(&program, inputs.clone(), chunk_cycles)
+                .expect("trace failed");
+            assert_eq!(
+                output.trace.rows(),
+                whole.rows(),
+                "chunk_cycles {chunk_cycles}"
+            );
+            assert_eq!(output.dimensions, dimensions, "chunk_cycles {chunk_cycles}");
+            assert_eq!(
+                output.trace.heap_bytes(),
+                size_of_val(whole.rows()),
+                "chunk_cycles {chunk_cycles}"
+            );
         }
     }
 
@@ -844,6 +952,15 @@ mod tests {
             instruction.trace(&mut cpu, Some(&mut captured));
             trace[position] = captured[0];
         }
+        // Appended pieces: a serial one at index 0, a parallel one and a
+        // serial one at later indices.
+        let (head, rest) = trace.split_at(1);
+        let (middle, tail) = rest.split_at(rest.len() - 1);
+        let mut appended_rows = Vec::new();
+        let mut appended_batches = Vec::new();
+        for cycles in [head, middle, tail] {
+            append_rows(&mut appended_rows, &mut appended_batches, cycles, &bytecode).unwrap();
+        }
         for (data, _) in [
             collect_rows(&trace, &bytecode).unwrap(),
             collect_owned_chunks(
@@ -854,6 +971,7 @@ mod tests {
                 &bytecode,
             )
             .unwrap(),
+            finish_rows(appended_rows, appended_batches).unwrap(),
         ] {
             assert_eq!(data.len(), trace.len());
             let event_cycles: Vec<_> = data

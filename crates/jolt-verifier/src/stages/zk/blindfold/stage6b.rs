@@ -3,9 +3,7 @@ use super::*;
 use jolt_claims::protocols::jolt::relations::claim_reductions::bytecode::CyclePhase as BytecodeCyclePhase;
 
 use jolt_claims::protocols::jolt::relations::claim_reductions::increments::IncClaimReductionOutputClaims;
-use jolt_claims::protocols::jolt::relations::ram::{
-    RamHammingBooleanityOutputClaims, RamRaVirtualizationOutputClaims,
-};
+use jolt_claims::protocols::jolt::relations::ram::RamRaVirtualizationOutputClaims;
 
 pub(super) fn add_stage6b<PCS, VC, ZkProof>(
     input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
@@ -28,7 +26,6 @@ where
         input.proof.one_hot_config.committed_chunk_bits(),
     );
     let booleanity_claims = relations::booleanity::BooleanityCyclePhase::new(booleanity_dimensions);
-    let ram_hamming_claims = relations::ram::HammingBooleanity::new(trace_dimensions);
     let ram_ra_claims =
         relations::ram::RaVirtualization::new(formula_dimensions.ram_ra_virtualization);
     let instruction_ra_claims = relations::instruction::RaVirtualization::new(
@@ -69,7 +66,6 @@ where
     let mut batch_claims = vec![
         bytecode_claim,
         relation_claim(&booleanity_claims),
-        relation_claim(&ram_hamming_claims),
         relation_claim(&ram_ra_claims),
         relation_claim(&instruction_ra_claims),
         relation_claim(&inc_claims),
@@ -142,12 +138,6 @@ fn stage6b_output_ids_and_aliases<F: JoltField>(
         bytecode_ra_opening_points,
         booleanity_opening_point,
     );
-    output_ids.extend(composite_ids(
-        RamHammingBooleanityOutputClaims::<F> {
-            ram_hamming_weight: F::zero(),
-        }
-        .canonical_order(),
-    ));
     output_ids.extend(composite_ids(
         RamRaVirtualizationOutputClaims::<F> {
             ram_ra: vec![
@@ -264,7 +254,6 @@ mod tests {
     #[cfg(feature = "field-inline")]
     use crate::stages::stage6b::outputs::FieldRegistersIncClaimReductionOutputClaims;
     use crate::stages::stage6b::outputs::Stage6bOutputClaims;
-    use crate::stages::stage6b::ram_hamming_booleanity::RamHammingBooleanityOutputClaims;
     use crate::stages::stage6b::ram_ra_virtualization::RamRaVirtualizationOutputClaims;
     use crate::stages::stage6b::stage6b_opening_values;
     use jolt_claims::protocols::jolt::geometry::dimensions::JoltOneHotDimensions;
@@ -307,9 +296,6 @@ mod tests {
                 instruction_ra: (0..ra_layout.instruction()).map(|_| next()).collect(),
                 bytecode_ra: (0..ra_layout.bytecode()).map(|_| next()).collect(),
                 ram_ra: (0..ra_layout.ram()).map(|_| next()).collect(),
-            },
-            ram_hamming_booleanity: RamHammingBooleanityOutputClaims {
-                ram_hamming_weight: next(),
             },
             ram_ra_virtualization: RamRaVirtualizationOutputClaims {
                 ram_ra: (0..formula_dimensions
@@ -371,7 +357,6 @@ mod tests {
                     .bytecode_read_raf
                     .resolve_output(id)
                     .or_else(|| claims.booleanity.resolve_output(id))
-                    .or_else(|| claims.ram_hamming_booleanity.resolve_output(id))
                     .or_else(|| claims.ram_ra_virtualization.resolve_output(id))
                     .or_else(|| claims.instruction_ra_virtualization.resolve_output(id))
                     .or_else(|| claims.inc_claim_reduction.resolve_output(id)),

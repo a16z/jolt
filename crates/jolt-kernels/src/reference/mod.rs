@@ -74,7 +74,6 @@ pub mod naive;
 pub mod opening;
 pub mod precommitted_reduction;
 pub mod program_image_claim_reduction;
-pub mod ram_hamming_booleanity;
 pub mod ram_output_check;
 pub mod ram_ra_claim_reduction;
 pub mod ram_ra_virtualization;
@@ -172,7 +171,6 @@ where
             booleanity_address: Box::new(ReferenceBackend),
             bytecode_read_raf_cycle: Box::new(ReferenceBackend),
             booleanity_cycle: Box::new(ReferenceBackend),
-            ram_hamming_booleanity: Box::new(ReferenceBackend),
             ram_ra_virtualization: Box::new(ReferenceBackend),
             instruction_ra_virtualization: Box::new(ReferenceBackend),
             inc_claim_reduction: Box::new(ReferenceBackend),

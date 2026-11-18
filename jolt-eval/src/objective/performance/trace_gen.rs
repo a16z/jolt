@@ -94,23 +94,25 @@ impl<G: GuestConfig> TraceGenObjective<G> {
         std::hint::black_box(output.trace.rows().len())
     }
 
-    /// The same trace without the `Cycle` to `JoltTraceRow` conversion, i.e. the
-    /// raw `tracer::trace` call that `TracerBackend::trace` wraps.
+    /// The same emulator run without the `Cycle` to `JoltTraceRow` conversion,
+    /// i.e. the raw `tracer::trace` call, which keeps every cycle in one vector
+    /// where `TracerBackend::trace` converts them chunk by chunk.
     ///
-    /// WHY this exists: the conversion pass dominates the seam (measured at
-    /// 74% for fibonacci and 86% for sha2-chain), and a backend that emits
-    /// `JoltTraceRow` directly skips it entirely. Reporting only the seam total
-    /// would let a backend bank that share as if it were codegen speedup, so
-    /// AC8/AC9 ratios are only interpretable against both numbers: `reference`
-    /// bounds the end-to-end win, `reference_raw` isolates the part that is
-    /// actually attributable to how rows are produced.
+    /// WHY this exists: a backend that emits `JoltTraceRow` directly skips the
+    /// conversion. Reporting only the seam total would let a backend bank that
+    /// share as if it were codegen speedup, so AC8/AC9 ratios are only
+    /// interpretable against both numbers: `reference` bounds the end-to-end
+    /// win, `reference_raw` the part that is attributable to how rows are
+    /// produced. Their difference is not the conversion's cost: `reference`
+    /// converts while the emulator runs and reuses its cycle buffers on a long
+    /// run, where `reference_raw` first-touches a buffer the size of the run.
     pub fn run_reference_raw(&self, setup: &TraceGenSetup) -> usize {
         raw_trace_cycles(&setup.program, &setup.inputs)
     }
 }
 
-/// Raw `tracer::trace`: the call `TracerBackend::trace` wraps, without the
-/// `Cycle` to `JoltTraceRow` conversion that follows it. Shared by the Criterion
+/// Raw `tracer::trace`: the emulator run of `TracerBackend::trace` without its
+/// `Cycle` to `JoltTraceRow` conversion. Shared by the Criterion
 /// `reference_raw` id and the `trace-gen-baseline` harness so both time the
 /// same thing.
 pub fn raw_trace_cycles(program: &JoltProgram, inputs: &TraceInputs) -> usize {
