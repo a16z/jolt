@@ -126,7 +126,7 @@ jobs:
         with:
           toolchain: nightly-2026-08-24
           components: llvm-tools-preview,rust-src
-          targets: ${{ matrix.workspace == 'jolt-eval' && 'riscv64imac-unknown-none-elf' || '' }}
+          target: ${{ matrix.workspace == 'jolt-eval' && 'riscv64imac-unknown-none-elf' || '' }}
       - name: Install pinned cargo-fuzz
         uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2
         with:
@@ -142,8 +142,8 @@ jobs:
           restore-keys: |
             fuzz-build-v1-${{ runner.os }}-${{ matrix.workspace }}-
       # libFuzzer runs every restored input before it first checks
-      # -max_total_time, so the replay is not bounded by a target's budget and
-      # uses it up. Pull requests therefore start from the checked-in seeds
+      # -max_total_time, so the replay is not bounded by a target's budget.
+      # Pull requests therefore start from the checked-in seeds
       # and regressions only; every other run still replays the corpus.
       - name: Restore trusted corpus
         id: corpus
