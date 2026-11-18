@@ -187,7 +187,8 @@ budgets](#target-budgets)); the workflow passes only the profile name.
 
 | Profile | Trigger | Corpus cache | Extras |
 |---------|---------|--------------|--------|
-| `pr` | pull request / push to main | restore only | |
+| `pr` | pull request | none | |
+| `pr` | push to main | restore only | |
 | `daily` | cron `17 4 * * *` | restore + save on success | |
 | `weekly` | cron `43 3 * * 0` | restore + save on success | `cmin` + coverage upload |
 | manual | `workflow_dispatch` | restore only | chosen profile |
@@ -196,8 +197,8 @@ Use `scripts/fuzz.py inventory` for current targets and per-workspace runtimes.
 Coverage builds use `fuzz/target-coverage/`, cached separately from ASan builds.
 
 All profiles validate the configuration and replay seeds and regressions
-before mutation. Pull-request jobs may consume the latest trusted corpus but
-never publish new corpus state — only successful scheduled runs on the default
+before mutation. Pull-request jobs mutate from those inputs alone; every other run, a
+manual `pr` run included, restores the corpus. Only successful scheduled runs on the default
 branch save a new cache, so contributor-controlled code and inputs cannot
 poison trusted state. A failed run never replaces the previous cache.
 
