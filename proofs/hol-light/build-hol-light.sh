@@ -56,7 +56,7 @@ git checkout --quiet --detach FETCH_HEAD
 
 # --no-install keeps opam from installing HOL Light through its own opam file.
 opam switch create . "ocaml-base-compiler.$OCAML_VERSION" --no-install --yes \
-  --repositories="pinned=git+https://github.com/ocaml/opam-repository.git#$OPAM_REPOSITORY_COMMIT"
+  --repositories="hol-light-$OPAM_REPOSITORY_COMMIT=git+https://github.com/ocaml/opam-repository.git#$OPAM_REPOSITORY_COMMIT"
 eval "$(opam env --switch . --set-switch)"
 # Pin Camlp5 before ledit installation to avoid a dependency downgrade and rebuild.
 opam pin --switch . add --yes --no-action camlp5 "$CAMLP5_VERSION"
