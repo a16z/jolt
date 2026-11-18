@@ -3,6 +3,9 @@ use std::{
     fmt::{Display, Formatter, Result as FmtResult},
 };
 
+use jolt_claims::protocols::composed::r1cs::rv64::{
+    RV64_VARIABLE_NAMES, V_IS_NOOP, V_NEXT_IS_NOOP,
+};
 use jolt_claims::protocols::jolt::{
     relations::{
         instruction::InputVirtualization, ram::ReadWriteChecking as RamReadWriteChecking,
@@ -12,6 +15,7 @@ use jolt_claims::protocols::jolt::{
     UnbatchedClaimExpr as ClaimExpr, UnbatchedRelation as RelationClaims,
 };
 use jolt_lookup_tables::LookupTableKind;
+use jolt_riscv::InstructionFlags;
 use regex::{NoExpand, Regex};
 
 use crate::{
@@ -38,20 +42,31 @@ pub struct ZkLeanVarRef {
 
 impl Display for ZkLeanVarRef {
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
-        write!(
-            f,
-            "{}.{}",
-            relation_ident(self.relation),
-            polynomial_ident(self.polynomial)
-        )
+        let relation = relation_ident(self.relation);
+        match r1cs_halt_lane_factor(self.polynomial) {
+            Some(column) => write!(f, "{relation}.{}", RV64_VARIABLE_NAMES[column]),
+            None => write!(f, "{relation}.{}", polynomial_ident(self.polynomial)),
+        }
+    }
+}
+
+/// The full-trace R1CS column of a factor of product lane 3 (row 21). The
+/// shift relation reads the same two witnesses, so it must name them as the
+/// R1CS does.
+fn r1cs_halt_lane_factor(polynomial: JoltPolynomialId) -> Option<usize> {
+    if polynomial == JoltVirtualPolynomial::NextIsNoop.into() {
+        Some(V_NEXT_IS_NOOP)
+    } else if polynomial == JoltVirtualPolynomial::InstructionFlags(InstructionFlags::IsNoop).into()
+    {
+        Some(V_IS_NOOP)
+    } else {
+        None
     }
 }
 
 impl ZkLeanVarRef {
     pub fn new(relation: JoltRelationId, polynomial: JoltPolynomialId) -> Self {
-        // The full-trace R1CS contains the jump product, so its successor bit is also
-        // the witness read by the shift relation.
-        let relation = if polynomial == JoltVirtualPolynomial::NextIsNoop.into() {
+        let relation = if r1cs_halt_lane_factor(polynomial).is_some() {
             JoltRelationId::SpartanOuter
         } else {
             relation
@@ -333,8 +348,8 @@ mod tests {
         let module = ZkLeanSumchecks::extract::<64>().as_module().unwrap();
         let lean = String::from_utf8(module.contents).unwrap();
         assert!(lean.contains(
-            "(1 - cycle.JoltR1CSInputs.NextIsNoop)\n    (1 - next_cycle.SpartanShift_Vars.InstructionFlags_IsNoop)"
+            "(1 - cycle.JoltR1CSInputs.NextIsNoop)\n    (1 - next_cycle.JoltR1CSInputs.IsNoop)"
         ));
-        assert!(!lean.contains("NextIsNoop : ZKExpr f"));
+        assert!(!lean.contains("IsNoop : ZKExpr f"));
     }
 }

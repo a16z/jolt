@@ -99,7 +99,7 @@ pub fn preprocess_committed_with_order(
     let metadata = full
         .metadata()
         .ok_or_else(|| PreprocessingError::InvalidCommittedProgram {
-            reason: "entry address is absent from bytecode preprocessing".to_owned(),
+            reason: "bytecode preprocessing has no valid code region".to_owned(),
         })?;
     let bytecode_candidate =
         bytecode::bytecode_total_vars(full.bytecode.code_size).map_err(|error| {
@@ -300,8 +300,7 @@ mod tests {
         assert_eq!(decoded.program(), preprocessing.program());
     }
 
-    #[test]
-    fn full_prover_preprocessing_round_trips() {
+    fn single_instruction_program() -> JoltProgramPreprocessing {
         let entry = JoltInstructionRow {
             instruction_kind: JoltInstructionKind::ADDI,
             address: RAM_START_ADDRESS as usize,
@@ -312,7 +311,7 @@ mod tests {
             },
             ..JoltInstructionRow::default()
         };
-        let full = JoltProgramPreprocessing::new(
+        JoltProgramPreprocessing::new(
             vec![entry],
             Vec::new(),
             MemoryLayout::new(&MemoryConfig {
@@ -323,25 +322,40 @@ mod tests {
             1 << 12,
             RV64IMAC_JOLT,
         )
-        .unwrap();
-        let preprocessing = from_shared(JoltSharedPreprocessing::new(full).unwrap()).unwrap();
+        .unwrap()
+    }
+
+    #[test]
+    fn full_prover_preprocessing_round_trips() {
+        let shared = JoltSharedPreprocessing::new(single_instruction_program()).unwrap();
+        let preprocessing = from_shared(shared).unwrap();
         assert_prover_preprocessing_round_trips(&preprocessing);
     }
 
     #[cfg(not(feature = "field-inline"))]
     #[test]
     fn committed_prover_preprocessing_round_trips() {
-        let full = JoltProgramPreprocessing::new(
-            Vec::new(),
-            Vec::new(),
-            MemoryLayout::default(),
-            0,
-            1 << 12,
-            RV64IMAC_JOLT,
-        )
-        .unwrap();
-        let preprocessing = preprocess_committed(full).unwrap();
+        let preprocessing = preprocess_committed(single_instruction_program()).unwrap();
         assert_prover_preprocessing_round_trips(&preprocessing);
+    }
+
+    /// The committed verifier rejects only entry index 0, so the builder must
+    /// refuse a no-op entry at any index.
+    #[cfg(not(feature = "field-inline"))]
+    #[test]
+    fn committed_preprocessing_rejects_an_entry_that_is_not_an_instruction() {
+        let mut padding_entry = single_instruction_program();
+        padding_entry.bytecode.entry_address = 0;
+        let mut noop_entry = single_instruction_program();
+        let entry_index = noop_entry.bytecode.entry_bytecode_index().unwrap();
+        assert_ne!(entry_index, 0);
+        noop_entry.bytecode.bytecode[entry_index].instruction_kind = JoltInstructionKind::NoOp;
+        for program in [padding_entry, noop_entry] {
+            assert!(matches!(
+                preprocess_committed(program),
+                Err(PreprocessingError::InvalidProgram { .. })
+            ));
+        }
     }
     #[cfg(not(feature = "field-inline"))]
     #[test]

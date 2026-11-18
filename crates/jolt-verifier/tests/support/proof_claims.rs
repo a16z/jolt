@@ -224,10 +224,10 @@ fn claim_mut_from_stage2_batch_outputs<F: JoltField>(
     id: native::JoltOpeningId,
 ) -> Option<&mut F> {
     let [ram_val, ram_ra, ram_inc] = [ram::ram_val(), ram::ram_ra(), ram::ram_inc()];
-    let [product_left_instruction_input, product_right_instruction_input, product_jump_flag, product_write_lookup_output_to_rd, product_lookup_output, product_branch_flag, product_next_is_noop, product_virtual_instruction] = [
+    let [product_left_instruction_input, product_right_instruction_input, product_is_noop, product_write_lookup_output_to_rd, product_lookup_output, product_branch_flag, product_next_is_noop, product_virtual_instruction] = [
         spartan::left_instruction_input_product(),
         spartan::right_instruction_input_product(),
-        spartan::jump_flag_product(),
+        spartan::is_noop_product(),
         spartan::write_lookup_output_to_rd_product(),
         spartan::lookup_output_product(),
         spartan::branch_flag_product(),
@@ -254,7 +254,7 @@ fn claim_mut_from_stage2_batch_outputs<F: JoltField>(
         id if id == product_right_instruction_input => {
             Some(&mut claims.product_remainder.right_instruction_input)
         }
-        id if id == product_jump_flag => Some(&mut claims.product_remainder.jump_flag),
+        id if id == product_is_noop => Some(&mut claims.product_remainder.is_noop),
         id if id == product_write_lookup_output_to_rd => {
             Some(&mut claims.product_remainder.write_lookup_output_to_rd)
         }

@@ -520,7 +520,7 @@ pub const STAGE2_TARGETS: &[TamperTarget] = &[
     ),
     checked_standard(
         "stage2.claims.batch_outputs.product_remainder.checked",
-        "claims.stage2.batch_outputs.product_remainder.{left_instruction_input,right_instruction_input,jump_flag,lookup_output,branch_flag,next_is_noop}",
+        "claims.stage2.batch_outputs.product_remainder.{left_instruction_input,right_instruction_input,is_noop,lookup_output,branch_flag,next_is_noop}",
         VerifierPhase::Stage2,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
@@ -1386,7 +1386,6 @@ pub fn observed_rejection_phase(error: &VerifierError) -> Option<VerifierPhase> 
         | VerifierError::MissingPreprocessingPayload { .. }
         | VerifierError::UnsupportedInstruction { .. }
         | VerifierError::EntryNotInstruction { .. }
-        | VerifierError::InvalidBranchOffset(_)
         | VerifierError::InvalidFieldInlineBytecode { .. }
         | VerifierError::PreprocessingDigestFailed { .. } => Some(VerifierPhase::Preamble),
         // The difficulty depends only on the challenge set, so the first site
@@ -1571,10 +1570,10 @@ fn expand_manifest_path(target: TamperTarget) -> Vec<&'static str> {
             "claims.stage2.batch_outputs.ram_read_write.ra",
             "claims.stage2.batch_outputs.ram_read_write.inc",
         ],
-        "claims.stage2.batch_outputs.product_remainder.{left_instruction_input,right_instruction_input,jump_flag,lookup_output,branch_flag,next_is_noop}" => vec![
+        "claims.stage2.batch_outputs.product_remainder.{left_instruction_input,right_instruction_input,is_noop,lookup_output,branch_flag,next_is_noop}" => vec![
             "claims.stage2.batch_outputs.product_remainder.left_instruction_input",
             "claims.stage2.batch_outputs.product_remainder.right_instruction_input",
-            "claims.stage2.batch_outputs.product_remainder.jump_flag",
+            "claims.stage2.batch_outputs.product_remainder.is_noop",
             "claims.stage2.batch_outputs.product_remainder.lookup_output",
             "claims.stage2.batch_outputs.product_remainder.branch_flag",
             "claims.stage2.batch_outputs.product_remainder.next_is_noop",
@@ -1691,7 +1690,7 @@ pub fn clear_claims<F: JoltField>(fill_optionals: bool) -> ClearProofClaims<F> {
                 product_remainder: stage2::outputs::ProductRemainderOutputClaims {
                     left_instruction_input: zero,
                     right_instruction_input: zero,
-                    jump_flag: zero,
+                    is_noop: zero,
                     write_lookup_output_to_rd: zero,
                     lookup_output: zero,
                     branch_flag: zero,

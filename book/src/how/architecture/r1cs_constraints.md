@@ -57,36 +57,37 @@ After the halt, the trace holds only padding no-ops up to its power-of-two lengt
 Two constraints implement this end rule:
 
 - Row 14 (`NextUnexpPCEqLookupIfJump`) is $\textsf{Jump} \cdot (\textsf{NextUnexpandedPC} - \textsf{LookupOutput}) = 0$, so every jump's successor address is its lookup output, and a halt's is 0.
-- Row 21 (`JumpHasSuccessorUnlessHalt`, lane 3 of Spartan product virtualization) has factors $\textsf{Jump}$ and $1 - \textsf{NextIsNoop}$, and its output depends on the statement's panic bit $\Pi$:
+- Row 21 (`NextIsNoopEqIsNoopUnlessHalt`, lane 3 of Spartan product virtualization) has factors $1$ and $\textsf{NextIsNoop} - \textsf{IsNoop}$, and its output depends on the statement's panic bit $\Pi$:
 
 $$
-\textsf{Jump} \cdot (1 - \textsf{NextIsNoop}) = \textsf{Jump} - (1 - 2\Pi) \cdot \textsf{Halt} - 2 \cdot \textsf{HaltPanic}
+\textsf{NextIsNoop} - \textsf{IsNoop} = (1 - 2\Pi) \cdot \textsf{Halt} + 2 \cdot \textsf{HaltPanic}
 $$
 
 $\Pi$ is the verifier's `panic` input, which enters the claim only as the derived public `SpartanProductVirtualizationPublic::ClaimedPanic`.
-`PRODUCT_JUMP_LANE_OUTPUT` in `jolt-claims` owns this output; the verifier, the optimized prover kernel and BlindFold evaluate the same expression, and the reference kernel computes the lane from the trace.
-$\textsf{NextIsNoop}$ is 1 when the next row is padding and at the last cycle $T-1$, so the lane reduces per row to:
+`PRODUCT_HALT_LANE_OUTPUT` in `jolt-claims` owns this output; the verifier, the optimized prover kernel and BlindFold evaluate the same expression, and the reference kernel computes the lane from the trace.
+$\textsf{IsNoop}$ is 1 on a padding row.
+$\textsf{NextIsNoop}$ is the next row's $\textsf{IsNoop}$, and 1 at the last cycle $T-1$.
+On a halt the output is $1 + 2 \cdot (\textsf{HaltPanic} - \Pi)$, so the lane reduces per row to:
 
-| Row | (Jump, Halt, HaltPanic) | Lane 3 reduces to | Forces |
+| Row | (IsNoop, Halt, HaltPanic) | Lane 3 reduces to | Forces |
 |---|---|---|---|
-| Not a jump | (0, 0, 0) | $0 = 0$ | nothing; rows 15 and 16 apply |
-| JAL or JALR | (1, 0, 0) | $1 - \textsf{NextIsNoop} = 1$ | a real successor, so not the last cycle |
-| `jolt.success` | (1, 1, 0) | $1 - \textsf{NextIsNoop} = 2\Pi$ | $\Pi = 0$, and padding or the end follows |
-| `EBREAK` | (1, 1, 1) | $1 - \textsf{NextIsNoop} = 2\Pi - 2$ | $\Pi = 1$, and padding or the end follows |
+| Real, not a halt | (0, 0, 0) | $\textsf{NextIsNoop} = 0$ | a real successor, so not the last cycle |
+| Padding | (1, 0, 0) | $\textsf{NextIsNoop} = 1$ | padding or the end follows |
+| `jolt.success` | (0, 1, 0) | $\textsf{NextIsNoop} = 1 - 2\Pi$ | $\Pi = 0$, and padding or the end follows |
+| `EBREAK` | (0, 1, 1) | $\textsf{NextIsNoop} = 3 - 2\Pi$ | $\Pi = 1$, and padding or the end follows |
 
 The excluded cases need a field characteristic other than 2 and 3: a success halt under $\Pi = 1$ would need $\textsf{NextIsNoop} = -1$, and an `EBREAK` halt under $\Pi = 0$ would need $\textsf{NextIsNoop} = 3$.
 Both proof fields qualify.
-Under either value of $\Pi$, the lane also rejects every flag combination that no instruction carries.
-This form keeps lane 3's coefficients in the full-trace matrix in $\{\pm 1, -2\}$.
+Under either value of $\Pi$, the lane also rejects `HaltPanic` without `Halt`.
+It admits a row with both `IsNoop` and `Halt`, and it does not read `Jump`, so it treats `Halt` without `Jump` as a halt. No instruction kind carries either combination, and bytecode read-RAF binds each cycle's flags to its bytecode row's: the verifier computes them from the row's kind for a full program, and trusts the committed flag lanes of a committed one, as for every flag.
 
-Only a halt can precede padding.
-A padding row has address 0. A real row followed by padding, or at $T-1$, has $\textsf{NextUnexpandedPC} = 0$.
-If that row is not a jump, row 15 (a taken branch) or row 16 sets its $\textsf{NextUnexpandedPC}$ from its own address: its own address plus the branch offset, the next sequential address, or its own address inside an expanded sequence.
-None of these is 0. Bytecode addresses are at least `RAM_START_ADDRESS` ($2^{31}$), and bytecode admission checks that every conditional branch has an even signed 13-bit displacement, including branches emitted by registered inlines. The row must therefore be a jump, and lane 3 makes it a halt.
-A padding row keeps the next address at 0 (row 16), so no real row follows padding.
+Only a halt can precede padding, and only padding can follow it.
+Bytecode read-RAF pins cycle 0 to the entry row, which is real.
+A real row that is not a halt has a real successor, a halt of the claimed kind has a padding successor, a padding row has a padding successor, and the last cycle is a halt or padding.
 The real rows therefore form a prefix that ends at exactly one halt: a proof with $\Pi = 0$ attests a run that ended at `jolt.success`, and one with $\Pi = 1$ a run that ended at `EBREAK`.
+The lane reads no address, so this holds wherever the code is loaded and whatever a branch offset or a jump target is.
 
-Halt placement and the entry row have separate admission checks.
+Two admission checks complete the rule:
 
 - A halt is a whole source instruction. A halt as the last row of a longer expansion would end the proof in the middle of an instruction, so bytecode preprocessing rejects such a sequence (`PreprocessingError::HaltInSequence`) and expansion rejects a halt among the final rows of a multi-row sequence (`ExpansionError::HaltInSequence`).
-- The entry row is a real instruction. Bytecode read-RAF pins cycle 0 to the key's entry row; if that row were padding, an all-padding trace would verify under either value of $\Pi$. Full-mode verification under such a key fails with `VerifierError::EntryNotInstruction`. A committed key carries no rows: the verifier rejects only entry index 0 and trusts the key for the rest, as it does for the committed rows themselves. The prover refuses a padding entry and a trace that is empty or does not end at a halt.
+- The entry row is a real instruction. Bytecode read-RAF pins cycle 0 to the key's entry row; if that row were padding, an all-padding trace would verify under either value of $\Pi$. Full-mode verification under such a key fails with `VerifierError::EntryNotInstruction`. A committed key carries no rows: its builder refuses an entry that is not an instruction before committing, and the verifier rejects only entry index 0 and trusts the key for the rest, as it does for the committed rows themselves. The prover refuses a padding entry and a trace that is empty or does not end at a halt.

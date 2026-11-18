@@ -16,7 +16,6 @@ use jolt_program::execution::{
     ChunkedExecutionBackend, ExecutionBackend, JoltProgram, TraceError, TraceInputs,
 };
 use jolt_program::expand::{expand_instruction, ExpansionAllocator};
-use jolt_program::preprocess::PreprocessingError;
 use jolt_riscv::instructions::VirtualHostIO;
 use jolt_riscv::{
     JoltInstructionKind as Kind, JoltInstructionRow, NormalizedOperands, RV64IMAC_JOLT,
@@ -234,18 +233,6 @@ fn static_branch_to_unmapped_target_faults_only_when_taken() {
             assert_eq!(outcome.fault_addr, target);
         }
     }
-}
-
-#[test]
-fn compilation_rejects_an_unencodable_branch_offset() {
-    let mut branch = row(Kind::BEQ, Some(1), None, 4096);
-    branch.operands.rs2 = Some(2);
-    assert!(matches!(
-        compile_program(&single_row_program(branch)),
-        Err(TraceError::Preprocessing(
-            PreprocessingError::InvalidBranchOffset(_)
-        ))
-    ));
 }
 
 #[test]

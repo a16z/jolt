@@ -4,8 +4,8 @@
 //! the product uni-skip first round, a standalone centered-integer sumcheck whose
 //! reduced opening the remainder consumes. Modelling it as a [`ConcreteSumcheck`]
 //! single-sources its input-claim algebra — the Lagrange-weighted sum of the lane
-//! values from five Spartan-outer openings (`product`, `should_branch`, and lane 3's
-//! `jump`, `halt` and `halt_panic`, which also reads the statement's panic bit) — so
+//! values from four Spartan-outer openings (`product`, `should_branch`, and lane 3's
+//! `halt` and `halt_panic`, which also reads the statement's panic bit) — so
 //! it stays in lockstep with the BlindFold constraint, which evaluates the same
 //! `spartan::product_uniskip` input formula.
 //!
@@ -45,7 +45,7 @@ use crate::stages::relations::ConcreteSumcheck;
 use crate::stages::stage1::Stage1ClearOutput;
 use crate::VerifierError;
 
-/// Wire the five consumed Spartan-outer opening *values* from the stage 1 outer
+/// Wire the four consumed Spartan-outer opening *values* from the stage 1 outer
 /// output. Only the values feed the input claim (the uni-skip's output point comes
 /// from its own sumcheck point), so the input points are left empty.
 pub fn product_uniskip_input_values_from_stage1<F: JoltField>(
@@ -55,7 +55,6 @@ pub fn product_uniskip_input_values_from_stage1<F: JoltField>(
     let inputs = ProductUniskipInputClaims {
         product: outer.product,
         should_branch: outer.should_branch,
-        jump: outer.jump,
         halt: outer.halt,
         halt_panic: outer.halt_panic,
     };
@@ -126,7 +125,7 @@ impl<F: JoltField> ConcreteSumcheck<F> for ProductUniskip<F> {
         match public_id {
             // The uni-skip first-round Lagrange weights, evaluated at `tau_high`; the
             // input claim reweights its three lane values (`product`, `should_branch`,
-            // and lane 3's fold of `jump`, `halt` and `halt_panic` with `ClaimedPanic`)
+            // and lane 3's fold of `halt` and `halt_panic` with `ClaimedPanic`)
             // by `UniskipLagrangeWeight(0..=2)` exactly as the formula's
             // `product_uniskip_weight(i)`; field-inline builds add their lanes at the
             // following indices.
@@ -165,20 +164,19 @@ mod tests {
     /// ordinary symbolic fold (lanes 0..3, weights over the SAME composed domain) plus the
     /// field-inline lanes at the following indices — pinned against a from-scratch
     /// Lagrange-weighted sum over all five lane values, with lane 3's literal value
-    /// for jump 7, halt 17 and halt_panic 19 under each claimed panic bit.
+    /// for halt 17 and halt_panic 19 under each claimed panic bit.
     #[test]
     fn composed_input_claim_matches_five_lane_fold() {
         assert_eq!(SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE, 5);
 
         let tau_high = Fr::from_u64(23);
-        let (jump, halt, halt_panic) = (Fr::from_u64(7), Fr::from_u64(17), Fr::from_u64(19));
+        let (halt, halt_panic) = (Fr::from_u64(17), Fr::from_u64(19));
         let field_product = Fr::from_u64(11);
         let field_inv_product = Fr::from_u64(13);
         let inputs = ComposedClaims {
             base: ProductUniskipInputClaims::<Fr> {
                 product: Fr::from_u64(3),
                 should_branch: Fr::from_u64(5),
-                jump,
                 halt,
                 halt_panic,
             },
@@ -196,7 +194,7 @@ mod tests {
             let lane_values = [
                 inputs.product,
                 inputs.should_branch,
-                Fr::from_i64(if claimed_panic { -14 } else { -48 }),
+                Fr::from_i64(if claimed_panic { 21 } else { 55 }),
                 field_product,
                 field_inv_product,
             ];

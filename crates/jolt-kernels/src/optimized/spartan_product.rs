@@ -26,7 +26,7 @@ use jolt_claims::protocols::field_inline::geometry::product::{
     composed_remainder_factor_contributions, FieldProductLaneFactors,
 };
 use jolt_claims::protocols::jolt::geometry::spartan::{
-    branch_flag_product, jump_flag_product, left_instruction_input_product, lookup_output_product,
+    branch_flag_product, is_noop_product, left_instruction_input_product, lookup_output_product,
     next_is_noop_product, right_instruction_input_product, virtual_instruction_product,
     write_lookup_output_to_rd_product, SpartanProductDimensions,
 };
@@ -88,8 +88,8 @@ pub struct SpartanProductRow {
     pub left_instruction_input: LeftInstructionInput,
     #[opening(RightInstructionInput)]
     pub right_instruction_input: RightInstructionInput,
-    #[opening(OpFlags(CircuitFlags::Jump))]
-    pub jump_flag: OpFlag,
+    #[opening(InstructionFlags(InstructionFlags::IsNoop))]
+    pub is_noop: InstructionFlag,
     #[opening(OpFlags(CircuitFlags::WriteLookupOutputToRD))]
     pub write_lookup_output_to_rd: OpFlag,
     #[opening(LookupOutput)]
@@ -114,11 +114,11 @@ impl SpartanProductRow {
         let mut left = F::Accumulator::default();
         left.fmadd_u64(weights[0], self.left_instruction_input.0);
         left.fmadd_u64(weights[1], self.lookup_output.0);
-        left.fmadd_u64(weights[2], u64::from(self.jump_flag.0));
+        left.fmadd_u64(weights[2], 1);
         let mut right = <F as WithAccumulator>::SignedProductAccumulator::default();
         right.fmadd_i128(weights[0], self.right_instruction_input.0);
         right.fmadd_u64(weights[1], u64::from(self.branch_flag.0));
-        right.fmadd_u64(weights[2], 1 - u64::from(self.next_is_noop.0));
+        right.fmadd_i64(weights[2], self.noop_step());
         let factors = [left.reduce(), right.reduce()];
         #[cfg(feature = "field-inline")]
         if let Some(field_row) = field_row {
@@ -136,6 +136,12 @@ impl SpartanProductRow {
             return [factors[0] + field_left, factors[1] + field_right];
         }
         factors
+    }
+
+    /// Lane 3's right factor, `NextIsNoop − IsNoop`.
+    #[inline]
+    fn noop_step(&self) -> i64 {
+        i64::from(self.next_is_noop.0) - i64::from(self.is_noop.0)
     }
 }
 
@@ -165,7 +171,7 @@ fn extension_coefficients() -> [[i64; DOMAIN]; EXTENSION_SIZE] {
 }
 
 /// `left(node) · right(node)` outside the base domain, as exact integers:
-/// `|left| < 2^74` (two u64 lanes and a flag, times composed coefficients ≤ 2^7),
+/// `|left| < 2^74` (two u64 lanes and the constant 1, times composed coefficients ≤ 2^7),
 /// `|right| < 2^137` (the i128 lane), product `< 2^211` — inside `S256`. For cycles
 /// without field-inline activity: the field-inline lanes' factors are all zero there,
 /// so the three rv64 coefficient slots below are the whole composed sum; active
@@ -180,13 +186,10 @@ fn extension_products(
     let left_lanes = [
         i128::from(row.left_instruction_input.0),
         i128::from(row.lookup_output.0),
-        i128::from(row.jump_flag.0),
+        1,
     ];
     let right_wide = S192::from_i128(row.right_instruction_input.0);
-    let right_flags = [
-        i64::from(row.branch_flag.0),
-        1 - i64::from(row.next_is_noop.0),
-    ];
+    let right_flags = [i64::from(row.branch_flag.0), row.noop_step()];
     for (slot, coefficients) in out.iter_mut().zip(coefficients) {
         let mut left: i128 = 0;
         for (lane, &c) in left_lanes.iter().zip(coefficients) {
@@ -217,12 +220,12 @@ fn field_extension_products<F: JoltField>(
     let left_lanes = [
         F::from_u64(row.left_instruction_input.0),
         F::from_u64(row.lookup_output.0),
-        F::from_bool(row.jump_flag.0),
+        F::one(),
     ];
     let right_lanes = [
         F::from_i128(row.right_instruction_input.0),
         F::from_bool(row.branch_flag.0),
-        F::one() - F::from_bool(row.next_is_noop.0),
+        F::from_i64(row.noop_step()),
     ];
     let mut out = [F::zero(); EXTENSION_SIZE];
     for (slot, weights) in out.iter_mut().zip(coefficients) {
@@ -757,22 +760,22 @@ impl<F: JoltField> ProductRemainderKernel<F> {
                 words[0].fmadd_u64(weight, row.left_instruction_input.0);
                 words[1].fmadd_i128(weight, row.right_instruction_input.0);
                 words[2].fmadd_u64(weight, row.lookup_output.0);
-                flags[0].fmadd_u64(weight, u64::from(row.jump_flag.0));
+                flags[0].fmadd_u64(weight, u64::from(row.is_noop.0));
                 flags[1].fmadd_u64(weight, u64::from(row.write_lookup_output_to_rd.0));
                 flags[2].fmadd_u64(weight, u64::from(row.branch_flag.0));
                 flags[3].fmadd_u64(weight, u64::from(row.next_is_noop.0));
                 flags[4].fmadd_u64(weight, u64::from(row.virtual_instruction.0));
             }
             let [left_input, right_input, lookup_output] = words;
-            let [jump, write_lookup, branch, noop, virtual_instruction] = flags;
+            let [is_noop, write_lookup, branch, next_is_noop, virtual_instruction] = flags;
             let mut values = vec![
                 left_input.reduce(),
                 right_input.reduce(),
-                jump.reduce(),
+                is_noop.reduce(),
                 write_lookup.reduce(),
                 lookup_output.reduce(),
                 branch.reduce(),
-                noop.reduce(),
+                next_is_noop.reduce(),
                 virtual_instruction.reduce(),
             ];
             block.scale(&mut values);
@@ -863,7 +866,7 @@ impl<F: JoltField> SumcheckKernel<F> for ProductRemainderKernel<F> {
         let ids = [
             left_instruction_input_product(),
             right_instruction_input_product(),
-            jump_flag_product(),
+            is_noop_product(),
             write_lookup_output_to_rd_product(),
             lookup_output_product(),
             branch_flag_product(),
@@ -960,7 +963,7 @@ mod tests {
     const COLUMNS: [JoltVirtualPolynomial; 8] = [
         JoltVirtualPolynomial::LeftInstructionInput,
         JoltVirtualPolynomial::RightInstructionInput,
-        JoltVirtualPolynomial::OpFlags(CircuitFlags::Jump),
+        JoltVirtualPolynomial::InstructionFlags(InstructionFlags::IsNoop),
         JoltVirtualPolynomial::OpFlags(CircuitFlags::WriteLookupOutputToRD),
         JoltVirtualPolynomial::LookupOutput,
         JoltVirtualPolynomial::InstructionFlags(InstructionFlags::Branch),
@@ -972,7 +975,7 @@ mod tests {
         match index {
             0 => row.left_instruction_input.to_field(),
             1 => row.right_instruction_input.to_field(),
-            2 => row.jump_flag.to_field(),
+            2 => row.is_noop.to_field(),
             3 => row.write_lookup_output_to_rd.to_field(),
             4 => row.lookup_output.to_field(),
             5 => row.branch_flag.to_field(),
@@ -1005,7 +1008,7 @@ mod tests {
                 SpartanProductRow {
                     left_instruction_input: LeftInstructionInput(next()),
                     right_instruction_input: RightInstructionInput(signed),
-                    jump_flag: OpFlag(bits & 1 == 1),
+                    is_noop: InstructionFlag(bits & 1 == 1),
                     write_lookup_output_to_rd: OpFlag(bits & 2 == 2),
                     lookup_output: LookupOutput(next()),
                     branch_flag: InstructionFlag(bits & 4 == 4),
@@ -1096,17 +1099,16 @@ mod tests {
         let eq = EqPolynomial::new(tau_low.to_vec()).evaluations();
         let weights = centered_lagrange_evals::<Fr>(DOMAIN, r0).unwrap();
         let scale = centered_lagrange_kernel::<Fr>(DOMAIN, tau_high, r0).unwrap();
-        let one = Fr::from_u64(1);
         let mut total = Fr::from_u64(0);
         for (j, (row, &eq_value)) in rows.iter().zip(&eq).enumerate() {
             #[cfg_attr(not(feature = "field-inline"), expect(unused_mut))]
             let mut left = weights[0] * column_field_value(row, 0)
                 + weights[1] * column_field_value(row, 4)
-                + weights[2] * column_field_value(row, 2);
+                + weights[2];
             #[cfg_attr(not(feature = "field-inline"), expect(unused_mut))]
             let mut right = weights[0] * column_field_value(row, 1)
                 + weights[1] * column_field_value(row, 5)
-                + weights[2] * (one - column_field_value(row, 6));
+                + weights[2] * (column_field_value(row, 6) - column_field_value(row, 2));
             #[cfg(feature = "field-inline")]
             if let Some((_, field_row)) = field_rows.iter().find(|(cycle, _)| *cycle == j) {
                 let (field_left, field_right) = composed_remainder_factor_contributions(
@@ -1132,7 +1134,7 @@ mod tests {
     /// Upstream lane inputs whose lane values are the brute-force lane sums at
     /// `tau_low`, with lane 3's value spread over nonzero `halt` and
     /// `halt_panic` openings, so that it is
-    /// `jump − (1 − 2Π)·halt − 2·halt_panic` only under the claimed `Π`.
+    /// `(1 − 2Π)·halt + 2·halt_panic` only under the claimed `Π`.
     fn uniskip_input_claims(
         rows: &[SpartanProductRow],
         #[cfg(feature = "field-inline")] field_rows: &[(usize, FieldInlineSpartanRow<Fr>)],
@@ -1150,12 +1152,13 @@ mod tests {
                 node,
             )
         };
-        let (halt, halt_panic) = (Fr::from_u64(19), Fr::from_u64(23));
+        let halt_panic = Fr::from_u64(23);
         let (one, two) = (Fr::from_u64(1), Fr::from_u64(2));
+        // `1 − 2Π` is its own inverse.
+        let halt = (at(2) - two * halt_panic) * (one - two * Fr::from_bool(claimed_panic));
         let inputs = ProductUniskipInputClaims {
             product: at(0),
             should_branch: at(1),
-            jump: at(2) + (one - two * Fr::from_bool(claimed_panic)) * halt + two * halt_panic,
             halt,
             halt_panic,
         };
@@ -1495,7 +1498,6 @@ mod tests {
             .map(|row| SpartanProductRow {
                 left_instruction_input: LeftInstructionInput(u64::MAX),
                 lookup_output: LookupOutput(u64::MAX),
-                jump_flag: OpFlag(true),
                 ..row
             })
             .collect();

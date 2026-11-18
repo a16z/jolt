@@ -359,7 +359,6 @@ mod tests {
     use super::rv64::{flag_column, V_CONST, V_IMM, V_RD_WRITE_VALUE, V_RS1_VALUE};
     use super::rv64::{
         rv64_trace_constraints, NUM_PRODUCT_CONSTRAINTS, V_FLAG_HALT, V_FLAG_HALT_PANIC,
-        V_FLAG_JUMP,
     };
     use super::*;
     use crate::protocols::composed::geometry::{
@@ -545,7 +544,7 @@ mod tests {
     /// on distinct flag values under both claimed panic bits.
     #[test]
     #[expect(clippy::indexing_slicing, reason = "tests index fixture data")]
-    fn jump_lane_row_matches_product_uniskip_input() {
+    fn halt_lane_row_matches_product_uniskip_input() {
         use crate::protocols::jolt::geometry::spartan::{outer_opening, SpartanProductDimensions};
         use crate::protocols::jolt::relations::spartan::ProductUniskip;
         use crate::protocols::jolt::{
@@ -555,12 +554,11 @@ mod tests {
         use jolt_field::Ring;
         use jolt_riscv::CircuitFlags;
 
-        let (jump, halt, halt_panic) = (Fr::from_u64(5), Fr::from_u64(7), Fr::from_u64(11));
+        let (halt, halt_panic) = (Fr::from_u64(7), Fr::from_u64(11));
         let input = ProductUniskip::new(SpartanProductDimensions::new(3)).input_expression::<Fr>();
         for claimed_panic in [false, true] {
             let matrices = rv64_trace_constraints::<Fr>(claimed_panic);
             let mut z = vec![Fr::from_u64(0); matrices.num_vars];
-            z[V_FLAG_JUMP] = jump;
             z[V_FLAG_HALT] = halt;
             z[V_FLAG_HALT_PANIC] = halt_panic;
             let row = &matrices.c[RV64_NUM_CONSTRAINTS_PER_CYCLE - 1];
@@ -571,7 +569,6 @@ mod tests {
             let lane = input.evaluate(
                 |id| {
                     [
-                        (CircuitFlags::Jump, jump),
                         (CircuitFlags::Halt, halt),
                         (CircuitFlags::HaltPanic, halt_panic),
                     ]

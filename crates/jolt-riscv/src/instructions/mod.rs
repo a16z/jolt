@@ -776,7 +776,8 @@ mod tests {
     }
 
     /// `Halt` marks exactly the two halt kinds and `HaltPanic` exactly the failure
-    /// halt; both imply `Jump`, so a halt is a jump, and no halt touches RAM.
+    /// halt; both imply `Jump`, so a halt is a jump, and no halt touches RAM or
+    /// is a no-op.
     #[test]
     fn halt_flags_mark_exactly_the_halt_kinds() {
         for instr in JoltInstruction::iter() {
@@ -801,6 +802,10 @@ mod tests {
             assert!(
                 !halt || !(flags[CircuitFlags::Load] || flags[CircuitFlags::Store]),
                 "{instr:?}",
+            );
+            assert!(
+                !halt || !instr.instruction_flags()[InstructionFlags::IsNoop],
+                "{instr:?}"
             );
         }
     }

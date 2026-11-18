@@ -365,7 +365,7 @@ mod tests {
             product_remainder: ProductRemainderOutputClaims {
                 left_instruction_input: fr(4),
                 right_instruction_input: fr(5),
-                jump_flag: fr(6),
+                is_noop: fr(6),
                 write_lookup_output_to_rd: fr(7),
                 lookup_output: fr(8),
                 branch_flag: fr(9),

@@ -274,7 +274,7 @@ fn stage2_output_ids_and_aliases<F: JoltField>(
     let product_order = ProductRemainderOutputClaims::<F> {
         left_instruction_input: F::zero(),
         right_instruction_input: F::zero(),
-        jump_flag: F::zero(),
+        is_noop: F::zero(),
         write_lookup_output_to_rd: F::zero(),
         lookup_output: F::zero(),
         branch_flag: F::zero(),
@@ -468,7 +468,7 @@ mod tests {
             product_remainder: ProductRemainderOutputClaims {
                 left_instruction_input: fr(4),
                 right_instruction_input: fr(5),
-                jump_flag: fr(6),
+                is_noop: fr(6),
                 write_lookup_output_to_rd: fr(7),
                 lookup_output: fr(8),
                 branch_flag: fr(9),
@@ -563,7 +563,6 @@ mod tests {
         let base = ProductUniskipInputClaims::<Fr> {
             product: fr(3),
             should_branch: fr(5),
-            jump: fr(7),
             halt: fr(17),
             halt_panic: fr(19),
         };
@@ -633,7 +632,7 @@ mod tests {
         let outputs = ProductRemainderOutputClaims::<Fr> {
             left_instruction_input: fr(2),
             right_instruction_input: fr(3),
-            jump_flag: fr(5),
+            is_noop: fr(5),
             write_lookup_output_to_rd: fr(7),
             lookup_output: fr(11),
             branch_flag: fr(13),
