@@ -108,6 +108,14 @@ const PROTOCOL_SUFFIX: &str = "";
 #[cfg(feature = "akita")]
 const PROTOCOL_SUFFIX: &str = "_akita";
 
+/// The compiled protocol's name: `run.protocol` in `summary.json`, `pcs` in
+/// `--result-json` (checked against the suite case by `scripts/bench/run.py`),
+/// and the `--protocol` value `scripts/benchmark_summary.py` selects its rows by.
+#[cfg(not(feature = "akita"))]
+const PROTOCOL: &str = "dory";
+#[cfg(feature = "akita")]
+const PROTOCOL: &str = "akita";
+
 /// The run identity `modular_{workload}{protocol}_{scale}{backend}` — the
 /// trace-name stem shared by the run directory, the `latest_` link (which
 /// the sweep's resume check reads), and the artifact lock. The reference
@@ -675,6 +683,7 @@ pub fn run(args: &ProfileArgs) -> ProfileResult<ProfileArtifacts> {
         workload: args.workload_name(),
         scale_log2: scale,
         backend: args.backend.as_str().to_string(),
+        protocol: PROTOCOL.to_string(),
         streaming_families: args.streaming_families(),
     };
     let (summary_file, summary) =
@@ -744,6 +753,7 @@ pub fn run_sweep(args: &BenchmarkArgs) -> bool {
         ]
     });
     let exe = std::env::current_exe().expect("resolve current executable");
+    let backend = args.backend.as_str();
 
     let mut completed = 0u32;
     let mut skipped = 0u32;
@@ -753,7 +763,6 @@ pub fn run_sweep(args: &BenchmarkArgs) -> bool {
         println!("=== Running benchmarks at scale 2^{scale} ===");
         for &workload in &workloads {
             let name = workload.as_str();
-            let backend = args.backend.as_str();
             // A completed run flips the `latest_` link, so its presence is
             // the resume marker (dangling links read as absent).
             let latest_link = format!(
@@ -814,8 +823,8 @@ pub fn run_sweep(args: &BenchmarkArgs) -> bool {
     }
     println!();
     println!("Render results with:");
-    println!("  python3 scripts/benchmark_summary.py");
-    println!("  python3 scripts/plot_benchmarks.py");
+    println!("  python3 scripts/benchmark_summary.py --protocol {PROTOCOL} --backend {backend}");
+    println!("  python3 scripts/plot_benchmarks.py --backend {backend}");
     println!("  python3 scripts/plot_memory_usage.py");
 
     failed.is_empty()
@@ -1033,7 +1042,7 @@ fn run_workload(args: &ProfileArgs, scale: u32, run_dir: &Path) -> ProfileResult
     if let Some(path) = &args.result_json {
         let metrics = serde_json::json!({
             "workload": bench_name,
-            "pcs": if cfg!(feature = "akita") { "akita" } else { "dory" },
+            "pcs": PROTOCOL,
             "backend": backend_label,
             "streaming_families": args.streaming_families(),
             "scale_log2": scale,
@@ -1165,7 +1174,7 @@ fn prove_workload(
     }
     let shared_preprocessing =
         JoltSharedPreprocessing::new(program_preprocessing).expect("shared preprocessing");
-    let setup_span = tracing::info_span!("profile_pcs_setup", protocol = "dory");
+    let setup_span = tracing::info_span!("profile_pcs_setup", protocol = PROTOCOL);
     let setup_guard = setup_span.enter();
     let setup_now = Instant::now();
     let prover_preprocessing =
@@ -1306,7 +1315,7 @@ fn prove_workload(
     )
     .expect("Akita setup parameters");
     let shared = JoltSharedPreprocessing::new(program_preprocessing).expect("shared preprocessing");
-    let setup_span = tracing::info_span!("profile_pcs_setup", protocol = "akita");
+    let setup_span = tracing::info_span!("profile_pcs_setup", protocol = PROTOCOL);
     let setup_guard = setup_span.enter();
     let setup_now = Instant::now();
     let (pcs_setup, verifier_setup) = match budget {

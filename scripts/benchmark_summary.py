@@ -45,6 +45,9 @@ def main():
                         help='Metric to display in the table')
     parser.add_argument('--protocol', choices=['dory', 'akita'], default='dory',
                         help='Protocol rows to display (default: dory)')
+    parser.add_argument('--backend', default='reference',
+                        help='Kernel backend rows to display, as named in the '
+                             'CSV backend column (default: reference)')
     parser.add_argument('--akita-chunk-profile',
                         metavar='w<chunks>r<levels>', default='w1r0',
                         help='Akita chunk geometry to display (default: w1r0)')
@@ -54,7 +57,7 @@ def main():
     profile_label = (f", {args.akita_chunk_profile}"
                      if args.protocol == 'akita' else '')
 
-    print(f"\nBenchmark Summary ({args.protocol}{profile_label}, "
+    print(f"\nBenchmark Summary ({args.protocol}{profile_label}, {args.backend}, "
           f"{METRICS[args.metric]['label']})")
     print("=" * 60)
 
@@ -67,10 +70,15 @@ def main():
 
     # Read data
     data = {}
+    backends = set()
     try:
         with open(args.csv, 'r') as f:
             reader = csv.DictReader(f)
             for row in reader:
+                backend = row.get('backend') or 'reference'
+                backends.add(backend)
+                if backend != args.backend:
+                    continue
                 if not row[args.metric]:
                     continue
                 scale = int(row['scale'])
@@ -85,6 +93,10 @@ def main():
     except KeyError as e:
         print(f"Error: Column {e} not found in CSV")
         sys.exit(1)
+
+    if backends and args.backend not in backends:
+        sys.exit(f"Error: no rows for backend '{args.backend}' in {args.csv} "
+                 f"(backends found: {', '.join(sorted(backends))})")
 
     # Print table
     for scale in sorted(data.keys()):

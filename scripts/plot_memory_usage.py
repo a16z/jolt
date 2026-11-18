@@ -5,7 +5,8 @@ Each `jolt-prover profile --format chrome` run leaves a `summary.json` in
 its run directory (read through the `latest_*` links); this script reads
 the getrusage peak (`peak_rss_gib`, falling back to the sampled
 `root.peak_memory_gib`) and the run identity (`run.workload`,
-`run.scale_log2`) from each and plots peak memory vs scale.
+`run.protocol`, `run.backend`, `run.scale_log2`) from each and plots peak
+memory vs scale, one series per workload, protocol and kernel backend.
 """
 
 import json
@@ -35,6 +36,8 @@ TICK_LABELS = {
 }
 
 COLORS = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd"]
+SYMBOLS = ["circle", "square", "diamond", "cross", "x", "triangle-up",
+           "triangle-down", "star", "hexagon", "pentagon"]
 
 NICE_NAMES = {
     "btreemap": "BTreeMap",
@@ -45,9 +48,11 @@ NICE_NAMES = {
 
 
 def read_summary_point(summary_path):
-    """Read (benchmark_name, scale, peak_memory_gib) from a summary.json.
+    """Read (benchmark_name, variant, scale, peak_memory_gib) from a summary.json.
 
-    Run identity comes from the summary's `run` metadata. Peak memory
+    Run identity comes from the summary's `run` metadata. The variant names
+    the protocol and kernel backend, e.g. "akita, optimized"; a summary
+    written before `run.protocol` existed gives the backend alone. Peak memory
     prefers the process-lifetime getrusage high-water mark (`peak_rss_gib`),
     falling back to the sampled prove-window peak (`root.peak_memory_gib`).
     Returns None if identity or peak memory is missing.
@@ -61,8 +66,9 @@ def read_summary_point(summary_path):
 
     run = summary.get("run") or {}
     benchmark_name = run.get("workload")
+    backend = run.get("backend")
     scale = run.get("scale_log2")
-    if benchmark_name is None or scale is None:
+    if benchmark_name is None or backend is None or scale is None:
         print(f"Warning: no run identity in {summary_path}", file=sys.stderr)
         return None
 
@@ -72,13 +78,15 @@ def read_summary_point(summary_path):
     if peak is None:
         print(f"Warning: no peak memory in {summary_path}", file=sys.stderr)
         return None
-    return benchmark_name, scale, peak
+    variant = ", ".join(filter(None, (run.get("protocol"), backend)))
+    return benchmark_name, variant, scale, peak
 
 
 def load_memory_data(traces_dir):
     """Load peak memory usage data from all summary.json artifacts.
 
-    Returns: dict mapping benchmark_name -> list of (scale, peak_memory_gib)
+    Returns: dict mapping (benchmark_name, variant) -> list of
+    (scale, peak_memory_gib)
     """
     data = defaultdict(list)
     traces_dir = Path(traces_dir)
@@ -87,7 +95,7 @@ def load_memory_data(traces_dir):
         print(f"Error: Traces directory not found at {traces_dir}")
         return dict(data)
 
-    # One summary per (workload, scale): read through the latest_* links
+    # One summary per run identity: read through the latest_* links
     # so superseded runs in timestamped directories are not double-counted.
     summary_files = sorted(traces_dir.glob("latest_*/summary.json"))
 
@@ -98,8 +106,8 @@ def load_memory_data(traces_dir):
     for summary_file in summary_files:
         point = read_summary_point(summary_file)
         if point is not None:
-            benchmark_name, scale, peak_memory = point
-            data[benchmark_name].append((scale, peak_memory))
+            benchmark_name, variant, scale, peak_memory = point
+            data[benchmark_name, variant].append((scale, peak_memory))
 
     return dict(data)
 
@@ -112,9 +120,12 @@ def create_memory_plot(data, output_path):
 
     fig = go.Figure()
 
+    workloads = sorted({name for name, _ in data})
+    variants = sorted({variant for _, variant in data})
+
     # Collect all unique scales from data
     all_scales = set()
-    for i, (name, points) in enumerate(data.items()):
+    for (name, variant), points in data.items():
         if not points:
             continue
 
@@ -127,8 +138,12 @@ def create_memory_plot(data, output_path):
 
         nice_name = NICE_NAMES.get(name, name)
         fig.add_trace(go.Scatter(
-            x=scales, y=memories, mode='markers', name=nice_name,
-            marker=dict(size=10, color=COLORS[i % len(COLORS)])
+            x=scales, y=memories, mode='markers',
+            name=f"{nice_name} ({variant})",
+            marker=dict(
+                size=10,
+                color=COLORS[workloads.index(name) % len(COLORS)],
+                symbol=SYMBOLS[variants.index(variant) % len(SYMBOLS)])
         ))
 
     # Set up x-axis ticks dynamically from data
@@ -177,9 +192,9 @@ def main():
               "benchmark` (or `profile`) with --format chrome first.")
         return
 
-    print(f"Loaded memory data for {len(data)} benchmark types")
-    for name, points in data.items():
-        print(f"  {name}: {len(points)} data points")
+    print(f"Loaded memory data for {len(data)} series")
+    for (name, variant), points in data.items():
+        print(f"  {name} ({variant}): {len(points)} data points")
 
     output_path = os.path.join(args.output_dir, args.output_name)
     create_memory_plot(data, output_path)

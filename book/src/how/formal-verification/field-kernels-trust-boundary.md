@@ -201,11 +201,16 @@ the following evidence.
 8. Evidence that the claimed execution path reaches that code.
 9. Every operation and representation that remains outside the claim.
 
-The current `akita` path uses the shared `jolt_field::Fp128` type but enables
-only `jolt-field/solinas`, not `asm`, so it runs the portable Rust bodies. The
-Jolt Fp128 theorems do not cover that runtime path. Enabling `asm` on the
-product and inspecting the downstream binary must happen before a claim about
-the complete Akita path is valid.
+The current `akita` path uses the shared `jolt_field::Fp128` type with `asm`
+enabled: the pinned `akita-algebra` depends on `jolt-field` with
+`features = ["asm", "solinas"]`, and the workspace `[patch]` points that
+dependency at this repository's `jolt-field`. Its AArch64 and x86-64 builds
+therefore select the inline assembly bodies for scalar addition, subtraction,
+and multiplication instead of the portable Rust bodies. Feature selection
+does not show which instruction bytes a final binary contains. No one has yet
+inspected a final 6A23801F Akita binary, so the Jolt Fp128 theorems are not
+yet connected to that runtime path. That inspection must happen before a
+claim about the complete Akita path is valid.
 
 ## What a final executable scan can establish
 

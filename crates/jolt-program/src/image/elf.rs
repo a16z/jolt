@@ -7,7 +7,10 @@ use std::{
     ops::Range,
 };
 
-use crate::{preprocess::PreprocessingError, ProgramError};
+use crate::{
+    preprocess::{ram::code_region, PreprocessingError},
+    ProgramError,
+};
 
 /// Contents decoded directly from an RV64 ELF program image.
 ///
@@ -161,24 +164,25 @@ pub fn decode_elf(
         decode(cursor..end)?;
     }
 
-    for instruction in &instructions {
-        let row = instruction.row();
-        let address = row.address as u64;
-        let end = address
-            .checked_add(if row.is_compressed { 2 } else { 4 })
-            .ok_or(ProgramError::MalformedImage(
-                "invalid source instruction extent",
-            ))?;
-        let code_start = address / 8;
-        let code_end = end.div_ceil(8);
-        for &(start, end) in &writable_ranges {
-            let first_word = start / 8;
-            let end_word = end.div_ceil(8);
-            if code_start < end_word && first_word < code_end {
-                return Err(ProgramError::MalformedImage(
-                    "writable section shares a protected code doubleword",
-                ));
-            }
+    let code = code_region(
+        instructions.iter().map(|instruction| {
+            let row = instruction.row();
+            (row.address as u64, row.is_compressed)
+        }),
+        0,
+    )
+    .map_err(|_| ProgramError::MalformedImage("invalid source instruction extent"))?;
+    // Protection freezes every doubleword from the first source instruction
+    // through the last, including read-only bytes and zero padding among them.
+    // Zero text padding outside that region protects nothing.
+    for (start, end) in writable_ranges {
+        let first_word = start / 8;
+        let end_word = end.div_ceil(8);
+        if (code.start as u128) < u128::from(end_word) && u128::from(first_word) < code.end as u128
+        {
+            return Err(ProgramError::MalformedImage(
+                "writable section overlaps the protected code region",
+            ));
         }
     }
 
@@ -641,7 +645,28 @@ mod tests {
             assert!(matches!(
                 decode_elf(&elf, RV64IMAC_JOLT),
                 Err(ProgramError::MalformedImage(
-                    "writable section shares a protected code doubleword"
+                    "writable section overlaps the protected code region"
+                ))
+            ));
+        }
+    }
+
+    #[test]
+    fn decode_elf_rejects_writable_sections_between_code_regions() {
+        let data = data_section(RAM_START_ADDRESS + 8, &[0xaa; 8]);
+        let mut bss = data_section(RAM_START_ADDRESS + 8, &[]);
+        bss.section_type = SHT_NOBITS;
+        bss.size_override = Some(8);
+        for writable in [data, bss] {
+            let elf = build_elf64(&[
+                text_section(RAM_START_ADDRESS, &[0x01, 0x00]),
+                writable,
+                text_section(RAM_START_ADDRESS + 16, &[0x01, 0x00]),
+            ]);
+            assert!(matches!(
+                decode_elf(&elf, RV64IMAC_JOLT),
+                Err(ProgramError::MalformedImage(
+                    "writable section overlaps the protected code region"
                 ))
             ));
         }
@@ -658,13 +683,17 @@ mod tests {
     }
 
     #[test]
-    fn decode_elf_allows_read_only_data_sharing_a_code_word() {
-        let mut rodata = data_section(RAM_START_ADDRESS + 2, &[0xaa, 0xbb]);
+    fn decode_elf_allows_read_only_data_in_the_code_region() {
+        let mut rodata = data_section(RAM_START_ADDRESS + 2, &[0xaa; 14]);
         rodata.flags = SHF_ALLOC;
-        let elf = build_elf64(&[text_section(RAM_START_ADDRESS, &[0x01, 0x00]), rodata]);
+        let elf = build_elf64(&[
+            text_section(RAM_START_ADDRESS, &[0x01, 0x00]),
+            rodata,
+            text_section(RAM_START_ADDRESS + 16, &[0x01, 0x00]),
+        ]);
         let image =
-            decode_elf(&elf, RV64IMAC_JOLT).expect("read-only neighboring bytes may freeze");
-        assert_eq!(image.instructions.len(), 1);
+            decode_elf(&elf, RV64IMAC_JOLT).expect("read-only bytes in the region may freeze");
+        assert_eq!(image.instructions.len(), 2);
     }
 
     #[test]

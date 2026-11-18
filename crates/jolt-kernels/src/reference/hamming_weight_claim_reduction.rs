@@ -2,14 +2,15 @@
 //! the committed chunk domain.
 //!
 //! The summand is
-//! `Σ_i G_i(k) · (γ^{3i} + γ^{3i+1}·eq(r_addr_bool, k) + γ^{3i+2}·eq(r_addr_virt_i, k))`
-//! — reducing each checked one-hot polynomial's Hamming-weight, booleanity,
-//! and virtualization claims to one fresh opening. Each `G_i(k) =
-//! Σ_j eq(r_cycle, j) · ra_i(k, j)` is the cycle fold of the committed one-hot
-//! grid at the shared stage-6b cycle point (the booleanity opening point's
-//! cycle suffix — every stage-6b member bound the same cycle challenges, so
-//! all three reduced claim families live at that cycle). The eq publics are
-//! one multilinear each over the chunk domain.
+//! `Σ_i G_i(k) · (h_i·γ^{3i} + γ^{3i+1}·eq(r_addr_bool, k) + γ^{3i+2}·eq(r_addr_virt_i, k))`,
+//! with `h_i` = 1 for instruction and bytecode and 0 for RAM — reducing each
+//! checked one-hot polynomial's booleanity and virtualization claims (plus the
+//! instruction and bytecode Hamming-weight claims) to one fresh opening. Each
+//! `G_i(k) = Σ_j eq(r_cycle, j) · ra_i(k, j)` is the cycle fold of the committed
+//! one-hot grid at the shared stage-6b cycle point (the booleanity opening
+//! point's cycle suffix — every stage-6b member bound the same cycle
+//! challenges, so the reduced booleanity and virtualization claims all live at
+//! that cycle). The eq publics are one multilinear each over the chunk domain.
 
 use std::collections::BTreeMap;
 

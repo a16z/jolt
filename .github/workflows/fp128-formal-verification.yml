@@ -44,6 +44,7 @@ jobs:
       - uses: actions-rust-lang/setup-rust-toolchain@a188e68d0fd2bd36ad51dccb2b07ba6e75105f30 # v2
         with:
           toolchain: ${{ env.FUZZ_TOOLCHAIN }}
+          cache: false
       - name: Install cargo-fuzz
         uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2
         with:
@@ -61,6 +62,7 @@ jobs:
       - uses: actions-rust-lang/setup-rust-toolchain@a188e68d0fd2bd36ad51dccb2b07ba6e75105f30 # v2
         with:
           toolchain: ${{ env.FUZZ_TOOLCHAIN }}
+          cache: false
       - name: Install cargo-fuzz
         uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2
         with:
@@ -92,26 +94,45 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: actions-rust-lang/setup-rust-toolchain@a188e68d0fd2bd36ad51dccb2b07ba6e75105f30 # v2
+        with:
+          cache: false
 
       - name: Install proof dependencies
         run: |
           sudo apt-get update
           sudo apt-get install --yes libgmp-dev libpcre2-dev libstring-shellquote-perl llvm ocaml opam xdot
-          opam init --disable-sandboxing --yes
+          opam init --bare --disable-sandboxing --yes
 
-      - name: Check out pinned proof libraries
+      - name: Check out pinned s2n-bignum
         run: |
-          git clone https://github.com/jrh13/hol-light.git "$RUNNER_TEMP/hol-light"
-          git -C "$RUNNER_TEMP/hol-light" checkout 433477862bb90b328a593e012e09390e99b2439b
           git clone https://github.com/awslabs/s2n-bignum.git "$RUNNER_TEMP/s2n-bignum"
           git -C "$RUNNER_TEMP/s2n-bignum" checkout ac31a43db30953037abd1b64b540e65cf31f4c67
 
-      - name: Build HOL Light as an OCaml module
-        working-directory: ${{ runner.temp }}/hol-light
+      - name: Key the HOL Light build
+        id: hol-light-key
         run: |
-          make switch-5
-          eval "$(opam env --switch . --set-switch)"
-          HOLLIGHT_USE_MODULE=1 make -j2
+          key=$(./proofs/hol-light/build-hol-light.sh --cache-key)
+          echo "key=hol-light-$key" >> "$GITHUB_OUTPUT"
+
+      - name: Restore the HOL Light build
+        id: hol-light
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ${{ runner.temp }}/hol-light
+          key: ${{ steps.hol-light-key.outputs.key }}
+
+      - name: Build HOL Light as an OCaml module
+        if: steps.hol-light.outputs.cache-hit != 'true'
+        run: ./proofs/hol-light/build-hol-light.sh "$RUNNER_TEMP/hol-light"
+
+      # An entry saved from a pull request can be restored only by that pull
+      # request, and it evicts main's entries from the repository cache quota.
+      - name: Save the HOL Light build
+        if: steps.hol-light.outputs.cache-hit != 'true' && github.event_name != 'pull_request'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ${{ runner.temp }}/hol-light
+          key: ${{ steps.hol-light-key.outputs.key }}
 
       - name: Check public bytes and run HOL Light proofs
         env:

@@ -2,8 +2,8 @@ use jolt_field::Ring;
 use serde::{Deserialize, Serialize};
 
 use crate::protocols::jolt::geometry::claim_reductions::hamming_weight::{
-    booleanity_claim, gamma_power_expr, hamming_weight_claim, reduced_claim, virtualization_claim,
-    HammingWeightClaimReductionDimensions,
+    booleanity_claim, gamma_power_expr, has_hamming_weight_leg, reduced_claim,
+    virtualization_claim, HammingWeightClaimReductionDimensions,
 };
 use crate::protocols::jolt::{
     HammingWeightClaimReductionChallenge, HammingWeightClaimReductionPublic, JoltChallengeId,
@@ -31,14 +31,12 @@ pub struct HammingWeightClaimReductionOutputClaims<C> {
     pub ram_ra: Vec<C>,
 }
 
-/// Consumed claims reduced by the hamming-weight sumcheck: the RAM hamming-weight
-/// claim (from RAM hamming booleanity) plus the per-family booleanity and
-/// virtualization claims (each wired from its producing stage-6 relation).
-/// Generic over the cell.
+/// Consumed claims reduced by the hamming-weight sumcheck: the per-family
+/// booleanity and virtualization claims (each wired from its producing stage-6
+/// relation). The instruction and bytecode Hamming-weight claims are the public
+/// constant one; RAM has none. Generic over the cell.
 #[derive(Clone, Debug, Default, PartialEq, Eq, InputClaims)]
 pub struct HammingWeightClaimReductionInputClaims<C> {
-    #[opening(RamHammingWeight, from = RamHammingBooleanity)]
-    pub ram_hamming_weight: C,
     #[opening(committed = InstructionRa, from = Booleanity)]
     pub instruction_booleanity: Vec<C>,
     #[opening(committed = BytecodeRa, from = Booleanity)]
@@ -60,9 +58,10 @@ pub struct HammingWeightClaimReductionChallenges<F> {
     pub gamma: F,
 }
 
-/// Batches each RA polynomial's hamming-weight, booleanity, and virtualization
-/// claims by powers of `gamma` and reduces them to the per-polynomial
-/// hamming-weight-claim-reduction openings weighted by the eq publics.
+/// Batches each RA polynomial's booleanity and virtualization claims, and the
+/// instruction and bytecode Hamming-weight claims, by powers of `gamma` and
+/// reduces them to the per-polynomial hamming-weight-claim-reduction openings
+/// weighted by the eq publics.
 #[derive(Clone)]
 pub struct ClaimReduction {
     shape: HammingWeightClaimReductionDimensions,
@@ -98,8 +97,10 @@ impl SymbolicSumcheck for ClaimReduction {
         let mut input = JoltExpr::zero();
 
         for (i, polynomial) in self.shape.layout.polynomials().enumerate() {
+            if has_hamming_weight_leg(polynomial) {
+                input = input + gamma_power_expr(3 * i);
+            }
             input = input
-                + gamma_power_expr(3 * i) * hamming_weight_claim(polynomial)
                 + gamma_power_expr(3 * i + 1) * opening(booleanity_claim(polynomial))
                 + gamma_power_expr(3 * i + 2) * opening(virtualization_claim(polynomial));
         }
@@ -111,11 +112,13 @@ impl SymbolicSumcheck for ClaimReduction {
         let mut output = JoltExpr::zero();
 
         for (i, polynomial) in self.shape.layout.polynomials().enumerate() {
-            let output_coeff = gamma_power_expr(3 * i)
-                + gamma_power_expr(3 * i + 1)
-                    * derived(HammingWeightClaimReductionPublic::EqBooleanity)
+            let mut output_coeff = gamma_power_expr(3 * i + 1)
+                * derived(HammingWeightClaimReductionPublic::EqBooleanity)
                 + gamma_power_expr(3 * i + 2)
                     * derived(HammingWeightClaimReductionPublic::EqVirtualization(i));
+            if has_hamming_weight_leg(polynomial) {
+                output_coeff = gamma_power_expr(3 * i) + output_coeff;
+            }
             output = output + output_coeff * opening(reduced_claim(polynomial));
         }
 

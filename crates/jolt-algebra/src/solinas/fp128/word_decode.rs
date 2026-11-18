@@ -1,4 +1,5 @@
-//! Fixed byte-tuple decoding with register-sized accumulators.
+//! Hand-written rather than `impl_serde_bytes!`: assembling two words as the bytes arrive
+//! costs a zkVM guest fewer rows than filling the macro's `[u8; 16]` buffer (#2455).
 
 use core::fmt::{Formatter, Result as FormatResult};
 

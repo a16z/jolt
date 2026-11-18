@@ -14,6 +14,8 @@ use jolt_witness::WitnessError;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
+use crate::optimized::registers_read_write::sparse::ops::close_block_gaps;
+
 /// Rows per callback of a task's visit.
 pub(crate) const VISIT_ROWS: usize = 1 << 12;
 
@@ -173,13 +175,21 @@ where
     Ok(items)
 }
 
+/// Entries per block [`bind_groups_in_place`] hands [`close_block_gaps`],
+/// which moves a block per pool task and moves a block on the calling thread
+/// while the gap ahead of it is shorter than the block. Whole key runs would
+/// be too coarse: a run is `1 / task_count` of the table, and a bind that
+/// keeps 99% of its entries opens a gap that long only after 99 runs.
+const GAP_BLOCK: usize = 1 << 14;
+
 /// Binds `items`, sorted by `key`, in place one key group at a time:
 /// `bind(group, emit)` emits the group's bound items, never more than it
 /// holds. Runs of whole groups ([`key_runs`]) bind in parallel, each writing
 /// from its own start and reading the group being bound from a copy; the
-/// runs' outputs then move down in order and `items` truncates to them,
-/// keeping its capacity. A group that emits more items than it holds fails
-/// with [`FillMismatch`] and leaves `items` partly bound.
+/// runs' outputs then move down in [`GAP_BLOCK`]-entry blocks
+/// ([`close_block_gaps`]) and `items` truncates to them, keeping its
+/// capacity. A group that emits more items than it holds fails with
+/// [`FillMismatch`] and leaves `items` partly bound.
 pub(crate) fn bind_groups_in_place<T: Copy + Send + Sync>(
     items: &mut Vec<T>,
     key: impl Fn(&T) -> usize + Sync,
@@ -228,13 +238,21 @@ pub(crate) fn bind_groups_in_place<T: Copy + Send + Sync>(
         .collect::<Result<_, _>>()?;
     #[cfg(not(feature = "parallel"))]
     let written: Vec<usize> = runs.into_iter().map(compact).collect::<Result<_, _>>()?;
-    let (mut start, mut end) = (0, 0);
+    let blocks = items.len() / GAP_BLOCK + lens.len();
+    let mut bounds = Vec::with_capacity(blocks + 1);
+    let mut counts = Vec::with_capacity(blocks);
+    let mut start = 0;
+    bounds.push(start);
     for (len, written) in lens.into_iter().zip(written) {
-        items.copy_within(start..start + written, end);
-        end += written;
+        for offset in (0..len).step_by(GAP_BLOCK) {
+            let block = GAP_BLOCK.min(len - offset);
+            counts.push(written.saturating_sub(offset).min(block));
+            bounds.push(start + offset + block);
+        }
         start += len;
     }
-    items.truncate(end);
+    let total = close_block_gaps(items, &bounds, &counts);
+    items.truncate(total);
     Ok(())
 }
 
@@ -468,9 +486,24 @@ mod tests {
 
     use super::{bind_groups_in_place, task_ranges, FillMismatch};
 
+    /// Runs `check` on pools of one and of three threads, which split a
+    /// table into at most 8 and 24 key runs; without `parallel`, once.
+    fn on_pools(check: impl Fn() + Send + Sync) {
+        #[cfg(feature = "parallel")]
+        for threads in [1, 3] {
+            ThreadPoolBuilder::new()
+                .num_threads(threads)
+                .build()
+                .unwrap()
+                .install(&check);
+        }
+        #[cfg(not(feature = "parallel"))]
+        check();
+    }
+
     #[test]
     fn group_overemit_fails_after_an_earlier_group_shrinks() {
-        let check = || {
+        on_pools(|| {
             let mut items = vec![0, 0, 1, 1];
             items.extend([2; 36]);
             let result = bind_groups_in_place(
@@ -491,17 +524,36 @@ mod tests {
                 },
             );
             assert_eq!(result, Err(FillMismatch));
-        };
-        #[cfg(feature = "parallel")]
-        for threads in [1, 3] {
-            ThreadPoolBuilder::new()
-                .num_threads(threads)
-                .build()
-                .unwrap()
-                .install(check);
-        }
-        #[cfg(not(feature = "parallel"))]
-        check();
+        });
+    }
+
+    /// Group `g` holds the items `4g..4g + 4` and keeps the first
+    /// `g / 5000 % 5` of them, so every key run spans several `GAP_BLOCK`s
+    /// and leaves full, partly live and empty ones.
+    #[test]
+    fn bound_groups_stay_in_order_across_multi_block_runs() {
+        const GROUPS: usize = 1 << 19;
+        let kept = |group: usize| group / 5000 % 5;
+        on_pools(|| {
+            let mut items: Vec<usize> = (0..4 * GROUPS).collect();
+            let result = bind_groups_in_place(
+                &mut items,
+                |&item| item / 4,
+                |group, emit| {
+                    for &item in &group[..kept(group[0] / 4)] {
+                        emit(item);
+                    }
+                },
+            );
+            assert_eq!(result, Ok(()));
+            let expected: Vec<usize> = (0..GROUPS)
+                .flat_map(|group| (0..kept(group)).map(move |offset| 4 * group + offset))
+                .collect();
+            assert!(
+                items == expected,
+                "the bound groups must stay contiguous in key order"
+            );
+        });
     }
 
     /// Tasks tile the cycles in order, each a positive whole number of
