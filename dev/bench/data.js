@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795025919014,
+  "lastUpdate": 1795027667303,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -265474,6 +265474,270 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 889756,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "atretyakov@a16z.com",
+            "name": "Andrew Tretyakov",
+            "username": "0xAndoroid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "ecfed777d16d6a0f82f1a8c2f1eab4aa66ace320",
+          "message": "fix(fuzz): make a target's fuzz budget its mutation time (#2507)\n\n* fix(fuzz): make a target's fuzz budget its mutation time\n\n`scripts/fuzz.py run` gave libFuzzer the budget as -max_total_time.\nlibFuzzer measures that limit from process start and first tests it after\nit has executed every corpus input (FuzzerInternal.h TimedOut,\nFuzzerLoop.cpp Loop), so replaying a restored corpus used the budget up.\nObserved in scheduled runs: 195 s of a 300 s daily budget\n(jolt-verifier zk_proof_tamper_must_reject) and 991 s of a 2,700 s weekly\nbudget (jolt-dory zk_mode_confusion) went to the replay; on pull requests\nsix targets replayed past their whole budget and mutated nothing.\n\n`run` now replays the corpus directories alone first (-runs=0 stops\nlibFuzzer right after that pass) and starts the fuzzing run with the\nbudget plus the measured replay time. libFuzzer has no option that counts\nthe limit from the end of the replay, and -stop_file costs one failed file\nopen per loop iteration (10% fewer executions on the fastest target), so\nthe corpus is executed twice per target and a target's wall time is its\nbudget plus two replays.\n\n* fix(fuzz): build the target before the timed corpus replay\n\n`cargo fuzz run` compiles a stale target before it starts libFuzzer, so\nthe timed `-runs=0` pass counted compile time as replay time and added it\nto the fuzzing run's limit: a local `run --seconds 6` on an unbuilt target\nmutated for 16 s. `run` now builds the target first and starts the clock\nafter the build. CI already built every target in an earlier step and is\nunaffected, apart from one no-op build check per target.\n\nFUZZING.md also states how exact the budget is: the fuzzing run replays the\ncorpus a second time, so the budget holds to within the difference between\nthe two replays.\n\n* ci(fuzz): pass the RISC-V target under the toolchain action's input name\n\nThe pinned actions-rust-lang/setup-rust-toolchain reads `target`; the\nworkflow passed `targets`, which the action ignores with an \"Unexpected\ninput(s)\" warning in every fuzz job. With the input corrected, the\njolt-eval job installs riscv64imac-unknown-none-elf in the toolchain step.\n\nToday the jolt-eval job downloads one more rust-std at the first cargo\ncall in `Build fuzz targets`; no other fuzz job does.\njolt-eval/fuzz/rust-toolchain.toml is the only fuzz toolchain file that\nlists a target, this one, so the same component should now arrive one\nstep earlier. The other eleven jobs pass an empty string and install\nnothing more, as before.",
+          "timestamp": "2026-11-18T12:31:35-05:00",
+          "tree_id": "324b56b0c5e5cb308cb3b9aaa3b63d7b1517b3df",
+          "url": "https://github.com/a16z/jolt/commit/ecfed777d16d6a0f82f1a8c2f1eab4aa66ace320"
+        },
+        "date": 1795027659081,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 4.4729,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 888708,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.518,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 463996,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 463904,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 463804,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.8515,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 464092,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-mem",
+            "value": 888132,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 1.8764,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 464084,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 5.6342,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 463984,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 5.2809,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 132192,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.9904,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 889188,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.6445,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 463816,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.4772,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 463724,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 25.8216,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 463364,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 5.5098,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 463824,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 37.0692,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 721520,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 18.0641,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 610688,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 75.0074,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 628388,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.8664,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 463940,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 2.13,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 463964,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 19.9085,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 888420,
             "unit": "KB",
             "extra": ""
           }
