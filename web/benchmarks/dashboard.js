@@ -51,11 +51,14 @@ function rawLink(record) {
   return typeof record.raw === "string" && /^runs\/(github-[0-9a-f]{40}-[1-9][0-9]*-[1-9][0-9]*|preview-[0-9a-f]{64})\.json$/.test(record.raw) ? record.raw : null;
 }
 
+// Configuration identity leaves out what only describes one run: free swap, the management node
+// (control_plane) and the machine that built the binary. Used as identity, they split one trend into many short ones.
 function hostSettings(host) {
-  if (!host?.settings) return host ?? null;
-  const settings = {...host.settings};
-  delete settings.swap_free_bytes;
-  return {...host, settings};
+  if (!host) return null;
+  const identifying = {...host, settings: {...host.settings}};
+  delete identifying.control_plane;
+  delete identifying.settings.swap_free_bytes;
+  return identifying;
 }
 
 function buildSettings(build) {
@@ -63,9 +66,7 @@ function buildSettings(build) {
   return Object.fromEntries([
     "toolchain", "cargo_version", "target_cpu", "target_triple", "target_features", "profile",
     "rustflags", "harness_files",
-  ].map((key) => [key, build[key] ?? null]).concat([
-    ["host", hostSettings(build.host)], ["runner_sha256", build.runner?.sha256 ?? null],
-  ]));
+  ].map((key) => [key, build[key] ?? null]).concat([["runner_sha256", build.runner?.sha256 ?? null]]));
 }
 
 function references(record, data) {
@@ -222,6 +223,7 @@ function renderRows(rows) {
     details.append(element("summary", "Build and source"), element("pre", JSON.stringify({
       source: record.source, publisher_revision: record.publisher_revision,
       raw_sha256: record.sha256, measured_revision: reference?.testCase.samples.find((sample) => sample.leg === reference.leg)?.revision ?? null,
+      host_control_plane: reference?.data.host?.control_plane ?? null,
       build: reference?.build ?? null, suite: reference?.data.suite ?? null,
     }, null, 2)));
     provenance.append(details);

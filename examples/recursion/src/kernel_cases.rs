@@ -11,6 +11,7 @@ pub(crate) struct KernelCase<F> {
     pub weighted: F,
     pub signed: F,
     pub product_sums: [F; 5],
+    pub mul_adds: Vec<F>,
     pub squares: Vec<F>,
     pub inverses: Vec<Option<F>>,
 }

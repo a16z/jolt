@@ -1,3 +1,4 @@
+use common::jolt_device::MemoryLayoutError;
 use jolt_riscv::{JoltInstructionRow, SourceInstructionKind, TraceRowError};
 
 use crate::preprocess::PreprocessingError;
@@ -10,6 +11,10 @@ pub enum TraceError {
     MissingElfBytes,
     #[error("execution backend failed: {0}")]
     Backend(&'static str),
+    #[error(
+        "guest stopped at pc {pc:#x} without executing a halt instruction (jolt.success or ebreak)"
+    )]
+    EndedWithoutHalt { pc: u64 },
     #[error(transparent)]
     InvalidRow(#[from] TraceRowError),
     #[error(transparent)]
@@ -33,4 +38,6 @@ pub enum TraceError {
         expected: Box<JoltInstructionRow>,
         actual: Box<JoltInstructionRow>,
     },
+    #[error(transparent)]
+    MemoryLayout(#[from] MemoryLayoutError),
 }

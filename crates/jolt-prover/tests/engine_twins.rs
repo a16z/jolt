@@ -24,6 +24,7 @@ use jolt_transcript::{prover_transcript, Keccak, Transcript};
 use jolt_verifier::stages::relations::{ConcreteSumcheck as _, SumcheckBatch};
 use jolt_verifier::stages::stage5::{InstructionReadRaf, RegistersValEvaluation};
 use jolt_verifier::stages::uniskip::{self, UniskipParams};
+use rand_core::OsRng;
 
 #[derive(SumcheckBatch)]
 struct TwinFixtureSumchecks<F: JoltField> {
@@ -246,8 +247,7 @@ fn committed_engine_twin_matches_generated_verify_zk() {
         57,
     );
 
-    let mut recorder =
-        CommittedSumcheckRecorder::<Fr, VC, _>::new(&setup, rand_core::OsRng).unwrap();
+    let mut recorder = CommittedSumcheckRecorder::<Fr, VC, _>::new(&setup, OsRng).unwrap();
     let (batch, prover_coefficients) = sumchecks
         .begin_batch(
             &inputs,

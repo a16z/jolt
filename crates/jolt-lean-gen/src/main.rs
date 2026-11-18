@@ -329,7 +329,16 @@ enum Class {
 fn is_unsupported(kind: SourceInstructionKind) -> bool {
     matches!(
         kind.name(),
-        "ECALL" | "EBREAK" | "MRET" | "CSRRW" | "CSRRS" | "Inline"
+        "ECALL"
+            | "EBREAK"
+            | "MRET"
+            | "CSRRW"
+            | "CSRRS"
+            | "CSRRC"
+            | "CSRRWI"
+            | "CSRRSI"
+            | "CSRRCI"
+            | "Inline"
     )
 }
 

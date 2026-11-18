@@ -76,7 +76,7 @@ mod split_eq;
 mod univariate;
 
 pub use binding::BindingOrder;
-pub use compressed_univariate::CompressedPoly;
+pub use compressed_univariate::{eval_round_wire, CompressedPoly, WireFormat};
 pub use dense::{bind_prefix_in_place, bind_prefix_rows_in_place, Polynomial};
 pub use eq::{
     boolean_bits_msb, boolean_index_msb, boolean_point_msb, eq_index, eq_index_msb, try_eq_mle,
@@ -87,7 +87,8 @@ pub use evaluation_claim::EvaluationClaim;
 pub use identity::{IdentityPolynomial, OperandPolynomial, OperandSide};
 pub use lt::LtPolynomial;
 pub use mle::{
-    block_selector_mle_msb, range_mask_mle_msb, sparse_mle_msb, sparse_segments_mle_msb, MleError,
+    block_selector_mle_msb, interval_mask_mle_msb, range_mask_mle_msb, sparse_mle_msb,
+    sparse_segments_mle_msb, MleError,
 };
 pub use multilinear::{MultilinearBinding, MultilinearEvaluation, MultilinearPoly, RlcSource};
 pub use omitted_constant::OmittedConstantPoly;

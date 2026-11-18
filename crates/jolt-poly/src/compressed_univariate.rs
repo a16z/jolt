@@ -49,26 +49,6 @@ impl<F: Field> CompressedPoly<F> {
         self.coeffs_except_linear_term.is_empty()
     }
 
-    /// Recovers the omitted linear term from the hint `h = f(0) + f(1)`.
-    ///
-    /// `c1 = h - 2*c0 - c2 - c3 - ...`
-    #[inline]
-    fn recover_linear_term(&self, hint: F) -> F {
-        // Deserialized proofs can carry an empty coefficient vector; fail with
-        // a clear contract violation instead of an index panic. Callers on
-        // untrusted data must reject empty polynomials first (`is_empty`).
-        assert!(
-            !self.coeffs_except_linear_term.is_empty(),
-            "cannot evaluate an empty compressed polynomial"
-        );
-        let c0 = self.coeffs_except_linear_term[0];
-        let mut linear_term = hint - c0 - c0;
-        for &c in &self.coeffs_except_linear_term[1..] {
-            linear_term -= c;
-        }
-        linear_term
-    }
-
     /// Evaluates the polynomial at `point` using the hint `h = f(0) + f(1)`.
     ///
     /// Recovers the linear term, then evaluates via ascending-power accumulation
@@ -88,15 +68,12 @@ impl<F: Field> CompressedPoly<F> {
     /// Panics if the polynomial is empty ([`is_empty`](Self::is_empty)).
     #[inline]
     pub fn eval_from_hint(&self, hint: &F, point: &F) -> F {
-        let linear_term = self.recover_linear_term(*hint);
-
-        let mut x_pow = *point;
-        let mut sum = self.coeffs_except_linear_term[0] + *point * linear_term;
-        for &c in &self.coeffs_except_linear_term[1..] {
-            x_pow *= *point;
-            sum += c * x_pow;
-        }
-        sum
+        eval_round_wire(
+            WireFormat::Compressed,
+            &self.coeffs_except_linear_term,
+            *hint,
+            *point,
+        )
     }
 
     /// Recovers the full polynomial given the hint `h = f(0) + f(1)`.
@@ -104,14 +81,69 @@ impl<F: Field> CompressedPoly<F> {
     /// # Panics
     /// Panics if the polynomial is empty ([`is_empty`](Self::is_empty)).
     pub fn decompress(&self, hint: F) -> UnivariatePoly<F> {
-        let linear_term = self.recover_linear_term(hint);
+        let (constant, linear_term, higher) =
+            recover_compressed_terms(&self.coeffs_except_linear_term, hint);
 
         let mut coeffs = Vec::with_capacity(self.coeffs_except_linear_term.len() + 1);
-        coeffs.push(self.coeffs_except_linear_term[0]);
+        coeffs.push(constant);
         coeffs.push(linear_term);
-        coeffs.extend_from_slice(&self.coeffs_except_linear_term[1..]);
+        coeffs.extend_from_slice(higher);
         UnivariatePoly::new(coeffs)
     }
+}
+
+/// The omitted coefficient and the claim relation used to recover it.
+#[derive(Clone, Copy, Debug)]
+pub enum WireFormat<F> {
+    Compressed,
+    EqFactored { tau: F },
+}
+
+/// Evaluates a borrowed round without allocating or copying coefficients.
+/// Empty eq-factored wires represent the constant `claim`.
+///
+/// # Panics
+/// A compressed wire must contain its constant coefficient.
+#[inline]
+pub fn eval_round_wire<F: Field>(format: WireFormat<F>, wire: &[F], claim: F, point: F) -> F {
+    match format {
+        WireFormat::Compressed => {
+            let (constant, linear, higher) = recover_compressed_terms(wire, claim);
+            let mut power = point;
+            let mut sum = constant + point * linear;
+            for &coefficient in higher {
+                power *= point;
+                sum += coefficient * power;
+            }
+            sum
+        }
+        WireFormat::EqFactored { tau } => {
+            let constant = claim - tau * wire.iter().copied().sum::<F>();
+            constant
+                + wire
+                    .iter()
+                    .rev()
+                    .copied()
+                    .fold(F::zero(), |acc, coefficient| acc * point + coefficient)
+                    * point
+        }
+    }
+}
+
+#[inline]
+#[expect(
+    clippy::expect_used,
+    reason = "preserves the owned compressed polynomial empty-input contract"
+)]
+fn recover_compressed_terms<F: Field>(wire: &[F], claim: F) -> (F, F, &[F]) {
+    let (&constant, higher) = wire
+        .split_first()
+        .expect("cannot evaluate an empty compressed polynomial");
+    let mut linear = claim - constant - constant;
+    for &coefficient in higher {
+        linear -= coefficient;
+    }
+    (constant, linear, higher)
 }
 
 #[cfg(test)]

@@ -103,6 +103,12 @@ body, docs, comments and tests are unverified until source or a run settles them
 6. **Judge the tests:** name the test that fails if each invariant breaks. A test asserting wrong
    behavior pins the bug and is a finding; each necessary finding names the test that should have
    caught it, or states none can.
+7. **List comment and test bloat:** read every comment and test the diff adds or changes against
+   CLAUDE.md's Comments and Tests sections; `comment-policy` and `test-policy` hold the keep
+   lists. A comment that carries nothing the code cannot (narration, restated behavior, change
+   history) and a test with no independent failure signal are findings: list each with its
+   `file:line`, to fix before merge. The check is the same on a fork pull request, where each
+   instance is a finding in the review for the contributor to fix.
 
 ## Probe Jolt's attack surfaces
 
@@ -121,6 +127,12 @@ CLAUDE.md owns these rules; probe each one the change reaches.
 - **Wire formats:** serialized enums stay append-only; fixtures and digests change only on purpose.
 - **Modes:** clear, ZK, Akita and field-inline can break alone; test each one the change reaches.
 - **Prover hot paths:** one pass over the trace; profile a suspected regression (CLAUDE.md).
+- **Other backends:** for each optimization the change adds, find the other implementations of
+  the same work in the tree and decide from their code whether it applies. CLAUDE.md's Performance
+  section gives examples, not a closed list: streaming or eager kernels, Dory or Akita,
+  per-architecture field arithmetic, Metal, the other tracer backend. An applicable one is ported
+  in the change, tracked by an open issue the PR body links, or left out for a stated reason that
+  holds; a missing or wrong answer is a finding.
 
 ## Findings and verdict
 
@@ -154,7 +166,7 @@ fetched:
 
 ```bash
 mkdir -p "$HOME/jolt-review"
-codex exec -m gpt-6-astra -c model_reasoning_effort=max -s workspace-write \
+codex exec -m gpt-6.2-astra -c model_reasoning_effort=max -s workspace-write \
   -c sandbox_workspace_write.network_access=true --add-dir "$HOME/jolt-review" \
   "Review the changes in git diff origin/main...HEAD following .claude/skills/ci-code-review/SKILL.md. Fan out to many parallel subagents, run the pull request's code only in the credential-free container it describes, keep helpers out of the branch, do not re-run CI, and state your confidence."
 ```
@@ -163,7 +175,10 @@ The sandbox flags let the session write scratch files and snapshots in `~/jolt-r
 cannot create itself, and reach GitHub and Docker whatever your `config.toml` sets; its commands
 still read your credentials, so the pull request's code runs only in the container.
 
-Use plain `codex exec`. In Codex CLI 0.162.0, `codex exec review` runs Codex's built-in review
+Run a Codex CLI whose model list includes `gpt-6.2-astra`, such as 0.169.0; 0.162.0 lacks the
+entry, warns and falls back to generic model metadata.
+
+Use plain `codex exec`. In Codex CLI 0.169.0, `codex exec review` runs Codex's built-in review
 mode, which turns off subagent tools (the `multi_agent` feature) and adds its own review rubric.
 
 If the review reports nothing to fix and posting is authorized, the Pika App bot or a
@@ -183,8 +198,8 @@ CI reviews do not replace the line. The `ai-review` label has no effect.
 
 The [gate guide](../../../.github/ai-merge-gate.md) defines the policy and labels. The line is
 what lets the gate approve a risk-1 through risk-3 head; a person's approval satisfies GitHub's
-review rule without it. The gate never approves risk-4, where the policy asks for a current-head
-approval by a maintainer other than the PR author.
+review rule without it. The gate never approves risk-4, where the policy asks for an undismissed
+approval by a maintainer other than the PR author, on any commit of the pull request.
 
 ## Reviewer routine
 

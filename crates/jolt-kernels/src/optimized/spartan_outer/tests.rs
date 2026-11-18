@@ -18,6 +18,7 @@ use jolt_witness::{BundleSource, JoltWitnessOracle};
 use jolt_witness::{FixedBackend, PolynomialEncoding, Shape, TraceBackend};
 
 use super::*;
+use crate::optimized::streaming::{prefix_end, DenseCap};
 use crate::reference::spartan_outer::{ReferenceOuterRemainder, SpartanOuterKernel};
 use crate::ReferenceBackend;
 
@@ -288,12 +289,22 @@ fn true_input_claim(
     kernel * total
 }
 
-fn parity_case(dummy_plane: &dyn JoltWitnessPlane<Fr>, log_t: usize, seed: u64) {
-    parity_case_with_eq(dummy_plane, log_t, seed, None, false, None, None);
+/// The streaming remainder under the cap its tables first fit at round
+/// `depth`.
+fn streamed_remainder<F: JoltField>(
+    session: &mut ProofSession,
+    inputs: &ProverInputs<'_, F, OuterRemainder<F>>,
+    depth: usize,
+) -> OuterRemainderKernel<F> {
+    let cap = DenseCap {
+        bytes: 4 * size_of::<F>(),
+        per_rows: 1 << depth,
+    };
+    OuterRemainderKernel::prepare_streamed(take_carry(session).unwrap(), inputs, cap).unwrap()
 }
 
 fn parity_case_with_eq(
-    dummy_plane: &dyn JoltWitnessPlane<Fr>,
+    depth: Option<usize>,
     log_t: usize,
     seed: u64,
     exceptional: Option<ExceptionalEq>,
@@ -388,10 +399,10 @@ fn parity_case_with_eq(
     let points = SumcheckInputPoints::<Fr, OuterRemainder<Fr>>::default();
     let no_challenges = NoChallenges::<Fr>::default();
 
-    let mut reference_kernel = ReferenceOuterRemainder
-        .prepare(
+    let mut reference_kernel = with_sample_backend(|plane| {
+        ReferenceOuterRemainder.prepare(
             &mut reference_session,
-            dummy_plane,
+            plane,
             ProverInputs {
                 relation: &relation,
                 claims: &claims,
@@ -399,19 +410,19 @@ fn parity_case_with_eq(
                 challenges: &no_challenges,
             },
         )
-        .unwrap();
-    let mut optimized_kernel = OptimizedOuterRemainder
-        .prepare(
-            &mut optimized_session,
-            dummy_plane,
-            ProverInputs {
-                relation: &relation,
-                claims: &claims,
-                points: &points,
-                challenges: &no_challenges,
-            },
-        )
-        .unwrap();
+    })
+    .unwrap();
+    let inputs = ProverInputs {
+        relation: &relation,
+        claims: &claims,
+        points: &points,
+        challenges: &no_challenges,
+    };
+    let mut optimized_kernel = match depth {
+        None => OuterRemainderKernel::prepare(take_carry(&mut optimized_session).unwrap(), &inputs)
+            .unwrap(),
+        Some(depth) => streamed_remainder(&mut optimized_session, &inputs, depth),
+    };
 
     let rounds = log_t + 1;
     let challenges: Vec<Fr> = (0..rounds)
@@ -428,6 +439,22 @@ fn parity_case_with_eq(
     for (round, &challenge) in challenges.iter().enumerate() {
         let reference_round = reference_kernel.prove_round(bind, round, previous).unwrap();
         let optimized_round = optimized_kernel.prove_round(bind, round, previous).unwrap();
+        if let Some(depth) = depth {
+            match &optimized_kernel.tables {
+                OuterTables::Dense { az, bz } => {
+                    assert!(round >= depth);
+                    assert_eq!(az.values.len(), bz.values.len());
+                    if round == depth {
+                        // The fill stops at the split-eq group that holds the
+                        // last cycle before the constant suffix.
+                        let group = optimized_kernel.split_eq.e_in_current().len() << depth;
+                        let end = prefix_end(optimized_kernel.prefix_cycles, group, 1 << log_t);
+                        assert_eq!(az.values.len(), 2 * (end >> depth));
+                    }
+                }
+                OuterTables::Streamed { .. } => assert!(round < depth),
+            }
+        }
         assert_eq!(
             optimized_round, reference_round,
             "round {round} polynomial, log_t = {log_t}"
@@ -459,37 +486,31 @@ fn parity_case_with_eq(
 
 #[test]
 fn remainder_matches_reference_at_exceptional_eq_and_zero_scaling() {
-    with_sample_backend(|dummy| {
-        for case in ExceptionalEq::ALL {
-            parity_case_with_eq(dummy, 4, 389, Some(case), false, None, None);
-        }
-        parity_case_with_eq(dummy, 4, 389, None, true, None, None);
-    });
+    for case in ExceptionalEq::ALL {
+        parity_case_with_eq(None, 4, 389, Some(case), false, None, None);
+    }
+    parity_case_with_eq(None, 4, 389, None, true, None, None);
 }
 
 #[test]
 fn remainder_matches_reference_with_repeated_guard_rows() {
-    with_sample_backend(|dummy| {
-        // log_t = 12 gives 64-row blocks; period 48 repeats 16 rows per
-        // block and collides keys in the 128-slot guard-endpoint cache.
-        parity_case_with_eq(dummy, 12, 389, None, false, None, Some(48));
-        parity_case_with_eq(dummy, 12, 390, None, false, Some(3000), Some(48));
-    });
+    // log_t = 12 gives 64-row blocks; period 48 repeats 16 rows per
+    // block and collides keys in the 128-slot guard-endpoint cache.
+    parity_case_with_eq(None, 12, 389, None, false, None, Some(48));
+    parity_case_with_eq(None, 12, 390, None, false, Some(3000), Some(48));
 }
 
 #[test]
 fn constant_stream_tails_match_reference_rounds_and_openings() {
-    with_sample_backend(|dummy| {
-        for prefix in [0, 1, 3, 7, 8, 9, 15, 16] {
-            for seed in [389, 390] {
-                parity_case_with_eq(dummy, 4, seed, None, false, Some(prefix), None);
-                for case in ExceptionalEq::ALL {
-                    parity_case_with_eq(dummy, 4, seed, Some(case), false, Some(prefix), None);
-                }
+    for prefix in [0, 1, 3, 7, 8, 9, 15, 16] {
+        for seed in [389, 390] {
+            parity_case_with_eq(None, 4, seed, None, false, Some(prefix), None);
+            for case in ExceptionalEq::ALL {
+                parity_case_with_eq(None, 4, seed, Some(case), false, Some(prefix), None);
             }
-            parity_case_with_eq(dummy, 4, 389, None, true, Some(prefix), None);
         }
-    });
+        parity_case_with_eq(None, 4, 389, None, true, Some(prefix), None);
+    }
 }
 
 #[test]
@@ -538,13 +559,46 @@ fn uniskip_matches_reference_with_many_guard_patterns() {
 }
 
 #[test]
-fn synthetic_parity_with_reference_kernels() {
-    with_sample_backend(|dummy| {
-        for (log_t, seed) in [(1usize, 111u64), (2, 222), (3, 333), (4, 444)] {
-            parity_case(dummy, log_t, seed);
+fn streamed_remainder_matches_reference_at_every_crossover() {
+    for log_t in [1, 3, 6] {
+        for depth in 0..=log_t + 1 {
+            parity_case_with_eq(Some(depth), log_t, 389, None, false, None, None);
         }
-    });
+    }
+    for depth in [0, 1, 4, 5] {
+        for case in ExceptionalEq::ALL {
+            parity_case_with_eq(Some(depth), 4, 389, Some(case), false, None, None);
+        }
+        parity_case_with_eq(Some(depth), 4, 389, None, true, None, None);
+        for prefix in [0, 1, 3, 4, 7, 8, 9, 16] {
+            for seed in [389, 390] {
+                parity_case_with_eq(Some(depth), 4, seed, None, false, Some(prefix), None);
+            }
+        }
+    }
+    // Suffixes that start inside a split-eq group, on a group boundary and
+    // in the last group, over prefixes of several groups and tasks.
+    for depth in [0, 2, 6] {
+        for prefix in [37, 96, 250] {
+            parity_case_with_eq(Some(depth), 8, 390, None, false, Some(prefix), None);
+        }
+    }
+    parity_case_with_eq(Some(13), 13, 389, None, false, None, None);
 }
+
+#[test]
+fn synthetic_parity_with_reference_kernels() {
+    for (log_t, seed) in [(1usize, 111u64), (2, 222), (3, 333), (4, 444)] {
+        parity_case_with_eq(None, log_t, seed, None, false, None, None);
+    }
+}
+
+type BuildRemainder = fn(
+    &mut ProofSession,
+    &TraceBackend,
+    ProverInputs<'_, Fr, OuterRemainder<Fr>>,
+    usize,
+) -> Box<dyn SumcheckKernel<Fr, Relation = OuterRemainder<Fr>>>;
 
 /// The trait-path parity body over a real trace backend: the optimized
 /// bundle walk against the reference's oracle tables, with the remainder
@@ -553,7 +607,7 @@ fn synthetic_parity_with_reference_kernels() {
 /// uni-skip reduction at r0 need not equal the joint-domain sum here; the
 /// remainder runs on the true sum, which is what the naive reference
 /// self-checks against.
-fn sample_case(backend: &TraceBackend, log_t: usize) {
+fn sample_case(backend: &TraceBackend, log_t: usize, build: BuildRemainder) {
     let tau: Vec<Fr> = (0..log_t + 2)
         .map(|i| Fr::from_u64(29 + 13 * i as u64))
         .collect();
@@ -627,18 +681,17 @@ fn sample_case(backend: &TraceBackend, log_t: usize) {
             },
         )
         .unwrap();
-    let mut optimized_kernel = OptimizedOuterRemainder
-        .prepare(
-            &mut optimized_session,
-            backend,
-            ProverInputs {
-                relation: &relation,
-                claims: &claims,
-                points: &points,
-                challenges: &no_challenges,
-            },
-        )
-        .unwrap();
+    let mut optimized_kernel = build(
+        &mut optimized_session,
+        backend,
+        ProverInputs {
+            relation: &relation,
+            claims: &claims,
+            points: &points,
+            challenges: &no_challenges,
+        },
+        log_t,
+    );
 
     let challenges: Vec<Fr> = (0..=log_t)
         .map(|i| Fr::from_u64(523 + 17 * i as u64))
@@ -667,11 +720,27 @@ fn sample_case(backend: &TraceBackend, log_t: usize) {
 /// row seam.
 #[test]
 fn sample_trace_parity_through_the_trait_path() {
-    #[cfg(not(feature = "field-inline"))]
-    with_sample_backend(|backend| sample_case(backend, 2));
-    #[cfg(feature = "field-inline")]
-    crate::optimized::field_registers_testing::structured_field_register_fixture(12)
-        .with_plane(4, |backend| sample_case(backend, 4));
+    let default: BuildRemainder = |session, backend, inputs, _| {
+        OptimizedOuterRemainder
+            .prepare(session, backend, inputs)
+            .unwrap()
+    };
+    let streaming: BuildRemainder = |session, backend, inputs, _| {
+        StreamingOuterRemainder
+            .prepare(session, backend, inputs)
+            .unwrap()
+    };
+    let at_one: BuildRemainder =
+        |session, _, inputs, _| Box::new(streamed_remainder(session, &inputs, 1));
+    let all_rounds: BuildRemainder =
+        |session, _, inputs, log_t| Box::new(streamed_remainder(session, &inputs, log_t + 1));
+    for build in [default, streaming, at_one, all_rounds] {
+        #[cfg(not(feature = "field-inline"))]
+        with_sample_backend(|backend| sample_case(backend, 2, build));
+        #[cfg(feature = "field-inline")]
+        crate::optimized::field_registers_testing::structured_field_register_fixture(12)
+            .with_plane(4, |backend| sample_case(backend, 4, build));
+    }
 }
 
 #[test]

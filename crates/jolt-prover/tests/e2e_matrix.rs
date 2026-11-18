@@ -1,10 +1,14 @@
 //! End-to-end acceptance: one guest table per instruction profile, across all modes.
 //!
-//! Table cases check native expected output, prove with the optimized backend,
-//! and verify through the public verifier API. Field-inline builds select the
-//! active field-ops and field-limbs cases and the inactive muldiv case; ordinary
-//! builds select the general guest table. Specialized suites retain tampering, reference-backend parity,
-//! committed programs, and other mode-specific checks.
+//! Table cases check native expected output and the halt that ends the run,
+//! prove with the optimized backend, and verify through the public verifier
+//! API. Field-inline builds select the active field-ops and field-limbs cases
+//! and the inactive muldiv case; ordinary builds select the general guest
+//! table. Both tables also prove `exact_domain`, a run that fills its padded
+//! domain with no padding row, and `panic_halt`, a guest panic proved with
+//! `panic = true`. Akita builds also prove `fibonacci_ring_512` and assert the
+//! ring dimension of its trace commitment. Specialized suites retain tampering,
+//! reference-backend parity, committed programs, and other mode-specific checks.
 
 #[cfg(feature = "prover-fixtures")]
 mod support;
@@ -30,12 +34,16 @@ mod matrix {
 
     #[cfg(all(feature = "field-inline", feature = "akita"))]
     use jolt_akita::AkitaField as Field;
+    #[cfg(feature = "akita")]
+    use jolt_akita::{AkitaBatchProof, AkitaVerifierSetup};
     #[cfg(all(feature = "field-inline", not(feature = "akita")))]
     use jolt_field::Fr as Field;
     #[cfg(feature = "field-inline")]
     use jolt_field::Ring;
     #[cfg(feature = "field-inline")]
     use jolt_host::field_inline::canonical_limbs;
+
+    use jolt_kernels::optimized::StreamingFamilies;
 
     use crate::support::GuestCase;
 
@@ -158,13 +166,68 @@ mod matrix {
         (map.len() as u128).wrapping_add(u128::from(range_sum))
     }
 
-    #[cfg(not(feature = "field-inline"))]
-    fn muldiv_full_domain() -> GuestCase {
+    /// Akita's padding floor (`MIN_PADDED_TRACE_LENGTH`), and a power of two
+    /// above Dory's, so both prove the exact-domain case with no padding row.
+    const EXACT_DOMAIN_ROWS: usize = 1 << 12;
+
+    /// The memory-ops guest's `exact_rows` entry, padded so that its run fills
+    /// exactly `EXACT_DOMAIN_ROWS` rows: the proof has no padding row and the
+    /// halt sits at T−1. The pad is calibrated by running the entry with
+    /// `pad = 0`.
+    fn exact_domain() -> GuestCase {
+        let case = |pad: u16| {
+            let bytes = postcard::to_stdvec(&pad.to_le_bytes()).expect("serialize the pad");
+            GuestCase {
+                func: Some("exact_rows"),
+                inputs: bytes.clone(),
+                expected_output: Some(bytes),
+                max_padded_trace_length: None,
+                ..GuestCase::new("memory-ops-guest")
+            }
+        };
+        let probe = case(0);
+        let fixed_rows = crate::support::program(&probe).execute(&probe.inputs, &[], &[]);
+        let pad = EXACT_DOMAIN_ROWS
+            .checked_sub(fixed_rows)
+            .expect("the prologue and epilogue fit the domain");
+        case(u16::try_from(pad).expect("the pad fits u16"))
+    }
+
+    /// The memory-ops guest's `panic_halt` entry with the panic requested: the
+    /// run ends at `ebreak` without writing an output.
+    fn panic_halt() -> GuestCase {
         GuestCase {
-            inputs: encode(&[9u32, 5, 3]),
-            expected_output: Some(encode(&15u32)),
-            max_padded_trace_length: None,
-            ..GuestCase::new("muldiv-guest")
+            func: Some("panic_halt"),
+            inputs: postcard::to_stdvec(&true).expect("serialize the trigger"),
+            expected_output: Some(Vec::new()),
+            panics: true,
+            ..GuestCase::new("memory-ops-guest")
+        }
+    }
+
+    /// The fibonacci guest's `fib(n)`, with the wrapping `u128` additions of
+    /// its release build.
+    #[cfg(feature = "akita")]
+    fn fibonacci_reference(n: u32) -> u128 {
+        let (mut a, mut b) = (0u128, 1u128);
+        for _ in 1..n {
+            (a, b) = (b, a.wrapping_add(b));
+        }
+        b
+    }
+
+    /// A trace padded to 2^18 rows, which Akita commits at inner ring dimension
+    /// 512; the test asserts the dimension its proof selected.
+    #[cfg(feature = "akita")]
+    fn fibonacci_ring_512() -> GuestCase {
+        const N: u32 = 20_000;
+        GuestCase {
+            inputs: postcard::to_stdvec(&N).expect("serialize guest input"),
+            expected_output: Some(
+                postcard::to_stdvec(&fibonacci_reference(N)).expect("serialize guest output"),
+            ),
+            max_padded_trace_length: Some(1 << 18),
+            ..GuestCase::new("fibonacci-guest")
         }
     }
 
@@ -177,7 +240,8 @@ mod matrix {
                     expected_output: Some(encode(&15u32)),
                     ..GuestCase::new("muldiv-guest")
                 };
-                muldiv_full_domain => super::muldiv_full_domain();
+                exact_domain => super::exact_domain();
+                panic_halt => super::panic_halt();
                 fibonacci => GuestCase {
                     inputs: encode(&100u32),
                     expected_output: Some(encode(&354_224_848_179_261_915_075u128)),
@@ -186,6 +250,12 @@ mod matrix {
                 memory_ops => GuestCase {
                     func: Some("memory_ops"),
                     expected_output: Some(encode(&memory_ops_reference())),
+                    ..GuestCase::new("memory-ops-guest")
+                };
+                // Stores the last byte below the linker's `__heap_end`.
+                heap_top => GuestCase {
+                    func: Some("heap_top"),
+                    expected_output: Some(encode(&0xa523_4567_89ab_cdef_u64)),
                     ..GuestCase::new("memory-ops-guest")
                 };
                 // 127 bytes: one full block through the initial compression,
@@ -255,6 +325,16 @@ mod matrix {
                     expected_output: Some(encode(&(7u64 * 3 + 5))),
                     ..GuestCase::new("advice-consumer-guest")
                 };
+                rounded_advice => GuestCase {
+                    func: Some("rounded_advice"),
+                    max_untrusted_advice_size: Some(12),
+                    // Sixteen bytes fill the rounded block, past the configured 12.
+                    untrusted_advice: (1..=16).collect(),
+                    expected_output: Some(encode(&u64::from_le_bytes([
+                        9, 10, 11, 12, 13, 14, 15, 16
+                    ]))),
+                    ..GuestCase::new("memory-ops-guest")
+                };
             }
         };
     }
@@ -275,26 +355,31 @@ mod matrix {
         }
     }
 
-    /// The field-ops guest with no fixed padded bound: the harness repeats the
-    /// final `j .` stall until the trace fills its padded domain exactly.
-    #[cfg(feature = "field-inline")]
-    fn field_ops_full_domain() -> GuestCase {
-        GuestCase {
-            max_padded_trace_length: None,
-            ..crate::support::field_inline::field_ops()
-        }
-    }
-
     #[cfg(feature = "field-inline")]
     macro_rules! guests {
         ($emit:ident) => {
             $emit! {
                 field_ops => crate::support::field_inline::field_ops();
-                field_ops_full_domain => super::field_ops_full_domain();
+                exact_domain => super::exact_domain();
+                panic_halt => super::panic_halt();
                 field_limbs => super::field_limbs();
                 muldiv => crate::support::field_inline::muldiv();
             }
         };
+    }
+
+    /// Inner ring dimension of the root fold's own group in the schedule row
+    /// `opening` selected: the dimension at which Akita committed the trace group.
+    #[cfg(feature = "akita")]
+    fn trace_ring_dimension(setup: &AkitaVerifierSetup, opening: &AkitaBatchProof) -> usize {
+        let catalog = setup.one_hot_catalog().expect("one-hot schedule catalog");
+        catalog
+            .resolve_selection(opening.selection())
+            .expect("the proof selects a row of the verifier's catalog")
+            .schedule()
+            .root
+            .params
+            .d_a()
     }
 
     macro_rules! emit_tests {
@@ -302,7 +387,7 @@ mod matrix {
             $(
                 #[test]
                 fn $test() {
-                    super::mode::prove_and_verify(&$case);
+                    super::mode::prove_and_verify(&$case, super::StreamingFamilies::default());
                 }
             )*
         };
@@ -316,11 +401,11 @@ mod matrix {
 
         #[cfg(not(feature = "field-inline"))]
         #[test]
-        fn muldiv_full_domain_cycle_first() {
+        fn exact_domain_cycle_first() {
             use jolt_prover::JoltBackend;
 
-            super::mode::prove_with_config(
-                &super::muldiv_full_domain(),
+            let _ = super::mode::prove_with_config(
+                &super::exact_domain(),
                 JoltBackend::optimized(),
                 |_| {},
             );
@@ -328,11 +413,11 @@ mod matrix {
 
         #[cfg(not(feature = "field-inline"))]
         #[test]
-        fn muldiv_full_domain_reference() {
+        fn exact_domain_reference() {
             use jolt_prover::JoltBackend;
 
-            super::mode::prove_with_config(
-                &super::muldiv_full_domain(),
+            let _ = super::mode::prove_with_config(
+                &super::exact_domain(),
                 JoltBackend::reference(),
                 |_| {},
             );
@@ -351,10 +436,47 @@ mod matrix {
         #[cfg(not(feature = "field-inline"))]
         use super::*;
         guests!(emit_tests);
+
+        #[test]
+        fn fibonacci_ring_512() {
+            use super::StreamingFamilies;
+
+            assert_eq!(
+                super::mode::prove_and_verify_trace_ring(
+                    &super::fibonacci_ring_512(),
+                    StreamingFamilies::default(),
+                ),
+                512,
+                "the proof must commit its trace group at ring dimension 512",
+            );
+        }
+    }
+
+    #[test]
+    fn all_streaming_families_prove_and_verify() {
+        #[cfg(not(feature = "field-inline"))]
+        let case = GuestCase {
+            inputs: encode(&[9u32, 5, 3]),
+            expected_output: Some(encode(&15u32)),
+            ..GuestCase::new("muldiv-guest")
+        };
+        #[cfg(feature = "field-inline")]
+        let case = crate::support::field_inline::field_ops();
+        mode::prove_and_verify(
+            &case,
+            StreamingFamilies {
+                instruction_input: true,
+                spartan: true,
+                ram: true,
+                registers: true,
+                instruction_rows: true,
+            },
+        );
     }
 
     #[cfg(all(not(feature = "akita"), not(feature = "field-inline")))]
     mod mode {
+        use super::StreamingFamilies;
         use jolt_crypto::{Bn254G1, Pedersen};
         use jolt_dory::DoryScheme;
         use jolt_field::Fr;
@@ -364,28 +486,35 @@ mod matrix {
 
         use crate::support::{self, GuestCase};
 
-        pub fn prove_and_verify(case: &GuestCase) {
+        pub fn prove_and_verify(case: &GuestCase, families: StreamingFamilies) {
             #[cfg(feature = "zk")]
             {
                 let case = case.clone();
-                support::with_zk_stack(move || prove_case(&case));
+                support::with_zk_stack(move || prove_case(&case, families));
             }
             #[cfg(not(feature = "zk"))]
-            prove_case(case);
+            prove_case(case, families);
         }
 
-        fn prove_case(case: &GuestCase) {
-            prove_with_config(case, JoltBackend::optimized(), |config| {
-                config.rw_config.ram_rw_phase1_num_rounds = 0;
-                config.rw_config.registers_rw_phase1_num_rounds = 0;
-            });
+        fn prove_case(case: &GuestCase, families: StreamingFamilies) {
+            let prove = |backend| {
+                prove_with_config(case, backend, |config| {
+                    config.rw_config.ram_rw_phase1_num_rounds = 0;
+                    config.rw_config.registers_rw_phase1_num_rounds = 0;
+                })
+            };
+            let proof = prove(JoltBackend::optimized().with_streaming(families));
+            if cfg!(not(feature = "zk")) && families != StreamingFamilies::default() {
+                assert_eq!(proof, prove(JoltBackend::optimized()));
+            }
         }
 
+        /// Returns the verified proof's postcard bytes.
         pub(super) fn prove_with_config(
             case: &GuestCase,
             backend: JoltBackend<Fr, DoryScheme>,
             configure: impl FnOnce(&mut ProverConfig),
-        ) {
+        ) -> Vec<u8> {
             let prepared = support::prepare(case);
             let mut config = ProverConfig::derive_from_dimensions::<Fr>(
                 prepared.trace.dimensions,
@@ -433,11 +562,13 @@ mod matrix {
                 trusted.as_ref().map(|advice| &advice.commitment),
             )
             .expect("Dory proof must verify");
+            postcard::to_stdvec(&proof).expect("encode proof")
         }
     }
 
     #[cfg(all(feature = "akita", not(feature = "field-inline")))]
     mod mode {
+        use super::StreamingFamilies;
         use jolt_akita::{AkitaChunkProfile, AkitaField, AkitaScheduleArtifacts, AkitaScheme};
         use jolt_prover::akita;
         use jolt_prover::akita::preprocessing::{self, AkitaVc};
@@ -448,7 +579,32 @@ mod matrix {
 
         use crate::support::{self, GuestCase};
 
-        pub fn prove_and_verify(case: &GuestCase) {
+        pub fn prove_and_verify(case: &GuestCase, families: StreamingFamilies) {
+            let _ = prove_and_verify_trace_ring(case, families);
+            if families != StreamingFamilies::default() {
+                // The derived configuration binds the read-write checks
+                // cycle-first, the only order in which the streaming register
+                // kernel replaces the default one.
+                let _ = prove_with_config(case, families, |_| {});
+            }
+        }
+
+        pub(super) fn prove_and_verify_trace_ring(
+            case: &GuestCase,
+            families: StreamingFamilies,
+        ) -> usize {
+            prove_with_config(case, families, |config| {
+                config.rw_config.ram_rw_phase1_num_rounds = 0;
+                config.rw_config.registers_rw_phase1_num_rounds = 0;
+            })
+        }
+
+        /// Returns the ring dimension of the verified proof's trace commitment.
+        fn prove_with_config(
+            case: &GuestCase,
+            families: StreamingFamilies,
+            configure: impl FnOnce(&mut ProverConfig),
+        ) -> usize {
             let prepared = support::prepare(case);
             let mut config = ProverConfig::derive_from_dimensions::<AkitaField>(
                 prepared.trace.dimensions,
@@ -458,11 +614,10 @@ mod matrix {
                 prepared.preprocessing.max_padded_trace_length,
             )
             .expect("derive config");
-            config.rw_config.ram_rw_phase1_num_rounds = 0;
-            config.rw_config.registers_rw_phase1_num_rounds = 0;
+            configure(&mut config);
             let untrusted_advice = !case.untrusted_advice.is_empty();
             let trusted_advice = !case.trusted_advice.is_empty();
-            let preprocessing = preprocessing::preprocess_full_with_advice(
+            let mut preprocessing = preprocessing::preprocess_full_with_advice(
                 &AkitaScheduleArtifacts::shared_from_default_directory(AkitaChunkProfile::new(
                     8, 2,
                 )),
@@ -472,6 +627,15 @@ mod matrix {
                 trusted_advice,
             )
             .expect("Akita preprocessing");
+            // A streaming selection also streams the opening's ring-switch NTT
+            // operations; the eager proof below opens on the default backends.
+            let eager_setup = preprocessing.pcs_setup.clone();
+            if families != StreamingFamilies::default() {
+                preprocessing.pcs_setup = preprocessing
+                    .pcs_setup
+                    .with_streamed_ring_switch()
+                    .expect("streamed ring-switch setup");
+            }
             let trusted = trusted_advice.then(|| {
                 preprocessing::commit_trusted_advice(&preprocessing, &case.trusted_advice)
                     .expect("trusted advice commitment")
@@ -491,7 +655,9 @@ mod matrix {
                 JoltVmWitnessInputs::new(&prepared.program, &program_preprocessing, prepared.trace),
             );
             let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, ProverState<Keccak>>(
-                JoltBackend::optimized().with_witness(&witness),
+                JoltBackend::optimized()
+                    .with_streaming(families)
+                    .with_witness(&witness),
                 &preprocessing,
                 &config,
                 trusted.as_ref(),
@@ -505,10 +671,30 @@ mod matrix {
                 trusted.as_ref().map(|object| &object.commitment),
             )
             .expect("Akita proof must verify");
+            if families != StreamingFamilies::default() {
+                preprocessing.pcs_setup = eager_setup;
+                let eager = akita::prove::<AkitaField, AkitaScheme, AkitaVc, ProverState<Keccak>>(
+                    JoltBackend::optimized().with_witness(&witness),
+                    &preprocessing,
+                    &config,
+                    trusted.as_ref(),
+                    &public_io,
+                )
+                .expect("eager Akita proof");
+                assert_eq!(
+                    postcard::to_stdvec(&proof).expect("encode streaming proof"),
+                    postcard::to_stdvec(&eager).expect("encode eager proof"),
+                );
+            }
+            super::trace_ring_dimension(
+                &preprocessing.verifier.pcs_setup,
+                &proof.joint_opening_proof,
+            )
         }
     }
     #[cfg(feature = "field-inline")]
     mod mode {
+        use super::StreamingFamilies;
         #[cfg(feature = "akita")]
         use jolt_prover::JoltBackend;
         #[cfg(not(feature = "akita"))]
@@ -522,33 +708,65 @@ mod matrix {
         use crate::support::field_inline::dory;
         use crate::support::GuestCase;
 
-        pub fn prove_and_verify(case: &GuestCase) {
+        pub fn prove_and_verify(case: &GuestCase, families: StreamingFamilies) {
             #[cfg(feature = "zk")]
             {
                 let case = case.clone();
-                support::with_zk_stack(move || prove_case(&case));
+                support::with_zk_stack(move || prove_case(&case, families));
             }
             #[cfg(not(feature = "zk"))]
-            prove_case(case);
+            prove_case(case, families);
         }
 
-        fn prove_case(case: &GuestCase) {
+        fn prove_case(case: &GuestCase, families: StreamingFamilies) {
             #[cfg(not(feature = "akita"))]
             {
-                let (preprocessing, public_io, proof) = dory::prove(case, JoltBackend::optimized());
+                let (preprocessing, public_io, proof) =
+                    dory::prove(case, JoltBackend::optimized().with_streaming(families));
                 dory::verify_full(&preprocessing, &public_io, &proof)
                     .expect("field-inline Dory proof must verify");
+                #[cfg(not(feature = "zk"))]
+                if families != StreamingFamilies::default() {
+                    let (_, _, eager) = dory::prove(case, JoltBackend::optimized());
+                    assert_eq!(
+                        postcard::to_stdvec(&proof).expect("encode streaming proof"),
+                        postcard::to_stdvec(&eager).expect("encode eager proof"),
+                    );
+                }
             }
             #[cfg(feature = "akita")]
             {
-                let (output, ()) = akita::prove(case, JoltBackend::optimized(), |_, _, _| ());
-                akita::verify_full(
-                    &output.verifier_preprocessing,
-                    &output.public_io,
-                    &output.proof,
-                )
-                .expect("field-inline Akita proof must verify");
+                let _ = prove_and_verify_trace_ring(case, families);
             }
+        }
+
+        #[cfg(feature = "akita")]
+        pub(super) fn prove_and_verify_trace_ring(
+            case: &GuestCase,
+            families: StreamingFamilies,
+        ) -> usize {
+            let (output, ()) = akita::prove(
+                case,
+                JoltBackend::optimized().with_streaming(families),
+                |_, _, _| (),
+            );
+            akita::verify_full(
+                &output.verifier_preprocessing,
+                &output.public_io,
+                &output.proof,
+            )
+            .expect("field-inline Akita proof must verify");
+            if families != StreamingFamilies::default() {
+                let (eager, ()) = akita::prove(case, JoltBackend::optimized(), |_, _, _| ());
+                assert_eq!(
+                    postcard::to_stdvec(&output.proof).expect("encode streaming proof"),
+                    postcard::to_stdvec(&eager.proof).expect("encode eager proof"),
+                );
+            }
+            super::trace_ring_dimension(
+                &output.verifier_preprocessing.pcs_setup,
+                &output.proof.joint_opening_proof,
+            )
         }
     }
 }

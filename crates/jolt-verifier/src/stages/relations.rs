@@ -25,7 +25,7 @@ use std::collections::BTreeSet;
 
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::JoltField;
-use jolt_transcript::FieldTranscript;
+use jolt_transcript::{FieldTranscript, PrivateChannel};
 
 use crate::stages::ids::{VerifierChallengeId, VerifierDerivedId};
 use crate::VerifierError;
@@ -48,9 +48,7 @@ pub trait OutputAppend<F: JoltField>: OutputClaims<F> {
     /// and MUST match the order in which the
     /// prover commits the openings.
     fn append_openings<T: FieldTranscript<F>>(&self, transcript: &mut T) {
-        for value in self.opening_values() {
-            transcript.append(&value);
-        }
+        transcript.append_private(&self.opening_values());
     }
 }
 
@@ -335,20 +333,39 @@ where
         output_points: &SumcheckOutputPoints<F, Self>,
         challenges: &ConcreteSumcheckChallenges<F, Self>,
     ) -> Result<F, VerifierError> {
-        self.symbolic().output_expression::<F>().try_evaluate(
-            |id| {
-                output_values
-                    .resolve_output(id)
-                    .ok_or(VerifierError::MissingOpeningClaim { id: (*id).into() })
-            },
-            |id| {
-                challenges
-                    .resolve_challenge(id)
-                    .ok_or(VerifierError::MissingStageClaimChallenge { id: (*id).into() })
-            },
-            |id| self.derive_output_term(id, input_points, output_points, challenges),
-        )
+        evaluate_output_expression(self, output_values, challenges, |id| {
+            self.derive_output_term(id, input_points, output_points, challenges)
+        })
     }
+}
+
+/// Evaluate the canonical output expression with a per-call derived-value
+/// resolver. Relations can share public computations across terms without
+/// restating the expression or changing opening and challenge resolution.
+#[inline]
+pub(crate) fn evaluate_output_expression<F, S>(
+    relation: &S,
+    output_values: &SumcheckOutputClaims<F, S>,
+    challenges: &ConcreteSumcheckChallenges<F, S>,
+    derived: impl FnMut(&DerivedIdOf<F, S>) -> Result<F, VerifierError>,
+) -> Result<F, VerifierError>
+where
+    F: JoltField,
+    S: ConcreteSumcheck<F>,
+{
+    relation.symbolic().output_expression::<F>().try_evaluate(
+        |id| {
+            output_values
+                .resolve_output(id)
+                .ok_or(VerifierError::MissingOpeningClaim { id: (*id).into() })
+        },
+        |id| {
+            challenges
+                .resolve_challenge(id)
+                .ok_or(VerifierError::MissingStageClaimChallenge { id: (*id).into() })
+        },
+        derived,
+    )
 }
 
 /// One member's absorbed opening scalars: its claims' `canonical_order`-aligned
@@ -622,7 +639,10 @@ mod tests {
             via_values.append(&value);
         }
 
-        assert_eq!(via_append.absorbed(), via_values.absorbed());
+        assert_eq!(
+            via_append.absorbed().concat(),
+            via_values.absorbed().concat()
+        );
     }
 
     #[derive(OutputClaims)]

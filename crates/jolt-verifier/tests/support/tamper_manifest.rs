@@ -889,14 +889,6 @@ pub const STAGE6_TARGETS: &[TamperTarget] = &[
         "prover-fixture test offsets every Booleanity RAM RA output claim",
     ),
     checked_standard(
-        "stage6.claims.ram_hamming_booleanity.ram_hamming_weight",
-        "claims.stage6b.ram_hamming_booleanity.ram_hamming_weight",
-        VerifierPhase::Stage6,
-        MutationStrategy::OffsetScalar,
-        TamperCoverage::Active,
-        "prover-fixture test offsets the RAM hamming Booleanity output claim",
-    ),
-    checked_standard(
         "stage6.claims.ram_ra_virtualization.ram_ra",
         "claims.stage6b.ram_ra_virtualization.ram_ra",
         VerifierPhase::Stage6,
@@ -1297,7 +1289,6 @@ fn relation_phase(id: JoltRelationId) -> VerifierPhase {
         | JoltRelationId::RegistersValEvaluation => VerifierPhase::Stage5,
         JoltRelationId::BytecodeReadRaf
         | JoltRelationId::Booleanity
-        | JoltRelationId::RamHammingBooleanity
         | JoltRelationId::InstructionRaVirtualization
         | JoltRelationId::RamRaVirtualization
         | JoltRelationId::IncClaimReduction
@@ -1308,6 +1299,7 @@ fn relation_phase(id: JoltRelationId) -> VerifierPhase {
         | JoltRelationId::BytecodeClaimReduction
         | JoltRelationId::HammingWeightClaimReduction
         | JoltRelationId::ProgramImageClaimReduction => VerifierPhase::Stage7,
+        JoltRelationId::Reserved12(retired) => match retired {},
     }
 }
 
@@ -1326,7 +1318,6 @@ fn relation_phase_from_stage_string(stage: &str) -> Option<VerifierPhase> {
         JoltRelationId::RamOutputCheck,
         JoltRelationId::RamValCheck,
         JoltRelationId::RamRaClaimReduction,
-        JoltRelationId::RamHammingBooleanity,
         JoltRelationId::RamRaVirtualization,
         JoltRelationId::RegistersClaimReduction,
         JoltRelationId::RegistersReadWriteChecking,
@@ -1813,9 +1804,6 @@ pub fn clear_claims<F: JoltField>(fill_optionals: bool) -> ClearProofClaims<F> {
                 instruction_ra: vec![zero],
                 bytecode_ra: vec![zero],
                 ram_ra: vec![zero],
-            },
-            ram_hamming_booleanity: stage6b::outputs::RamHammingBooleanityOutputClaims {
-                ram_hamming_weight: zero,
             },
             ram_ra_virtualization: stage6b::outputs::RamRaVirtualizationOutputClaims {
                 ram_ra: vec![zero],

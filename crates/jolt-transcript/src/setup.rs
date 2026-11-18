@@ -52,9 +52,9 @@ pub const PROTOCOL_ID: [u8; TAG_BYTES] = protocol_tag(match DIGEST_HASH {
 /// [`BytesMsg`]. Never empty, so spongefish's constructors accept it. The tag
 /// has a fixed width and the statement carries its length, so the instance
 /// cannot run into the first message, and it ends on a word boundary.
-struct Instance<'a, S: ?Sized> {
-    session: &'a [u8; TAG_BYTES],
-    statement: &'a S,
+pub(crate) struct Instance<'a, S: ?Sized> {
+    pub(crate) session: &'a [u8; TAG_BYTES],
+    pub(crate) statement: &'a S,
 }
 
 impl<S: Encoding + ?Sized> Encoding for Instance<'_, S> {

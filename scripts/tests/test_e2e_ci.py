@@ -60,19 +60,20 @@ class E2eCiTests(unittest.TestCase):
                 with self.subTest(tier=tier, field=field), self.assertRaises(ValueError):
                     ci.check_dispatch(dict(manifest, **{field: value}), plan)
 
-    def test_pr_admission_rejects_unlabelled_fork_nonmaintainer_and_stale_events(self):
+    def test_pr_admission_rejects_unlabelled_nonmaintainer_and_stale_events(self):
         pr = {'number': 7, 'state': 'open', 'labels': [{'name': 'benchmark'}],
               'head': {'sha': 'b' * 40, 'ref': 'candidate', 'repo': {'full_name': 'a16z/jolt'}},
               'base': {'sha': 'a' * 40, 'ref': 'main', 'repo': {'full_name': 'a16z/jolt'}}}
         labelled = {'id': 11, 'event': 'labeled', 'label': {'name': 'benchmark'},
                     'actor': {'login': 'maintainer'}, 'created_at': '2026-11-02T18:00:00Z'}
-        for fault in ('unlabelled', 'fork', 'other-base', 'write-only', 'removed', 'stale-head', 'untrusted-event'):
+        for fault in ('unlabelled', 'stale-head-repository', 'other-base', 'write-only', 'removed', 'stale-head',
+                      'untrusted-event'):
             current, timeline, role = copy.deepcopy(pr), [labelled], 'maintain'
             event = {'action': 'synchronize', 'pull_request': copy.deepcopy(pr)}
             name = 'pull_request_target'
             if fault == 'unlabelled':
                 current['labels'] = []
-            elif fault == 'fork':
+            elif fault == 'stale-head-repository':
                 current['head']['repo']['full_name'] = 'outside/jolt'
             elif fault == 'other-base':
                 current['base']['ref'] = 'other'
@@ -129,11 +130,70 @@ class E2eCiTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 ci.recheck_pr(plan)
 
+    def test_maintainer_labelled_fork_head_is_admitted_and_pinned_through_the_target_recheck(self):
+        pr = {'number': 7, 'state': 'open', 'labels': [{'name': 'benchmark'}],
+              'head': {'sha': 'b' * 40, 'ref': 'candidate', 'repo': {'full_name': 'outside/jolt'}},
+              'base': {'sha': 'f' * 40, 'ref': 'main', 'repo': {'full_name': 'a16z/jolt'}}}
+        labelled = {'id': 11, 'event': 'labeled', 'label': {'name': 'benchmark'},
+                    'actor': {'login': 'maintainer'}, 'created_at': '2026-11-02T18:00:00Z'}
+        event = {'action': 'labeled', 'label': {'name': 'benchmark'},
+                 'sender': {'login': 'maintainer'}, 'pull_request': copy.deepcopy(pr)}
+        def api(path, **_):
+            return ({'role_name': 'maintain'} if path.startswith('collaborators/')
+                    else [labelled] if '/events?' in path else pr)
+        revisions = {'HEAD': 'a' * 40, 'refs/e2e/merge': 'c' * 40}
+        with patch.object(ci, 'github', side_effect=api), \
+                patch.object(ci.bench, 'git_revision', side_effect=revisions.__getitem__), \
+                patch.object(ci.bench, 'capture', side_effect=lambda argv:
+                    'a' * 40 + ' ' + 'b' * 40 if argv[1] == 'show' else 'a' * 40):
+            _, runs, number, admission = ci.resolve('pull_request_target', event, 'a16z/jolt', 'a' * 40)
+            self.assertEqual(number, 7)
+            self.assertEqual(runs, [{'base': 'a' * 40, 'head': 'c' * 40, 'submitted_head': 'b' * 40}])
+            self.assertEqual(admission, {'label_event_id': 11, 'label_actor': 'maintainer',
+                'label_created_at': '2026-11-02T18:00:00Z', 'head_repo': 'outside/jolt', 'head_ref': 'candidate'})
+            plan = {'runs': runs, 'provenance': {'pr_number': 7}, 'admission': admission}
+            ci.recheck_pr(plan)
+            pr['head']['sha'] = 'e' * 40
+            with self.assertRaisesRegex(ValueError, 'changed after trusted admission'):
+                ci.recheck_pr(plan)
+            pr['head'].update(sha='b' * 40, repo={'full_name': 'renamed/jolt'})
+            with self.assertRaisesRegex(ValueError, 'changed after trusted admission'):
+                ci.recheck_pr(plan)
+
+    def test_fork_pr_refuses_lower_roles_later_pushes_stale_reruns_and_a_deleted_head_repository(self):
+        pr = {'number': 7, 'state': 'open', 'labels': [{'name': 'benchmark'}],
+              'head': {'sha': 'b' * 40, 'ref': 'candidate', 'repo': {'full_name': 'outside/jolt'}},
+              'base': {'sha': 'f' * 40, 'ref': 'main', 'repo': {'full_name': 'a16z/jolt'}}}
+        labelled = {'id': 11, 'event': 'labeled', 'label': {'name': 'benchmark'},
+                    'actor': {'login': 'maintainer'}, 'created_at': '2026-11-02T18:00:00Z'}
+        label_request = {'action': 'labeled', 'label': {'name': 'benchmark'},
+                         'sender': {'login': 'maintainer'}, 'pull_request': pr}
+        pushed = copy.deepcopy(pr)
+        pushed['head']['sha'] = 'e' * 40
+        deleted = copy.deepcopy(pr)
+        deleted['head']['repo'] = None
+        for fault, current, event, role, reason in [
+                ('write-role', pr, label_request, 'write', 'maintainer or administrator'),
+                ('triage-role', pr, label_request, 'triage', 'maintainer or administrator'),
+                ('push-after-label', pushed, {'action': 'synchronize', 'pull_request': pushed}, 'maintain',
+                 'only at the head a maintainer labelled'),
+                ('label-run-rerun-after-push', pushed, label_request, 'maintain', 'no longer current'),
+                ('deleted-head-repository', deleted, label_request, 'maintain', 'head repository exists')]:
+            def api(path, **_):
+                return ({'role_name': role} if path.startswith('collaborators/')
+                        else [labelled] if '/events?' in path else current)
+            with self.subTest(fault=fault), patch.object(ci, 'github', side_effect=api), \
+                    patch.object(ci.bench, 'git_revision', return_value='a' * 40), \
+                    patch.object(ci.bench, 'capture') as capture:
+                with self.assertRaisesRegex(ValueError, reason):
+                    ci.resolve('pull_request_target', event, 'a16z/jolt', 'a' * 40)
+                capture.assert_not_called()
+
     def test_conflicting_pr_refuses_before_fetch_but_unknown_mergeability_proceeds(self):
         pr = {'number': 7, 'mergeable': False,
               'head': {'sha': 'b' * 40, 'ref': 'candidate', 'repo': {'full_name': 'a16z/jolt'}}}
         event = {'action': 'synchronize', 'pull_request': pr}
-        with patch.object(ci, 'labelled_pr', return_value=(pr, {})), \
+        with patch.object(ci, 'labelled_pr', return_value=(pr, {'head_repo': 'a16z/jolt'})), \
                 patch.object(ci.bench, 'git_revision', side_effect=lambda ref:
                     'c' * 40 if ref == 'refs/e2e/merge' else 'a' * 40), \
                 patch.object(ci.bench, 'capture', side_effect=lambda argv:
@@ -259,7 +319,8 @@ const github = {
                                       ([base, head, side], False), ([head], False)]:
                 merge = commit('merge', parents)
                 subprocess.run(['git', 'update-ref', 'refs/pull/7/merge', merge], cwd=repo, check=True)
-                with self.subTest(parents=parents), patch.object(ci, 'labelled_pr', return_value=(pr, {})), \
+                with self.subTest(parents=parents), \
+                        patch.object(ci, 'labelled_pr', return_value=(pr, {'head_repo': 'a16z/jolt'})), \
                         patch.object(ci.bench, 'capture', side_effect=lambda argv, **kwargs: real_capture(argv, cwd=repo)):
                     if accepted:
                         harness, runs, number, _ = ci.resolve('pull_request_target', event, 'a16z/jolt', main)

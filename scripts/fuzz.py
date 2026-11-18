@@ -369,11 +369,8 @@ def run_for_targets(
     for workspace in workspaces:
         check_workspace(root, workspace, resolve=True)
         for target in selected_targets(workspace, args.target):
-            command = [
-                "cargo",
-                f"+{PINNED_NIGHTLY}",
-                "fuzz",
-                "run" if args.command in ("replay", "reproduce") else args.command,
+            cargo_fuzz = ["cargo", f"+{PINNED_NIGHTLY}", "fuzz"]
+            build_options = [
                 "--fuzz-dir",
                 str(workspace.directory),
                 "--sanitizer",
@@ -381,6 +378,11 @@ def run_for_targets(
                 *cargo_target_args(args),
                 *cargo_feature_args(target),
                 target.name,
+            ]
+            command = [
+                *cargo_fuzz,
+                "run" if args.command in ("replay", "reproduce") else args.command,
+                *build_options,
             ]
             seconds = None
             if args.command == "replay":
@@ -411,7 +413,6 @@ def run_for_targets(
                 command.extend(
                     [
                         "--",
-                        f"-max_total_time={seconds}",
                         f"-max_len={args.max_len}",
                         f"-timeout={args.timeout}",
                         f"-rss_limit_mb={args.rss_limit_mb}",
@@ -439,16 +440,35 @@ def run_for_targets(
             elif args.command != "build":
                 raise AssertionError(f"unsupported target command {args.command}")
 
-            started = time.monotonic()
-            status = run_command(command, cwd=root)
-            elapsed = time.monotonic() - started
             if args.command == "run":
+                # libFuzzer measures -max_total_time from process start and
+                # first tests it after executing every corpus input, so the
+                # limit alone lets the corpus replay use the mutation budget
+                # up. -runs=0 stops libFuzzer right after that replay; its
+                # duration is added to the fuzzing run's limit, which replays
+                # the same inputs again before it mutates. The target is built
+                # first because `cargo fuzz run` compiles a stale target, and
+                # that time must stay out of the measured replay.
+                status = run_command([*cargo_fuzz, "build", *build_options], cwd=root)
+                started = time.monotonic()
+                replay = 0.0
+                if status == 0:
+                    status = run_command([*command, "-runs=0"], cwd=root)
+                    replay = time.monotonic() - started
+                if status == 0:
+                    status = run_command(
+                        [*command, f"-max_total_time={seconds + round(replay)}"],
+                        cwd=root,
+                    )
+                elapsed = time.monotonic() - started
                 print(
                     f"[stats] {workspace.name}/{target.name}: exit={status} "
                     f"focus={target.focus} budget={seconds}s "
-                    f"elapsed={elapsed:.1f}s",
+                    f"replay={replay:.1f}s elapsed={elapsed:.1f}s",
                     flush=True,
                 )
+            else:
+                status = run_command(command, cwd=root)
             if status != 0:
                 failures.append(f"{workspace.name}/{target.name} (exit {status})")
                 if args.command in ("run", "replay"):

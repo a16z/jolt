@@ -4,18 +4,16 @@
 //!
 //! # Privilege model
 //!
-//! Jolt targets M-mode-only execution with no interrupt hardware. MRET is
-//! implemented as a single JALR to mepc — it does not modify mstatus.
+//! Jolt's hart is M-mode only. The inline sequence (`jolt_program::expand`,
+//! `expand_mret`) sets `mstatus.MIE := mstatus.MPIE`, `mstatus.MPIE := 1` and
+//! jumps to mepc. MPP stays M, which is both its only legal value and the
+//! least-privileged supported mode the specification asks MRET to leave in
+//! it.
 //!
-//! The full RISC-V spec requires MRET to restore MIE from MPIE, set MPIE=1,
-//! and reset MPP to the least-privileged mode. These operations are omitted
-//! because:
-//! - There is only one privilege level (Machine) — MPP is always 3.
-//! - No interrupt sources exist and the MIE CSR (0x304) is inaccessible,
-//!   so MIE/MPIE bits are unused.
-//! - The ZeroOS trap trampoline restores mstatus via `csrw mstatus, <saved>`
-//!   before executing `mret`, so the virtual register holds the correct value
-//!   without MRET needing to manipulate it.
+//! `exec` below only jumps to the `mepc` held in `cpu.csr` and leaves
+//! `mstatus` alone. It is reached only by a direct
+//! `RISCVInstruction::execute` call. `Instruction::execute` and tracing run
+//! the inline sequence, which keeps the CSRs in virtual registers.
 
 use crate::instruction::registers::i::RegisterStateI;
 
@@ -40,9 +38,6 @@ impl MRET {
     fn exec(&self, cpu: &mut Cpu, _: &mut <MRET as RISCVInstruction>::RamAccess) {
         let mepc = cpu.read_csr_raw(CSR_MEPC_ADDRESS);
         cpu.pc = mepc;
-
-        // mstatus is not modified — see module-level docs for why this is
-        // correct in the M-mode-only model.
     }
 }
 

@@ -254,6 +254,35 @@ pub enum SumcheckError<F: Field> {
     #[error("integer sumcheck domain of size {domain_size} is not distinct in the field")]
     IntegerDomainNotDistinct { domain_size: usize },
 
+    /// A single-instance sumcheck declared degree bound zero.
+    #[error("sumcheck degree bound must be at least 1")]
+    ZeroDegreeBound,
+
+    /// The prover kernel's round count disagrees with the instance.
+    #[error("sumcheck instance declares {expected} rounds, prover reports {got}")]
+    RoundCountMismatch { expected: usize, got: usize },
+
+    /// An equality-factored instance's equality point has the wrong length.
+    #[error("equality point has {got} coordinates for {expected} rounds")]
+    EqualityPointLengthMismatch { expected: usize, got: usize },
+
+    /// A single-instance shape whose proof size `degree × rounds` overflows.
+    #[error("sumcheck shape of {rounds} rounds at degree {degree} is not representable")]
+    ShapeOverflow { rounds: usize, degree: usize },
+
+    /// An equality-factored instance declared no rounds.
+    #[error("equality-factored sumcheck needs at least one round")]
+    EqFactoredZeroRounds,
+
+    /// A single-instance round carries the wrong number of wire coefficients:
+    /// every round sends exactly the instance's degree bound of them.
+    #[error("round {round}: expected {expected} wire coefficients, got {got}")]
+    WrongRoundWidth {
+        round: usize,
+        expected: usize,
+        got: usize,
+    },
+
     /// The transcript refused a challenge draw: the challenge codec does not
     /// support the request, or its rejection pool ran out.
     #[error("transcript rejected a challenge draw")]

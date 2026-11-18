@@ -1,12 +1,11 @@
 //! Stage 6b: the cycle-phase batch — bytecode read+RAF and booleanity cycle
-//! phases, RAM Hamming booleanity, both RA virtualizations, the increment
-//! claim reduction, and the present precommitted claim-reduction cycle
-//! phases (advice, committed bytecode, program image — head-aligned
-//! members). A precommitted member whose schedule has active address-phase
-//! rounds stages its intermediate claim here and — via the driver's uniform
-//! post-extraction `park_residue` hook — parks its post-cycle bound state in
-//! the proof session as plain data; stage 7's address-phase member reclaims
-//! the carry.
+//! phases, both RA virtualizations, the increment claim reduction, and the
+//! present precommitted claim-reduction cycle phases (advice, committed
+//! bytecode, program image — head-aligned members). A precommitted member
+//! whose schedule has active address-phase rounds stages its intermediate
+//! claim here and — via the driver's uniform post-extraction `park_residue`
+//! hook — parks its post-cycle bound state in the proof session as plain
+//! data; stage 7's address-phase member reclaims the carry.
 //!
 //! Pure orchestration mirroring `stage6b::verify`: the bytecode gamma is
 //! carried from stage 6a's squeeze (no draw here), the post-6a draws and the
@@ -282,7 +281,7 @@ mod field_inline_round_trip {
         let mode = ProofMode::<Pedersen<Bn254G1>>::new(None).unwrap();
         let config = test_prover_config();
         let public_io = test_public_io();
-        let checked = test_checked_inputs();
+        let checked = test_checked_inputs(&witness.preprocessing);
 
         let mut prover_state =
             prover_transcript::<Keccak>(&jolt_transcript::protocol_tag(label), b"");
@@ -319,7 +318,14 @@ mod field_inline_round_trip {
         let mut transcript =
             prover_transcript::<Keccak>(&jolt_transcript::protocol_tag(label), b"");
         twins::replay_stage1(&mut transcript, &stage1);
-        twins::replay_stage2(&mut transcript, &config, &public_io, &stage1, &stage2);
+        twins::replay_stage2(
+            &mut transcript,
+            &config,
+            &checked,
+            &public_io,
+            &stage1,
+            &stage2,
+        );
         twins::replay_stage3(&mut transcript, &stage1, &stage2, &stage3);
         twins::replay_stage4(
             &mut transcript,
@@ -564,7 +570,7 @@ mod field_inline_zk {
         let mode = ProofMode::<Pedersen<Bn254G1>>::new(Some(&setup)).unwrap();
         let config = test_prover_config();
         let public_io = test_public_io();
-        let checked = test_checked_inputs();
+        let checked = test_checked_inputs(&witness.preprocessing);
         let preprocessing = addi_only_preprocessing();
 
         let mut transcript = prover_transcript::<Keccak>(

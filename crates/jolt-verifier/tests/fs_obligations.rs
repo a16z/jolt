@@ -591,7 +591,13 @@ fn is_challenge_call(name: &str) -> bool {
 fn is_absorb_method(name: &str) -> bool {
     matches!(
         name,
-        "append" | "append_bytes" | "append_to_transcript" | "append_values" | "check_public_grind"
+        "append"
+            | "append_bytes"
+            | "append_private"
+            | "append_to_transcript"
+            | "append_values"
+            | "bind_derived"
+            | "check_public_grind"
     )
 }
 

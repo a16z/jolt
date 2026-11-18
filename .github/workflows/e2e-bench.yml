@@ -124,9 +124,12 @@ jobs:
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           enable-cache: false
-      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2
+      # No `components`: rustc writes the rust-src path into the prover when that component is
+      # installed, so this job and the benchmark machine both install exactly what
+      # rust-toolchain.toml lists. See "One toolchain definition for both builders" in
+      # scripts/bench/README.md.
+      - uses: actions-rust-lang/setup-rust-toolchain@a188e68d0fd2bd36ad51dccb2b07ba6e75105f30 # v2
         with:
-          components: rust-src
           cache: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:

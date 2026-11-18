@@ -21,7 +21,7 @@ use jolt_sumcheck::{
     CenteredIntegerDomain, CommittedSumcheckConsistency, SumcheckClaim, SumcheckProof,
     SumcheckStatement,
 };
-use jolt_transcript::{Encoding, FieldTranscript};
+use jolt_transcript::{Encoding, FieldTranscript, PrivateChannel};
 
 use crate::stages::zk::committed::{self, CommittedOutputClaimOutput};
 use crate::verifier::CheckedInputs;
@@ -160,7 +160,7 @@ where
     // Match the prover transcript: the uni-skip output is absorbed as an
     // opening claim before any post-uni-skip draw (the remainder batch's RLC
     // coefficient squeeze in particular).
-    transcript.append(&output_claim);
+    transcript.append_private(&[output_claim]);
 
     let [challenge] = reduction.point.as_slice() else {
         return Err(params.sumcheck_failed("uni-skip proof did not reduce to one challenge"));

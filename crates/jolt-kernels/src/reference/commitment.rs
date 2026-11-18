@@ -143,8 +143,8 @@ where
 
 /// A committed column's derivation from the fact bundle: the increments
 /// directly, the one-hots through the consumer-held chunk selector. Shared
-/// with the optimized joint-opening kernel — the opened values must be the
-/// committed values, so both derive through this one type.
+/// with the optimized commit and joint-opening kernels — the opened values
+/// must be the committed values, so all of them derive through this one type.
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum ColumnKind {
     RdInc,

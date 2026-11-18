@@ -9,8 +9,25 @@
 //! impl; the seam (the traits, [`JoltBackend`], `ProofSession`, the wire
 //! types) never depends on this directory. The reference tier is the
 //! equivalence anchor optimized backends are tested against and the
-//! fallback partial backends compose over; it is eager-dense throughout — a
-//! test oracle at harness scale, never a performance path.
+//! fallback partial backends compose over. Its eager-dense compute-slot
+//! implementations are test oracles at harness scale, and
+//! `JoltBackend::optimized` replaces every one of them.
+//!
+//! Other reference code runs in production proofs, so its cost matters:
+//!
+//! - `reference/akita/` serves the commit slot under the `akita` feature,
+//!   which `JoltBackend::optimized` keeps.
+//! - The round scheduler stays `ReferenceBackend` in every mode.
+//! - `NaiveSumcheckProver` drives the optimized RAM RAF-evaluation kernel.
+//! - Optimized kernels call helpers in `views`, such as `eq_table`.
+//! - Without `akita`, the optimized commit and joint-opening slots derive
+//!   every trace column through `ColumnKind` in `reference/commitment.rs`.
+//!   The commit slot also delegates advice commits, field-inline witness
+//!   commits, and address-major or widened grids to
+//!   `reference/commitment.rs`, and the field-inline opening delegates to
+//!   `reference/opening.rs`.
+//! - Dory stage 0 requests the `annotated_ids` of the
+//!   `InstructionReadRafWitness` and `BytecodeReadRafWitness` types.
 
 #[cfg(feature = "akita")]
 use jolt_akita::TraceOneHotCommitment;
@@ -57,7 +74,6 @@ pub mod naive;
 pub mod opening;
 pub mod precommitted_reduction;
 pub mod program_image_claim_reduction;
-pub mod ram_hamming_booleanity;
 pub mod ram_output_check;
 pub mod ram_ra_claim_reduction;
 pub mod ram_ra_virtualization;
@@ -155,7 +171,6 @@ where
             booleanity_address: Box::new(ReferenceBackend),
             bytecode_read_raf_cycle: Box::new(ReferenceBackend),
             booleanity_cycle: Box::new(ReferenceBackend),
-            ram_hamming_booleanity: Box::new(ReferenceBackend),
             ram_ra_virtualization: Box::new(ReferenceBackend),
             instruction_ra_virtualization: Box::new(ReferenceBackend),
             inc_claim_reduction: Box::new(ReferenceBackend),

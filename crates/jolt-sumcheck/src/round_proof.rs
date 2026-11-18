@@ -1,6 +1,6 @@
 use jolt_field::Field;
 use jolt_poly::{UnivariatePoly, UnivariatePolynomial};
-use jolt_transcript::{Encoding, Transcript};
+use jolt_transcript::{Encoding, PrivateChannel, Transcript};
 
 use crate::error::SumcheckError;
 
@@ -21,10 +21,11 @@ pub trait ClearRound<F: Field>: RoundMessage {
     }
 }
 
-/// A round polynomial absorbs as one `u64` count word, then its
-/// coefficients. The prover chooses the degree up to the bound, so the count
-/// word keeps a longer polynomial from absorbing like a shorter one. Uni-skip
-/// and standard rounds absorb alike; their position tells them apart.
+/// A round polynomial absorbs as one public `u64` count word, then its
+/// coefficients as one private message. The prover chooses the degree up to
+/// the bound, so the count word keeps a longer polynomial from absorbing like
+/// a shorter one. Uni-skip and standard rounds absorb alike; their position
+/// tells them apart.
 impl<F: Field + Encoding> RoundMessage for UnivariatePoly<F> {
     fn degree(&self) -> usize {
         UnivariatePolynomial::degree(self)
@@ -33,7 +34,7 @@ impl<F: Field + Encoding> RoundMessage for UnivariatePoly<F> {
     fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
         let coeffs = self.coefficients();
         transcript.append(&(coeffs.len() as u64));
-        transcript.append_values(coeffs);
+        transcript.append_private(coeffs);
     }
 }
 
@@ -52,10 +53,10 @@ impl<F: Field + Encoding> ClearRound<F> for UnivariatePoly<F> {
 }
 
 /// Absorbs a compressed round's sent coefficients `[c0, c2, ..., cd]`: one
-/// `u64` count word, then the coefficients as one message zero-padded to a
-/// word. The prover's recorder, the verifier's compressed-proof loop and the
+/// public `u64` count word, then the coefficients as one private message.
+/// The prover's recorder, the verifier's compressed-proof loop and the
 /// BlindFold prover all call this, so the encoding has one owner.
-pub fn append_compressed_round<F: Encoding, T: Transcript>(transcript: &mut T, sent: &[F]) {
+pub fn append_compressed_round<F: Field + Encoding, T: Transcript>(transcript: &mut T, sent: &[F]) {
     transcript.append(&(sent.len() as u64));
-    transcript.append_values(sent);
+    transcript.append_private(sent);
 }

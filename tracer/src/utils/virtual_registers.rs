@@ -28,7 +28,8 @@ pub const CSR_MTVAL: u16 = 0x343;
 ///   - 36: mepc (exception PC)
 ///   - 37: mcause (trap cause)
 ///   - 38: mtval (trap value)
-///   - 39: mstatus (machine status)
+///   - 39: mstatus (machine status): only the writable bits MIE and MPIE;
+///     reads add the read-only MPP = M bits (0x1800)
 /// - Registers 40-47: Temporary registers for inline sequences (allocate())
 /// - Registers 48+: Registers for larger inlines (allocate_for_inline())
 ///

@@ -10,7 +10,7 @@ use std::{
 use std::{cell::Cell, num::NonZeroUsize};
 
 use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
-use akita_params::{OpeningScheduleSelection, ScheduleRowDigest};
+use akita_params::{OpeningScheduleSelection, ScheduleRowDigest, SetupMode};
 use akita_pcs::{
     new_prover_setup, AkitaCommitmentScheme, AkitaDeserialize, AkitaError,
     AkitaProverSetup as BackendProverSetup, AkitaSerialize, AkitaVerifier, CommitmentHandle,
@@ -371,6 +371,8 @@ impl AkitaSetupParams {
 #[derive(Debug)]
 pub(crate) struct FullWidthBackendSetup {
     pub(crate) scheme: AkitaCommitmentScheme<JoltDenseFull>,
+    /// The setup `backend` was built on.
+    pub(crate) expanded: Arc<AkitaExpandedSetup<AkitaField>>,
     pub(crate) backend: Arc<AkitaBackend>,
 }
 
@@ -393,10 +395,11 @@ impl AkitaProverSetup {
         if !field_len.is_power_of_two() {
             return Err(invalid_batch("setup domain must be a power of two"));
         }
-        let (prover, _) = self.one_hot_backend()?;
+        let (prover, backend) = self.one_hot_backend()?;
         if prover.expanded.descriptor().num_field_elements >= field_len {
             return Ok(self);
         }
+        let ring_switch_cache_limit = backend.max_cached_ring_switch_elements();
         let mut prover = prover.clone();
         let mut descriptor = prover.expanded.descriptor().clone();
         descriptor.num_field_elements = field_len;
@@ -405,13 +408,55 @@ impl AkitaProverSetup {
             AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(descriptor, matrix),
         );
         let public = one_hot_setup_verifier(&self.verifier, &prover)?;
-        let backend = AkitaBackend::new(Arc::clone(&prover.expanded)).map_err(akita_error)?;
+        let backend = AkitaBackend::with_ring_switch_cache_limit(
+            Arc::clone(&prover.expanded),
+            ring_switch_cache_limit,
+        )
+        .map_err(akita_error)?;
         // Other flavors and decoded catalogs remain valid. Detach only this
         // setup's one-hot cache; clones keep their original prepared verifier.
         self.verifier.backend_cache.one_hot = Default::default();
         self.one_hot_cpu_backend = Some(Arc::new(backend));
         self.one_hot_backend_prover_setup = Some(Arc::new(prover));
         self.verifier.prime_backend_cache(None, Some(public))?;
+        Ok(self)
+    }
+
+    /// Rebuilds every backend so that an opening streams its ring-switch NTT
+    /// operations: a kernel transforms the public-matrix rows of a
+    /// ring-switch relation as it reads them, where a default backend retains
+    /// their NTT form until the opening returns. Openings hold less memory
+    /// and take longer on large traces. Call before making commitments: a
+    /// handle proves only on the backend that committed it. Proofs keep their
+    /// bytes, because the route does not change the relation rows:
+    /// akita-cpu-backend's `arithmetic/streamed_tests.rs` checks that both
+    /// routes return equal rows.
+    pub fn with_streamed_ring_switch(mut self) -> Result<Self, OpeningsError> {
+        let streamed = |expanded: &Arc<AkitaExpandedSetup<AkitaField>>| {
+            AkitaBackend::with_ring_switch_cache_limit(Arc::clone(expanded), 0)
+                .map(Arc::new)
+                .map_err(akita_error)
+        };
+        if let Some(setup) = &self.backend_prover_setup {
+            self.cpu_backend = Some(streamed(&setup.expanded)?);
+        }
+        let cached_one_hot = self.one_hot_cpu_backend.clone();
+        if let Some(setup) = &self.one_hot_backend_prover_setup {
+            self.one_hot_cpu_backend = Some(streamed(&setup.expanded)?);
+        }
+        for full_width in self.full_width.values_mut() {
+            let backend = match (&cached_one_hot, &self.one_hot_cpu_backend) {
+                (Some(cached), Some(one_hot)) if Arc::ptr_eq(cached, &full_width.backend) => {
+                    Arc::clone(one_hot)
+                }
+                _ => streamed(&full_width.expanded)?,
+            };
+            *full_width = Arc::new(FullWidthBackendSetup {
+                scheme: full_width.scheme.clone(),
+                expanded: Arc::clone(&full_width.expanded),
+                backend,
+            });
+        }
         Ok(self)
     }
 
@@ -822,6 +867,7 @@ impl AkitaVerifierSetup {
                         scheme.schedules().clone(),
                         prepared.selection(),
                         Some(prepared.terminal_cache()?),
+                        SetupMode::Check,
                     )
                     .map_err(invalid_setup)
                 })?;

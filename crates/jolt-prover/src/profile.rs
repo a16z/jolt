@@ -52,11 +52,13 @@ use jolt_dory::DoryScheme;
 #[cfg(not(feature = "akita"))]
 use jolt_field::Fr;
 use jolt_field::JoltField;
+use jolt_host::memory::Allocatable;
 use jolt_host::{GuestElf, JoltProgramSource, Program};
 // Keep the inline libraries linked so their host-side registrations reach the tracer.
 use jolt_inlines_keccak256 as _;
 use jolt_inlines_secp256k1 as _;
 use jolt_inlines_sha2 as _;
+use jolt_kernels::optimized::StreamingFamilies;
 use jolt_profiling::summary::{finalize_trace, ProfileSummary, SummaryContext};
 use jolt_profiling::{
     format_memory_size, report_stage_boundaries, setup_tracing_with_trace_path, PeakMemory,
@@ -105,6 +107,14 @@ fn scale_to_target_ops(target_cycles: usize, cycles_per_op: f64) -> u32 {
 const PROTOCOL_SUFFIX: &str = "";
 #[cfg(feature = "akita")]
 const PROTOCOL_SUFFIX: &str = "_akita";
+
+/// The compiled protocol's name: `run.protocol` in `summary.json`, `pcs` in
+/// `--result-json` (checked against the suite case by `scripts/bench/run.py`),
+/// and the `--protocol` value `scripts/benchmark_summary.py` selects its rows by.
+#[cfg(not(feature = "akita"))]
+const PROTOCOL: &str = "dory";
+#[cfg(feature = "akita")]
+const PROTOCOL: &str = "akita";
 
 /// The run identity `modular_{workload}{protocol}_{scale}{backend}` — the
 /// trace-name stem shared by the run directory, the `latest_` link (which
@@ -319,6 +329,17 @@ pub struct ProfileArgs {
     #[clap(long, value_enum, default_value = "reference")]
     pub backend: BackendKind,
 
+    /// Comma-separated streaming kernel families: instruction-input, spartan, ram,
+    /// registers, instruction-rows. An `akita` build also accepts ring-switch: the
+    /// Akita opening transforms the setup-matrix rows of its ring-switch relations
+    /// as it reads them instead of caching their NTT form, which lowers the
+    /// opening's memory and costs time on large traces.
+    /// Requires --backend optimized. Uses row recomputation or sparse RAM events,
+    /// not a process-memory limit. Cannot be combined with --memory-budget:
+    /// its reservations price only eager kernels.
+    #[clap(long, value_parser = parse_streaming_selection, conflicts_with = "memory_budget")]
+    pub streaming: Option<StreamingSelection>,
+
     /// Prebuilt guest ELF; bypasses guest compilation in this process.
     #[clap(long)]
     pub guest_elf: Option<PathBuf>,
@@ -336,9 +357,14 @@ pub struct ProfileArgs {
     #[clap(long, value_parser = parse_akita_chunk_profile, default_value = "w1r0")]
     pub akita_chunk_profile: AkitaChunkProfile,
 
-    /// Explicit memory budget in bytes: an integer with an optional binary
-    /// suffix (KiB, MiB, GiB or TiB; e.g. 32GiB). Requires `--backend
-    /// optimized`. The profile reserves against it in turn and returns an
+    /// Memory budget: bytes as an integer with an optional binary suffix
+    /// (KiB, MiB, GiB or TiB; e.g. 32GiB), or `auto`. Requires `--backend
+    /// optimized`. `auto` is read from the host after tracing: what it can
+    /// still give this process (the smaller of `MemAvailable` and each cgroup
+    /// v2 `memory.max` on its path less that cgroup's usage other than file
+    /// cache) plus the buffers the process already holds and reserves below.
+    /// A host whose limits cannot be read fails an `auto` run.
+    /// The profile reserves against the budget in turn and returns an
     /// error at the first reservation that does not fit. After tracing and
     /// before PCS setup, it reserves the input, the trace output, the program
     /// and program preprocessing buffers, the public-I/O clone's request,
@@ -348,11 +374,23 @@ pub struct ProfileArgs {
     /// which the matrix check does not price. Passing does not mean the whole
     /// proof fits, and the budget does not cap process memory.
     #[clap(long, value_parser = parse_memory_budget)]
-    pub memory_budget: Option<MemoryBudget>,
+    pub memory_budget: Option<MemoryBudgetArg>,
 }
 
-/// `--memory-budget`: bytes, optionally scaled by a binary suffix.
-fn parse_memory_budget(value: &str) -> StdResult<MemoryBudget, String> {
+/// `--memory-budget`'s value.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MemoryBudgetArg {
+    Bytes(MemoryBudget),
+    /// What the host can still give the process when the run reads it
+    /// ([`Allocatable::read`]), beside the owners the run already holds.
+    Auto,
+}
+
+/// `--memory-budget`: `auto`, or bytes, optionally scaled by a binary suffix.
+fn parse_memory_budget(value: &str) -> StdResult<MemoryBudgetArg, String> {
+    if value == "auto" {
+        return Ok(MemoryBudgetArg::Auto);
+    }
     let (digits, shift) = [("KiB", 10), ("MiB", 20), ("GiB", 30), ("TiB", 40)]
         .into_iter()
         .find_map(|(suffix, shift)| value.strip_suffix(suffix).map(|digits| (digits, shift)))
@@ -361,13 +399,85 @@ fn parse_memory_budget(value: &str) -> StdResult<MemoryBudget, String> {
         .parse::<usize>()
         .ok()
         .and_then(|count| count.checked_mul(1usize.checked_shl(shift)?))
-        .map(MemoryBudget::from_bytes)
+        .map(|bytes| MemoryBudgetArg::Bytes(MemoryBudget::from_bytes(bytes)))
         .ok_or_else(|| {
-            format!("expected bytes with an optional KiB, MiB, GiB or TiB suffix, got {value:?}")
+            format!(
+                "expected auto, or bytes with an optional KiB, MiB, GiB or TiB suffix, got {value:?}"
+            )
         })
 }
 
+/// `--streaming`'s value.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct StreamingSelection {
+    /// The kernel families the backend installs.
+    pub families: StreamingFamilies,
+    /// Whether the Akita prover setup streams its openings' ring-switch NTT
+    /// operations ([`jolt_akita::AkitaProverSetup::with_streamed_ring_switch`]).
+    #[cfg(feature = "akita")]
+    pub ring_switch: bool,
+}
+
+fn parse_streaming_selection(value: &str) -> StdResult<StreamingSelection, String> {
+    let mut selection = StreamingSelection::default();
+    let families = &mut selection.families;
+    for family in value.split(',') {
+        match family {
+            "instruction-input" => families.instruction_input = true,
+            "spartan" => families.spartan = true,
+            "ram" => families.ram = true,
+            "registers" => families.registers = true,
+            "instruction-rows" => families.instruction_rows = true,
+            #[cfg(feature = "akita")]
+            "ring-switch" => selection.ring_switch = true,
+            _ => {
+                let expected = if cfg!(feature = "akita") {
+                    "instruction-input, spartan, ram, registers, instruction-rows or ring-switch"
+                } else {
+                    "instruction-input, spartan, ram, registers or instruction-rows"
+                };
+                return Err(format!("unknown family {family:?}; expected {expected}"));
+            }
+        }
+    }
+    Ok(selection)
+}
+
 impl ProfileArgs {
+    fn streaming_families(&self) -> Vec<String> {
+        let selection = self.streaming.unwrap_or_default();
+        let mut names = Vec::new();
+        if selection.families.instruction_input {
+            names.push("instruction-input".to_string());
+        }
+        if selection.families.spartan {
+            names.push("spartan".to_string());
+        }
+        if selection.families.ram {
+            names.push("ram".to_string());
+        }
+        if selection.families.registers {
+            names.push("registers".to_string());
+        }
+        if selection.families.instruction_rows {
+            names.push("instruction-rows".to_string());
+        }
+        #[cfg(feature = "akita")]
+        if selection.ring_switch {
+            names.push("ring-switch".to_string());
+        }
+        names
+    }
+
+    fn streaming_suffix(&self) -> String {
+        let names = self.streaming_families();
+        if names.is_empty() {
+            String::new()
+        } else {
+            format!("_streaming_{}", names.join("_").replace('-', "_"))
+        }
+    }
+
     #[cfg(feature = "akita")]
     fn chunk_profile_suffix(&self) -> String {
         match self.akita_chunk_profile {
@@ -383,21 +493,21 @@ impl ProfileArgs {
         let name = self.name.as_str().to_string();
         #[cfg(feature = "akita")]
         let name = format!("{name}{}", self.chunk_profile_suffix());
-        name
+        format!("{name}{}", self.streaming_suffix())
     }
 
     fn benchmark_name(&self) -> String {
         let name = format!("{}{PROTOCOL_SUFFIX}", self.name.as_str());
         #[cfg(feature = "akita")]
         let name = format!("{name}{}", self.chunk_profile_suffix());
-        name
+        format!("{name}{}", self.streaming_suffix())
     }
 
     fn trace_name(&self, scale: u32) -> String {
         let name = trace_name(self.name, scale, self.backend);
         #[cfg(feature = "akita")]
         let name = format!("{name}{}", self.chunk_profile_suffix());
-        name
+        format!("{name}{}", self.streaming_suffix())
     }
 }
 
@@ -493,8 +603,12 @@ type ProfileResult<T> = StdResult<T, Box<dyn Error + Send + Sync>>;
 ///
 /// Returns a `--memory-budget` below what its checks reserve
 /// ([`ProverError::MemoryBudgetExceeded`](crate::ProverError::MemoryBudgetExceeded)),
+/// a host whose limits `--memory-budget auto` cannot read
+/// ([`MemoryDiscoveryError`](jolt_host::memory::MemoryDiscoveryError)),
 /// and, under Akita, a PCS setup failure, such as a budgeted setup shape the
 /// matrix limit does not price.
+/// Streaming selections require the optimized backend and cannot be combined
+/// with a memory budget, whose reservations price only eager kernels.
 ///
 /// # Panics
 ///
@@ -504,6 +618,14 @@ type ProfileResult<T> = StdResult<T, Box<dyn Error + Send + Sync>>;
 /// subscriber-installing format (the global tracing subscriber can only be
 /// set once).
 pub fn run(args: &ProfileArgs) -> ProfileResult<ProfileArtifacts> {
+    if args.streaming.is_some() {
+        if args.memory_budget.is_some() {
+            return Err("--streaming cannot be combined with --memory-budget: streaming kernels are not priced".into());
+        }
+        if args.backend != BackendKind::Optimized {
+            return Err("--streaming requires --backend optimized".into());
+        }
+    }
     assert!(
         args.memory_budget.is_none() || args.backend == BackendKind::Optimized,
         "--memory-budget checks the optimized prover's reservation; pass --backend optimized"
@@ -561,6 +683,8 @@ pub fn run(args: &ProfileArgs) -> ProfileResult<ProfileArtifacts> {
         workload: args.workload_name(),
         scale_log2: scale,
         backend: args.backend.as_str().to_string(),
+        protocol: PROTOCOL.to_string(),
+        streaming_families: args.streaming_families(),
     };
     let (summary_file, summary) =
         finalize_trace(&trace_path, &ctx, peak).expect("finalize chrome trace");
@@ -629,6 +753,7 @@ pub fn run_sweep(args: &BenchmarkArgs) -> bool {
         ]
     });
     let exe = std::env::current_exe().expect("resolve current executable");
+    let backend = args.backend.as_str();
 
     let mut completed = 0u32;
     let mut skipped = 0u32;
@@ -638,7 +763,6 @@ pub fn run_sweep(args: &BenchmarkArgs) -> bool {
         println!("=== Running benchmarks at scale 2^{scale} ===");
         for &workload in &workloads {
             let name = workload.as_str();
-            let backend = args.backend.as_str();
             // A completed run flips the `latest_` link, so its presence is
             // the resume marker (dangling links read as absent).
             let latest_link = format!(
@@ -699,8 +823,8 @@ pub fn run_sweep(args: &BenchmarkArgs) -> bool {
     }
     println!();
     println!("Render results with:");
-    println!("  python3 scripts/benchmark_summary.py");
-    println!("  python3 scripts/plot_benchmarks.py");
+    println!("  python3 scripts/benchmark_summary.py --protocol {PROTOCOL} --backend {backend}");
+    println!("  python3 scripts/plot_benchmarks.py --backend {backend}");
     println!("  python3 scripts/plot_memory_usage.py");
 
     failed.is_empty()
@@ -776,6 +900,32 @@ fn migrate_legacy_timings_csv(path: &Path) -> Result<()> {
         migrated.push('\n');
     }
     fs::write(path, migrated)
+}
+
+/// The budget of a run the host can still give `allocatable` bytes: those
+/// bytes plus the owners the run holds when its budget checks start, since the
+/// host's reading no longer includes them and the checks reserve each at this
+/// size: an input buffer of `input_capacity` bytes, the trace output with its
+/// trace, the program and its preprocessing. A sum past `usize` is the largest
+/// budget, which no reservation exceeds.
+fn automatic_budget(
+    allocatable: u64,
+    input_capacity: usize,
+    trace: &TraceOutput,
+    program: &JoltProgram,
+    preprocessing: &JoltProgramPreprocessing,
+) -> MemoryBudget {
+    MemoryBudget::from_bytes(
+        [
+            usize::try_from(allocatable).unwrap_or(usize::MAX),
+            input_capacity,
+            trace.heap_bytes(),
+            program.heap_bytes(),
+            preprocessing.heap_bytes(),
+        ]
+        .into_iter()
+        .fold(0, usize::saturating_add),
+    )
 }
 
 fn reserve_profile_owners<F: JoltField>(
@@ -857,25 +1007,44 @@ fn run_workload(args: &ProfileArgs, scale: u32, run_dir: &Path) -> ProfileResult
     assert!(!trace_output.device.panic, "benchmark guest panicked");
     let memory_budget = args
         .memory_budget
-        .map(|budget| budget.reserve::<ProofField>(input.capacity()))
+        .map(|request| -> ProfileResult<MemoryBudget> {
+            let budget = match request {
+                MemoryBudgetArg::Bytes(budget) => budget,
+                MemoryBudgetArg::Auto => {
+                    let allocatable = Allocatable::read()?;
+                    let budget = automatic_budget(
+                        allocatable.bytes,
+                        input.capacity(),
+                        &trace_output,
+                        &jolt_program,
+                        &program_preprocessing,
+                    );
+                    println!(
+                        "modular {bench_name} (2^{scale}, {backend_label}): Memory budget auto: {} bytes, the host's {allocatable} plus the run's live owners",
+                        budget.bytes(),
+                    );
+                    budget
+                }
+            };
+            Ok(budget.reserve::<ProofField>(input.capacity())?)
+        })
         .transpose()?;
     let run = prove_workload(
         &jolt_program,
         program_preprocessing,
         trace_output,
-        backend,
+        args,
         e2e_start,
         memory_budget,
-        #[cfg(feature = "akita")]
-        args.akita_chunk_profile,
     )?;
     let (duration, proof_size) = (run.duration, run.proof_size);
 
     if let Some(path) = &args.result_json {
         let metrics = serde_json::json!({
             "workload": bench_name,
-            "pcs": if cfg!(feature = "akita") { "akita" } else { "dory" },
+            "pcs": PROTOCOL,
             "backend": backend_label,
+            "streaming_families": args.streaming_families(),
             "scale_log2": scale,
             "e2e_s": run.e2e_duration.as_secs_f64(),
             "prove_s": duration.as_secs_f64(),
@@ -979,7 +1148,7 @@ fn prove_workload(
     jolt_program: &Arc<JoltProgram>,
     program_preprocessing: JoltProgramPreprocessing,
     trace_output: TraceOutput,
-    backend: BackendKind,
+    args: &ProfileArgs,
     e2e_start: Instant,
     memory_budget: Option<MemoryBudget>,
 ) -> ProfileResult<ProvenRun> {
@@ -1005,7 +1174,7 @@ fn prove_workload(
     }
     let shared_preprocessing =
         JoltSharedPreprocessing::new(program_preprocessing).expect("shared preprocessing");
-    let setup_span = tracing::info_span!("profile_pcs_setup", protocol = "dory");
+    let setup_span = tracing::info_span!("profile_pcs_setup", protocol = PROTOCOL);
     let setup_guard = setup_span.enter();
     let setup_now = Instant::now();
     let prover_preprocessing =
@@ -1025,9 +1194,10 @@ fn prove_workload(
         JoltVmWitnessInputs::new(jolt_program, &program_preprocessing, trace_output),
     ));
 
-    let backend = match backend {
+    let backend = match args.backend {
         BackendKind::Reference => JoltBackend::<Fr, DoryScheme>::reference(),
-        BackendKind::Optimized => JoltBackend::<Fr, DoryScheme>::optimized(),
+        BackendKind::Optimized => JoltBackend::<Fr, DoryScheme>::optimized()
+            .with_streaming(args.streaming.unwrap_or_default().families),
     };
 
     // --- The measured window: the full modular prove (witness
@@ -1092,10 +1262,9 @@ fn prove_workload(
     jolt_program: &Arc<JoltProgram>,
     program_preprocessing: JoltProgramPreprocessing,
     trace_output: TraceOutput,
-    backend: BackendKind,
+    args: &ProfileArgs,
     e2e_start: Instant,
     memory_budget: Option<MemoryBudget>,
-    chunk_profile: AkitaChunkProfile,
 ) -> ProfileResult<ProvenRun> {
     use crate::akita::preprocessing::AkitaVc;
     use crate::JoltProverPreprocessing;
@@ -1104,9 +1273,11 @@ fn prove_workload(
     use jolt_transcript::{Keccak, ProverState, VerifierState};
     use jolt_verifier::{JoltVerifierPreprocessing, ProgramPreprocessing};
 
-    let backend = match backend {
+    let backend = match args.backend {
         BackendKind::Reference => JoltBackend::reference(),
-        BackendKind::Optimized => JoltBackend::optimized(),
+        BackendKind::Optimized => {
+            JoltBackend::optimized().with_streaming(args.streaming.unwrap_or_default().families)
+        }
     };
 
     let memory_layout = program_preprocessing.memory_layout.clone();
@@ -1120,7 +1291,7 @@ fn prove_workload(
         max_trace_length,
     )
     .expect("derive config");
-    config.akita_chunk_profile = chunk_profile;
+    config.akita_chunk_profile = args.akita_chunk_profile;
     let budget = memory_budget
         .map(|budget| {
             reserve_profile_owners::<AkitaField>(
@@ -1144,7 +1315,7 @@ fn prove_workload(
     )
     .expect("Akita setup parameters");
     let shared = JoltSharedPreprocessing::new(program_preprocessing).expect("shared preprocessing");
-    let setup_span = tracing::info_span!("profile_pcs_setup", protocol = "akita");
+    let setup_span = tracing::info_span!("profile_pcs_setup", protocol = PROTOCOL);
     let setup_guard = setup_span.enter();
     let setup_now = Instant::now();
     let (pcs_setup, verifier_setup) = match budget {
@@ -1160,6 +1331,11 @@ fn prove_workload(
             }
         }
         None => AkitaScheme::setup(params)?,
+    };
+    let pcs_setup = if args.streaming.unwrap_or_default().ring_switch {
+        pcs_setup.with_streamed_ring_switch()?
+    } else {
+        pcs_setup
     };
     let setup_duration = setup_now.elapsed();
     drop(setup_guard);

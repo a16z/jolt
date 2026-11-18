@@ -2,6 +2,7 @@ mod build_wasm;
 
 use std::{
     fs::{self, File},
+    hash::{DefaultHasher, Hash, Hasher},
     io::Write,
     path::PathBuf,
     process::{exit, Command},
@@ -183,9 +184,24 @@ fn build_command(args: JoltBuildArgs) -> Result<()> {
 
     let opt_flag = guest_opt_flag();
 
-    // Strip symbols for smaller ELFs. Preserve them when JOLT_BACKTRACE is set
-    // or --backtrace enable is passed, so the tracer can symbolize panic backtraces.
-    // In auto mode (default), strip for release and preserve for debug/dev profiles.
+    // rustc does not track -T contents. Keep these rendering inputs in sync with
+    // zeroos-build's LinkerConfig construction and private backtrace resolution.
+    let mut linker_inputs = DefaultHasher::new();
+    [
+        LINKER_TEMPLATE,
+        &args.base.memory_origin,
+        &args.base.memory_size,
+        &args.base.stack_size,
+        &args.base.heap_size,
+        &format!("{:?}", args.base.mode),
+        &format!("{:?}", args.base.backtrace),
+    ]
+    .hash(&mut linker_inputs);
+    let linker_cfg = format!(
+        "--cfg=jolt_linker_inputs=\"{:016x}\"",
+        linker_inputs.finish()
+    );
+
     let backtrace_via_env = std::env::var("JOLT_BACKTRACE")
         .map(|v| !v.is_empty() && v != "0")
         .unwrap_or(false);
@@ -195,7 +211,7 @@ fn build_command(args: JoltBuildArgs) -> Result<()> {
         BacktraceMode::Dwarf | BacktraceMode::FramePointers
     );
 
-    let preserve_symbols = backtrace_via_env
+    let preserve_debuginfo = backtrace_via_env
         || force_frame_pointers
         || match args.base.backtrace {
             BacktraceMode::Auto => {
@@ -217,12 +233,13 @@ fn build_command(args: JoltBuildArgs) -> Result<()> {
         "-Cllvm-args=-max-store-memcpy=32",
         "-Cllvm-args=-max-store-memset=32",
         "--cfg=getrandom_backend=\"custom\"",
+        &linker_cfg,
     ];
 
     if args.base.mode == StdMode::Std {
         // Rust 1.95 gates generated target specs behind this flag; zeroos-build sets RUSTC_BOOTSTRAP.
         jolt_rustflags.push("-Zunstable-options");
-        // The ELF decoder requires instruction-only text; LLVM's large model puts pools there.
+        // Medium keeps LLVM constant pools out of .text; the decoder accepts `$d`-marked data there.
         jolt_rustflags.push("-Ccode-model=medium");
     }
 
@@ -257,8 +274,9 @@ fn build_command(args: JoltBuildArgs) -> Result<()> {
     std::env::set_var("CARGO_PROFILE_DEV_TRIM_PATHS", "all");
     std::env::set_var("CARGO_PROFILE_RELEASE_TRIM_PATHS", "all");
 
-    if !preserve_symbols {
-        jolt_rustflags.push("-Cstrip=symbols");
+    if !preserve_debuginfo {
+        // The ELF loader needs $x/$d mapping symbols to classify executable bytes.
+        jolt_rustflags.push("-Cstrip=debuginfo");
     }
 
     // Frame pointers change generated code — only enable for explicit --backtrace modes,
@@ -281,6 +299,18 @@ fn build_command(args: JoltBuildArgs) -> Result<()> {
     if let Some(target_dir) = target_dir {
         std::env::set_var("CARGO_TARGET_DIR", target_dir);
     }
+
+    // zeroos-build rewrites the shared linker script before cargo takes its own
+    // lock, so a concurrent build with another layout could link against this
+    // script and cache the ELF under its own key. Serialize script write and link.
+    // Not `.jolt-build.lock`: the SDK parent holds that file in this directory.
+    let lock_dir = zeroos_build::project::get_target_directory(&workspace_root)?;
+    fs::create_dir_all(&lock_dir).context("create the guest target directory")?;
+    let linker_lock =
+        File::create(lock_dir.join(".jolt-linker.lock")).context("open the guest linker lock")?;
+    linker_lock
+        .lock()
+        .context("acquire the guest linker lock")?;
 
     zeroos_build::cmds::build_binary_with_rustflags(
         &workspace_root,

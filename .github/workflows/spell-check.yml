@@ -1,0 +1,20 @@
+name: Spell check
+
+# No path filter: typos checks documentation as well as code, so it also runs
+# on the documentation-only changes that rust.yml's path filter skips.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  typos:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: crate-ci/typos@2611abd15acb0c2e317fb9e45855aabb8b35a414 # v1.52.1
+        with:
+          files: .
