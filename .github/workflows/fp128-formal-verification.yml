@@ -106,7 +106,9 @@ jobs:
 
       - name: Key the HOL Light build
         id: hol-light-key
-        run: echo "key=hol-light-${ImageOS:?}-${{ runner.arch }}-${ImageVersion:?}-${{ hashFiles('proofs/hol-light/build-hol-light.sh') }}" >> "$GITHUB_OUTPUT"
+        run: |
+          key=$(./proofs/hol-light/build-hol-light.sh --cache-key)
+          echo "key=hol-light-$key" >> "$GITHUB_OUTPUT"
 
       - name: Restore the HOL Light build
         id: hol-light
