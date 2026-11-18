@@ -183,17 +183,6 @@ jobs:
       - name: Minimize weekly corpus
         if: success() && steps.profile.outputs.name == 'weekly'
         run: python3 scripts/fuzz.py --workspace "${{ matrix.workspace }}" --target-triple x86_64-unknown-linux-gnu cmin
-      # Coverage builds carry -C instrument-coverage instead of ASan; giving
-      # them their own target dir (and cache) keeps the two instrumentation
-      # flavors from invalidating each other's artifacts every week.
-      - name: Cache coverage builds
-        if: success() && steps.profile.outputs.name == 'weekly'
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
-        with:
-          path: ${{ matrix.directory }}/target-coverage
-          key: fuzz-coverage-build-v1-${{ runner.os }}-${{ matrix.workspace }}-${{ hashFiles(format('{0}/Cargo.lock', matrix.directory)) }}
-          restore-keys: |
-            fuzz-coverage-build-v1-${{ runner.os }}-${{ matrix.workspace }}-
       - name: Generate weekly coverage
         if: success() && steps.profile.outputs.name == 'weekly'
         run: python3 scripts/fuzz.py --workspace "${{ matrix.workspace }}" --target-triple x86_64-unknown-linux-gnu coverage
