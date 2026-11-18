@@ -372,7 +372,7 @@ class FuzzInventoryTests(unittest.TestCase):
             self.assertIn("alpha/one (exit 101)", errors.getvalue())
             self.assertIn("beta/two (exit 101)", errors.getvalue())
 
-    def test_run_uses_manifest_budgets_and_seconds_override(self) -> None:
+    def test_run_budget_is_mutation_time_after_the_corpus_replay(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory).resolve()
             self.make_validated_workspace(root, targets=("alpha",))
@@ -387,13 +387,20 @@ class FuzzInventoryTests(unittest.TestCase):
                     "run_command",
                     side_effect=lambda command, **_: commands.append(command) or 0,
                 ),
+                mock.patch.object(FUZZ, "time") as clock,
                 redirect_stdout(StringIO()),
             ):
+                # Per run: start, end of the replay, end of the fuzzing run.
+                clock.monotonic.side_effect = (0.0, 12.4, 630.0, 0.0, 0.2, 8.0)
                 self.assertEqual(FUZZ.main(("run", "--profile", "daily")), 0)
                 self.assertEqual(FUZZ.main(("run", "--seconds", "7")), 0)
 
-            self.assertIn("-max_total_time=600", commands[0])
-            self.assertIn("-max_total_time=7", commands[1])
+            replay, fuzz, replay_override, fuzz_override = commands
+            self.assertEqual(replay[-1], "-runs=0")
+            self.assertEqual(fuzz[:-1], replay[:-1])
+            self.assertEqual(fuzz[-1], "-max_total_time=612")
+            self.assertEqual(replay_override[-1], "-runs=0")
+            self.assertEqual(fuzz_override[-1], "-max_total_time=7")
 
     def test_target_features_reach_check_build_and_run_commands(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -716,11 +723,13 @@ class FuzzInventoryTests(unittest.TestCase):
                 )
                 self.assertEqual(FUZZ.main(("--sanitizer", "none", "coverage")), 0)
 
-            self.assertEqual([command[3] for command in commands], ["run", "coverage"])
+            self.assertEqual(
+                [command[3] for command in commands], ["run", "run", "coverage"]
+            )
             for command in commands:
                 self.assertEqual(command[command.index("--sanitizer") + 1], "none")
             self.assertEqual(
-                commands[1][commands[1].index("--target-dir") + 1],
+                commands[2][commands[2].index("--target-dir") + 1],
                 str(fuzz_dir / "target-coverage"),
             )
 

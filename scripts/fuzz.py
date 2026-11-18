@@ -411,7 +411,6 @@ def run_for_targets(
                 command.extend(
                     [
                         "--",
-                        f"-max_total_time={seconds}",
                         f"-max_len={args.max_len}",
                         f"-timeout={args.timeout}",
                         f"-rss_limit_mb={args.rss_limit_mb}",
@@ -440,13 +439,28 @@ def run_for_targets(
                 raise AssertionError(f"unsupported target command {args.command}")
 
             started = time.monotonic()
-            status = run_command(command, cwd=root)
+            if args.command == "run":
+                # libFuzzer measures -max_total_time from process start and
+                # first tests it after executing every corpus input, so the
+                # limit alone lets the corpus replay use the mutation budget
+                # up. -runs=0 stops libFuzzer right after that replay; its
+                # duration is added to the fuzzing run's limit, which replays
+                # the same inputs again before it mutates.
+                status = run_command([*command, "-runs=0"], cwd=root)
+                replay = time.monotonic() - started
+                if status == 0:
+                    status = run_command(
+                        [*command, f"-max_total_time={seconds + round(replay)}"],
+                        cwd=root,
+                    )
+            else:
+                status = run_command(command, cwd=root)
             elapsed = time.monotonic() - started
             if args.command == "run":
                 print(
                     f"[stats] {workspace.name}/{target.name}: exit={status} "
                     f"focus={target.focus} budget={seconds}s "
-                    f"elapsed={elapsed:.1f}s",
+                    f"replay={replay:.1f}s elapsed={elapsed:.1f}s",
                     flush=True,
                 )
             if status != 0:

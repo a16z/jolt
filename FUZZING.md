@@ -144,6 +144,12 @@ missing, non-integer, or non-positive budget. `check` and `inventory` report
 each workspace's total runtime per profile; soundness-focused targets get the
 largest budgets, and hot parser/no-panic targets the smallest.
 
+A budget is time spent mutating. libFuzzer measures `-max_total_time` from
+process start and executes every corpus input before it first tests the limit,
+so `run` first replays the corpus directories alone (`-runs=0`) and then starts
+the fuzzing run with the budget plus the duration of that replay. A target's
+wall time is therefore its budget plus two replays of its corpus.
+
 The current allocations are priors, not measurements. Before materially
 changing a budget, run the [calibration procedure](specs/production-fuzz-infra.md#budget-calibration) and reallocate toward targets that still reach
 new high-value states. A plateaued soundness target keeps a baseline budget;
@@ -158,7 +164,7 @@ without forcing every verifier fuzz target into that feature mode.
 
 Each `run` invocation prints libFuzzer status lines, final statistics
 (`-print_final_stats=1`), and a runner `[stats]` line per target with exit
-status, focus, budget, and elapsed time. The signals to read:
+status, focus, budget, corpus replay time, and elapsed time. The signals to read:
 
 - **exec/s** — throughput. High values on a protocol target often mean inputs
   are rejected before reaching the interesting path, not that fuzzing is going
