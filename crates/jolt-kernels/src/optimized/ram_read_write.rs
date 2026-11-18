@@ -1035,12 +1035,18 @@ mod tests {
     fn protected_io_mask_matches_reference_in_both_binding_orders() {
         let lowest = super::super::testing::fixture_lowest_address();
         let layout = MemoryLayout {
+            max_trusted_advice_size: 16,
             trusted_advice_start: lowest,
             trusted_advice_end: lowest + 16,
+            max_untrusted_advice_size: 16,
             untrusted_advice_start: lowest + 16,
             untrusted_advice_end: lowest + 32,
+            max_input_size: 8,
             input_start: lowest + 32,
             input_end: lowest + 40,
+            output_start: lowest + 40,
+            output_end: lowest + 40,
+            io_end: lowest + 40,
             stack_end: lowest + 88,
             heap_end: lowest + 256,
             ..Default::default()

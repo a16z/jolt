@@ -138,11 +138,19 @@ fn ram_padding(addresses: [u64; 3]) -> [[u64; 3]; 3] {
         addresses[1], heap_end,
         "the host must use the guest's heap end"
     );
+    assert!(
+        addresses.iter().all(|address| address.is_multiple_of(8)) && addresses[2] >= heap_end,
+        "the host must pass doublewords, the last one past the heap"
+    );
     let mut loads = [[0; 3]; 3];
     for (i, (&address, loads)) in addresses.iter().zip(&mut loads).enumerate() {
         let word = address as *mut u64;
-        // SAFETY: each address is a doubleword of the admitted RAM domain
-        // that no I/O segment, allocation or stack holds.
+        // SAFETY: each address is a doubleword (asserted above) outside every
+        // Rust object: the e2e harness (`ram_padding` in
+        // crates/jolt-prover/tests/e2e_matrix.rs) passes the first I/O-gap
+        // word below RAM, `heap_end` (checked against the linker above) and
+        // the last word of the admitted domain. The tracer faults on an
+        // address outside that domain.
         unsafe {
             loads[0] = core::ptr::read_volatile(word);
             core::ptr::write_volatile(word, 0x0123_4567_89ab_cdef ^ i as u64);

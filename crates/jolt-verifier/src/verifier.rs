@@ -1604,7 +1604,10 @@ mod tests {
         // would make the RAF identity blind to digit zero.
         memory_layout.trusted_advice_start = 0;
         memory_layout.untrusted_advice_start = 0;
-        let preprocessing = test_preprocessing_with_layout(memory_layout);
+        let mut preprocessing = test_preprocessing();
+        if let ProgramPreprocessing::Full(full) = &mut preprocessing.program {
+            Arc::make_mut(full).memory_layout = memory_layout;
+        }
         let public_io = JoltDevice {
             memory_layout: preprocessing.program.memory_layout().clone(),
             ..JoltDevice::default()
@@ -2143,14 +2146,8 @@ mod tests {
         })
     }
 
-    fn test_preprocessing() -> JoltVerifierPreprocessing<TestPcs, Pedersen<Bn254G1>> {
-        test_preprocessing_with_layout(test_memory_layout())
-    }
-
     #[expect(clippy::expect_used, reason = "test fixture")]
-    fn test_preprocessing_with_layout(
-        memory_layout: common::jolt_device::MemoryLayout,
-    ) -> JoltVerifierPreprocessing<TestPcs, Pedersen<Bn254G1>> {
+    fn test_preprocessing() -> JoltVerifierPreprocessing<TestPcs, Pedersen<Bn254G1>> {
         let entry_row = JoltInstructionRow {
             instruction_kind: JoltInstructionKind::ADDI,
             address: usize::try_from(RAM_START_ADDRESS).expect("RAM start fits usize"),
@@ -2164,7 +2161,7 @@ mod tests {
         let program = JoltProgramPreprocessing::new(
             vec![entry_row],
             Vec::new(),
-            memory_layout,
+            test_memory_layout(),
             RAM_START_ADDRESS,
             MIN_PADDED_TRACE_LENGTH,
             JOLT_VERIFIER_INSTRUCTION_PROFILE,

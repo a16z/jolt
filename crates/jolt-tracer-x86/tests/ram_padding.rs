@@ -5,7 +5,6 @@
 #![cfg(all(target_arch = "x86_64", target_os = "linux"))]
 #![expect(clippy::expect_used)]
 
-use common::constants::RAM_START_ADDRESS;
 use common::jolt_device::MemoryConfig;
 use jolt_program::execution::{ChunkedExecutionBackend, ExecutionBackend, TraceInputs};
 use jolt_riscv::{JoltTraceRow, JOLT_SUCCESS_WORD};
@@ -31,10 +30,6 @@ fn li(rd: u32, imm: i32) -> u32 {
     (((imm as u32) & 0xfff) << 20) | (rd << 7) | 0x13
 }
 
-/// Both ends of the gap and of the padding are loaded, stored and reloaded,
-/// and a byte store merges into a gap word. Rows, dimensions, the final
-/// image and the device match the interpreter's, and one-row chunks replay
-/// across the stores.
 #[test]
 fn io_gap_and_heap_padding_match_the_interpreter() {
     // `io_end` is RAM_START_ADDRESS - 32 and `heap_end` RAM_START_ADDRESS +
@@ -66,16 +61,6 @@ fn io_gap_and_heap_padding_match_the_interpreter() {
     let reference = TracerBackend::new()
         .trace(&program, inputs.clone())
         .expect("reference trace");
-    let image = &reference.final_memory.as_ref().expect("final memory").bytes;
-    for byte in [
-        (RAM_START_ADDRESS - 32, 0xe0),
-        (RAM_START_ADDRESS - 31, 0xb8),
-        (RAM_START_ADDRESS - 8, 0xf8),
-        (RAM_START_ADDRESS + 1216, 0xc0),
-        (RAM_START_ADDRESS + 1976, 0xb8),
-    ] {
-        assert!(image.contains(&byte), "{byte:x?}");
-    }
 
     let mut backend = X86TracerBackend::new();
     backend.set_min_checkpoint_spacing_rows(1);

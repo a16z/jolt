@@ -86,6 +86,8 @@ fn verify_address_witness(
         ram: RamReadWriteInputClaims {
             ram_read_value: lerp(read, tau),
             ram_write_value: lerp([read[0] + increments[0], read[1] + increments[1]], tau),
+            // The relation reads the two flags only as their sum, so every
+            // memory row, a load included, carries `Store`.
             load: Fr::zero(),
             store: lerp(memory_rows, tau),
         },

@@ -54,7 +54,12 @@ only if it covers the I/O region, the I/O gap and the program image and does not
 exceed `max_ram_K`.
 
 Layout admission requires `heap_end <= 2^64 - 8` and
-`lowest_address + 8 * max_ram_K <= 2^64`.
+`lowest_address + 8 * max_ram_K <= 2^64`. It also requires the I/O segments
+(advice, inputs, outputs) to follow one another from `lowest_address` without
+gaps or overlap, each doubleword aligned and exactly its configured size, with
+each advice capacity zero or a power of two, each advice segment starting at a
+multiple of its size from `lowest_address`, and `io_end = output_end <=
+RAM_START_ADDRESS` (`MemoryLayout::validate_io_segments`).
 Checked layout construction, full and committed preprocessing admission, and
 verifier-key deserialization enforce these bounds before execution or verification.
 The ELF decoder also rejects odd instruction addresses, matching bytecode admission's

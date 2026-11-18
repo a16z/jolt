@@ -1,7 +1,5 @@
 const TEST_MEMORY_CAPACITY: u64 = DEFAULT_HEAP_SIZE;
 
-const PROGRAM_MEMORY_CAPACITY: u64 = DEFAULT_HEAP_SIZE;
-
 extern crate fnv;
 
 use crate::instruction::Cycle;
@@ -38,6 +36,7 @@ use self::terminal::Terminal;
 use common::constants::{DEFAULT_HEAP_SIZE, RAM_START_ADDRESS};
 use common::jolt_device::JoltDevice;
 use jolt_program::execution::TraceError;
+use jolt_riscv::JoltInstructionProfile;
 #[cfg(not(feature = "field-inline"))]
 use jolt_riscv::RV64IMAC_JOLT_ALL_INLINES;
 #[cfg(feature = "field-inline")]
@@ -46,6 +45,21 @@ use std::io::Write;
 use std::path::Path;
 
 const FAILURE_ENDCODE: u64 = 1;
+
+/// The address of the `tohost` symbol by which the tracer recognizes a
+/// riscv-tests ELF: present and nonzero. Any other ELF is a Jolt guest.
+pub fn tohost_address(symbols: &FnvHashMap<String, u64>) -> Option<u64> {
+    symbols
+        .get("tohost")
+        .copied()
+        .filter(|&address| address != 0)
+}
+
+/// The instruction profile the tracer decodes a guest ELF under.
+#[cfg(not(feature = "field-inline"))]
+pub const GUEST_PROFILE: JoltInstructionProfile = RV64IMAC_JOLT_ALL_INLINES;
+#[cfg(feature = "field-inline")]
+pub const GUEST_PROFILE: JoltInstructionProfile = RV64IMAC_JOLT_FIELD_INLINE;
 
 /// Returns `payload >> 1` only for an HTIF syscall-proxy exit command:
 /// device (bits 63..56) and command (bits 55..48) must both be zero, and
@@ -233,8 +247,16 @@ impl Emulator {
     /// and configure CPU properly. If the passed contend doesn't seem ELF file,
     /// it panics. This method is expected to be called only once.
     ///
+    /// An ELF that is not a riscv-tests ELF ([`tohost_address`]) is a Jolt
+    /// guest, whose `JoltDevice` sizes its RAM: attach the device first, as
+    /// [`crate::create_emulator`] does, or this panics.
+    ///
     /// # Arguments
     /// * `data` Program binary
+    #[expect(
+        clippy::expect_used,
+        reason = "like protect_code, setup has no error path: a Jolt guest's missing device is a caller bug"
+    )]
     pub fn setup_program(&mut self, data: &[u8]) {
         let analyzer = ElfAnalyzer::new(data);
 
@@ -262,7 +284,7 @@ impl Emulator {
             .extend(analyzer.read_symbol_map(&header, &section_headers));
 
         // Find tohost, begin_signature, and end_signature addresses from symbol map since they are all global labels
-        self.tohost_addr = self.symbol_map.get("tohost").copied().unwrap_or(0);
+        self.tohost_addr = tohost_address(&self.symbol_map).unwrap_or(0);
         self.begin_signature_addr = self.symbol_map.get("begin_signature").copied().unwrap_or(0);
         self.end_signature_addr = self.symbol_map.get("end_signature").copied().unwrap_or(0);
 
@@ -299,7 +321,8 @@ impl Emulator {
             layout_ram_size.map_or(TEST_MEMORY_CAPACITY, |size| size.min(TEST_MEMORY_CAPACITY))
         } else {
             self.is_test = false;
-            layout_ram_size.unwrap_or(PROGRAM_MEMORY_CAPACITY)
+            layout_ram_size
+                .expect("a Jolt guest's JoltDevice must be attached before setup_program")
         };
         self.cpu.get_mut_mmu().init_memory(memory_capacity);
 
@@ -350,11 +373,7 @@ impl Emulator {
         reason = "no error path, like create_emulator on over-long I/O: it panics without a JoltDevice or on a program image jolt-program rejects"
     )]
     pub fn protect_code(&mut self, elf_contents: &[u8]) {
-        #[cfg(not(feature = "field-inline"))]
-        let profile = RV64IMAC_JOLT_ALL_INLINES;
-        #[cfg(feature = "field-inline")]
-        let profile = RV64IMAC_JOLT_FIELD_INLINE;
-        let image = jolt_program::image::decode_elf(elf_contents, profile)
+        let image = jolt_program::image::decode_elf(elf_contents, GUEST_PROFILE)
             .expect("program ELF decoding failed");
         let mmu = self.cpu.get_mut_mmu();
         let jolt_device = mmu.jolt_device.as_ref().expect("JoltDevice not set");
@@ -580,7 +599,16 @@ mod tests {
     fn run_test_fails_a_stall_in_an_elf_without_tohost() {
         let symbols = tohost_symbols();
         let without_tohost = &symbols[..1];
-        let mut emulator = emulator_with(&[0x0000_006f], without_tohost, StrtabOrder::GnuLd); // j .
+        let mut emulator = Emulator::new(Box::new(DefaultTerminal::default()));
+        emulator.get_mut_cpu().get_mut_mmu().jolt_device = Some(JoltDevice::new(&MemoryConfig {
+            program_size: Some(4),
+            ..Default::default()
+        }));
+        emulator.setup_program(&build_elf64(
+            &[0x0000_006f], // j .
+            without_tohost,
+            StrtabOrder::GnuLd,
+        ));
         assert_eq!(emulator.tohost_addr, 0);
         assert_eq!(emulator.run_test(false, false), 1);
     }

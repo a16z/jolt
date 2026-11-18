@@ -1,6 +1,7 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     fmt::{Display, Formatter, Result as FmtResult},
+    io::{Error as IoError, Result as IoResult},
 };
 
 use jolt_claims::protocols::jolt::{
@@ -8,7 +9,8 @@ use jolt_claims::protocols::jolt::{
         instruction::InputVirtualization, ram::ReadWriteChecking as RamReadWriteChecking,
         registers::ReadWriteChecking as RegistersReadWriteChecking, spartan::Shift,
     },
-    JoltPolynomialId, JoltRelationId, JoltVirtualPolynomial, UnbatchedClaim as Claim,
+    InstructionInputPublic, JoltDerivedId, JoltPolynomialId, JoltRelationId, JoltVirtualPolynomial,
+    RamReadWritePublic, RegistersReadWritePublic, SpartanShiftPublic, UnbatchedClaim as Claim,
     UnbatchedClaimExpr as ClaimExpr, UnbatchedRelation as RelationClaims,
 };
 use jolt_lookup_tables::LookupTableKind;
@@ -18,6 +20,57 @@ use crate::{
     modules::{AsModule, Module},
     util::indent,
 };
+
+/// The `RamReadWriteChecking_Vars` field that `memory_step` (in the package
+/// template's `Jolt/MemOps.lean`) binds to the write-protected-word mask C at
+/// the doubleword a cycle accesses.
+const WRITE_PROTECTED: &str = "WriteProtected";
+
+/// A claim's public weight, lowered to the per-cycle model: cycle equality
+/// states the identity at every cycle, successor-cycle equality links each
+/// cycle to the next, and a further public factor becomes a per-cycle
+/// variable that multiplies the claim's output.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CycleWeight {
+    Cycle,
+    NextCycle,
+    WriteProtectedCycle,
+}
+
+impl CycleWeight {
+    fn of(claim: &Claim) -> IoResult<Self> {
+        let weight = match claim.output_weight {
+            JoltDerivedId::RamReadWrite(public) => match public {
+                RamReadWritePublic::EqCycle => Self::Cycle,
+                RamReadWritePublic::WriteProtectedEqCycle => Self::WriteProtectedCycle,
+                RamReadWritePublic::Reserved2(retired) => match retired {},
+            },
+            JoltDerivedId::RegistersReadWrite(public) => match public {
+                RegistersReadWritePublic::EqCycle => Self::Cycle,
+            },
+            JoltDerivedId::InstructionInput(public) => match public {
+                InstructionInputPublic::EqProduct => Self::Cycle,
+            },
+            JoltDerivedId::SpartanShift(public) => match public {
+                SpartanShiftPublic::EqPlusOneOuter | SpartanShiftPublic::EqPlusOneProduct => {
+                    Self::NextCycle
+                }
+            },
+            weight => {
+                return Err(IoError::other(format!(
+                    "ZKLean has no lowering for the claim weight {weight:?}"
+                )))
+            }
+        };
+        if claim.offset != (weight == Self::NextCycle) {
+            return Err(IoError::other(format!(
+                "the claim weight {:?} disagrees with the claim's cycle offset",
+                claim.output_weight
+            )));
+        }
+        Ok(weight)
+    }
+}
 
 /// The per-cycle identities underlying the four relations exported to ZKLean.
 /// The runtime sumchecks fold this same metadata by their gamma challenges.
@@ -112,11 +165,28 @@ impl ZkLeanSumchecks {
         &self,
         f: &mut impl std::io::Write,
         mut indent_level: usize,
-    ) -> std::io::Result<()> {
+    ) -> IoResult<()> {
         let top_level_indent = indent_level;
         let vars_type = "SumcheckVars";
 
-        for (relation, vars) in &self.vars {
+        let mut declared = self.vars.clone();
+        let mut lowered = Vec::with_capacity(self.claims.len());
+        for relation in &self.claims {
+            let mut claims = Vec::with_capacity(relation.claims.len());
+            for claim in &relation.claims {
+                let weight = CycleWeight::of(claim)?;
+                if weight == CycleWeight::WriteProtectedCycle {
+                    declared
+                        .entry(relation.output_relation)
+                        .or_default()
+                        .insert(String::from(WRITE_PROTECTED));
+                }
+                claims.push((claim, weight));
+            }
+            lowered.push((relation.output_relation, claims));
+        }
+
+        for (relation, vars) in &declared {
             if *relation == JoltRelationId::SpartanOuter || vars.is_empty() {
                 continue;
             }
@@ -145,7 +215,7 @@ impl ZkLeanSumchecks {
             "{}JoltR1CSInputs : JoltR1CSInputs f",
             indent(indent_level)
         )?;
-        for (relation, vars) in &self.vars {
+        for (relation, vars) in &declared {
             if *relation == JoltRelationId::SpartanOuter || vars.is_empty() {
                 continue;
             }
@@ -157,38 +227,33 @@ impl ZkLeanSumchecks {
 
         let mut uniform = Vec::new();
         let mut non_uniform = Vec::new();
-        for relation in &self.claims {
-            let (offset, same_cycle): (Vec<_>, Vec<_>) =
-                relation.claims.iter().partition(|claim| claim.offset);
+        for (output_relation, claims) in &lowered {
+            let (offset, same_cycle): (Vec<_>, Vec<_>) = claims
+                .iter()
+                .partition(|(_, weight)| *weight == CycleWeight::NextCycle);
             if !same_cycle.is_empty() {
-                let name = format!(
-                    "{}.uniform_claims",
-                    relation_ident(relation.output_relation)
-                );
+                let name = format!("{}.uniform_claims", relation_ident(*output_relation));
                 uniform.push(name.clone());
                 pretty_print_claims_fun(
                     f,
                     &name,
                     vars_type,
                     &same_cycle,
-                    relation.output_relation,
+                    *output_relation,
                     false,
                     indent_level,
                 )?;
                 writeln!(f)?;
             }
             if !offset.is_empty() {
-                let name = format!(
-                    "{}.non_uniform_claims",
-                    relation_ident(relation.output_relation)
-                );
+                let name = format!("{}.non_uniform_claims", relation_ident(*output_relation));
                 non_uniform.push(name.clone());
                 pretty_print_claims_fun(
                     f,
                     &name,
                     vars_type,
                     &offset,
-                    relation.output_relation,
+                    *output_relation,
                     true,
                     indent_level,
                 )?;
@@ -247,32 +312,40 @@ fn pretty_print_claims_fun(
     f: &mut impl std::io::Write,
     name: &str,
     vars_type: &str,
-    claims: &[&Claim],
+    claims: &[&(&Claim, CycleWeight)],
     output_relation: JoltRelationId,
     offset: bool,
     mut indent_level: usize,
-) -> std::io::Result<()> {
+) -> IoResult<()> {
     let arguments = if offset { "cycle next_cycle" } else { "cycle" };
+    let output_vars = if offset { "next_cycle" } else { "cycle" };
     writeln!(
         f,
         "{}def {name} [Field f] ({arguments} : {vars_type} f) : ZKBuilder f PUnit := do",
         indent(indent_level)
     )?;
     indent_level += 1;
-    for claim in claims {
+    for (claim, weight) in claims {
         writeln!(f, "{}ZKBuilder.constrainEq", indent(indent_level))?;
         indent_level += 1;
         write!(f, "{}", indent(indent_level))?;
         pretty_print_claim_expr(f, "cycle", claim.input_relation, &claim.input, true)?;
         writeln!(f)?;
         write!(f, "{}", indent(indent_level))?;
-        pretty_print_claim_expr(
-            f,
-            if offset { "next_cycle" } else { "cycle" },
-            output_relation,
-            &claim.output,
-            true,
-        )?;
+        match weight {
+            CycleWeight::Cycle | CycleWeight::NextCycle => {
+                pretty_print_claim_expr(f, output_vars, output_relation, &claim.output, true)?;
+            }
+            CycleWeight::WriteProtectedCycle => {
+                write!(
+                    f,
+                    "({output_vars}.{}.{WRITE_PROTECTED} * ",
+                    relation_ident(output_relation)
+                )?;
+                pretty_print_claim_expr(f, output_vars, output_relation, &claim.output, true)?;
+                write!(f, ")")?;
+            }
+        }
         writeln!(f)?;
         indent_level -= 1;
     }
@@ -285,7 +358,7 @@ fn pretty_print_claim_expr(
     relation: JoltRelationId,
     expr: &ClaimExpr,
     group: bool,
-) -> std::io::Result<()> {
+) -> IoResult<()> {
     match expr {
         ClaimExpr::Constant(value) => write!(f, "{value}"),
         ClaimExpr::Polynomial(polynomial) => {
@@ -313,7 +386,7 @@ fn pretty_print_claim_expr(
 }
 
 impl AsModule for ZkLeanSumchecks {
-    fn as_module(&self) -> std::io::Result<Module> {
+    fn as_module(&self) -> IoResult<Module> {
         let mut contents = Vec::new();
         self.zklean_pretty_print(&mut contents, 0)?;
         Ok(Module {
@@ -336,5 +409,17 @@ mod tests {
             "(1 - cycle.JoltR1CSInputs.NextIsNoop)\n    (1 - next_cycle.SpartanShift_Vars.InstructionFlags_IsNoop)"
         ));
         assert!(!lean.contains("NextIsNoop : ZKExpr f"));
+    }
+
+    /// The write-protection claim keeps its mask C, so the model forbids a
+    /// value-changing store only on a word `memory_step` marks protected.
+    #[test]
+    fn ram_write_protection_claim_keeps_its_mask() {
+        let module = ZkLeanSumchecks::extract::<64>().as_module().unwrap();
+        let lean = String::from_utf8(module.contents).unwrap();
+        assert!(lean.contains("\n  WriteProtected : ZKExpr f\n"));
+        assert!(lean.contains(
+            "    0\n    (cycle.RamReadWriteChecking_Vars.WriteProtected * (cycle.RamReadWriteChecking_Vars.RamRa * cycle.RamReadWriteChecking_Vars.RamInc))"
+        ));
     }
 }

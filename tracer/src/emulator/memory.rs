@@ -333,8 +333,8 @@ impl Memory {
     }
 
     pub(crate) fn validate_address(&self, address: u64) -> bool {
-        let word_index = (address >> 3) as usize;
-        word_index < self.data.get_num_doublewords()
+        usize::try_from(address >> 3)
+            .is_ok_and(|word_index| word_index < self.data.get_num_doublewords())
     }
 
     pub fn get_byte(&self, address: u64) -> u8 {

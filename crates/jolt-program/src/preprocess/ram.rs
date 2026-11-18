@@ -340,7 +340,7 @@ pub fn compute_max_ram_k(memory_layout: &MemoryLayout) -> Result<usize, RamDomai
         | MemoryLayoutError::HeapEndTooHigh { .. }
         | MemoryLayoutError::HeapEndUnaligned { .. }
         | MemoryLayoutError::IoTooLong { .. }
-        | MemoryLayoutError::IoOutsideOutputCheck { .. }) => RamDomainError::MemoryLayout(error),
+        | MemoryLayoutError::IoSegmentMisplaced { .. }) => RamDomainError::MemoryLayout(error),
     })
 }
 
@@ -393,7 +393,7 @@ mod tests {
     use super::{
         compute_max_ram_k, compute_min_ram_k, PublicInitialRam, RAMPreprocessing, RamDomainError,
     };
-    use common::jolt_device::{JoltDevice, MemoryConfig, MemoryLayoutError};
+    use common::jolt_device::{JoltDevice, MemoryConfig, MemoryLayout, MemoryLayoutError};
 
     fn bounded_device() -> JoltDevice {
         JoltDevice::new(&MemoryConfig {
@@ -428,14 +428,18 @@ mod tests {
 
     #[test]
     fn protected_regions_merge_at_zero_and_clip_to_the_proof_domain() {
-        let mut layout = bounded_device().memory_layout;
+        // Trusted advice, untrusted advice and inputs hold words 0-1, 2 and 3-4.
+        let mut layout = MemoryLayout::new(&MemoryConfig {
+            program_size: Some(1024),
+            max_trusted_advice_size: 16,
+            max_untrusted_advice_size: 8,
+            max_input_size: 16,
+            max_output_size: 16,
+            stack_size: 8,
+            heap_size: 8,
+        });
         let lowest = layout.get_lowest_address();
-        layout.untrusted_advice_start = lowest;
-        layout.untrusted_advice_end = lowest + 8;
-        layout.trusted_advice_start = lowest + 8;
-        layout.trusted_advice_end = lowest + 24;
-        layout.input_start = lowest + 24;
-        layout.input_end = lowest + 40;
+        assert_eq!(layout.input_end, lowest + 40);
         layout.stack_end = lowest + 62;
         let code = 4..8;
         let intervals = super::write_protected_word_intervals(code.clone(), &layout, 16).unwrap();
@@ -535,20 +539,6 @@ mod tests {
             Err(RamDomainError::AddressSpaceOverflow {
                 lowest_address,
                 max_ram_k: 1usize << 61
-            })
-        );
-
-        layout.trusted_advice_start = 1u64 << 63;
-        layout.untrusted_advice_start = 1u64 << 63;
-        layout.heap_end = u64::MAX - 7;
-        assert_eq!(compute_max_ram_k(&layout), Ok(1usize << 60));
-        layout.trusted_advice_start += 8;
-        layout.untrusted_advice_start += 8;
-        assert_eq!(
-            compute_max_ram_k(&layout),
-            Err(RamDomainError::AddressSpaceOverflow {
-                lowest_address: (1u64 << 63) + 8,
-                max_ram_k: 1usize << 60
             })
         );
     }

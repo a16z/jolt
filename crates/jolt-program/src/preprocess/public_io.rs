@@ -22,42 +22,43 @@ pub struct PublicIoMemory {
 impl PublicIoMemory {
     pub fn new(public_io: &JoltDevice) -> Result<Self, MemoryLayoutError> {
         let layout = &public_io.memory_layout;
+        // Packing starts each segment at lane 0 of a word.
+        layout.validate_io_segments()?;
         let io_mask_start = layout.remapped_word_address(layout.input_start)? as u128;
         let io_mask_end = layout.remapped_word_address(layout.output_end)? as u128;
         let io_num_vars = io_mask_end.next_power_of_two().max(1).ilog2() as usize;
         let mut segments = Vec::new();
 
-        for (region, start, len, words) in [
+        for (region, start, max, len, words) in [
             (
                 "Input",
                 layout.input_start,
+                layout.max_input_size,
                 public_io.inputs.len(),
                 public_io.input_words_le(),
             ),
             (
                 "Output",
                 layout.output_start,
+                layout.max_output_size,
                 public_io.outputs.len(),
                 public_io.output_words_le(),
             ),
         ] {
+            // An over-long input would overlap the outputs' words, and an
+            // over-long output would reach past `io_mask_end`, where the output
+            // check binds no word.
+            let len = u64::try_from(len).unwrap_or(u64::MAX);
+            if len > max {
+                return Err(MemoryLayoutError::IoTooLong { region, len, max });
+            }
             if words.is_empty() {
                 continue;
             }
-            let start_index = layout.remapped_word_address(start)? as u128;
-            // The output check binds no word outside the mask, and the
-            // verifier's ValIo evaluation aliases a word at or past
-            // `2^io_num_vars`.
-            if start_index < io_mask_start || start_index + words.len() as u128 > io_mask_end {
-                return Err(MemoryLayoutError::IoOutsideOutputCheck {
-                    region,
-                    start,
-                    len: u64::try_from(len).unwrap_or(u64::MAX),
-                    mask_start: layout.input_start,
-                    mask_end: layout.output_end,
-                });
-            }
-            segments.push(PublicMemorySegment { start_index, words });
+            segments.push(PublicMemorySegment {
+                start_index: layout.remapped_word_address(start)? as u128,
+                words,
+            });
         }
 
         Ok(Self {
@@ -112,7 +113,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_public_io_outside_the_mask() {
+    fn rejects_public_io_outside_its_segment() {
         let mut device = JoltDevice::new(&MemoryConfig {
             program_size: Some(1024),
             max_trusted_advice_size: 8,
@@ -122,24 +123,25 @@ mod tests {
             ..Default::default()
         });
         let layout = device.memory_layout.clone();
-        let outside = |start, len| MemoryLayoutError::IoOutsideOutputCheck {
-            region: "Output",
-            start,
-            len,
-            mask_start: layout.input_start,
-            mask_end: layout.output_end,
-        };
         device.outputs = vec![1; 17];
         assert_eq!(
             PublicIoMemory::new(&device),
-            Err(outside(layout.output_start, 17))
+            Err(MemoryLayoutError::IoTooLong {
+                region: "Output",
+                len: 17,
+                max: 16
+            })
         );
 
         device.outputs = vec![1];
         device.memory_layout.output_start = layout.trusted_advice_start;
         assert_eq!(
             PublicIoMemory::new(&device),
-            Err(outside(layout.trusted_advice_start, 1))
+            Err(MemoryLayoutError::IoSegmentMisplaced {
+                region: "Output",
+                start: layout.trusted_advice_start,
+                end: layout.output_end
+            })
         );
     }
 

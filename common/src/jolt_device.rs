@@ -59,15 +59,12 @@ pub enum MemoryLayoutError {
         len: u64,
         max: u64,
     },
-    /// A public I/O segment, `len` bytes from `start`, does not lie inside
-    /// `[mask_start, mask_end)`, the input and output words the RAM output
-    /// check binds.
-    IoOutsideOutputCheck {
+    /// The `region` segment `[start, end)` breaks the I/O segment layout that
+    /// [`MemoryLayout::validate_io_segments`] admits.
+    IoSegmentMisplaced {
         region: &'static str,
         start: u64,
-        len: u64,
-        mask_start: u64,
-        mask_end: u64,
+        end: u64,
     },
 }
 
@@ -116,15 +113,9 @@ impl Display for MemoryLayoutError {
                 f,
                 "{region} too long: got {len} bytes, max is {max} bytes (the configured size rounded up to a multiple of eight)"
             ),
-            Self::IoOutsideOutputCheck {
-                region,
-                start,
-                len,
-                mask_start,
-                mask_end,
-            } => write!(
+            Self::IoSegmentMisplaced { region, start, end } => write!(
                 f,
-                "{region} of {len} bytes at {start:#x} does not fit inside [{mask_start:#x}, {mask_end:#x}), the input and output words the RAM output check binds"
+                "{region} segment [{start:#x}, {end:#x}) is misplaced: the I/O segments must follow one another from the lowest address without gaps or overlap, each doubleword aligned and spanning its configured size, each advice segment must start at a multiple of its size from the lowest address, and io_end must equal output_end at or below RAM_START_ADDRESS"
             ),
         }
     }
@@ -438,7 +429,8 @@ pub struct MemoryLayout {
     /// Exclusive end of the I/O segments and start of the I/O gap. `try_new`
     /// sets it to `output_end` and pads the region so that the gap holds at
     /// least the doubleword at `io_end` (`io_end <= RAM_START_ADDRESS - 8`);
-    /// verifier-key admission does not recheck this.
+    /// admission rechecks only `io_end == output_end <= RAM_START_ADDRESS`
+    /// ([`Self::validate_io_segments`]).
     pub io_end: u64,
 }
 
@@ -516,17 +508,7 @@ impl MemoryLayout {
         let stack_size = align_up(config.stack_size, "stack")?;
         let heap_size = align_up(config.heap_size, "heap")?;
 
-        // Critical for ValEvaluation and ValFinal sumchecks in RAM
-        if max_trusted_advice_size != 0 && !max_trusted_advice_size.is_power_of_two() {
-            return Err(MemoryLayoutError::InvalidTrustedAdviceSize {
-                size: max_trusted_advice_size,
-            });
-        }
-        if max_untrusted_advice_size != 0 && !max_untrusted_advice_size.is_power_of_two() {
-            return Err(MemoryLayoutError::InvalidUntrustedAdviceSize {
-                size: max_untrusted_advice_size,
-            });
-        }
+        Self::validate_advice_sizes(max_trusted_advice_size, max_untrusted_advice_size)?;
 
         // Reserving a doubleword past the outputs keeps the I/O gap nonempty
         // for every layout: `io_end <= RAM_START_ADDRESS - 8`.
@@ -660,11 +642,14 @@ impl MemoryLayout {
         Ok(())
     }
 
-    /// Computes and admits the maximum padded RAM domain for this layout.
-    /// Construction, verifier-key admission and the tracers' memory bound
-    /// ([`Self::ram_size`]) all use this sizing law.
+    /// Computes and admits the maximum padded RAM domain for this layout,
+    /// and admits its heap end and I/O segments ([`Self::validate_io_segments`]).
+    /// Construction, verifier-key admission, each proof's input validation
+    /// and the tracers' memory bound ([`Self::ram_size`]) all use this sizing
+    /// law.
     pub fn max_ram_k(&self) -> Result<usize, MemoryLayoutError> {
         self.validate_heap_end()?;
+        self.validate_io_segments()?;
         let lowest_address = self.get_lowest_address();
         let total_bytes = self.heap_end.checked_sub(lowest_address).ok_or(
             MemoryLayoutError::HeapBelowLowest {
@@ -685,6 +670,85 @@ impl MemoryLayout {
             });
         }
         Ok(max_ram_k)
+    }
+
+    /// Ensures the I/O segments follow one another from the lowest address
+    /// without gaps or overlap, each doubleword aligned and exactly its
+    /// configured size: the two advice segments, each of zero or power-of-two
+    /// size and starting at a multiple of its size from the lowest address,
+    /// then inputs, then outputs, ending at `io_end = output_end <=
+    /// RAM_START_ADDRESS`. The public I/O packing and the RAM output check
+    /// address these segments in whole words, the RAM value sumchecks open
+    /// each advice segment as one block of its size, and the verifier bounds
+    /// each segment's contents by its configured size. Admission repeats this
+    /// check for layouts decoded from verifier keys.
+    pub fn validate_io_segments(&self) -> Result<(), MemoryLayoutError> {
+        Self::validate_advice_sizes(self.max_trusted_advice_size, self.max_untrusted_advice_size)?;
+        let mut advice = [
+            (
+                "Trusted advice",
+                self.trusted_advice_start,
+                self.trusted_advice_end,
+                self.max_trusted_advice_size,
+            ),
+            (
+                "Untrusted advice",
+                self.untrusted_advice_start,
+                self.untrusted_advice_end,
+                self.max_untrusted_advice_size,
+            ),
+        ];
+        advice.sort_unstable_by_key(|&(_, start, end, _)| (start, end));
+        let lowest = self.get_lowest_address();
+        let mut previous_end = lowest;
+        for (region, start, end, size) in advice.into_iter().chain([
+            (
+                "Input",
+                self.input_start,
+                self.input_end,
+                self.max_input_size,
+            ),
+            (
+                "Output",
+                self.output_start,
+                self.output_end,
+                self.max_output_size,
+            ),
+        ]) {
+            if start != previous_end
+                || !start.is_multiple_of(8)
+                || !size.is_multiple_of(8)
+                || end.checked_sub(start) != Some(size)
+            {
+                return Err(MemoryLayoutError::IoSegmentMisplaced { region, start, end });
+            }
+            previous_end = end;
+        }
+        if self.io_end != previous_end || self.io_end > RAM_START_ADDRESS {
+            return Err(MemoryLayoutError::IoSegmentMisplaced {
+                region: "I/O gap",
+                start: self.io_end,
+                end: RAM_START_ADDRESS,
+            });
+        }
+        for (region, start, end, size) in advice {
+            if size != 0 && !(start - lowest).is_multiple_of(size) {
+                return Err(MemoryLayoutError::IoSegmentMisplaced { region, start, end });
+            }
+        }
+        Ok(())
+    }
+
+    /// Advice capacities are zero or powers of two: the RAM value sumchecks
+    /// open each advice segment as one block of its size.
+    fn validate_advice_sizes(trusted: u64, untrusted: u64) -> Result<(), MemoryLayoutError> {
+        if trusted != 0 && !trusted.is_power_of_two() {
+            return Err(MemoryLayoutError::InvalidTrustedAdviceSize { size: trusted });
+        }
+        if untrusted != 0 && !untrusted.is_power_of_two() {
+            return Err(MemoryLayoutError::InvalidUntrustedAdviceSize { size: untrusted });
+        }
+        Ok(())
     }
 
     /// Bytes from `RAM_START_ADDRESS` to the end of the admitted RAM domain,
@@ -1065,6 +1129,76 @@ mod tests {
             Err(MemoryLayoutError::HeapEndUnaligned {
                 heap_end: layout.heap_end - 1
             })
+        );
+    }
+
+    #[test]
+    fn admission_rejects_misplaced_io_segments() {
+        let layout = MemoryLayout::new(&MemoryConfig {
+            program_size: Some(1024),
+            max_trusted_advice_size: 16,
+            max_untrusted_advice_size: 8,
+            ..Default::default()
+        });
+        let misplaced =
+            |region, start, end| Err(MemoryLayoutError::IoSegmentMisplaced { region, start, end });
+        let lowest = layout.get_lowest_address();
+        let (start, end) = (layout.output_start, layout.output_end);
+
+        let mut decoded = layout.clone();
+        decoded.output_end += 4;
+        assert_eq!(decoded.max_ram_k(), misplaced("Output", start, end + 4));
+        decoded.max_output_size += 4;
+        decoded.io_end += 4;
+        assert_eq!(decoded.max_ram_k(), misplaced("Output", start, end + 4));
+
+        let mut decoded = layout.clone();
+        for bound in [
+            &mut decoded.trusted_advice_start,
+            &mut decoded.trusted_advice_end,
+            &mut decoded.untrusted_advice_start,
+            &mut decoded.untrusted_advice_end,
+            &mut decoded.input_start,
+            &mut decoded.input_end,
+            &mut decoded.output_start,
+            &mut decoded.output_end,
+            &mut decoded.io_end,
+        ] {
+            *bound += 4;
+        }
+        assert_eq!(
+            decoded.max_ram_k(),
+            misplaced("Trusted advice", lowest + 4, lowest + 20)
+        );
+
+        let mut decoded = layout.clone();
+        decoded.max_input_size += 8;
+        decoded.input_end += 8;
+        assert_eq!(decoded.max_ram_k(), misplaced("Output", start, end));
+
+        let mut decoded = layout.clone();
+        decoded.io_end += 8;
+        assert_eq!(
+            decoded.max_ram_k(),
+            misplaced("I/O gap", end + 8, RAM_START_ADDRESS)
+        );
+
+        let mut decoded = layout.clone();
+        decoded.max_untrusted_advice_size = 24;
+        assert_eq!(
+            decoded.max_ram_k(),
+            Err(MemoryLayoutError::InvalidUntrustedAdviceSize { size: 24 })
+        );
+
+        // The smaller advice segment first leaves the larger one off its block.
+        let mut decoded = layout.clone();
+        decoded.untrusted_advice_start = lowest;
+        decoded.untrusted_advice_end = lowest + 8;
+        decoded.trusted_advice_start = lowest + 8;
+        decoded.trusted_advice_end = lowest + 24;
+        assert_eq!(
+            decoded.max_ram_k(),
+            misplaced("Trusted advice", lowest + 8, lowest + 24)
         );
     }
 
