@@ -448,7 +448,6 @@ mod tests {
             instruction_kind,
             ..instruction(address, virtual_sequence_remaining)
         };
-        // A halt as the last row of a multi-row instruction, and as its first.
         for run in [
             vec![
                 instruction(0x8000_0004, Some(1)),
@@ -494,7 +493,6 @@ mod tests {
             preprocessing.entry_instruction(),
             preprocessing.bytecode.get(1)
         );
-        // Address 0 resolves to the padding sentinel; 0x8000_0008 to no row.
         for entry_address in [0, 0x8000_0008] {
             let moved = BytecodePreprocessing {
                 entry_address,

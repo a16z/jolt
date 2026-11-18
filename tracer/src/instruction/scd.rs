@@ -189,8 +189,8 @@ mod tests {
         );
     }
 
-    /// SC.D to a non-RAM (I/O) address must be rejected by the
-    /// inline-sequence RAM-range constraint. Same rationale as SC.W.
+    /// SC.D to a non-RAM (I/O) address must fail the RAM guard that
+    /// `expand_sc_success` emits.
     #[test]
     #[should_panic(expected = "assertion failed")]
     fn test_scd_to_io_rejected() {

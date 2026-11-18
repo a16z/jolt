@@ -134,7 +134,6 @@ mod tests {
 
     #[test]
     fn shared_preprocessing_rejects_an_entry_without_an_instruction_row() {
-        // An entry absent from the bytecode, and one naming the padding row.
         for program in [
             program_with_entry(Vec::new(), RAM_START_ADDRESS),
             program_with_entry(vec![addi_at_ram_start()], 0),
