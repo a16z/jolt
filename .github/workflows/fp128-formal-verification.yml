@@ -23,6 +23,7 @@ on:
       - "Cargo.toml"
       - "rust-toolchain.toml"
       - ".cargo/**"
+      - "!**/*.md"
 
 permissions:
   contents: read

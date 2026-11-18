@@ -5,10 +5,20 @@ on:
     branches: [main]
   pull_request:
     branches: ["**", main]
-    paths-ignore:
-      - "specs/**"
-      - "*.md"
-      - ".claude/**"
+    # Skips changes confined to documentation that no job here reads; typos
+    # runs from spell-check.yml, which has no path filter. `paths-ignore` takes
+    # no exceptions, so the exclusions are `!` patterns, and a later pattern wins.
+    paths:
+      - "**"
+      - "!specs/**"
+      - "!.claude/**"
+      - "!**/*.md"
+      - "!book/src/**"
+      - "!book/theme/**"
+      - "!imgs/**"
+      # The `style` job runs scripts.tests.test_ai_merge_gate, which reads these.
+      - ".claude/skills/verifier-classifier/SKILL.md"
+      - "scripts/tests/fixtures/**"
 
 env:
   RUSTFLAGS: -D warnings
@@ -676,14 +686,6 @@ jobs:
       # by fixtures the real Akita prover generates at test time.
       - name: Run jolt-verifier akita fixture and tamper suites
         run: cargo nextest run --cargo-profile ci -p jolt-verifier --features akita,prover-fixtures --test-threads 1
-
-  typos:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: crate-ci/typos@2611abd15acb0c2e317fb9e45855aabb8b35a414 # v1.52.1
-        with:
-          files: .
 
   test-sdk:
     name: jolt binary check
