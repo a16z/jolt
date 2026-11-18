@@ -596,8 +596,12 @@ jobs:
         uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2
         with:
           tool: nextest
+      # akita-planner runs at most three schedule searches at once, a memory
+      # bound, unless AKITA_SCHEDULE_GEN_JOBS raises it. The K=16 field-inline
+      # grid test sets this step's wall time with 20 full searches of under
+      # 1 GB each, so it gets every runner CPU.
       - name: Run jolt-akita with field-inline
-        run: cargo nextest run --cargo-profile ci -p jolt-akita --features field-inline
+        run: AKITA_SCHEDULE_GEN_JOBS=$(nproc) cargo nextest run --cargo-profile ci -p jolt-akita --features field-inline
 
   test-verifier-field-inline-fixtures:
     runs-on: ubuntu-latest
