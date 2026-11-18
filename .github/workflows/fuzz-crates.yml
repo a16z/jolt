@@ -25,6 +25,7 @@ on:
       - "scripts/fuzz.py"
       - "scripts/tests/test_fuzz.py"
       - ".github/workflows/fuzz-crates.yml"
+      - "!**/*.md"
   schedule:
     - cron: "17 4 * * *"
     - cron: "43 3 * * 0"

@@ -18,7 +18,7 @@ fmt-check:
 taplo:
     taplo fmt --check
 
-# Spell-check the repository, as the rust.yml typos job does
+# Spell-check the repository, as the spell-check.yml typos job does
 typos:
     typos .
 

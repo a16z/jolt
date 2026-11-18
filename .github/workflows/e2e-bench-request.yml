@@ -4,11 +4,14 @@ on:
   pull_request:
     branches: [main]
     types: [opened, synchronize, reopened]
-    paths-ignore:
-      - '**/*.md'
-      - 'book/**'
-      - 'specs/**'
-      - '.claude/**'
+    paths:
+      - '**'
+      - '!**/*.md'
+      - '!book/**'
+      - '!specs/**'
+      - '!.claude/**'
+      # scripts.tests.test_e2e_calibration checks this file's thresholds table against the code.
+      - 'scripts/bench/README.md'
 
 permissions:
   contents: read

@@ -35,7 +35,7 @@ A push voids the line. After opening a pull request and after every push, review
 
 ## Essential Commands
 
-The root `justfile` wraps the format, lint, test and CLI-install commands below and `rust.yml`'s other lint checks (taplo, typos, style invariants, machete) as recipes; `just` lists them.
+The root `justfile` wraps the format, lint, test and CLI-install commands below and CI's other lint checks (`rust.yml`'s taplo, style invariants and machete, `spell-check.yml`'s typos) as recipes; `just` lists them.
 
 ### Opt-in prover benchmarks
 

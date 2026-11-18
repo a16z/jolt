@@ -19,6 +19,7 @@ on:
       - "Cargo.lock"
       - "rust-toolchain.toml"
       - ".cargo/**"
+      - "!**/*.md"
 
 permissions:
   contents: read
