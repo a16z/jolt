@@ -19,7 +19,6 @@ on:
 
 permissions:
   contents: read
-  pull-requests: write
 
 env:
   CARGO_TERM_COLOR: always
@@ -36,8 +35,20 @@ concurrency:
 jobs:
   bench:
     runs-on: ubuntu-latest
-    name: Criterion benchmarks
-    timeout-minutes: 90
+    name: Criterion benchmarks (shard ${{ matrix.shard }})
+    timeout-minutes: 30
+    strategy:
+      matrix:
+        # Shard indices 0..N-1, N = strategy.job-total. One leg of a benchmark
+        # costs about 10 s (3 s warm-up, 5 s measurement), so N sets a shard's
+        # wall time: 160 benchmarks over 16 shards measure for about 100 s per
+        # leg. scripts/ci/bench_comment.py deals the shares, and its render
+        # fails the comment job unless exactly one shard measured each
+        # listed benchmark.
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+    outputs:
+      base: ${{ steps.refs.outputs.base }}
+      head: ${{ steps.refs.outputs.head }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -53,10 +64,12 @@ jobs:
           git rev-parse --verify -q HEAD^2 >/dev/null || { echo "::error::expected the PR merge commit, got a non-merge HEAD"; exit 1; }
           { echo "merge=$(git rev-parse HEAD)"; echo "base=$(git rev-parse HEAD^1)"; echo "head=$(git rev-parse HEAD^2)"; } >> "$GITHUB_OUTPUT"
 
-      # Base and PR are benchmarked back-to-back on the SAME runner. Comparing
-      # against a stored main baseline measured on a different VM flagged most of
-      # the suite on unrelated PRs: the hosted x64 fleet mixes CPU models, which
-      # alone shifts wall time by 14% (median) to 34% (p90) between runs.
+      # Each shard measures its benchmarks at base and then at the PR on the
+      # SAME runner. Comparing against a stored main baseline measured on a
+      # different VM flagged most of the suite on unrelated PRs: the hosted x64
+      # fleet mixes CPU models, which alone shifts wall time by 14% (median) to
+      # 34% (p90) between runs. The same spread separates the shards' runners,
+      # so times compare within a benchmark's row, not between rows.
       #
       # The base leg always runs first. On the validation run (no code change
       # between legs) the second leg came out ~0.2% faster (median; 42 of 57
@@ -67,7 +80,14 @@ jobs:
         env:
           BASE: ${{ steps.refs.outputs.base }}
           MERGE: ${{ steps.refs.outputs.merge }}
+          SHARD: ${{ matrix.shard }}
+          SHARDS: ${{ strategy.job-total }}
         run: |
+          # Both legs take their share from the merge commit's script; the
+          # checkouts below swap the working-tree copy.
+          cp scripts/ci/bench_comment.py "$RUNNER_TEMP/bench_comment.py"
+          listings=target/bench-listings
+          mkdir -p "$listings"
           for leg in "$BASE base_run" "$MERGE pr_run"; do
             read -r sha baseline <<< "$leg"
             echo "::group::$baseline @ $sha"
@@ -85,22 +105,50 @@ jobs:
             if grep -q '^transcript-blake2b = ' crates/jolt-transcript/Cargo.toml; then
               features+=,jolt-transcript/transcript-blake2b,jolt-transcript/transcript-keccak,jolt-transcript/transcript-poseidon
             fi
-            cargo bench \
-              -p jolt-crypto \
-              -p "$field" \
-              -p jolt-poly \
-              -p jolt-transcript \
-              --features "$features" \
-              --bench '*' \
-              -- --save-baseline "$baseline" --noplot
+            bench=(
+              cargo bench
+              -p jolt-crypto
+              -p "$field"
+              -p jolt-poly
+              -p jolt-transcript
+              --features "$features"
+              --bench '*'
+              --
+            )
+            "${bench[@]}" --list > "$listings/$baseline.txt"
+            filter=$(python3 "$RUNNER_TEMP/bench_comment.py" filter "$SHARD" "$SHARDS" "$listings/base_run.txt" "$listings/$baseline.txt")
+            "${bench[@]}" --save-baseline "$baseline" --noplot "$filter"
             echo "::endgroup::"
           done
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: bench-crates-shard-${{ matrix.shard }}
+          path: |
+            target/criterion
+            target/bench-listings
+
+  comment:
+    needs: bench
+    runs-on: ubuntu-latest
+    name: Criterion benchmarks
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: bench-crates-shard-*
+          path: ${{ runner.temp }}/shards
 
       # Bolds the faster run per benchmark and colors the Δ of entries whose
       # delta exceeds the noise threshold (see NOISE_THRESHOLD in the script).
       - name: Render comparison
         run: |
-          python3 scripts/ci/bench_comment.py ${{ steps.refs.outputs.base }} ${{ steps.refs.outputs.head }} > "$RUNNER_TEMP/bench-comment.md"
+          python3 scripts/ci/bench_comment.py render ${{ needs.bench.outputs.base }} ${{ needs.bench.outputs.head }} "$RUNNER_TEMP/shards" > "$RUNNER_TEMP/bench-comment.md"
           cat "$RUNNER_TEMP/bench-comment.md"
 
       - name: Post benchmark comparison
