@@ -2,6 +2,10 @@
 //! that generates their fixtures is compiled and linked once rather than per
 //! suite. `fs_attacks` and `fs_obligations` stay separate targets: the
 //! Fiat-Shamir workflow builds each alone with `--test`.
+//!
+//! A suite is a module declared here: a suite directory that no `mod` line
+//! names is not compiled, and any other `tests/*.rs` file is built as a
+//! separate binary that compiles the prover again if it proves.
 
 #![expect(
     dead_code,

@@ -1378,7 +1378,7 @@ mod tests {
         assert!(verify(&transported).is_err());
 
         // Detached bodies serve again only once attached in place
-        // (`tests/prepared_transport.rs`).
+        // (`tests/integration/prepared_transport.rs`).
         let _ = transported.detach_prepared_payloads().unwrap();
         assert!(verify(&transported).is_err());
     }

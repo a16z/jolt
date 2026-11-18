@@ -1,5 +1,9 @@
 //! jolt-prover's integration tests, linked as one binary so the prover and
 //! its dependencies are compiled and linked once rather than per file.
+//!
+//! A suite is a module declared here: a file in this directory that no `mod`
+//! line names is not compiled, and any other `tests/*.rs` file is built as a
+//! separate binary that compiles the prover again.
 
 #[cfg(feature = "prover-fixtures")]
 mod support;
