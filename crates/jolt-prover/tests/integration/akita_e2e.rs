@@ -15,13 +15,6 @@ mod backend_contract;
     feature = "akita",
     not(feature = "field-inline")
 ))]
-mod support;
-
-#[cfg(all(
-    feature = "prover-fixtures",
-    feature = "akita",
-    not(feature = "field-inline")
-))]
 #[expect(
     clippy::expect_used,
     clippy::panic,

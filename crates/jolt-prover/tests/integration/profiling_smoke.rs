@@ -16,7 +16,7 @@
 //! once an optimized backend fits runner memory.
 //!
 //! Run explicitly (needs the guest toolchain, like the byte-diff harness):
-//! `cargo nextest run -p jolt-prover --features profiling -E 'binary(profiling_smoke)'`
+//! `cargo nextest run -p jolt-prover --features profiling -E 'test(/^profiling_smoke::/)'`
 
 #![cfg(feature = "profiling")]
 #![expect(clippy::unwrap_used, clippy::expect_used)]

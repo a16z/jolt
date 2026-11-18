@@ -11,9 +11,6 @@
 //! reference-backend parity, committed programs, and other mode-specific checks.
 
 #[cfg(feature = "prover-fixtures")]
-mod support;
-
-#[cfg(feature = "prover-fixtures")]
 #[expect(clippy::expect_used, reason = "end-to-end fixtures fail loudly")]
 mod matrix {
     // Host-side inline registrations for the hashing guests.

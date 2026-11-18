@@ -12,13 +12,6 @@
     feature = "field-inline",
     feature = "akita"
 ))]
-mod support;
-
-#[cfg(all(
-    feature = "prover-fixtures",
-    feature = "field-inline",
-    feature = "akita"
-))]
 #[expect(
     clippy::expect_used,
     clippy::panic,

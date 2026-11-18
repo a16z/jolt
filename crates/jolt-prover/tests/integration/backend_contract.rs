@@ -4,14 +4,6 @@
     not(feature = "field-inline"),
     not(feature = "zk")
 ))]
-mod support;
-
-#[cfg(all(
-    feature = "prover-fixtures",
-    not(feature = "akita"),
-    not(feature = "field-inline"),
-    not(feature = "zk")
-))]
 #[expect(
     clippy::expect_used,
     clippy::panic,

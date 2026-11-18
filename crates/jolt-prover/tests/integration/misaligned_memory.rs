@@ -11,12 +11,6 @@
     feature = "prover-fixtures",
     not(any(feature = "zk", feature = "akita", feature = "field-inline"))
 ))]
-mod support;
-
-#[cfg(all(
-    feature = "prover-fixtures",
-    not(any(feature = "zk", feature = "akita", feature = "field-inline"))
-))]
 #[expect(
     clippy::expect_used,
     clippy::indexing_slicing,

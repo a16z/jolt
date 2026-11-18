@@ -11,6 +11,7 @@ mod native_batching;
 mod one_hot_groups;
 mod pathologies;
 mod prefix_packing;
+mod prepared_transport;
 mod runtime_chunking;
 mod schedules;
 mod scheme_surface;

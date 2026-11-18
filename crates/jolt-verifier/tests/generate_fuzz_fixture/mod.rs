@@ -4,7 +4,7 @@
 //!
 //! Run explicitly and commit the output:
 //! `cargo nextest run -p jolt-verifier --features prover-fixtures \
-//!   --test generate_fuzz_fixture --run-ignored ignored-only`
+//!   -E 'test(/^generate_fuzz_fixture::/)' --run-ignored ignored-only`
 
 #![cfg(all(
     feature = "prover-fixtures",
@@ -13,7 +13,6 @@
 #![expect(
     clippy::expect_used,
     clippy::print_stdout,
-    dead_code,
     reason = "the ignored fixture generator should fail loudly and report written paths"
 )]
 
@@ -27,7 +26,7 @@ use jolt_field::Fr;
 use jolt_transcript::{Keccak, VerifierState};
 use jolt_verifier::{JoltProof, JoltVerifierPreprocessing};
 
-mod support;
+use crate::support;
 
 type FuzzPreprocessing = JoltVerifierPreprocessing<DoryScheme, Pedersen<Bn254G1>>;
 type FuzzProof = JoltProof<DoryScheme, Pedersen<Bn254G1>>;
