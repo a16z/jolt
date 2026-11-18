@@ -426,7 +426,7 @@ jobs:
       # step existed they were clippy-only, so the golden BlindFold shape pins
       # in completeness/zk.rs could go stale without any lane noticing.
       - name: Run jolt-verifier fixtures with zk feature
-        run: cargo nextest run --cargo-profile ci -p jolt-verifier --features prover-fixtures,zk --test-threads 1 --cargo-quiet
+        run: cargo nextest run --cargo-profile ci -p jolt-verifier --features prover-fixtures,zk --cargo-quiet
       # The jolt-kernels unit suite in its zk flavor.
       - name: Run jolt-kernels tests with zk feature
         run: cargo nextest run --cargo-profile ci -p jolt-kernels --features zk
@@ -574,7 +574,7 @@ jobs:
       - name: Run jolt-kernels with field-inline,akita
         run: cargo nextest run --cargo-profile ci -p jolt-kernels --features field-inline,akita
       - name: Run jolt-verifier with prover-fixtures,field-inline,akita
-        run: cargo nextest run --cargo-profile ci -p jolt-verifier --features prover-fixtures,field-inline,akita --test-threads 1
+        run: cargo nextest run --cargo-profile ci -p jolt-verifier --features prover-fixtures,field-inline,akita
 
   # The Akita field-inline provisioning checks and verifier fixture suite (the
   # modular Akita prover's eq-MLE proof; legacy-generated akita fixtures pin the
@@ -636,7 +636,7 @@ jobs:
       # sweep (tampering/field_inline.rs), backed by fixtures the modular
       # prover generates at test time.
       - name: Run jolt-verifier field-inline fixture and tamper suites
-        run: cargo nextest run --cargo-profile ci -p jolt-verifier --features prover-fixtures,field-inline --test-threads 1
+        run: cargo nextest run --cargo-profile ci -p jolt-verifier --features prover-fixtures,field-inline
 
   test-verifier-akita-fixtures:
     runs-on: ubuntu-latest
@@ -675,7 +675,7 @@ jobs:
       # proof-shape, and presence tamper sweeps (tampering/akita.rs), backed
       # by fixtures the real Akita prover generates at test time.
       - name: Run jolt-verifier akita fixture and tamper suites
-        run: cargo nextest run --cargo-profile ci -p jolt-verifier --features akita,prover-fixtures --test-threads 1
+        run: cargo nextest run --cargo-profile ci -p jolt-verifier --features akita,prover-fixtures
 
   typos:
     runs-on: ubuntu-latest
@@ -944,7 +944,7 @@ jobs:
         with:
           tool: nextest
       - name: Run verifier fixtures
-        run: cargo nextest run --cargo-profile ci -p jolt-verifier --features prover-fixtures --test-threads 1 --cargo-quiet
+        run: cargo nextest run --cargo-profile ci -p jolt-verifier --features prover-fixtures --cargo-quiet
 
   test-inlines:
     name: Test inlines
