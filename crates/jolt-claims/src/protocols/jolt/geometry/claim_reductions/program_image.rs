@@ -104,11 +104,8 @@ impl ProgramImageClaimReductionLayout {
         r_addr_rw: &[F],
         opening_point: &[F],
     ) -> Result<F, PointGeometryError> {
-        let permuted = self
-            .precommitted
-            .cycle_phase_permuted_from_opening_point(opening_point)?;
         let eq_eval =
-            eval_shifted_eq_poly_at_opening_point(r_addr_rw, self.start_index, &permuted)?;
+            eval_shifted_eq_poly_at_opening_point(r_addr_rw, self.start_index, opening_point)?;
         Ok(eq_eval * self.precommitted.cycle_phase_skip_scale::<F>())
     }
 
@@ -238,6 +235,7 @@ fn eval_shifted_eq_poly_at_opening_point<F: JoltField>(
 mod tests {
     #![expect(clippy::panic, reason = "tests fail loudly on unexpected errors")]
 
+    use super::super::bytecode::bytecode_total_vars;
     use super::*;
     use jolt_field::{Fr, Ring};
     use jolt_poly::EqPolynomial;
@@ -265,6 +263,35 @@ mod tests {
         assert_eq!(padded_program_image_len_words(8), 8);
         assert_eq!(precommitted_candidate(3), 2);
         assert_eq!(precommitted_candidate(1024), 10);
+    }
+
+    #[test]
+    fn rejects_cycle_final_image_under_a_wider_committed_bytecode() {
+        // log_T = 12 and K = 16 with a 2^22-row committed bytecode: the
+        // 1024-word image would bind its row variables in the first cycle
+        // rounds and its column variables in the last ones.
+        let (log_t, log_k_chunk) = (12, 4);
+        let bytecode_vars = bytecode_total_vars(1 << 22)
+            .unwrap_or_else(|error| panic!("bytecode length is valid: {error}"));
+        let scheduling_reference = PrecommittedClaimReduction::scheduling_reference(
+            log_t + log_k_chunk,
+            &[bytecode_vars, precommitted_candidate(1024)],
+            log_k_chunk,
+        );
+
+        assert_eq!(
+            ProgramImageClaimReductionLayout::balanced(
+                TracePolynomialOrder::CycleMajor,
+                log_t,
+                scheduling_reference,
+                1024,
+                0,
+            ),
+            Err(PointGeometryError::CycleFinalRoundsNotDescending {
+                poly_row_vars: 5,
+                poly_col_vars: 5,
+            })
+        );
     }
 
     #[test]

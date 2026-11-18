@@ -173,6 +173,22 @@ impl PrecommittedClaimReduction {
             &poly_opening_round_permutation_be,
             scheduling_reference.cycle_alignment_rounds,
         );
+        // Soundness: a reduction that completes in the cycle phase opens at
+        // `cycle_phase_opening_point`, its active challenges in descending
+        // round order, and the verifier weights the claim at that point. The
+        // prover's kernels bind variable `i` in round
+        // `poly_opening_round_permutation_be[i]`, so their claim is the
+        // polynomial's evaluation there only for a descending permutation.
+        // Cycle-major precommitted dominance can project a row tail from the
+        // cycle prefix ahead of a column tail from the dense cycle rounds.
+        if address_phase_rounds.is_empty()
+            && !poly_opening_round_permutation_be.is_sorted_by(|earlier, later| earlier > later)
+        {
+            return Err(PointGeometryError::CycleFinalRoundsNotDescending {
+                poly_row_vars,
+                poly_col_vars,
+            });
+        }
         Ok(Self {
             scheduling_reference,
             poly_opening_round_permutation_be,
@@ -360,7 +376,10 @@ impl PrecommittedClaimReduction {
             .collect())
     }
 
-    /// Big-endian opening point cached at the cycle-phase handoff.
+    /// Big-endian opening point cached at the cycle-phase handoff. When the
+    /// reduction completes in the cycle phase this is the committed
+    /// polynomial's final opening point: [`Self::new`] only builds such a
+    /// layout if this order is the commitment layout's variable order.
     pub fn cycle_phase_opening_point<F: JoltField>(
         &self,
         challenges: &[F],
@@ -389,45 +408,6 @@ impl PrecommittedClaimReduction {
             .map(|&global_round| {
                 if global_round < cycle_round_limit {
                     Ok(challenges[global_round])
-                } else {
-                    Err(PointGeometryError::CyclePhaseNotFinal {
-                        active_address_rounds: self.num_address_phase_rounds(),
-                    })
-                }
-            })
-            .collect()
-    }
-
-    /// [`cycle_phase_permuted_opening_point`] recovered from the produced
-    /// `cycle_phase_opening_point` (the reverse-ordered active cycle challenges)
-    /// instead of the full sumcheck challenges. The cycle-phase opening point
-    /// holds exactly this polynomial's active cycle challenges, and the Dory
-    /// permutation only references active cycle rounds (see
-    /// `active_rounds_from_poly_permutation`), so the permuted point is fully
-    /// recoverable without the rounds this polynomial skips. Lets a relation
-    /// object's `resolve_public` derive the cycle-phase `FinalScale` from the
-    /// opening point it produced, mirroring the address-phase
-    /// `*_at_opening_point` helpers.
-    ///
-    /// [`cycle_phase_permuted_opening_point`]: Self::cycle_phase_permuted_opening_point
-    pub fn cycle_phase_permuted_from_opening_point<F: JoltField>(
-        &self,
-        opening_point: &[F],
-    ) -> Result<Vec<F>, PointGeometryError> {
-        if opening_point.len() != self.cycle_phase_rounds.len() {
-            return Err(PointGeometryError::ChallengeLengthMismatch {
-                expected: self.cycle_phase_rounds.len(),
-                got: opening_point.len(),
-            });
-        }
-        let mut cycle_var_challenges = opening_point.to_vec();
-        cycle_var_challenges.reverse();
-        let cycle_round_limit = self.cycle_alignment_rounds();
-        self.poly_opening_round_permutation_be
-            .iter()
-            .map(|&global_round| {
-                if global_round < cycle_round_limit {
-                    self.cycle_challenge_for_round(&cycle_var_challenges, global_round)
                 } else {
                     Err(PointGeometryError::CyclePhaseNotFinal {
                         active_address_rounds: self.num_address_phase_rounds(),
@@ -585,38 +565,65 @@ mod tests {
     }
 
     #[test]
-    fn cycle_phase_permuted_recovers_from_opening_point() {
-        // A precommitted-dominant, cycle-completed schedule: the Dory permutation
-        // reorders the cycle rounds, so the permuted opening point differs from
-        // the produced (reverse-ordered) cycle opening point — exercising the
-        // recovery rather than a trivial reverse.
-        let scheduling_reference = PrecommittedClaimReduction::scheduling_reference(2, &[5], 0);
-        let precommitted = PrecommittedClaimReduction::new(
-            2,
-            3,
-            scheduling_reference,
+    fn cycle_final_opening_point_follows_commitment_layout() {
+        let orders = [
             TracePolynomialOrder::CycleMajor,
-            2,
-        )
-        .unwrap_or_else(|error| panic!("schedule should build: {error}"));
-        assert_eq!(precommitted.num_address_phase_rounds(), 0);
+            TracePolynomialOrder::AddressMajor,
+        ];
+        let geometries = orders.into_iter().flat_map(|trace_order| {
+            (1..=4).flat_map(move |log_t| {
+                (0..=4).flat_map(move |log_k_chunk| {
+                    let main_total_vars = log_t + log_k_chunk;
+                    (0..=2 * main_total_vars + 2).map(move |widest_total_vars| {
+                        let scheduling_reference = PrecommittedClaimReduction::scheduling_reference(
+                            main_total_vars,
+                            &[widest_total_vars],
+                            log_k_chunk,
+                        );
+                        (trace_order, log_t, scheduling_reference)
+                    })
+                })
+            })
+        });
 
-        let challenges: Vec<Fr> = (0..precommitted.cycle_phase_total_rounds())
-            .map(|index| Fr::from_u64(10 + index as u64))
-            .collect();
-        let opening_point = precommitted
-            .cycle_phase_opening_point(&challenges)
-            .unwrap_or_else(|error| panic!("cycle opening point: {error}"));
-        let from_challenges = precommitted
-            .cycle_phase_permuted_opening_point(&challenges)
-            .unwrap_or_else(|error| panic!("permuted from challenges: {error}"));
-        // Guard against a vacuous test: the permutation is not just the reverse.
-        assert_ne!(from_challenges, opening_point);
-        assert_eq!(
-            precommitted
-                .cycle_phase_permuted_from_opening_point(&opening_point)
-                .unwrap_or_else(|error| panic!("permuted from opening point: {error}")),
-            from_challenges,
-        );
+        let (mut accepted, mut rejected) = (0, 0);
+        for (trace_order, log_t, scheduling_reference) in geometries {
+            for poly_total_vars in 0..=scheduling_reference.reference_total_vars {
+                let shape = CommitmentMatrixShape::balanced(poly_total_vars);
+                let precommitted = match PrecommittedClaimReduction::new(
+                    shape.row_vars(),
+                    shape.column_vars(),
+                    scheduling_reference,
+                    trace_order,
+                    log_t,
+                ) {
+                    Ok(precommitted) => precommitted,
+                    Err(error) => {
+                        assert_eq!(
+                            error,
+                            PointGeometryError::CycleFinalRoundsNotDescending {
+                                poly_row_vars: shape.row_vars(),
+                                poly_col_vars: shape.column_vars(),
+                            }
+                        );
+                        rejected += 1;
+                        continue;
+                    }
+                };
+                if precommitted.num_address_phase_rounds() > 0 {
+                    continue;
+                }
+                let challenges: Vec<Fr> = (0..precommitted.cycle_phase_total_rounds())
+                    .map(|round| Fr::from_u64(10 + round as u64))
+                    .collect();
+                assert_eq!(
+                    precommitted.cycle_phase_opening_point(&challenges),
+                    precommitted.cycle_phase_permuted_opening_point(&challenges),
+                    "{trace_order:?} log_t={log_t} {scheduling_reference:?} poly={poly_total_vars}"
+                );
+                accepted += 1;
+            }
+        }
+        assert!(accepted > 0 && rejected > 0);
     }
 }

@@ -118,10 +118,7 @@ impl AdviceClaimReductionLayout {
         reference_opening_point: &[F],
         opening_point: &[F],
     ) -> Result<F, PointGeometryError> {
-        let permuted = self
-            .precommitted
-            .cycle_phase_permuted_from_opening_point(opening_point)?;
-        let eq_eval = final_advice_eq_eval(reference_opening_point, &permuted)?;
+        let eq_eval = final_advice_eq_eval(reference_opening_point, opening_point)?;
         Ok(eq_eval * self.precommitted.cycle_phase_skip_scale::<F>())
     }
 

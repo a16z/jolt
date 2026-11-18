@@ -7,11 +7,12 @@
 //! otherwise it completes here, opening the committed polynomial under a
 //! final output weight.
 //!
-//! Because the produced opening point is the (reverse-ordered) cycle opening
-//! point while the scale is evaluated at the Dory-permuted point, each relation
-//! OVERRIDES [`ConcreteSumcheck::expected_output`] to recover the scale from the
-//! produced opening point via the layout's `cycle_phase_*_at_opening_point`
-//! helpers; see `PrecommittedClaimReduction::cycle_phase_permuted_from_opening_point`.
+//! Each relation OVERRIDES [`ConcreteSumcheck::expected_output`] to evaluate the
+//! scale at the produced opening point via the layout's
+//! `cycle_phase_*_at_opening_point` helpers, so the scale and the stage 8
+//! opening share one point. That point follows the commitment layout's
+//! variable order in every layout `PrecommittedClaimReduction::new` builds; it
+//! rejects the rest.
 //! The output expression is bypassed (not the `derive_output_term` path) because the
 //! produced opening id is dynamic in `has_address_phase`; the override computes
 //! exactly the formula value, so the clear path and BlindFold stay in sync.
