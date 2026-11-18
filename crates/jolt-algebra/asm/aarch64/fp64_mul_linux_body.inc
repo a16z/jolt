@@ -30,5 +30,5 @@
 .inst 0x9100ed0a
 // sbcs xzr, x9, xzr
 .inst 0xfa1f013f
-// csel x0, x8, x10, lo
-.inst 0x9a8a3100
+// csel x0, x8, x10, lt
+.inst 0x9a8ab100

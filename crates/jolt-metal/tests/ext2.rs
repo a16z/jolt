@@ -75,7 +75,9 @@ mod gpu {
 
     fn random_ext<F: TestField>(words: &mut SplitMix64, len: usize) -> Vec<Ext2<F>> {
         random_elements::<F>(words, 2 * len)
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .map(|pair| Ext2::new(element(pair[0]), element(pair[1])))
             .collect()
     }
@@ -156,7 +158,13 @@ mod gpu {
             }));
         }
         let random = random_ext::<F>(&mut words, 2 * RANDOM);
-        pairs.extend(random.chunks_exact(2).map(|pair| (pair[0], pair[1])));
+        pairs.extend(
+            random
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|pair| (pair[0], pair[1])),
+        );
         if sums_products::<F>() {
             // A c1 sum whose carry into the top word comes through the low
             // word.

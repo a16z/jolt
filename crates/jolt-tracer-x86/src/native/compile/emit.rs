@@ -11,9 +11,11 @@
 //! - `Jalr` targets are `(x[rs1] + imm) & !1`;
 //! - the virtual right shifts take their shift amount from
 //!   `imm.trailing_zeros()` (the immediate is a bitmask, not a shift);
-//! - guest termination is the PC-stall convention: a jump/taken branch whose
-//!   target equals its own source address executes once, then execution
-//!   stops, unless re-running it would leave
+//! - a halt row (`Success` from `jolt.success`, `Panic` from `EBREAK`) writes
+//!   its link and exits at its own address (`ExitReason::HaltedSuccess`,
+//!   `ExitReason::HaltedPanic`); a jump or taken branch whose target is its
+//!   own address executes once and exits as a PC stall
+//!   (`ExitReason::Stalled`), unless re-running it would leave
 //!   (`JoltInstructionRow::self_jump_repeats`).
 
 use common::constants::STACK_CANARY_SIZE;
@@ -124,14 +126,15 @@ impl Emitter {
         );
     }
 
-    /// Terminal (PC-stall) sequence: record this row already happened (r14 was
-    /// incremented at row start), publish pc/exit, leave.
-    fn terminal(&mut self, address: u64) {
+    /// Publish `address` as the PC and `reason` as the exit, then leave. A row
+    /// that exits this way is already counted (r14 was incremented at row
+    /// start).
+    fn exit_at(&mut self, address: u64, reason: ExitReason) {
         dynasm!(self.ops
             ; .arch x64
             ; mov rcx, QWORD address as i64
             ; mov QWORD [r12 + OFF_PC], rcx
-            ; mov QWORD [r12 + OFF_EXIT], ExitReason::Terminated as u64 as i32
+            ; mov QWORD [r12 + OFF_EXIT], reason as u64 as i32
             ; jmp ->exit
         );
     }
@@ -190,9 +193,20 @@ impl Emitter {
         );
     }
 
-    /// Falling off the end of the compiled program is a bad jump.
-    pub(super) fn emit_jump_to_bad_jump(&mut self) {
-        dynasm!(self.ops ; .arch x64 ; jmp ->bad_jump);
+    /// Closes the group whose final row is `last`. Generated code runs straight
+    /// on into whatever is emitted next, which is the instruction after `last`
+    /// only when `next_group` starts at that instruction's address. Otherwise
+    /// that address has no bytecode row, and execution reaching it stops
+    /// there, where the interpreter's row lookup fails.
+    ///
+    /// "No bytecode row" relies on rows arriving in address order, which holds
+    /// by construction in `jolt_program::image::decode_elf` and is not checked
+    /// here.
+    pub(super) fn emit_fallthrough(&mut self, last: &JoltInstructionRow, next_group: Option<u64>) {
+        let successor = link_value(last) as u64;
+        if next_group != Some(successor) {
+            self.exit_at(successor, ExitReason::FaultMissingRow);
+        }
     }
 
     /// Static branch and jump targets without a compiled group fault when
@@ -300,14 +314,21 @@ enum Cc {
 }
 
 impl DynasmEmitter {
+    /// A halt row writes its link and ends the run at its own address.
+    fn emit_halt(e: &mut Emitter, row: &JoltInstructionRow, reason: ExitReason) {
+        e.load_imm(RAX, link_value(row));
+        e.store_rd(RAX, row.operands.rd);
+        e.exit_at(row.address as u64, reason);
+    }
+
     fn emit_branch(e: &mut Emitter, row: &JoltInstructionRow, cc: Cc) {
         let address = row.address as u64;
         let target = (row.address as i64).wrapping_add(row.operands.imm as i64) as u64;
         e.load_reg(RAX, row.operands.rs1);
         e.cmp_reg_operand(RAX, row.operands.rs2);
         if target == address {
-            // Taken branch to itself terminates (PC-stall). Invert: skip the
-            // terminal sequence when not taken.
+            // A taken branch to itself is a PC stall. Invert: skip the stall
+            // exit when not taken.
             match cc {
                 Cc::Eq => dynasm!(e.ops ; .arch x64 ; jne >fall),
                 Cc::Ne => dynasm!(e.ops ; .arch x64 ; je >fall),
@@ -316,7 +337,7 @@ impl DynasmEmitter {
                 Cc::LtUnsigned => dynasm!(e.ops ; .arch x64 ; jae >fall),
                 Cc::GeUnsigned => dynasm!(e.ops ; .arch x64 ; jb >fall),
             }
-            e.terminal(address);
+            e.exit_at(address, ExitReason::Stalled);
             dynasm!(e.ops ; .arch x64 ; fall:);
         } else {
             let label = e.label_for(target);
@@ -400,7 +421,6 @@ impl DynasmEmitter {
             ; mov rdx, QWORD RAM_START as i64
             ; sub rcx, rdx
             ; mov rdx, QWORD [r12 + OFF_MEM_SIZE]
-            ; sub rdx, 7
             ; cmp rcx, rdx
             ; jae >slow
             ; test al, 7
@@ -456,19 +476,33 @@ impl DynasmEmitter {
             ; mov rsi, QWORD RAM_START as i64
             ; sub rcx, rsi
             ; mov rsi, QWORD [r12 + OFF_MEM_SIZE]
-            ; sub rsi, 7
             ; cmp rcx, rsi
             ; jae >slow
             ; test al, 7
             ; jnz >slow
-            // Stack canary: plane offsets in [canary_offset, canary_offset +
-            // STACK_CANARY_SIZE) are a stack overflow. One unsigned compare
-            // covers both ends of the range; the helper reports the fault.
+            // Protect every overlapping doubleword even when the program size
+            // leaves the canary byte range unaligned.
             ; mov rsi, rcx
+            ; add rsi, 7
             ; sub rsi, QWORD [r12 + OFF_CANARY_OFFSET]
-            ; cmp rsi, STACK_CANARY_SIZE as i32
-            ; jb >slow
+            ; cmp rsi, (STACK_CANARY_SIZE + 7) as i32
+            ; jb >protected_word
         );
+        // The code region compiles to one two-bound comparison in the existing
+        // store path; only a protected-word hit calls Rust.
+        if !e.code_region.is_empty() {
+            let length = (e.code_region.len() as u64 * 8) as i64;
+            let start = (e.code_region.start as u64 * 8) as i64;
+            dynasm!(e.ops
+                ; .arch x64
+                ; mov rsi, rcx
+                ; mov r8, QWORD start
+                ; sub rsi, r8
+                ; mov r8, QWORD length
+                ; cmp rsi, r8
+                ; jb >protected_word
+            );
+        }
         if e.mode == EmitMode::Record {
             e.obs_reload();
             dynasm!(e.ops
@@ -486,6 +520,13 @@ impl DynasmEmitter {
             // value already in rdx (helper arg 3)
         );
         e.call_helper(helpers::slow_store_doubleword as *const () as usize);
+        dynasm!(e.ops
+            ; .arch x64
+            ; jmp >done
+            ; protected_word:
+            ; mov rsi, rax
+        );
+        e.call_helper(helpers::protected_store_doubleword as *const () as usize);
         dynasm!(e.ops ; .arch x64 ; done:);
     }
 
@@ -689,13 +730,15 @@ impl DynasmEmitter {
                 | K::BgeU(_)
                 | K::Jal(_)
                 | K::Jalr(_)
+                | K::Success(_)
+                | K::Panic(_)
         );
         if record {
             e.obs_open(e.row_index);
             e.obs_registers_pre(row);
             if transfers_control {
                 let link = match row.instruction_kind {
-                    K::Jal(_) | K::Jalr(_) => link_value(row),
+                    K::Jal(_) | K::Jalr(_) | K::Success(_) | K::Panic(_) => link_value(row),
                     _ => 0,
                 };
                 e.obs_rd_post_static(row, link);
@@ -965,7 +1008,7 @@ impl DynasmEmitter {
                 e.store_rd(RAX, row.operands.rd);
                 let target = (row.address as i64).wrapping_add(row.operands.imm as i64) as u64;
                 if target == row.address as u64 {
-                    e.terminal(target);
+                    e.exit_at(target, ExitReason::Stalled);
                 } else {
                     let label = e.label_for(target);
                     dynasm!(e.ops ; .arch x64 ; jmp =>label);
@@ -981,11 +1024,13 @@ impl DynasmEmitter {
                 e.store_rd(RCX, row.operands.rd);
                 if row.self_jump_repeats() {
                     dynasm!(e.ops ; .arch x64 ; mov rcx, QWORD row.address as i64 ; cmp rax, rcx ; jne >go);
-                    e.terminal(row.address as u64);
+                    e.exit_at(row.address as u64, ExitReason::Stalled);
                     dynasm!(e.ops ; .arch x64 ; go:);
                 }
                 e.dispatch();
             }
+            K::Success(_) => Self::emit_halt(e, row, ExitReason::HaltedSuccess),
+            K::Panic(_) => Self::emit_halt(e, row, ExitReason::HaltedPanic),
 
             K::Ld(_) => Self::emit_load_doubleword(e, row),
             K::Sd(_) => Self::emit_store_doubleword(e, row),
@@ -1084,6 +1129,8 @@ impl DynasmEmitter {
             K::VirtualXorRot24(_) => Self::emit_xor_rot(e, row, 24),
             K::VirtualXorRot16(_) => Self::emit_xor_rot(e, row, 16),
             K::VirtualXorRot63(_) => Self::emit_xor_rot(e, row, 63),
+            K::VirtualXorRot2(_) => Self::emit_xor_rot(e, row, 2),
+            K::VirtualXorRot61(_) => Self::emit_xor_rot(e, row, 61),
             K::VirtualXorRotW16(_) => Self::emit_xor_rotw(e, row, 16),
             K::VirtualXorRotW12(_) => Self::emit_xor_rotw(e, row, 12),
             K::VirtualXorRotW8(_) => Self::emit_xor_rotw(e, row, 8),

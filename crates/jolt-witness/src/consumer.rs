@@ -193,6 +193,50 @@ impl RandomAccessRows {
             (index + 1 < self.cycles).then(|| physical.get(index + 1).unwrap_or(&self.padding));
         B::from_row(current, next, &WitnessEnv::new(&self.preprocessing))
     }
+
+    /// Visits `range` in order: callback `i` receives the first cycle and the
+    /// bundles of the `min(chunk, rows left)` rows from `range.start + i ·
+    /// chunk`, each equal to [`Self::window`]'s, extracted serially into one
+    /// reused buffer. An empty range makes no callback; a callback error ends
+    /// the visit and is returned.
+    pub fn visit_bundles<B: WitnessBundle>(
+        &self,
+        range: Range<usize>,
+        chunk: usize,
+        mut visit: impl FnMut(usize, &[B]) -> Result<(), WitnessError>,
+    ) -> Result<(), WitnessError> {
+        if chunk == 0 {
+            return Err(WitnessError::InvalidDimensions {
+                label: JOLT_VM_LABEL,
+                reason: "visit chunk size must be nonzero".to_owned(),
+            });
+        }
+        if range.start > range.end || range.end > self.cycles {
+            return Err(WitnessError::InvalidDimensions {
+                label: JOLT_VM_LABEL,
+                reason: format!(
+                    "cycle range [{}, {}) exceeds the domain of {} cycles",
+                    range.start, range.end, self.cycles
+                ),
+            });
+        }
+        let env = WitnessEnv::new(&self.preprocessing);
+        let physical = self.rows.proof_rows();
+        let row = |index: usize| physical.get(index).unwrap_or(&self.padding);
+        let mut bundles = Vec::with_capacity(chunk.min(range.len()));
+        let mut start = range.start;
+        while start < range.end {
+            let end = start + chunk.min(range.end - start);
+            bundles.clear();
+            for index in start..end {
+                let next = (index + 1 < self.cycles).then(|| row(index + 1));
+                bundles.push(B::from_row(row(index), next, &env)?);
+            }
+            visit(start, &bundles)?;
+            start = end;
+        }
+        Ok(())
+    }
 }
 
 /// The fused pass: walk `range` once and deliver each chunk to every
@@ -340,6 +384,65 @@ mod tests {
             let mut consumers = (CollectBundles::<WindowBundle>::default(),);
             stream_witnesses(backend, 0..4, 2, &mut consumers).unwrap();
             assert_eq!(routed, consumers.0.into_rows());
+        });
+    }
+
+    /// Visits partition the range into exact chunks whose bundles equal the
+    /// random-access windows, through the padded suffix (2 physical rows of
+    /// 4 cycles) and the last cycle's absent lookahead.
+    #[test]
+    fn bundle_visits_partition_ranges_into_window_chunks() {
+        with_sample_backend(|backend| {
+            let rows = backend.random_access().unwrap();
+            for (range, chunk, partition) in [
+                (0..4, 1, vec![(0, 1), (1, 1), (2, 1), (3, 1)]),
+                (0..4, 3, vec![(0, 3), (3, 1)]),
+                (1..4, 2, vec![(1, 2), (3, 1)]),
+                (3..4, 8, vec![(3, 1)]),
+                (2..2, 4, vec![]),
+            ] {
+                let mut seen = Vec::new();
+                rows.visit_bundles(range.clone(), chunk, |first, bundles: &[WindowBundle]| {
+                    for (offset, bundle) in bundles.iter().enumerate() {
+                        assert_eq!(*bundle, rows.window(first + offset)?);
+                    }
+                    seen.push((first, bundles.len()));
+                    Ok(())
+                })
+                .unwrap();
+                assert_eq!(seen, partition, "{range:?} by {chunk}");
+            }
+        });
+    }
+
+    /// Malformed requests fail before any callback; a callback error ends
+    /// the visit.
+    #[test]
+    fn bundle_visits_reject_bad_requests_and_stop_on_errors() {
+        with_sample_backend(|backend| {
+            let rows = backend.random_access().unwrap();
+            for (range, chunk) in [(0..4, 0), (0..5, 1), (Range { start: 3, end: 2 }, 1)] {
+                let mut calls = 0;
+                let result = rows.visit_bundles(range, chunk, |_, _: &[WindowBundle]| {
+                    calls += 1;
+                    Ok(())
+                });
+                assert!(matches!(
+                    result,
+                    Err(WitnessError::InvalidDimensions { .. })
+                ));
+                assert_eq!(calls, 0);
+            }
+            let stop = WitnessError::UnavailableView { label: "stop" };
+            let mut calls = 0;
+            let result = rows.visit_bundles(0..4, 1, |_, _: &[WindowBundle]| {
+                calls += 1;
+                if calls == 2 {
+                    return Err(stop.clone());
+                }
+                Ok(())
+            });
+            assert_eq!((result, calls), (Err(stop), 2));
         });
     }
 

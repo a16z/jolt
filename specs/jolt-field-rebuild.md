@@ -108,9 +108,12 @@ and fold matrices; `S64`–`S256` + hi32 variants; `Limbs<N>`; rayon helpers;
   qualitative comments. The portable path is branchless and compiles to a
   near-identical adds/adcs/csel (resp. add/adc/cmov) sequence. The x86-64
   imm-vs-reg dispatch subtlety matters because a sign-extended imm32 is
-  unusable for C ≥ 2^31, including `Prime128OffsetA7F7`. The proof continuity
-  follow-up restores both architecture families. It also binds the A7F7
-  AArch64 words and x86-64 bytes to HOL Light theorems and an optimized public witness. See
+  unusable for C ≥ 2^31, such as the retired `Prime128OffsetA7F7`
+  (C = 0xFFFF_A7F7). `Prime128Offset6A23801F` has C = 0x6A23_801F < 2^31, so
+  it fits a positive imm32. The proof continuity
+  follow-up restores both architecture families. It also bound the A7F7
+  AArch64 words and x86-64 bytes to HOL Light theorems and an optimized public
+  witness; Jolt PR 2403 rebound them to the 6A23801F constant loads. See
   `specs/jolt-field-proof-continuity.md`.
 - **Initially dropped:** the AArch64 `mul_add` asm kernel together with the
   `mul_add`/`add_128_into_256` fused multiply-add surface had no consumer in
@@ -285,7 +288,8 @@ Final per-file actuals are recorded in the file-structure table below
    `akita-field` type is foreign, so the orphan rule forbids giving it serde
    impls here, and it must satisfy `JoltField` for the akita lanes to build.
    This matches the old umbrella (`Field` never carried serde bounds); every
-   first-party type keeps its `impl_serde_bytes!` impls. Restore the bounds
+   first-party type keeps its serde impls (`impl_serde_bytes!`, or the same
+   wire format written by hand for `Fp128`). Restore the bounds
    at the akita cutover when the bootstrap edge is deleted.
    **Discharged by the shared-field cutover chain:** Jolt #1810 lands the
    rebuilt field, Akita #447 rebinds Akita to it, and Jolt #1796 completes
@@ -322,7 +326,8 @@ Final per-file actuals are recorded in the file-structure table below
    reuses the canonical `FpExt4Fp32ProductAccum` formula and reduces four
    slots once; sub-32-bit Fp32 moduli retain the generic schedule.
 7. **Fp128 architecture add and subtract kernels are restored.** The A7F7
-   AArch64 and x86-64 instruction bodies are shared by production inline assembly and
+   AArch64 and x86-64 instruction bodies, now loaded with the 6A23801F constant
+   (Jolt PR 2403), are shared by production inline assembly and
    standalone proof objects. HOL Light proves the object bytes. An optimized
    public witness checks that Rust includes the same words.
    The same proof path now covers baseline x86-64 multiplication. That kernel

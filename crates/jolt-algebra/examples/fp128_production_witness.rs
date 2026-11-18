@@ -1,4 +1,4 @@
-use jolt_algebra::Prime128OffsetA7F7;
+use jolt_algebra::Prime128Offset6A23801F;
 
 /// Two 64-bit limbs returned through the platform C calling convention.
 #[repr(C)]
@@ -7,7 +7,7 @@ pub struct Fp128Result {
     hi: u64,
 }
 
-/// Invoke public field addition for the proved A7F7 modulus.
+/// Invoke public field addition for the proved 6A23801F modulus.
 ///
 /// The two input values must be canonical field representatives.
 #[unsafe(no_mangle)]
@@ -20,14 +20,16 @@ pub extern "C" fn jolt_fp128_add_production_witness(
 ) -> Fp128Result {
     // SAFETY: This inspection symbol has the same canonical input contract as
     // the machine theorem.
-    let a = unsafe { Prime128OffsetA7F7::from_canonical_u128((a_hi as u128) << 64 | a_lo as u128) };
+    let a =
+        unsafe { Prime128Offset6A23801F::from_canonical_u128((a_hi as u128) << 64 | a_lo as u128) };
     // SAFETY: See the function contract above.
-    let b = unsafe { Prime128OffsetA7F7::from_canonical_u128((b_hi as u128) << 64 | b_lo as u128) };
+    let b =
+        unsafe { Prime128Offset6A23801F::from_canonical_u128((b_hi as u128) << 64 | b_lo as u128) };
     let [lo, hi] = (a + b).to_limbs();
     Fp128Result { lo, hi }
 }
 
-/// Invoke public field subtraction for the proved A7F7 modulus.
+/// Invoke public field subtraction for the proved 6A23801F modulus.
 ///
 /// The two input values must be canonical field representatives.
 #[unsafe(no_mangle)]
@@ -40,14 +42,16 @@ pub extern "C" fn jolt_fp128_sub_production_witness(
 ) -> Fp128Result {
     // SAFETY: This inspection symbol has the same canonical input contract as
     // the machine theorem.
-    let a = unsafe { Prime128OffsetA7F7::from_canonical_u128((a_hi as u128) << 64 | a_lo as u128) };
+    let a =
+        unsafe { Prime128Offset6A23801F::from_canonical_u128((a_hi as u128) << 64 | a_lo as u128) };
     // SAFETY: See the function contract above.
-    let b = unsafe { Prime128OffsetA7F7::from_canonical_u128((b_hi as u128) << 64 | b_lo as u128) };
+    let b =
+        unsafe { Prime128Offset6A23801F::from_canonical_u128((b_hi as u128) << 64 | b_lo as u128) };
     let [lo, hi] = (a - b).to_limbs();
     Fp128Result { lo, hi }
 }
 
-/// Invoke public field multiplication for the proved A7F7 modulus.
+/// Invoke public field multiplication for the proved 6A23801F modulus.
 ///
 /// The two input values must be canonical field representatives.
 #[unsafe(no_mangle)]
@@ -60,9 +64,11 @@ pub extern "C" fn jolt_fp128_mul_production_witness(
 ) -> Fp128Result {
     // SAFETY: This inspection symbol has the same canonical input contract as
     // the machine theorem.
-    let a = unsafe { Prime128OffsetA7F7::from_canonical_u128((a_hi as u128) << 64 | a_lo as u128) };
+    let a =
+        unsafe { Prime128Offset6A23801F::from_canonical_u128((a_hi as u128) << 64 | a_lo as u128) };
     // SAFETY: See the function contract above.
-    let b = unsafe { Prime128OffsetA7F7::from_canonical_u128((b_hi as u128) << 64 | b_lo as u128) };
+    let b =
+        unsafe { Prime128Offset6A23801F::from_canonical_u128((b_hi as u128) << 64 | b_lo as u128) };
     let [lo, hi] = (a * b).to_limbs();
     Fp128Result { lo, hi }
 }

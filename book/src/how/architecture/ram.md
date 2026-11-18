@@ -26,6 +26,14 @@ For the purposes of the memory checking argument, we remap the memory address to
 where `lowest_address` is the left-most address depicted in the diagram above.
 The division by eight reflects the fact that we treat guest memory as "doubleword-addressable" for the purposes of memory-checking.
 
+Layout admission requires `heap_end <= 2^64 - 8` and
+`lowest_address + 8 * max_ram_K <= 2^64`, where `max_ram_K` is the maximum
+admitted power-of-two-padded RAM domain, not the domain selected by one proof.
+Checked layout construction, full and committed preprocessing admission, and
+verifier-key deserialization enforce these bounds before execution or verification.
+The ELF decoder also rejects odd instruction addresses, matching bytecode admission's
+two-byte alignment requirement. These checks add no per-cycle proof relation.
+
 ### Sub-doubleword accesses
 
 Load and store instructions that access less than a full doubleword (e.g. `LB`, `SH`, `LW`) are expanded into [inline sequences](./emulation.md#virtual-instructions-and-sequences) around a *floor-addressed* doubleword access: `VirtualLoad{B,H,W}` reads, and `VirtualStore{B,H,W}` writes, the doubleword containing the effective address `ea = rs1 + imm`.
@@ -45,6 +53,94 @@ RAF evaluation ties `RamAddress` to the one-hot address: on each cycle it must e
 The verifier requires `lowest_address` to be a multiple of 8, so every admissible `RamAddress` is a multiple of 8.
 An access misaligned for its width, such as an `LH` at an odd address or any misaligned `LD`, leaves a low bit set in `RamAddress` and cannot be proven.
 
+## Read-write checking and protected words
+
+RAM read-write checking enforces value consistency, address selection, value
+preservation on protected words and the exclusion of unmapped words.
+Let $E(j)=\widetilde{\textsf{eq}}(r_0,j)$, where $r_0$ is the outer sumcheck's
+cycle point, and let $C(k)$ select the words of the code region (the
+doubleword holding the first source instruction through the one holding the
+last), program input, trusted advice, untrusted advice or the stack canary
+`[stack_end, stack_end + STACK_CANARY_SIZE)`.
+Let $N(k)$ select the unmapped words of the proof's domain: the padding
+`[io_end, RAM_START_ADDRESS)` between the I/O region and DRAM, and the words
+from `heap_end` to `lowest_address + 8K`.
+Stage 2 proves
+
+$$
+\textsf{Read}(r_0)+\gamma\textsf{Write}(r_0)
+ +\gamma^3(\textsf{Load}+\textsf{Store})(r_0)
+ =\sum_{k,j}E(j)\textsf{ra}(k,j)
+ \left[(1+\gamma)\textsf{Val}(k,j)
+ +(\gamma+\gamma^2 C(k))\textsf{Inc}(j)+\gamma^3+\gamma^4 N(k)\right].
+$$
+
+The $\gamma^2$ identity forces zero increments on protected words. It rejects
+changes to any of these regions even when a later store restores the original
+value. Same-value stores remain valid, including byte, halfword and word stores
+into a protected
+doubleword. The $\gamma^3$ identity ties the selector sum to the existing Load
+and Store flags. Together with Booleanity of every committed RAM chunk, it
+requires one selected address on memory rows and none on other rows. It is the
+only RAM one-hotness check (see [No-op cycles](#no-op-cycles)). Virtual memory
+rows and the field-inline memory accumulator carry these same flags.
+The $\gamma^4$ identity, $0=\sum_{k,j}E(j)N(k)\textsf{ra}(k,j)$, forbids
+selecting an unmapped word on any row. With `ra` zero-or-one-hot on each
+cycle (the $\gamma^3$ identity with Booleanity), each cycle's count
+$v(j)=\sum_k N(k)\textsf{ra}(k,j)$ is 0 or 1 and is fixed before $r_0$ is
+drawn. The sum equals $\widetilde{v}(r_0)$, which vanishes at a random $r_0$
+only if every count is zero, that is, no cycle selects an unmapped word,
+except with probability $\log T/|\mathbb{F}|$. Layout construction rounds
+`heap_end` up to a doubleword, matching the linker's aligned `__heap_end`, and
+admission rejects an unaligned `heap_end`, so a guest that uses the whole heap
+never touches a word in $N$. The panic and termination words lie below
+`io_end` and are outside $N$.
+
+The code region runs from the doubleword holding the first real source
+instruction through the one holding the last. It excludes synthetic
+address-zero padding and takes each expanded instruction's extent from its
+final row, which records whether the source instruction is two or four bytes.
+$C$ combines the region with the input, advice and canary extents from the
+public memory layout, rounded outward to doublewords and merged, in RAM indices
+relative to the lowest mapped address, including I/O below DRAM and index zero,
+and restricts the union to the proof's RAM domain. In full program mode the
+verifier derives the code region from the bytecode. In committed mode the key's
+metadata carries it, and admission checks that it lies in RAM and that an empty
+region is `0..0`; the authenticated key vouches for its coverage. The region
+enters the program digest through the bytecode or the metadata, together with
+the memory layout. ELF admission rejects a writable section that overlaps the
+code region. Padding and read-only data inside the region are frozen with the
+code; text padding outside it protects nothing.
+
+At the final opening point, the verifier evaluates the multilinear extensions
+of both masks, rather than testing membership at a field-valued address. For
+$s$ intervals this takes $O(s\log K)$ arithmetic; $C$ has at most five
+intervals and $N$ at most two. The optimized prover uses
+interval endpoints and at most two boundary weights per interval while binding
+address bits. It adds no dense mask, trace pass, commitment, opening point or
+sumcheck round; the maximum degree remains three.
+
+The RAM value check reconstructs each pre-access value from initial RAM and
+all earlier selected increments. Since the protection identity makes those
+increments zero on protected words, each protected value equals its initial
+value throughout execution. Equality of initial and final RAM alone would permit
+a temporary modification.
+
+The interpreter, replay tracer and native tracer reject a changed protected
+word before writing it, reject loads below `lowest_address`, and reject any
+access at or above `io_end` below DRAM or at or above `heap_end` in DRAM. The
+constraints reject the same accesses: the $\gamma^2$ identity rejects the
+store, the $\gamma^3$ identity with RAF evaluation rejects any address outside
+the proof's domain `[lowest_address, lowest_address + 8K)`, and the
+$\gamma^4$ identity rejects any access to a word in $N$. The rest of the tracer's store-permission policy has no
+matching constraint. The tracers also reject an instruction fetch at an address
+that starts no decoded source instruction, such as a jump into data, padding or
+the middle of an instruction: the native tracer compiles only the decoded
+instructions, and the interpreter checks each address before decoding it. Host calls (prints, cycle
+markers and advice writes) never stop the run: a call whose buffer has a byte
+below `lowest_address`, or any other byte a guest load would reject, is logged
+and ignored.
+
 ## Deviations from the Twist algorithm as described in the paper
 
 Our implementation of the Twist prover algorithm differs from the description given in the Twist and Shout [paper](https://eprint.iacr.org/2025/105) in a couple of ways. One such deviation is [wv virtualization](../twist-shout.md#wv-virtualization). Other, RAM-specific deviations are described below.
@@ -60,21 +156,20 @@ This polynomial is referred to as $\widetilde{\textsf{ra}}$ for the rest of this
 
 Many instructions do not access memory, so we represent them using a row of zeros in the $\widetilde{\textsf{ra}}$ polynomial rather than the one-hot encoding of the accessed address.
 Having more zeros in $\widetilde{\textsf{ra}}$ makes it cheaper to commit to and speeds up some of the other Twist sumchecks.
-This modification necessitates adjustments to the [Hamming weight](../twist-shout.md#one-hot-polynomials) sumcheck, which would otherwise enforce that the Hamming weight for each "row" in $\widetilde{\textsf{ra}}$ is 1.
-
-We introduce an additional **Hamming Booleanity** sumcheck:
-
-$$
-0 = \sum_{j \in \{0, 1\}^{\log(T)}} \widetilde{\textsf{eq}}(r', j) \cdot \left(\widetilde{\textsf{hw}}(j)^2 - \widetilde{\textsf{hw}}(j)\right)
-$$
-
-where $\widetilde{\textsf{hw}}$ is the Hamming weight polynomial, which can be virtualized using the original Hamming weight sumcheck expression:
+The paper's [Hamming weight](../twist-shout.md#one-hot-polynomials) check, which requires every row of $\widetilde{\textsf{ra}}$ to have weight 1, therefore does not apply to RAM.
+Instead, the $\gamma^3$ identity of [read-write checking](#read-write-checking-and-protected-words) requires, on every cycle $j$,
 
 $$
-\widetilde{\textsf{hw}}(r_\text{cycle}) = \sum_{k = (k_1, \dots, k_d) \in \left(\{0, 1\}^{\log(K) / d}\right)^d} \widetilde{\textsf{ra}}(k, r_\text{cycle})
+\sum_{k} \textsf{ra}(k, j) = \textsf{Load}(j) + \textsf{Store}(j).
 $$
 
-For simplicity, these equations are presented for the $d=1$ case, but as described [above](#dynamic-parameters), $d$ for RAM is dynamic and can be greater than one.
+No instruction sets both flags (the `load_store_exclusive` test in `jolt-riscv` pins the instruction catalog, and bytecode read-checking ties each cycle's flags to its bytecode row), so the right-hand side is 0 or 1.
+The $d$ committed chunks factor the selector as $\textsf{ra}(k, j) = \prod_{i=1}^{d} \textsf{ra}_i(k_i, j)$ (as described [above](#dynamic-parameters), $d$ for RAM is dynamic), so the left-hand side is $\prod_{i=1}^{d} n_i(j)$, where $n_i(j) = \sum_{k_i} \textsf{ra}_i(k_i, j)$ sums over the values that digit $k_i$ takes in addresses of the RAM domain.
+Booleanity of every committed chunk makes each $n_i(j)$ a nonnegative integer, and the product is far below the field modulus, so the equation holds over the integers.
+On a memory row the product is 1, so every chunk's row restricted to those digit values is one-hot and $\textsf{ra}$ selects exactly one word.
+On any other row the product is 0, so some chunk's restriction is zero and $\textsf{ra}$ selects no word.
+`committed_address_chunks` fixes unused leading address bits to zero, so entries outside that slice need only satisfy Booleanity, even on memory rows.
+Individual chunk weights are not otherwise constrained: on a non-memory row, the chunk restrictions other than a zero one may hold several ones.
 
 ### ra virtualization
 

@@ -186,7 +186,8 @@ impl LazyBind {
     /// The step for branch tables of `table_lens` entries, in polynomial
     /// order with `factors` tables per polynomial (only each polynomial's
     /// first table doubles), over `cycles` cycles at `width` of at most
-    /// `max_width` branches.
+    /// `max_width` branches. A dense element count past `usize` saturates:
+    /// it exceeds every branch table that fits in memory.
     pub(super) fn new(
         width: usize,
         max_width: usize,
@@ -194,7 +195,7 @@ impl LazyBind {
         cycles: usize,
         table_lens: impl ExactSizeIterator<Item = usize>,
     ) -> Self {
-        let dense_elements = cycles / (2 * width) * (table_lens.len() / factors);
+        let dense_elements = (cycles / (2 * width)).saturating_mul(table_lens.len() / factors);
         let branch_elements = table_lens
             .enumerate()
             .map(|(column, len)| len * if column.is_multiple_of(factors) { 2 } else { 1 })
@@ -622,7 +623,11 @@ fn gather_product<F: JoltField, S: ChunkIndexSource>(
 /// second half by `challenge` (bit 1) — offset layout
 /// `b0 + 2·b1 + 4·b2`, matching the low bits of the original cycle index.
 /// Only lead columns carry branches; trailing columns pass through.
-fn double_branches<F: JoltField>(tables: Vec<Vec<F>>, factors: usize, challenge: F) -> Vec<Vec<F>> {
+pub(super) fn double_branches<F: JoltField>(
+    tables: Vec<Vec<F>>,
+    factors: usize,
+    challenge: F,
+) -> Vec<Vec<F>> {
     let one_minus = F::one() - challenge;
     let double = |(column, table): (usize, Vec<F>)| -> Vec<F> {
         if !column.is_multiple_of(factors) {
@@ -868,7 +873,7 @@ fn materialize_paired_rows<F: JoltField, S: ChunkIndexSource>(
 mod prefix_tests {
     use super::{ChunkIndexSource, LazyFoldedRa};
     #[cfg(feature = "akita")]
-    use jolt_field::Prime128OffsetA7F7;
+    use jolt_field::Prime128Offset6A23801F;
     use jolt_field::{Fr, JoltField};
 
     struct Source {
@@ -954,7 +959,9 @@ mod prefix_tests {
                 let challenge = F::from_u64([0, 1, 13, 29, 41, 53, 67][round % 7]);
                 for values in &mut dense {
                     *values = values
-                        .chunks_exact(2)
+                        .as_chunks::<2>()
+                        .0
+                        .iter()
                         .map(|p| p[0] + challenge * (p[1] - p[0]))
                         .collect();
                 }
@@ -969,7 +976,7 @@ mod prefix_tests {
     #[cfg(feature = "akita")]
     #[test]
     fn constant_tail_binds_match_dense_multilinears_fp128() {
-        check::<Prime128OffsetA7F7>();
+        check::<Prime128Offset6A23801F>();
     }
 }
 

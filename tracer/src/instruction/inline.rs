@@ -105,7 +105,7 @@ fn find_inline(opcode: u32, funct3: u32, funct7: u32) -> &'static InlineRegistra
         .find(|r| r.opcode == opcode && r.funct3 == funct3 && r.funct7 == funct7)
         .unwrap_or_else(|| {
             panic!(
-                "No inline registered for opcode={opcode:#04x}, funct3={funct3:#03b}, funct7={funct7:#09b}."
+                "No inline registered for opcode={opcode:#04x}, funct3={funct3:#b}, funct7={funct7:#09b}."
             )
         })
 }
@@ -329,7 +329,7 @@ impl INLINE {
         // panics here, with the faulting address from the error.
         let advice = (reg.build_advice)(self.operands, cpu).unwrap_or_else(|e| {
             panic!(
-                "Inline advice for opcode={:#04x}, funct3={:#03b}, funct7={:#09b} failed: {e}",
+                "Inline advice for opcode={:#04x}, funct3={:#b}, funct7={:#09b} failed: {e}",
                 self.opcode, self.funct3, self.funct7
             )
         });
@@ -343,7 +343,7 @@ impl INLINE {
                     va.advice = match advice.pop_front() {
                         Some(val) => val,
                         None => panic!(
-                            "Inline advice for opcode={:#04x}, funct3={:#03b}, funct7={:#09b} \
+                            "Inline advice for opcode={:#04x}, funct3={:#b}, funct7={:#09b} \
                             did not provide enough values",
                             self.opcode, self.funct3, self.funct7
                         ),
@@ -353,7 +353,7 @@ impl INLINE {
             }
             assert!(
                 advice.is_empty(),
-                "Inline advice for opcode={:#04x}, funct3={:#03b}, funct7={:#09b} \
+                "Inline advice for opcode={:#04x}, funct3={:#b}, funct7={:#09b} \
                 provided too many values",
                 self.opcode,
                 self.funct3,

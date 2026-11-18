@@ -11,8 +11,18 @@ import statistics
 import subprocess
 import tempfile
 
-METHOD = 'null-median3-symmetric-envelope-v2'
+METHOD = 'null-median3-symmetric-envelope-v3'
 NORMALIZATION = 'elf-no-build-id-comment-v1'
+# Percent reporting thresholds by trace ceiling; a row applies from its `from_scale_log2` up to the next row's.
+# This is their only definition: selection and every rendered sentence read it. scripts/bench/README.md
+# ("Reporting thresholds") gives the rule that derives each value and how often published nulls reach it.
+SIZE_THRESHOLDS = (
+    {'from_scale_log2': 0, 'group_time': 3.0, 'case_time': 3.0, 'rss': 15.0},
+    {'from_scale_log2': 20, 'group_time': 3.0, 'case_time': 4.5, 'rss': 15.0},
+    {'from_scale_log2': 22, 'group_time': 2.0, 'case_time': 2.5, 'rss': 9.0},
+    {'from_scale_log2': 24, 'group_time': 1.0, 'case_time': 2.0, 'rss': 3.0},
+    {'from_scale_log2': 27, 'group_time': 1.0, 'case_time': 1.5, 'rss': 3.0},
+)
 
 
 def encoded(value):
@@ -42,7 +52,7 @@ def normalized(path):
 
 
 def host_identity(host):
-    identity = {key: host[key] for key in ('id', 'kernel', 'microcode', 'control_plane')}
+    identity = {key: host[key] for key in ('id', 'kernel', 'microcode')}
     identity['settings'] = {key: host['settings'][key] for key in
         ('boost', 'smt', 'governor', 'transparent_huge_pages', 'swap_total_bytes')}
     return identity
@@ -76,7 +86,7 @@ def cell_key(result, case):
         for name in ('trace_rows', 'padded_trace_rows')}
     if any(len(values) != 1 for values in rows.values()):
         raise ValueError('base trace rows are absent or changed')
-    key = {'schema': 1, 'method': METHOD, 'normalization': NORMALIZATION, 'metric_contract': 1,
+    key = {'schema': 2, 'method': METHOD, 'normalization': NORMALIZATION, 'metric_contract': 1,
         'host': host, 'build': build, 'cache_policy': result['runtime_cache']['dory'],
         'case': {name: case[name] for name in ('id', 'workload', 'pcs', 'backend', 'physical_cores', 'cpu_ids')},
         'rows': {name: next(iter(values)) for name, values in rows.items()}}
@@ -91,9 +101,40 @@ def cell_key(result, case):
     return key
 
 
+def size_thresholds(scale_log2):
+    """Thresholds for one case and for a size group's mean at a trace ceiling.
+
+    A case with no ceiling gets the largest value of each column.
+    """
+    if scale_log2 is None:
+        row = {name: max(item[name] for item in SIZE_THRESHOLDS) for name in ('group_time', 'case_time', 'rss')}
+    else:
+        row = [item for item in SIZE_THRESHOLDS if scale_log2 >= item['from_scale_log2']][-1]
+    return {'case': {'e2e_s': row['case_time'], 'peak_rss_bytes': row['rss']},
+            'group': {'e2e_s': row['group_time'], 'peak_rss_bytes': row['rss']}}
+
+
+def case_thresholds(scale_log2, observed):
+    """A case's thresholds: its size row, raised to each metric's observed envelope when a reference matched."""
+    return {metric: max(value, observed[metric]['envelope_pct']) if observed else value
+            for metric, value in size_thresholds(scale_log2)['case'].items()}
+
+
+def size_thresholds_text():
+    parts = []
+    for row, following in zip(SIZE_THRESHOLDS, [*SIZE_THRESHOLDS[1:], None]):
+        start = row['from_scale_log2']
+        sizes = (f'2^{start} and above' if following is None else
+                 f"below 2^{following['from_scale_log2']}" if row is SIZE_THRESHOLDS[0] else
+                 f"2^{start} to 2^{following['from_scale_log2'] - 1}")
+        parts.append(f"{sizes}, {row['group_time']:g}% / {row['case_time']:g}% / {row['rss']:g}%")
+    return ("Trace-size thresholds (a size group's mean time / one case's time / peak RSS of either): "
+            + '; '.join(parts) + '.')
+
+
 def envelopes(case):
     values = {}
-    for metric, floor, unit in [('e2e_s', 3.0, 'seconds'), ('peak_rss_bytes', 2.0, 'bytes')]:
+    for metric, unit in [('e2e_s', 'seconds'), ('peak_rss_bytes', 'bytes')]:
         legs = {leg: [s['metrics'][metric] for s in case['samples']
                      if s['leg'] == leg and s['phase'] == 'measure'] for leg in ('base', 'head')}
         if any(len(v) != 10 or any(x <= 0 or not math.isfinite(x) for x in v) for v in legs.values()):
@@ -104,7 +145,7 @@ def envelopes(case):
             deltas.append(100 * (max(a / b, b / a) - 1))
         maximum = max(deltas)
         values[metric] = {'unit': unit, 'max_symmetric_window_delta_pct': float(maximum),
-                         'threshold_pct': .5 * math.ceil(max(Fraction(str(floor)), Fraction(3, 2) * maximum) * 2)}
+                         'envelope_pct': .5 * math.ceil(Fraction(3, 2) * maximum * 2)}
     return values
 
 
@@ -170,9 +211,8 @@ def manual_reference(result, case):
     if calibration.get('status') != 'measured':
         return None, calibration.get('reason') or 'reference not measured'
     try:
-        for key, value in {'method': 'null-median3-symmetric-envelope-v2', 'metric_contract': 1,
+        for key, value in {'method': METHOD, 'metric_contract': 1,
                            'window_pairs': 3, 'windows_overlap': True, 'independent_windows': False,
-                           'floor_pct': {'e2e_s': 3.0, 'peak_rss_bytes': 2.0},
                            'envelope_multiplier': 1.5, 'rounding_pp': 0.5}.items():
             if calibration.get(key) != value:
                 raise ValueError(f'calibration {key} differs from the supported method')
@@ -209,9 +249,6 @@ def manual_reference(result, case):
             'toolchain', 'target_cpu', 'target_triple', 'rustflags', 'profile', 'cargo_lock_sha256')]
         comparisons += [(f'host.{key}', source.get('host_id' if key == 'id' else key), host.get(key))
                         for key in ('id', 'kernel', 'microcode')]
-        comparisons += [(f'host.control_plane.{key}', source['control_plane'].get(key),
-                         (host.get('control_plane') or {}).get(key))
-                        for key in ('version', 'cli_sha256', 'node_sha256')]
         comparisons += [(f'host.settings.{key}', source['settings'].get(key), host.get('settings', {}).get(key))
                         for key in ('boost', 'smt', 'governor', 'transparent_huge_pages', 'swap_total_bytes')]
         for label, expected, actual in comparisons:
@@ -235,7 +272,7 @@ def manual_reference(result, case):
             value = reference['metrics'][metric]
             if value['unit'] != unit:
                 raise ValueError(f'mismatch: {metric} unit')
-            for key in ('threshold_pct', 'max_symmetric_window_delta_pct'):
+            for key in ('envelope_pct', 'max_symmetric_window_delta_pct'):
                 if (type(value.get(key)) not in (int, float) or not math.isfinite(value[key])
                         or value[key] < 0):
                     raise ValueError(f'missing or invalid {metric}.{key}')

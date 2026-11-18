@@ -56,6 +56,10 @@ pub(super) const fn handles_rd_zero_internally(instruction_kind: SourceInstructi
             | SourceInstructionKind::EBREAK
             | SourceInstructionKind::CSRRW
             | SourceInstructionKind::CSRRS
+            | SourceInstructionKind::CSRRC
+            | SourceInstructionKind::CSRRWI
+            | SourceInstructionKind::CSRRSI
+            | SourceInstructionKind::CSRRCI
     ) || field_inline_handles_rd_zero(instruction_kind)
 }
 

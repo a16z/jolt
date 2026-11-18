@@ -69,7 +69,7 @@ mod one_hot_histograms;
 pub mod opening;
 pub mod precommitted_reduction;
 mod prefix_product;
-pub mod ram_hamming_booleanity;
+mod ram_events;
 pub mod ram_output_check;
 pub mod ram_ra_claim_reduction;
 pub mod ram_ra_virtualization;
@@ -85,6 +85,7 @@ mod rw_matrix;
 pub mod spartan_outer;
 pub mod spartan_product;
 pub mod spartan_shift;
+mod streaming;
 pub(crate) mod support;
 
 pub use bytecode_read_raf::{OptimizedBytecodeReadRafAddress, OptimizedBytecodeReadRafCycle};
@@ -92,6 +93,7 @@ pub use hamming_weight_claim_reduction::OptimizedHammingWeightClaimReduction;
 pub use inc_claim_reduction::OptimizedIncClaimReduction;
 pub use precommitted_reduction::{OptimizedPrecommittedAddress, OptimizedPrecommittedCycle};
 pub use ram_trace::{ram_access_columns_bytes, ram_value_collection_bytes};
+pub use streaming::StreamingFamilies;
 
 /// The optimized implementations' marker type: implements the RAM-family
 /// [`PrepareKernel`](crate::PrepareKernel) slots (each module here hosts its
@@ -173,8 +175,6 @@ where
 
         self.booleanity_address = Box::new(booleanity::OptimizedBooleanityAddress);
         self.booleanity_cycle = Box::new(booleanity::OptimizedBooleanityCycle);
-        self.ram_hamming_booleanity =
-            Box::new(ram_hamming_booleanity::OptimizedRamHammingBooleanity);
 
         self.bytecode_read_raf_address = Box::new(OptimizedBytecodeReadRafAddress);
         self.bytecode_read_raf_cycle = Box::new(OptimizedBytecodeReadRafCycle);
@@ -205,6 +205,8 @@ where
 
 #[cfg(all(test, feature = "field-inline"))]
 pub(crate) mod field_registers_testing;
+#[cfg(test)]
+pub(crate) mod heap_peak;
 #[cfg(test)]
 pub(crate) mod parity;
 #[cfg(test)]

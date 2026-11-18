@@ -78,4 +78,4 @@ Several other types in `crates/jolt-poly/src/` exploit common structure:
 
 - **`OneHotPolynomial`** (`one_hot.rs`): Stores the optional nonzero index for each row rather than a dense vector of 0s and 1s. Used for $\widetilde{\textsf{ra}}$ and $\widetilde{\textsf{wa}}$ polynomials in [Twist and Shout](../twist-shout.md).
 - **`RlcSource`** (`multilinear.rs`): Represents a lazy random linear combination of multiple PCS sources.
-- **`EqPolynomial`** (`eq.rs`): The [equality MLE](./eq-polynomial.md) $\widetilde{\textsf{eq}}(r, \cdot)$, commonly used as a building block in sumcheck and MLE evaluation.
+- **`EqPolynomial`** (`eq/`): The [equality MLE](./eq-polynomial.md) $\widetilde{\textsf{eq}}(r, \cdot)$, commonly used as a building block in sumcheck and MLE evaluation.

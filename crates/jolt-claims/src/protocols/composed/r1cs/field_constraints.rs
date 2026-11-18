@@ -477,7 +477,7 @@ mod tests {
     fn modulus_binding_cannot_replace_the_residual_assertion() {
         let constraints = field_inline_trace_constraints::<Fr>();
         // A guest compiled for fp128 is executing in BN254.
-        let modulus = [0xffff_ffff_0000_5809u64, u64::MAX];
+        let modulus = [0xffff_ffff_95dc_7fe1u64, u64::MAX];
         let radix = limb_radix::<Fr>();
         let guest_modulus = Fr::from_u64(modulus[0]) + radix * Fr::from_u64(modulus[1]);
         let mut quotient = -guest_modulus;

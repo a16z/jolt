@@ -1097,9 +1097,10 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                 transcript: &mut __T,
                 claims: &#output_claims_name<#f>,
             ) {
-                for value in self.opening_values(claims) {
-                    transcript.append(&value);
-                }
+                ::jolt_transcript::PrivateChannel::append_private(
+                    transcript,
+                    &self.opening_values(claims),
+                );
             }
         }
     };

@@ -157,14 +157,7 @@ impl SharedRamAddresses {
         log_t: usize,
     ) -> Result<Arc<RamAddresses>, KernelError<F>> {
         if session.state::<Self>().is_none() {
-            let cycles = 1usize << log_t;
-            let [addresses] = collect_split_columns::<F, RamAddressBundle, u32, 1>(
-                witness,
-                cycles,
-                [NO_ACCESS],
-                |bundle| encode_address(bundle.address.0).map(|address| [address]),
-            )?;
-            session.park(Self(Arc::new(RamAddresses::new(addresses, cycles))));
+            session.park(Self(collect_addresses(witness, log_t)?));
         }
         let addresses = Arc::clone(
             &session
@@ -182,6 +175,21 @@ impl SharedRamAddresses {
         }
         Ok(addresses)
     }
+}
+
+/// Remapped addresses with the trace's implicit no-access suffix.
+pub(crate) fn collect_addresses<F: JoltField>(
+    witness: &dyn JoltWitnessPlane<F>,
+    log_t: usize,
+) -> Result<Arc<RamAddresses>, KernelError<F>> {
+    let cycles = 1usize << log_t;
+    let [addresses] = collect_split_columns::<F, RamAddressBundle, u32, 1>(
+        witness,
+        cycles,
+        [NO_ACCESS],
+        |bundle| encode_address(bundle.address.0).map(|address| [address]),
+    )?;
+    Ok(Arc::new(RamAddresses::new(addresses, cycles)))
 }
 
 fn collect_split_columns<F: JoltField, B, T, const N: usize>(
@@ -385,25 +393,36 @@ impl RamAccessColumns {
         self.pre_values.len().max(self.post_values.len())
     }
 
-    /// Recover initial values from each address's first access; untouched
-    /// addresses retain their final value.
-    ///
-    /// WARNING: RAM sumchecks enforce the assumed trace/final-image agreement.
     pub fn reconstruct_val_init<F: JoltField>(&self, val_final: Vec<F>) -> Vec<F> {
-        let mut val_init = val_final;
-        let mut seen = vec![false; val_init.len()];
-        for (cycle, &address) in self.addresses.prefix().iter().enumerate() {
-            if address == NO_ACCESS {
-                continue;
-            }
-            let address = address as usize;
-            if !seen[address] {
-                seen[address] = true;
-                val_init[address] = F::from_u64(self.pre_value(cycle));
-            }
-        }
-        val_init
+        val_init_from_first_accesses(
+            val_final,
+            self.addresses
+                .prefix()
+                .iter()
+                .enumerate()
+                .filter(|(_, address)| **address != NO_ACCESS)
+                .map(|(cycle, &address)| (address as usize, self.pre_value(cycle))),
+        )
     }
+}
+
+/// Recover initial values from cycle-ordered accesses; untouched addresses
+/// retain their final value.
+///
+/// WARNING: RAM sumchecks enforce the assumed trace/final-image agreement.
+pub(crate) fn val_init_from_first_accesses<F: JoltField>(
+    val_final: Vec<F>,
+    accesses: impl Iterator<Item = (usize, u64)>,
+) -> Vec<F> {
+    let mut val_init = val_final;
+    let mut seen = vec![false; val_init.len()];
+    for (address, pre_value) in accesses {
+        if !seen[address] {
+            seen[address] = true;
+            val_init[address] = F::from_u64(pre_value);
+        }
+    }
+    val_init
 }
 
 pub(crate) fn validate_addresses<F: JoltField>(
@@ -422,66 +441,70 @@ pub(crate) fn validate_addresses<F: JoltField>(
     Ok(())
 }
 
-/// Address fold: `out[j] = eq_address[addresses[j]]`, or zero without access.
-pub(crate) fn fold_addresses<F: JoltField>(addresses: &RamAddresses, eq_address: &[F]) -> Vec<F> {
-    let mut values: Vec<F> = addresses
-        .prefix()
-        .iter()
-        .map(|&address| {
-            if address == NO_ACCESS {
-                F::zero()
-            } else {
-                eq_address[address as usize]
-            }
-        })
-        .collect();
-    values.resize(addresses.len(), F::zero());
-    values
-}
+/// Bytes of `ram_k`-entry sums [`fold_parts`] may hold beside its result.
+#[cfg(feature = "parallel")]
+const FOLD_PART_BYTES: usize = 256 << 20;
 
-const FOLD_CYCLES_CHUNK: usize = 1 << 20;
+/// Sums a `ram_k`-entry table over `items`, in contiguous parts on the pool
+/// under `parallel`: `add_part(sum, first, part)` adds the terms of `part`,
+/// whose first item is `items[first]`, into the part's own zeroed `sum`, and
+/// the sums are added.
+pub(crate) fn fold_parts<F: JoltField, T: Sync>(
+    items: &[T],
+    ram_k: usize,
+    add_part: impl Fn(&mut [F], usize, &[T]) + Sync,
+) -> Vec<F> {
+    let fold_part = |first: usize, part: &[T]| {
+        let mut sum = vec![F::zero(); ram_k];
+        add_part(&mut sum, first, part);
+        sum
+    };
+
+    #[cfg(feature = "parallel")]
+    {
+        let extra_parts = FOLD_PART_BYTES / (ram_k * size_of::<F>()).max(1);
+        let parts = rayon::current_num_threads().min(1 + extra_parts);
+        // A part shorter than the address space would spend more on its sum
+        // than on its items.
+        let part_len = items.len().div_ceil(parts).max(ram_k).max(1);
+        items
+            .par_chunks(part_len)
+            .enumerate()
+            .map(|(index, part)| fold_part(index * part_len, part))
+            .reduce_with(|mut sum, part| {
+                sum.par_iter_mut()
+                    .zip(part)
+                    .with_min_len(1 << 12)
+                    .for_each(|(sum, value)| *sum += value);
+                sum
+            })
+            .unwrap_or_else(|| vec![F::zero(); ram_k])
+    }
+    #[cfg(not(feature = "parallel"))]
+    fold_part(0, items)
+}
 
 /// Cycle fold of the one-hot `ra` grid:
 /// `out[k] = Σ_j eq(r_cycle, j) · ra(k, j) = Σ_{j : addresses[j] = k} eq_cycle[j]`.
-/// Eq values are generated in chunks from `e_hi ⊗ e_lo`.
 pub(crate) fn fold_cycles<F: JoltField>(
     addresses: &RamAddresses,
     r_cycle: &[F],
     ram_k: usize,
 ) -> Vec<F> {
-    let addresses = addresses.prefix();
     let mid = r_cycle.len() / 2;
     let (r_hi, r_lo) = r_cycle.split_at(mid);
     let e_hi = EqPolynomial::<F>::evals(r_hi, None);
     let e_lo = EqPolynomial::<F>::evals(r_lo, None);
     let lo_bits = r_lo.len();
     let lo_mask = e_lo.len() - 1;
-
-    let mut out = vec![F::zero(); ram_k];
-    let mut staging: Vec<F> = vec![F::zero(); FOLD_CYCLES_CHUNK.min(addresses.len())];
-    for (chunk_index, chunk) in addresses.chunks(FOLD_CYCLES_CHUNK).enumerate() {
-        let base = chunk_index * FOLD_CYCLES_CHUNK;
-        let staging = &mut staging[..chunk.len()];
-        let fill = |(offset, slot): (usize, &mut F)| {
-            let j = base + offset;
-            *slot = e_hi[j >> lo_bits] * e_lo[j & lo_mask];
-        };
-        #[cfg(feature = "parallel")]
-        staging
-            .par_iter_mut()
-            .enumerate()
-            .with_min_len(1 << 10)
-            .for_each(fill);
-        #[cfg(not(feature = "parallel"))]
-        staging.iter_mut().enumerate().for_each(fill);
-
-        for (&address, &eq) in chunk.iter().zip(staging.iter()) {
+    fold_parts(addresses.prefix(), ram_k, |out, first_cycle, part| {
+        for (offset, &address) in part.iter().enumerate() {
             if address != NO_ACCESS {
-                out[address as usize] += eq;
+                let j = first_cycle + offset;
+                out[address as usize] += e_hi[j >> lo_bits] * e_lo[j & lo_mask];
             }
         }
-    }
-    out
+    })
 }
 
 #[cfg(test)]

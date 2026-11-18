@@ -436,6 +436,10 @@ pub fn is_source_only(instruction_kind: SourceInstructionKind) -> bool {
             | SourceInstructionKind::SW
             | SourceInstructionKind::CSRRW
             | SourceInstructionKind::CSRRS
+            | SourceInstructionKind::CSRRC
+            | SourceInstructionKind::CSRRWI
+            | SourceInstructionKind::CSRRSI
+            | SourceInstructionKind::CSRRCI
             | SourceInstructionKind::EBREAK
             | SourceInstructionKind::ECALL
             | SourceInstructionKind::MRET

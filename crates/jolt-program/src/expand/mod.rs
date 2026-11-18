@@ -39,7 +39,8 @@ pub mod asm_support {
 
 use allocator::{
     mcause_register, mepc_register, mstatus_register, mtval_register, reservation_d_register,
-    reservation_w_register, trap_handler_register, virtual_register_for_csr,
+    reservation_w_register, trap_handler_register, virtual_register_for_csr, CSR_MEPC, CSR_MSTATUS,
+    CSR_MTVEC,
 };
 use arithmetic::*;
 use control_flow::*;
@@ -251,6 +252,10 @@ fn expand_source_only_instruction(
         SourceInstructionKind::SW => expand_sw(row),
         SourceInstructionKind::CSRRW => expand_csrrw(row),
         SourceInstructionKind::CSRRS => expand_csrrs(row),
+        SourceInstructionKind::CSRRC => expand_csrrc(row),
+        SourceInstructionKind::CSRRWI => expand_csrrwi(row),
+        SourceInstructionKind::CSRRSI => expand_csrrsi(row),
+        SourceInstructionKind::CSRRCI => expand_csrrci(row),
         SourceInstructionKind::EBREAK => expand_ebreak(row),
         SourceInstructionKind::ECALL => expand_ecall(row),
         SourceInstructionKind::MRET => expand_mret(row),

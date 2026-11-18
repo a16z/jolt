@@ -8,9 +8,12 @@ use std::sync::Arc;
 use std::thread::Builder;
 
 use common::jolt_device::{JoltDevice, MemoryConfig, MemoryLayout};
+use jolt_field::Fr;
 use jolt_host::{JoltProgramSource, Program};
 use jolt_program::execution::{ExecutionBackend, JoltProgram, TraceInputs, TraceOutput};
 use jolt_program::preprocess::JoltProgramPreprocessing;
+use jolt_prover::ProverConfig;
+use jolt_riscv::JoltInstructionKind;
 use tracer::execution_backend::TracerBackend;
 
 #[cfg(feature = "field-inline")]
@@ -25,14 +28,21 @@ pub struct GuestCase {
     pub func: Option<&'static str>,
     pub std: bool,
     pub stack_size: Option<u64>,
+    /// Must match the guest's `max_untrusted_advice_size` attribute.
+    pub max_untrusted_advice_size: Option<u64>,
     pub inputs: Vec<u8>,
     pub untrusted_advice: Vec<u8>,
     pub trusted_advice: Vec<u8>,
     /// Checked against the guest's output buffer before proving, so a wrong
     /// result fails as a broken guest rather than proving a wrong claim.
     pub expected_output: Option<Vec<u8>>,
-    /// Padded trace bound baked into preprocessing.
-    pub max_padded_trace_length: usize,
+    /// Whether the guest panics: its run ends at `ebreak` and proves the
+    /// public panic flag. Otherwise it ends at `jolt.success`.
+    pub panics: bool,
+    /// Padded trace maximum baked into preprocessing. `None` bakes in the
+    /// execution's own padded domain, which the execution must fill exactly
+    /// (no padding row), as the e2e matrix's `exact_domain` case does.
+    pub max_padded_trace_length: Option<usize>,
     #[cfg(feature = "field-inline")]
     pub field_inline_active: bool,
 }
@@ -44,18 +54,20 @@ impl GuestCase {
             func: None,
             std: false,
             stack_size: None,
+            max_untrusted_advice_size: None,
             inputs: Vec::new(),
             untrusted_advice: Vec::new(),
             trusted_advice: Vec::new(),
             expected_output: None,
-            max_padded_trace_length: 1 << 16,
+            panics: false,
+            max_padded_trace_length: Some(1 << 16),
             #[cfg(feature = "field-inline")]
             field_inline_active: false,
         }
     }
 
     fn assert_output(&self, device: &JoltDevice) {
-        assert!(!device.panic, "{} panicked during execution", self.name);
+        assert_eq!(device.panic, self.panics, "{}: panic flag", self.name);
         if let Some(expected) = &self.expected_output {
             let (head, tail) = device
                 .outputs
@@ -89,10 +101,9 @@ pub fn memory_config(layout: &MemoryLayout) -> MemoryConfig {
     }
 }
 
-/// Builds, sizes, preprocesses, and traces `case`. A guest panic, a wrong
-/// output, or a trace over the padded bound is a broken case rather than a
-/// prover result, so all three fail here before any proving starts.
-pub fn prepare(case: &GuestCase) -> PreparedGuest {
+/// The guest build `case` runs: its example crate, entry point, profile,
+/// standard library, stack size, and untrusted-advice maximum.
+pub fn program(case: &GuestCase) -> Program {
     let mut source = Program::new(case.name);
     #[cfg(feature = "field-inline")]
     source.enable_field_inline();
@@ -103,18 +114,40 @@ pub fn prepare(case: &GuestCase) -> PreparedGuest {
     if let Some(bytes) = case.stack_size {
         source.set_stack_size(bytes);
     }
+    if let Some(bytes) = case.max_untrusted_advice_size {
+        source.set_max_untrusted_advice_size(bytes);
+    }
+    source
+}
+
+/// Builds, sizes, preprocesses, and traces `case`. A wrong panic flag, a wrong
+/// output, a trace over the padded bound, or a run that does not end at the
+/// expected halt is a broken case rather than a prover result, so each fails
+/// here before any proving starts.
+pub fn prepare(case: &GuestCase) -> PreparedGuest {
+    let mut source = program(case);
     let (_, sizing_trace, _, device) =
         source.trace(&case.inputs, &case.untrusted_advice, &case.trusted_advice);
     case.assert_output(&device);
-    // Same padding law as `ProverConfig::derive_from_dimensions`: one row is reserved beyond
-    // the executed trace.
-    assert!(
-        (sizing_trace.len() + 1).next_power_of_two() <= case.max_padded_trace_length,
-        "{}: {} cycles exceed the padded trace bound {}",
-        case.name,
-        sizing_trace.len(),
-        case.max_padded_trace_length,
-    );
+    let padded_trace_length =
+        ProverConfig::padded_trace_length::<Fr>(sizing_trace.len()).expect("padded trace domain");
+    let max_padded_trace_length = if let Some(max) = case.max_padded_trace_length {
+        assert!(
+            padded_trace_length <= max,
+            "{}: {} cycles exceed the padded trace bound {max}",
+            case.name,
+            sizing_trace.len(),
+        );
+        max
+    } else {
+        assert_eq!(
+            sizing_trace.len(),
+            padded_trace_length,
+            "{}: a full-domain case must fill its padded domain exactly",
+            case.name,
+        );
+        padded_trace_length
+    };
     let layout = device.memory_layout;
     let program = Arc::new(source.build_jolt_program().expect("build Jolt program"));
     let preprocessing = JoltProgramPreprocessing::new(
@@ -122,7 +155,7 @@ pub fn prepare(case: &GuestCase) -> PreparedGuest {
         program.memory_init.clone(),
         layout.clone(),
         program.entry_address,
-        case.max_padded_trace_length,
+        max_padded_trace_length,
         source.instruction_profile(),
     )
     .expect("program preprocessing");
@@ -136,6 +169,19 @@ pub fn prepare(case: &GuestCase) -> PreparedGuest {
         .trace(&program, inputs)
         .expect("modular trace");
     case.assert_output(&trace.device);
+    let last = trace
+        .trace
+        .proof_rows()
+        .last()
+        .expect("a guest run executes at least one row")
+        .instruction()
+        .instruction_kind;
+    let halt = if case.panics {
+        JoltInstructionKind::JoltPanic
+    } else {
+        JoltInstructionKind::JoltSuccess
+    };
+    assert_eq!(last, halt, "{}: run must end at its halt", case.name);
     #[cfg(feature = "field-inline")]
     assert_eq!(
         !trace.trace.field_events().is_empty(),

@@ -54,6 +54,9 @@ fn main() {
         ..Default::default()
     };
     emulator.get_mut_cpu().get_mut_mmu().jolt_device = Some(JoltDevice::new(&memory_config));
+    // Test ELFs (`tohost`) get the code guards of tracing for a proof too, so
+    // ACT4 runs under the rules a Jolt guest is proved under.
+    emulator.protect_code(&elf_content);
 
     let endcode = emulator.run_test(args.trace.unwrap_or(false), args.disassemble);
 

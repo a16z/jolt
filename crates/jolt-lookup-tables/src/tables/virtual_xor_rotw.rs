@@ -29,7 +29,7 @@ impl<const XLEN: usize, const ROTATION: u32> LookupTable for VirtualXORROTWTable
     {
         debug_assert_eq!(r.len(), 2 * XLEN);
         let mut result = F::zero();
-        for (idx, chunk) in r.chunks_exact(2).enumerate().skip(XLEN / 2) {
+        for (idx, chunk) in r.as_chunks::<2>().0.iter().enumerate().skip(XLEN / 2) {
             let r_x = chunk[0];
             let r_y = chunk[1];
             let xor_bit = (F::one() - r_x) * r_y + r_x * (F::one() - r_y);

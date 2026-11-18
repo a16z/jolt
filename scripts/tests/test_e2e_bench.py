@@ -190,7 +190,8 @@ print(json.dumps([small, large]))
                       trace_rows=4, padded_trace_rows=8, public_output=[0, 255])
         self.assertEqual(bench.validate_metrics(values, case)['trace_rows'], 4)
         self.assertEqual(bench.validate_metrics(values, case)['public_output'], [0, 255])
-        for update in ({'e2e_s': float('nan')}, {'e2e_s': 0.5}, {'padded_trace_rows': 4},
+        self.assertEqual(bench.validate_metrics(dict(values, padded_trace_rows=4), case)['padded_trace_rows'], 4)
+        for update in ({'e2e_s': float('nan')}, {'e2e_s': 0.5}, {'padded_trace_rows': 2},
                        {'padded_trace_rows': 7}, {'backend': 'reference'}, {'proof_bytes': 0},
                        {'public_output': [256]}, {'public_output': [True]}):
             with self.subTest(update=update), self.assertRaises(ValueError):

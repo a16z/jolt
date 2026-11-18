@@ -15,15 +15,19 @@ fn is_unsupported(kind: SourceInstructionKind) -> bool {
     matches!(
         kind.name(),
         // System / CSR
-        "ECALL" | "EBREAK" | "MRET" | "CSRRW" | "CSRRS"
-        // Load-reserved / store-conditional (hand-coded in LoadReserved.lean)
-        | "LRW" | "LRD" | "SCW" | "SCD"
+        "ECALL" | "EBREAK" | "MRET" | "CSRRW" | "CSRRS" | "CSRRC" | "CSRRWI" | "CSRRSI" | "CSRRCI"
         // Registered inline dispatch (needs an InlineExpansionProvider)
         | "Inline"
     )
 }
 
 ```
+
+LR.W, LR.D, SC.W and SC.D are generated for both destination branches.
+The floor-addressed `VirtualLoad{B,H,W}` and `VirtualStore{B,H,W}` rows, and the `VirtualShiftData{B,H,W}` rows that carry an immediate, are generated with their fault class and offset.
+The generated file uses the `JoltISA.Encoded.` constructors for 12-bit immediates and the plain constructors otherwise.
+Only `VirtualAdvice` introduces a runtime payload parameter; `VirtualAdviceLoad`
+retains its fixed byte-count immediate.
 
 ## Usage 
 

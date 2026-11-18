@@ -29,7 +29,7 @@ fn blindfold_protocol_pipeline_verifies_committed_sumcheck_outputs_and_eval_comm
     assert!(full.protocol.dimensions.coefficient_rows > 0);
     assert!(full.protocol.dimensions.output_claim_rows > 0);
     assert!(full.protocol.dimensions.auxiliary_rows > 0);
-    assert!(!full.protocol.eval_commitments.is_empty());
+    assert_ne!(full.protocol.eval_commitments, []);
     verify_blindfold_protocol_pipeline(&full).expect("protocol-backed BlindFold proof verifies");
 }
 

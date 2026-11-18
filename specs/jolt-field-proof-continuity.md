@@ -5,6 +5,11 @@ the ownership boundary after the Akita field migration.
 
 ## Source revisions
 
+The A7F7 rows record where the assets for the retired `Prime128OffsetA7F7`
+field came from. The baseline add, subtract, and multiply bodies take `C` in a
+register, so they carried over to 6A23801F unchanged. The last two rows record
+what the 6A23801F switch added.
+
 | Asset | Source revision | Jolt destination |
 | --- | --- | --- |
 | Fp128 architecture add and subtract kernels | Akita main `6918a2018da6061d6399c74b542017027a7b74b8` | `crates/jolt-field/src/solinas/fp128/add_sub.rs` |
@@ -16,6 +21,8 @@ the ownership boundary after the Akita field migration.
 | A7F7 baseline x86-64 multiplication body and HOL Light theorems | This Jolt continuation | `crates/jolt-field/asm/x86_64/` and `proofs/hol-light/` |
 | A7F7 BMI2 and ADX x86-64 multiplication body and HOL Light theorems | This Jolt continuation | `crates/jolt-field/asm/x86_64/` and `proofs/hol-light/` |
 | A7F7 primality certificate | This Jolt continuation | `proofs/hol-light/fp128_prime.ml` |
+| 6A23801F primality certificate | Jolt PR 2356 | `proofs/hol-light/fp128_prime.ml` |
+| 6A23801F constant loads (AArch64 `movz`, `movk`; x86-64 `mov r8d`), BMI2 and ADX constant, regenerated proof objects, and rewritten AArch64 corollaries | Jolt PR 2403 | `crates/jolt-algebra/asm/` and `proofs/hol-light/` |
 | Inspection witness and artifact checker design | Akita proof head `241cde109751ae28d02b55c92ac54e923a6a92af` | `crates/jolt-field/examples/` and `scripts/` |
 | Field specific legacy transcript dispatch | Jolt PR 1745 commit `6b5d3ff` | `crates/jolt-prover-legacy/` |
 | Fp64 and extension corrections | Jolt PR 1794 head `4a0d4a33265c6fc7c1dc0e97046b67773a8320ea` | Stacked base of this work |
@@ -52,10 +59,10 @@ compatibility.
 ## Proof scope
 
 The current HOL Light claim covers scalar AArch64 and x86-64 addition,
-subtraction, and multiplication for `Prime128OffsetA7F7`, under canonical
+subtraction, and multiplication for `Prime128Offset6A23801F`, under canonical
 input assumptions. x86-64 has a baseline multiplication theorem and a separate
 theorem for builds that enable both BMI2 and ADX. The proofs also show that the
-A7F7 modulus is prime. The x86-64 callable theorems continue through any result
+6A23801F modulus is prime. The x86-64 callable theorems continue through any result
 moves into `rax:rdx` and through `ret`. The complete optimized Linux inspection
 witness symbols are byte identical to those proved objects. Darwin
 x86-64 adds an exact frame wrapper that the artifact checker checks but HOL

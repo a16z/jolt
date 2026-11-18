@@ -491,7 +491,7 @@ mod tests {
     fn poly_mul_empty() {
         let a: [Fr; 0] = [];
         let b = [Fr::from_u64(1)];
-        assert!(poly_mul(&a, &b).is_empty());
+        assert_eq!(poly_mul(&a, &b), [] as [Fr; 0]);
     }
 
     #[test]

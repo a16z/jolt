@@ -10,10 +10,12 @@ pub(crate) fn execute_keccak256(msg: &[u8]) -> [u8; 32] {
     let mut offset = 0;
     while offset + RATE_IN_BYTES <= msg.len() {
         for (i, lane_bytes) in msg[offset..offset + RATE_IN_BYTES]
-            .chunks_exact(8)
+            .as_chunks::<8>()
+            .0
+            .iter()
             .enumerate()
         {
-            state[i] ^= u64::from_le_bytes(lane_bytes.try_into().unwrap());
+            state[i] ^= u64::from_le_bytes(*lane_bytes);
         }
 
         execute_keccak_f(&mut state);
@@ -28,8 +30,8 @@ pub(crate) fn execute_keccak256(msg: &[u8]) -> [u8; 32] {
     block[remaining.len()] ^= 0x01; // 0x01 delimiter after the message.
     block[RATE_IN_BYTES - 1] ^= 0x80;
 
-    for (i, lane_bytes) in block.chunks_exact(8).enumerate() {
-        state[i] ^= u64::from_le_bytes(lane_bytes.try_into().unwrap());
+    for (i, lane_bytes) in block.as_chunks::<8>().0.iter().enumerate() {
+        state[i] ^= u64::from_le_bytes(*lane_bytes);
     }
     execute_keccak_f(&mut state);
 

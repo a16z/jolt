@@ -620,6 +620,7 @@ def main() -> None:
 
     subparsers.add_parser("validate")
     subparsers.add_parser("contract-id")
+    subparsers.add_parser("toolchain")
 
     build_field = subparsers.add_parser("build-field")
     build_field.add_argument("--field", required=True)
@@ -675,6 +676,8 @@ def main() -> None:
         print(f"Validated {len(matrix['targets'])} registered Fp64 proof targets.")
     elif args.command == "contract-id":
         print(matrix_contract_id(matrix))
+    elif args.command == "toolchain":
+        print(matrix["toolchain"]["rustc_release"])
     elif args.command == "build-field":
         value = nested_value(matrix["build_contract"], args.field)
         print(json.dumps(value) if isinstance(value, (dict, list, bool)) else value)

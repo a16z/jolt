@@ -150,7 +150,12 @@ impl OneHotNtt {
                 }
             }
         }
-        for (pair, out) in lanes.chunks_exact(2).zip(out.chunks_exact_mut(2 * ROWS)) {
+        for (pair, out) in lanes
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .zip(out.as_chunks_mut::<{ 2 * ROWS }>().0)
+        {
             self.final_butterfly(&pair[0], &pair[1], out);
         }
     }

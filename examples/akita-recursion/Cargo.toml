@@ -9,7 +9,12 @@ publish = false
 ignored = ["jolt-inlines-blake2", "jolt-inlines-keccak256"]
 
 [features]
-akita = ["dep:jolt-akita", "dep:jolt-verifier"]
+akita = [
+  "dep:jolt-akita",
+  "dep:jolt-verifier",
+  "dep:akita-types",
+  "dep:akita-params",
+]
 recursion-host = [
   "dep:tracing",
   "akita",
@@ -39,8 +44,8 @@ jolt-verifier = { workspace = true, features = ["akita"], optional = true }
 jolt-crypto.workspace = true
 jolt-openings.workspace = true
 common.workspace = true
-akita-types.workspace = true
-akita-params.workspace = true
+akita-types = { workspace = true, optional = true }
+akita-params = { workspace = true, optional = true }
 serde.workspace = true
 bincode.workspace = true
 postcard = { workspace = true, features = ["alloc", "use-std"] }

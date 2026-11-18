@@ -65,7 +65,7 @@ fn equispaced_interpolation_preserves_coefficient_count() {
     assert_eq!(zero.coefficients(), &[Fr::zero()]);
     let mut empty = UnivariatePoly::<Fr>::zero();
     empty.trim_trailing_zeros();
-    assert!(empty.coefficients().is_empty());
+    assert_eq!(empty.coefficients(), [] as [Fr; 0]);
 }
 
 #[test]

@@ -18,13 +18,13 @@ class CheckFp128ProofArtifactsTests(unittest.TestCase):
        0: eb020005      subs x5, x0, x2
        4: d65f03c0      ret
 0000000000000008 <jolt_fp128_sub_asm>:
-       8: 128b0104      mov w4, #-0x5809
+       8: 529003e4      mov w4, #0x801f
 """
         self.assertEqual(
             CHECKER.parse_symbol_words(disassembly),
             {
                 "jolt_fp128_add_asm": [0xEB020005, 0xD65F03C0],
-                "jolt_fp128_sub_asm": [0x128B0104],
+                "jolt_fp128_sub_asm": [0x529003E4],
             },
         )
 

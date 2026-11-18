@@ -175,7 +175,7 @@ function. The Python checker compares those bytes with the matching standalone
 object. HOL Light independently checks the bytes that it imports from that
 object.
 
-The pinned Rust 1.95.0 toolchain emits different AArch64 schedules on Darwin
+The certified Rust 1.99.1 toolchain emits different AArch64 schedules on Darwin
 and Linux. The formulas are the same, but the order of independent
 instructions and the temporary registers differ. Jolt keeps a separate exact
 object and a separate machine proof for each sequence. The checker does not
@@ -213,12 +213,12 @@ actual field type and call path in the final binary. It must then confirm that
 the machine code at that path is the reviewed sequence or prove the complete
 compiled function that contains it.
 
-The current Jolt verifier does not instantiate `Prime64Offset59`. The legacy
-Akita verifier path still uses the external Akita Fp128 field. A final binary
-scan therefore cannot yet connect these Fp64 theorems to that verifier. Adding
-an unused call only to make the sequence appear would not close this gap. The
-first release check should run after an actual verifier path selects the Fp64
-field.
+The current Jolt verifier does not instantiate `Prime64Offset59`. Its Akita
+path uses the shared `jolt_field::Fp128` type at `Prime128Offset6A23801F`. A
+final binary scan therefore cannot yet connect these Fp64 theorems to that
+verifier. Adding an unused call only to make the sequence appear would not
+close this gap. The first release check should run after an actual verifier
+path selects the Fp64 field.
 
 ## Canonical inputs and the unsafe constructor
 

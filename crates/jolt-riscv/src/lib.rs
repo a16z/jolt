@@ -34,10 +34,36 @@ pub mod trace;
 pub mod trace_row;
 mod uncompress;
 
+/// `jolt.success` (`.insn i 0x5B, 3, x0, x0, 0`): custom-2 opcode, funct3 3, with `rd`, `rs1`
+/// and the immediate zero. It is the only accepted funct3-3 custom-2 word: both decoders reject
+/// every other one, keeping those fields reserved.
+pub const JOLT_SUCCESS_WORD: u32 = 0x0000_305b;
+
+/// Calls `$callback! { instructions: [..] }` with every source instruction
+/// kind, as `KIND => Marker => "canonical.name"` entries.
+///
+/// The list has two groups, because the order fixes the variant positions of
+/// the tracer's serde enums `Cycle` and `Instruction`, and
+/// `tracer::trace_to_file` persists traces with postcard, which encodes a
+/// variant by its position. `instructions` keeps the existing order.
+/// `appended` holds kinds added since; the tracer declares them after its
+/// `INLINE` variant, so no existing variant moves. Add new kinds at the end of
+/// `appended`.
+///
+/// The plain form passes one list, `instructions` followed by `appended`.
+/// `for_each_instruction_kind!(split $callback)` passes the two groups as
+/// `instructions: [..] appended: [..]`.
 #[macro_export]
 macro_rules! for_each_instruction_kind {
     ($callback:ident) => {
-        $callback! {
+        $crate::for_each_instruction_kind! { @list flatten $callback }
+    };
+    (split $callback:ident) => {
+        $crate::for_each_instruction_kind! { @list split $callback }
+    };
+    (@list $mode:ident $callback:ident) => {
+        $crate::__emit_instruction_kinds! {
+            $mode $callback
             instructions: [
                 ADD => Add => "rv64.add",
                 ADDI => Addi => "rv64.addi",
@@ -213,6 +239,43 @@ macro_rules! for_each_instruction_kind {
                 #[cfg(feature = "field-inline")]
                 FIELD_ADVICE_LIMB => FieldAdviceLimb => "field.advice_limb",
             ]
+            appended: [
+                CSRRC => Csrrc => "rv64.csrrc",
+                CSRRWI => Csrrwi => "rv64.csrrwi",
+                CSRRSI => Csrrsi => "rv64.csrrsi",
+                CSRRCI => Csrrci => "rv64.csrrci",
+                VirtualXORROT2 => VirtualXorRot2 => "jolt.virtual.xorrot2",
+                VirtualXORROT61 => VirtualXorRot61 => "jolt.virtual.xorrot61",
+                JoltSuccess => Success => "jolt.success",
+                JoltPanic => Panic => "jolt.panic",
+            ]
+        }
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __emit_instruction_kinds {
+    (
+        flatten $callback:ident
+        instructions: [$($(#[$meta:meta])* $instr:ident => $marker:ident => $name:expr),* $(,)?]
+        appended: [$($(#[$ameta:meta])* $ainstr:ident => $amarker:ident => $aname:expr),* $(,)?]
+    ) => {
+        $callback! {
+            instructions: [
+                $($(#[$meta])* $instr => $marker => $name,)*
+                $($(#[$ameta])* $ainstr => $amarker => $aname,)*
+            ]
+        }
+    };
+    (
+        split $callback:ident
+        instructions: [$($instructions:tt)*]
+        appended: [$($appended:tt)*]
+    ) => {
+        $callback! {
+            instructions: [$($instructions)*]
+            appended: [$($appended)*]
         }
     };
 }
@@ -317,6 +380,10 @@ macro_rules! for_each_jolt_instruction_kind {
                 VirtualStoreB => StoreB => (0x00a5, "jolt.virtual.storeb"),
                 VirtualStoreH => StoreH => (0x00a6, "jolt.virtual.storeh"),
                 VirtualStoreW => StoreW => (0x00a7, "jolt.virtual.storew"),
+                VirtualXORROT2 => VirtualXorRot2 => (0x00a8, "jolt.virtual.xorrot2"),
+                VirtualXORROT61 => VirtualXorRot61 => (0x00a9, "jolt.virtual.xorrot61"),
+                JoltSuccess => Success => (0x00aa, "jolt.success"),
+                JoltPanic => Panic => (0x00ab, "jolt.panic"),
                 #[cfg(feature = "field-inline")]
                 FIELD_ADD => FieldAdd => (0x0100, "field.add"),
                 #[cfg(feature = "field-inline")]

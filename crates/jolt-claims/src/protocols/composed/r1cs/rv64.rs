@@ -241,10 +241,8 @@ fn rv64_eq_constraint_rows<F: Field>() -> ConstraintRows<F> {
     // `materialize_inline`), so such an access lands within 2 KiB of 0 or
     // 2^64: past that RAM, or below `lowest_address`, which is at least 2^30
     // because `MemoryLayout::try_new` pads I/O below `RAM_START_ADDRESS` = 2^31
-    // to a power of two and rejects a region reaching 0. The tracer faults
-    // there, except that it reads loads below `lowest_address` as 0. Those are
-    // unprovable unwrapped too, except in the no-access zero doubleword: a
-    // load that carries into it runs but cannot be proven.
+    // to a power of two and rejects a region reaching 0. The tracer rejects
+    // accesses below `lowest_address` and past the allocated RAM.
     a_rows.push(row::<F>(&[(V_FLAG_LOAD, 1), (V_FLAG_STORE, 1)]));
     b_rows.push(row::<F>(&[
         (V_RAM_ADDRESS, 1),
@@ -571,6 +569,10 @@ mod tests {
 mod execution_witness_tests {
     use super::*;
     use jolt_field::{Fr, Ring};
+    use jolt_riscv::{
+        Flags, JoltInstruction, JoltInstructionKind, JoltInstructionRow, NormalizedOperands,
+        CIRCUIT_FLAGS,
+    };
     use num_traits::Zero;
 
     // Constraint row indices, matching the push order in
@@ -1146,5 +1148,142 @@ mod execution_witness_tests {
         w[V_FLAG_DO_NOT_UPDATE_UNEXPANDED_PC] = Fr::from_u64(0);
         w[V_NEXT_UNEXPANDED_PC] = Fr::from_u64(0x8000_0050 + 4);
         assert_eq!(check(&w), Err(MUST_START_SEQUENCE_FROM_BEGINNING));
+    }
+
+    /// Places `witness` on the last row of a trace that fills its padded
+    /// domain. EqPlusOne does not wrap around, so every shifted `Next*`
+    /// column reads 0 there and `NextIsNoop` reads 1, as if a no-op followed.
+    /// `ShouldJump = Jump·(1 − NextIsNoop)` is then 0.
+    fn at_last_row(witness: &[Fr]) -> Vec<Fr> {
+        let mut w = witness.to_vec();
+        w[V_NEXT_PC] = Fr::zero();
+        w[V_NEXT_UNEXPANDED_PC] = Fr::zero();
+        w[V_NEXT_IS_VIRTUAL] = Fr::zero();
+        w[V_NEXT_IS_FIRST_IN_SEQUENCE] = Fr::zero();
+        w[V_NEXT_IS_NOOP] = Fr::from_u64(1);
+        w[V_SHOULD_JUMP] = Fr::zero();
+        w
+    }
+
+    /// A `j .` self-loop: `JAL x0, 0` at 0x8000_0100, whose target is its own
+    /// address.
+    fn jal_self_loop_witness() -> Vec<Fr> {
+        const UNEXPANDED_PC: u64 = 0x8000_0100;
+
+        let mut w = jal_witness();
+        w[V_RIGHT_INSTRUCTION_INPUT] = Fr::zero();
+        w[V_PRODUCT] = Fr::zero();
+        w[V_NEXT_PC] = w[V_PC];
+        w[V_NEXT_UNEXPANDED_PC] = Fr::from_u64(UNEXPANDED_PC);
+        w[V_IMM] = Fr::zero();
+        w[V_RD_WRITE_VALUE] = Fr::from_u64(UNEXPANDED_PC + 4);
+        w[V_RIGHT_LOOKUP_OPERAND] = Fr::from_u64(UNEXPANDED_PC);
+        w[V_LOOKUP_OUTPUT] = Fr::from_u64(UNEXPANDED_PC);
+        w
+    }
+
+    #[test]
+    fn last_row_accepts_final_jump() {
+        assert_eq!(check(&jal_self_loop_witness()), Ok(()));
+        assert_eq!(check(&at_last_row(&jal_self_loop_witness())), Ok(()));
+    }
+
+    #[test]
+    fn last_row_rejects_final_jump_that_still_claims_to_jump() {
+        let w = with_cell(
+            &at_last_row(&jal_self_loop_witness()),
+            V_SHOULD_JUMP,
+            Fr::from_u64(1),
+        );
+        assert_eq!(check(&w), Err(NEXT_UNEXP_PC_EQ_LOOKUP_IF_SHOULD_JUMP));
+    }
+
+    #[test]
+    fn last_row_rejects_sequential_instruction() {
+        // A non-jump row must advance UnexpandedPC to a nonzero address,
+        // but the shifted NextUnexpandedPC is 0.
+        assert_eq!(
+            check(&at_last_row(&add_witness())),
+            Err(NEXT_UNEXP_PC_UPDATE_OTHERWISE)
+        );
+        assert_eq!(
+            check(&at_last_row(&ld_witness())),
+            Err(NEXT_UNEXP_PC_UPDATE_OTHERWISE)
+        );
+    }
+
+    #[test]
+    fn last_row_rejects_branch() {
+        assert_eq!(
+            check(&at_last_row(&beq_taken_witness())),
+            Err(NEXT_UNEXP_PC_EQ_PC_PLUS_IMM_IF_SHOULD_BRANCH)
+        );
+        assert_eq!(
+            check(&at_last_row(&beq_not_taken_witness())),
+            Err(NEXT_UNEXP_PC_UPDATE_OTHERWISE)
+        );
+    }
+
+    #[test]
+    fn last_row_rejects_unfinished_virtual_sequence() {
+        let w = at_last_row(&virtual_inline_step_witness());
+        // Row 16 is the first to fail: with DoNotUpdateUnexpandedPC it still
+        // requires NextUnexpandedPC = UnexpandedPC, which is nonzero.
+        assert_eq!(check(&w), Err(NEXT_UNEXP_PC_UPDATE_OTHERWISE));
+
+        // Row 17 rejects the row on its own as well: zeroing every term of
+        // row 16 leaves NextPC = 0 ≠ PC + 1.
+        let mut w = w;
+        w[V_UNEXPANDED_PC] = Fr::zero();
+        assert_eq!(check(&w), Err(NEXT_PC_EQ_PC_PLUS_ONE_IF_INLINE));
+    }
+
+    /// A halt row as tracers emit it: `jolt.success` (`vsr = None`) or EBREAK's one-row `Panic`
+    /// lowering (`vsr = Some(0)`, first, optionally compressed). Its circuit flags come from the
+    /// production flag table; it has no lookup table (output 0), no instruction flags (inputs 0),
+    /// and writes its link to a temporary.
+    fn halt_witness(
+        instruction_kind: JoltInstructionKind,
+        virtual_sequence_remaining: Option<u16>,
+        is_compressed: bool,
+    ) -> Vec<Fr> {
+        const UNEXPANDED_PC: u64 = 0x8000_0200;
+
+        let row = JoltInstructionRow {
+            instruction_kind,
+            address: UNEXPANDED_PC as usize,
+            operands: NormalizedOperands {
+                rd: Some(40),
+                rs1: Some(0),
+                rs2: None,
+                imm: 0,
+            },
+            virtual_sequence_remaining,
+            is_first_in_sequence: virtual_sequence_remaining.is_some(),
+            is_compressed,
+        };
+        let flags = JoltInstruction::from(row).circuit_flags();
+        let mut w = cycle_witness();
+        for flag in CIRCUIT_FLAGS {
+            if flags[flag] {
+                w[flag_column(flag)] = Fr::from_u64(1);
+            }
+        }
+        w[V_PC] = Fr::from_u64(12);
+        w[V_UNEXPANDED_PC] = Fr::from_u64(UNEXPANDED_PC);
+        w[V_RD_WRITE_VALUE] = Fr::from_u64(UNEXPANDED_PC + if is_compressed { 2 } else { 4 });
+        w
+    }
+
+    #[test]
+    fn last_row_accepts_final_halt() {
+        for (kind, virtual_sequence_remaining, is_compressed) in [
+            (JoltInstructionKind::JoltSuccess, None, false),
+            (JoltInstructionKind::JoltPanic, Some(0), false),
+            (JoltInstructionKind::JoltPanic, Some(0), true),
+        ] {
+            let w = halt_witness(kind, virtual_sequence_remaining, is_compressed);
+            assert_eq!(check(&at_last_row(&w)), Ok(()), "{kind:?}");
+        }
     }
 }

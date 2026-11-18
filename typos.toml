@@ -29,6 +29,8 @@ extend-exclude = [
 "useed" = "useed"
 "sseed" = "sseed"
 "mis" = "mis"
+# RISC-V mstatus field names (SXL, UXL) in the M-mode trap and CSR spec.
+"sxl" = "sxl"
 # "tru"/"unt" are the trusted/untrusted advice commitment-object shorthands
 # (A_tru, A_unt) in the packed (Akita) prove path docs.
 "tru" = "tru"

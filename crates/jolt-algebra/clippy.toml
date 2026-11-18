@@ -1,0 +1,2 @@
+# Must match proofs/hol-light/fp64-certified-builds.json.
+msrv = "1.99.1"

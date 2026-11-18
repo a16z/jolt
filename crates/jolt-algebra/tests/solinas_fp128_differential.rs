@@ -9,6 +9,7 @@
 
 use jolt_algebra as two;
 
+use bincode::error::DecodeError;
 use rand::{Rng, RngCore, SeedableRng};
 use rand_chacha::ChaCha20Rng;
 use two::{CanonicalBytes, CanonicalEncoding, Field as _, PseudoMersenne, Ring};
@@ -308,14 +309,18 @@ fn fp128_offset275_matches() {
 }
 
 #[test]
-fn fp128_offset_a7f7_matches() {
+fn fp128_offset_6a23801f_matches() {
     let mut rng = rng();
-    check_prime128!(two::Prime128OffsetA7F7, u128::MAX - 0xFFFF_A7F6, &mut rng);
-    assert_eq!(
-        two::pseudo_mersenne_modulus(128, 0xFFFF_A7F7),
-        Some(u128::MAX - 0xFFFF_A7F6)
+    check_prime128!(
+        two::Prime128Offset6A23801F,
+        u128::MAX - 0x6A23_801E,
+        &mut rng
     );
-    assert!(!two::is_registered_prime_offset(128, 0xFFFF_A7F7));
+    assert_eq!(
+        two::pseudo_mersenne_modulus(128, 0x6A23_801F),
+        Some(u128::MAX - 0x6A23_801E)
+    );
+    assert!(!two::is_registered_prime_offset(128, 0x6A23_801F));
     assert!(two::is_registered_prime_offset(128, 275));
 }
 
@@ -360,7 +365,7 @@ fn fp128_random_matches_spec() {
     check::<{ u128::MAX - 274 }>();
     check::<{ u128::MAX - 158 }>();
     check::<{ u128::MAX - 2354 }>();
-    check::<{ u128::MAX - 0xFFFF_A7F6 }>();
+    check::<{ u128::MAX - 0x6A23_801E }>();
 }
 
 #[test]
@@ -385,7 +390,8 @@ fn fp128_mul_add_matches_independent_oracle() {
 #[test]
 fn fp128_canonical_constructor_is_const_usable() {
     // SAFETY: one is below every supported prime modulus.
-    const ONE: two::Prime128OffsetA7F7 = unsafe { two::Prime128OffsetA7F7::from_canonical_u128(1) };
+    const ONE: two::Prime128Offset6A23801F =
+        unsafe { two::Prime128Offset6A23801F::from_canonical_u128(1) };
     assert_eq!(ONE.to_u128_checked(), Some(1));
 }
 
@@ -408,4 +414,45 @@ fn five_limb_reduction_extreme_offsets_match_long_division() {
     check::<{ u128::MAX }>();
     check::<{ u128::MAX - 2 }>();
     check::<{ u128::MAX - (u32::MAX as u128 - 1) }>();
+}
+
+#[test]
+fn fp128_serde_decodes_canonical_byte_tuples_only() {
+    type F = two::Prime128Offset6A23801F;
+    const MODULUS: u128 = u128::MAX - (0x6a23_801f - 1);
+    let config = bincode::config::standard();
+    let decode = |bytes: &[u8]| {
+        bincode::serde::decode_from_slice::<F, _>(bytes, config)
+            .map(|(value, read)| (value.to_u128_checked(), read))
+            .map_err(|error| error.to_string())
+    };
+    let mut rng = rng();
+    let limb_boundaries = [0, 1, (1u128 << 64) - 1, 1u128 << 64, MODULUS - 1];
+    let single_bits = (0..128).map(|bit| 1u128 << bit);
+    let random = (0..1000).map(|_| rng.gen::<u128>() % MODULUS);
+    for value in limb_boundaries.into_iter().chain(single_bits).chain(random) {
+        let mut input = value.to_le_bytes().to_vec();
+        input.extend_from_slice(&[0xaa, 0xbb]);
+        assert_eq!(decode(&input), Ok((Some(value), 16)), "{value:#x}");
+        let element = F::from_u128_checked(value);
+        assert_eq!(
+            element.and_then(|element| bincode::serde::encode_to_vec(element, config).ok()),
+            Some(value.to_le_bytes().to_vec()),
+            "{value:#x}"
+        );
+    }
+    let message = "non-canonical field element encoding".to_owned();
+    let non_canonical = DecodeError::OtherString(message).to_string();
+    for value in [MODULUS, MODULUS + 1, u128::MAX] {
+        let rejected = Err(non_canonical.clone());
+        assert_eq!(decode(&value.to_le_bytes()), rejected, "{value:#x}");
+    }
+    for length in 0..16 {
+        let short = &[0u8; 16][..length];
+        let as_bytes = bincode::serde::decode_from_slice::<[u8; 16], _>(short, config)
+            .err()
+            .map(|error| error.to_string());
+        assert!(as_bytes.is_some(), "{length} bytes");
+        assert_eq!(decode(short).err(), as_bytes, "{length} bytes");
+    }
 }

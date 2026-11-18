@@ -2,11 +2,11 @@
   "schema_version": 1,
   "name": "Jolt scalar Fp64 proof builds",
   "toolchain": {
-    "rustc_release": "1.95.0",
-    "rustc_commit_hash": "59807616e1fa2540724bfbac14d7976d7e4a3860",
-    "llvm_version": "22.1.2",
-    "cargo_release": "1.95.0",
-    "cargo_commit_hash": "f2d3ce0bd"
+    "rustc_release": "1.99.1",
+    "rustc_commit_hash": "58cf8f9c35b355199727627d07ae34a4e2846d67",
+    "llvm_version": "23.1.1",
+    "cargo_release": "1.99.1",
+    "cargo_commit_hash": "5f94df478"
   },
   "proof_libraries": {
     "hol_light_commit": "433477862bb90b328a593e012e09390e99b2439b",

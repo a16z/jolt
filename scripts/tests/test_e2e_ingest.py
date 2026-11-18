@@ -58,7 +58,8 @@ def inputs(tier='pr'):
     plan = {'tier': tier, 'enabled': True, 'harness': result['revisions']['harness'], 'push_before': 'a' * 40,
             'push_after': 'c' * 40, 'provenance': result['provenance'],
             'config': {'path': 'scripts/bench/suites.json', 'sha256': hashlib.sha256(config).hexdigest()},
-            'admission': {'label_event_id': 11, 'label_actor': 'maintainer', 'head_ref': 'candidate'},
+            'admission': {'label_event_id': 11, 'label_actor': 'maintainer',
+                          'head_repo': 'a16z/jolt', 'head_ref': 'candidate'},
             'runs': [{'base': 'a' * 40 if tier == 'pr' else None,
                       'head': 'c' * 40, 'submitted_head': ('b' if tier == 'pr' else 'c') * 40}],
             'expected_builds': {build['revision']: {key: value for key, value in build.items() if key != 'leg'}
@@ -75,12 +76,12 @@ def inputs(tier='pr'):
 
 
 class IngestTests(unittest.TestCase):
-    def test_pr_comment_uses_symmetric_three_percent_without_observed_envelopes(self):
+    def test_pr_comment_uses_symmetric_size_thresholds_without_observed_envelopes(self):
         result = inputs()[0]
         template = result['cases'].pop()
         for cores, seconds, rss in [(1, 104, 10000), (2, 96, 10000),
-                                    (3, 100, 10400), (4, 100, 9600),
-                                    (5, 103, 9700), (6, 97, 10300), (7, 103.001, 10000),
+                                    (3, 100, 11600), (4, 100, 8600),
+                                    (5, 103, 8690), (6, 97, 11500), (7, 103.001, 10000),
                                     (8, 0.97, 10000), (9, 1.03, 10000), (10, 100, 10000)]:
             case = copy.deepcopy(template)
             case['physical_cores'] = cores
@@ -92,7 +93,7 @@ class IngestTests(unittest.TestCase):
                     if cores == 10:
                         base_seconds = 103
                     sample['metrics'].update(e2e_s=base_seconds if sample['leg'] == 'base' else seconds,
-                        peak_rss_bytes=(10300 if cores == 10 else 10000) if sample['leg'] == 'base' else rss,
+                        peak_rss_bytes=(11500 if cores == 10 else 10000) if sample['leg'] == 'base' else rss,
                         trace_rows=4 if sample['leg'] == 'base' else 5)
             result['cases'].append(case)
         with tempfile.TemporaryDirectory() as directory:
@@ -102,9 +103,9 @@ class IngestTests(unittest.TestCase):
                           f"Measured merge: `{'c' * 40}`.", comment)
             for cores, values in [(1, '100.000000 / 104.000000 | +4.00%'),
                                   (2, '100.000000 / 96.000000 | -4.00%'),
-                                  (3, '10000 / 10400 | +4.00%'),
-                                  (4, '10000 / 9600 | -4.00%'),
-                                  (5, '10000 / 9700 | -3.00%'),
+                                  (3, '10000 / 11600 | +16.00%'),
+                                  (4, '10000 / 8600 | -14.00%'),
+                                  (5, '10000 / 8690 | -13.10%'),
                                   (6, '100.000000 / 97.000000 | -3.00%'),
                                   (7, '100.000000 / 103.001000 | +3.00%'),
                                   (8, '1.000000 / 0.970000 | -3.00%')]:
@@ -112,7 +113,8 @@ class IngestTests(unittest.TestCase):
                            if line.startswith(f'| fibonacci / dory | {cores} |'))
                 self.assertIn(f'| {cores} | 2^3 | 4 / 5 |', row)
                 self.assertIn(values, row)
-                self.assertEqual(row.count('3.00% (no observed envelope)'), 2)
+                self.assertIn('| 3.00% (no observed envelope) |', row)
+                self.assertIn('| 15.00% (no observed envelope) |', row)
                 full = next(line for line in summary.read_text().splitlines()
                             if line.startswith(f'| fibonacci / dory | {cores} |'))
                 full_cells, short_cells = full.split('|'), row.split('|')
@@ -121,25 +123,25 @@ class IngestTests(unittest.TestCase):
             for cores in (9, 10):
                 self.assertNotIn(f'| fibonacci / dory | {cores} |', comment)
 
-    def test_pr_comment_uses_each_metrics_observed_envelope_with_a_three_percent_floor(self):
+    def test_pr_comment_uses_the_larger_of_each_metrics_size_threshold_and_observed_envelope(self):
         result = inputs()[0]
         template = result['cases'].pop()
         bands = {}
-        for cores, seconds, rss, time_threshold, rss_threshold in [
-                (1, 109, 10000, 10, 8), (2, 111, 10000, 10, 8),
-                (3, 100, 10700, 10, 8), (4, 100, 10900, 10, 8),
-                (5, 90, 10000, 10, 8), (6, 100, 9200, 10, 8),
-                (7, 100, 10300, 3, 2), (8, 100, 10301, 3, 2),
-                (9, 100, 10000, 10, 8)]:
+        for cores, seconds, rss, time_envelope, rss_envelope in [
+                (1, 109, 10000, 10, 20), (2, 111, 10000, 10, 20),
+                (3, 100, 11900, 10, 20), (4, 100, 12100, 10, 20),
+                (5, 90, 10000, 10, 20), (6, 100, 8300, 10, 20),
+                (7, 100, 11500, 0.5, 2), (8, 100, 11501, 0.5, 2),
+                (9, 100, 10000, 10, 20)]:
             case = copy.deepcopy(template)
             case['physical_cores'] = cores
             for sample in case['samples']:
                 sample['metrics'].update(
                     e2e_s=(110 if cores == 9 else 100) if sample['leg'] == 'base' else seconds,
-                    peak_rss_bytes=(10800 if cores == 9 else 10000) if sample['leg'] == 'base' else rss)
+                    peak_rss_bytes=(12000 if cores == 9 else 10000) if sample['leg'] == 'base' else rss)
             result['cases'].append(case)
-            bands[cores] = {key: dict(threshold_pct=threshold, max_symmetric_window_delta_pct=0)
-                            for key, threshold in [('e2e_s', time_threshold), ('peak_rss_bytes', rss_threshold)]}
+            bands[cores] = {key: dict(envelope_pct=envelope, max_symmetric_window_delta_pct=0)
+                            for key, envelope in [('e2e_s', time_envelope), ('peak_rss_bytes', rss_envelope)]}
         with tempfile.TemporaryDirectory() as directory, patch.object(ingest.calibration, 'for_case',
                 side_effect=lambda result, case: (bands[case['physical_cores']], None)):
             comment = ingest.render_pr_comment(result, Path(directory) / 'summary.md',
@@ -151,8 +153,39 @@ class IngestTests(unittest.TestCase):
                        if line.startswith(f'| fibonacci / dory | {cores} |'))
             cells = [cell.strip() for cell in row.split('|')]
             self.assertEqual(cells[7], '3.00%' if cores == 8 else '10.00%')
-            self.assertEqual(cells[10], '3.00%' if cores == 8 else '8.00%')
+            self.assertEqual(cells[10], '15.00%' if cores == 8 else '20.00%')
         self.assertNotIn('no observed envelope', comment)
+
+    def test_pr_comment_lists_size_groups_whose_mean_change_exceeds_the_group_threshold(self):
+        result = inputs()[0]
+        template = result['cases'].pop()
+        for workload, pcs, cores, scale, seconds, rss in [
+                ('fibonacci', 'akita', 24, 24, 98.5, 10000), ('sha2-chain', 'akita', 24, 24, 99, 10000),
+                ('fibonacci', 'dory', 24, 24, 99.5, 10000), ('sha2-chain', 'dory', 24, 24, 100, 10000),
+                ('fibonacci', 'akita', 8, 24, 100, 10000), ('sha2-chain', 'akita', 8, 24, 100.2, 10000),
+                ('fibonacci', 'dory', 24, 16, 98, 10000), ('sha2-chain', 'dory', 24, 16, 97.5, 10000),
+                ('fibonacci', 'dory', 8, 20, 106, 10000), ('sha2-chain', 'dory', 8, 20, 94, 10000),
+                ('fibonacci', 'dory', 24, 22, 100, 11000), ('sha2-chain', 'dory', 24, 22, 100, 11000),
+                ('fibonacci', 'dory', 24, 27, 98, 10000)]:
+            case = copy.deepcopy(template)
+            case.update(workload=workload, pcs=pcs, physical_cores=cores, scale_log2=scale)
+            for sample in case['samples']:
+                sample['metrics'].update(e2e_s=100 if sample['leg'] == 'base' else seconds,
+                                         peak_rss_bytes=10000 if sample['leg'] == 'base' else rss)
+            result['cases'].append(case)
+        with tempfile.TemporaryDirectory() as directory:
+            summary = Path(directory) / 'summary.md'
+            comment = ingest.render_pr_comment(result, summary, 'https://fixture.invalid/results')
+            groups = [line for line in comment.splitlines() if line.startswith(('| akita |', '| dory |'))]
+            self.assertEqual(groups, [
+                '| akita | 24 | 2^24 | 2 | End-to-end time | -1.25% | 1.00% | -1.50% to -1.00% |',
+                '| dory | 24 | 2^22 | 2 | Peak RSS | +10.00% | 9.00% | +10.00% to +10.00% |'])
+            self.assertEqual([line for line in summary.read_text().splitlines()
+                              if line.startswith(('| akita |', '| dory |'))], groups)
+        cases = [line.split(' | ')[:3] for line in comment.splitlines() if ' / akita | ' in line or ' / dory | ' in line]
+        self.assertEqual(cases, [['| fibonacci / dory', '8', '2^20'], ['| sha2-chain / dory', '8', '2^20'],
+                                 ['| fibonacci / dory', '24', '2^22'], ['| sha2-chain / dory', '24', '2^22'],
+                                 ['| fibonacci / dory', '24', '2^27']])
 
     def test_pr_comment_no_change_marker_and_links(self):
         result = inputs()[0]
@@ -172,7 +205,7 @@ class IngestTests(unittest.TestCase):
         self.assertIn('[Benchmark history](https://a16z.github.io/jolt/dev/prover-history/)', comment)
         self.assertIn(f"Base: `{'a' * 40}`. Submitted head: `{'b' * 40}`. "
                       f"Measured merge: `{'c' * 40}`.", comment)
-        self.assertIn('No change exceeds its per-case reporting threshold', comment)
+        self.assertIn('No change exceeds its reporting threshold', comment)
         self.assertIn('Sizes run (physical cores × trace ceiling): 1 × 2^16, 24 × 2^18, 24 × 2^27.', comment)
         self.assertNotIn('2^30', comment)
         self.assertNotIn('| Workload', comment)
@@ -250,9 +283,49 @@ class IngestTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 ingest.trusted_plan(123, 1)
             actual['pull_requests'][0]['base']['ref'] = 'main'
+            unrecorded = copy.deepcopy(plan)
+            del unrecorded['admission']['head_repo']
+            archives[42] = zipped({'plan.json': json.dumps(unrecorded)})
+            self.assertEqual(ingest.trusted_plan(123, 1)[0], unrecorded)
+            actual['head_repository'] = {'full_name': 'outside/jolt'}
+            with self.assertRaisesRegex(ValueError, 'not bound to the admitted head'):
+                ingest.trusted_plan(123, 1)
+            actual['head_repository'] = {'full_name': 'a16z/jolt'}
+            archives[42] = zipped({'plan.json': plan_raw})
             artifacts.append(copy.deepcopy(artifacts[0]))
             with self.assertRaisesRegex(ValueError, 'exactly one'):
                 ingest.trusted_plan(123, 1)
+
+    def test_fork_head_plan_needs_a_pull_request_target_producer_and_the_admitted_head_repository(self):
+        result, plan, dispatch, config, receipt, _ = inputs()
+        plan['admission']['head_repo'] = 'outside/jolt'
+        actual = {'id': 123, 'run_attempt': 1, 'repository': {'full_name': 'a16z/jolt'},
+            'head_repository': {'full_name': 'outside/jolt'}, 'name': ingest.bench.WORKFLOW,
+            'path': ingest.bench.WORKFLOW_FILE, 'status': 'completed', 'conclusion': 'success',
+            'event': 'pull_request_target', 'head_branch': 'candidate', 'head_sha': 'b' * 40,
+            'pull_requests': []}
+        def github(path):
+            if path.startswith('actions/runs/'):
+                return actual
+            if path.startswith('commits/'):
+                return {'parents': [{'sha': 'a' * 40}, {'sha': 'b' * 40}]}
+            return {'type': 'file', 'encoding': 'base64', 'content': base64.b64encode(config).decode()}
+        def artifact(run_id, attempt, prefix, filename):
+            return (plan, json.dumps(plan).encode(), 42) if filename == 'plan.json' else (
+                dispatch, json.dumps(dispatch).encode(), 43)
+        with patch.object(ingest.ci, 'github', side_effect=github), \
+                patch.object(ingest, 'artifact_json', side_effect=artifact) as downloaded:
+            self.assertEqual(ingest.trusted_plan(123, 1)[0], plan)
+            for head_repository in ({'full_name': 'other/jolt'}, {'full_name': 'a16z/jolt'}, None):
+                actual['head_repository'] = head_repository
+                with self.subTest(head_repository=head_repository), \
+                        self.assertRaisesRegex(ValueError, 'not bound to the admitted head'):
+                    ingest.trusted_plan(123, 1)
+            actual.update(head_repository={'full_name': 'outside/jolt'}, event='pull_request')
+            downloaded.reset_mock()
+            with self.assertRaisesRegex(ValueError, 'not a successful trusted workflow attempt'):
+                ingest.trusted_plan(123, 1)
+            downloaded.assert_not_called()
 
     def test_main_ingest_refuses_divergence_and_foreign_build_artifacts(self):
         result, plan, dispatch, config, receipt, _ = inputs('main')
@@ -278,6 +351,7 @@ class IngestTests(unittest.TestCase):
             ingest.trusted_plan(123, 1)
             for target, key, value in [(comparison, 'status', 'diverged'),
                     (builds, 'workflow_run', {'id': 999}), (builds, 'name', 'other'),
+                    (actual, 'head_repository', {'full_name': 'outside/jolt'}),
                     (actual, 'head_branch', 'candidate'), (actual, 'head_sha', 'f' * 40)]:
                 original = target[key]
                 target[key] = value
@@ -327,7 +401,7 @@ class IngestTests(unittest.TestCase):
             self.assertLessEqual(len(check['summary']), 60000)
             self.assertEqual(job_summary.read_text(), check['summary'] + '\n')
             self.assertEqual(outputs.read_text(), 'pr_number=7\n')
-            self.assertIn('No change exceeds its per-case reporting threshold', (out / 'result/pr-comment.md').read_text())
+            self.assertIn('No change exceeds its reporting threshold', (out / 'result/pr-comment.md').read_text())
 
     def test_check_conclusions_distinguish_execution_failure_partial_and_complete_results(self):
         result = inputs('main')[0]

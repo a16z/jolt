@@ -53,7 +53,13 @@ mod gpu {
             .collect();
         pairs.extend(windows::<F>());
         let random = random_elements::<F>(&mut words, 2 * RANDOM);
-        pairs.extend(random.chunks_exact(2).map(|pair| (pair[0], pair[1])));
+        pairs.extend(
+            random
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|pair| (pair[0], pair[1])),
+        );
         let branches: Vec<Fold2> = pairs
             .iter()
             .map(|&(a, b)| fold2_branch::<F>(&[a * b]))

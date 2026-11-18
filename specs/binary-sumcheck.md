@@ -44,7 +44,7 @@ Write `n = max_num_vars`, and for member `i` write `a_i` for its input claim, `c
 ### Non-Goals
 
 1. Univariate skip in characteristic 2. It needs an evaluation domain inside the field (an `F_2`-subspace of a subfield) and the subfield embeddings of step 3 of the `specs/binary-field.md` roadmap.
-2. Round-polynomial construction from evaluations. `UnivariatePoly::from_evals`, `from_evals_toom`, `from_evals_and_hint`, `interpolate_over_integers`, the Gruen helpers in `jolt-poly/src/split_eq.rs` and `jolt-poly/src/lagrange.rs` evaluate at consecutive integers and stay as they are. A characteristic-2 member returns its round polynomial in coefficient form.
+2. Round-polynomial construction from evaluations. `UnivariatePoly::from_evals`, `from_evals_toom`, `from_evals_and_hint`, `interpolate_over_integers`, the Gruen helpers in `jolt-poly/src/split_eq/gruen.rs` and `jolt-poly/src/lagrange.rs` evaluate at consecutive integers and stay as they are. A characteristic-2 member returns its round polynomial in coefficient form.
 3. The committed (zero-knowledge) recorder, the `r1cs` lowering, and the fuzz target over binary fields.
 4. `jolt-kernels`, `jolt-claims`, `jolt-verifier` and `jolt-prover`. Their relations, kernels and generated batch drivers are written for odd characteristic and remain unsupported over binary fields: the generated final fold in `jolt-verifier-derive` applies no output factor.
 5. Any change to the wire format of proofs or to transcript labels.

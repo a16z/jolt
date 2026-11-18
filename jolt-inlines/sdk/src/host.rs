@@ -366,7 +366,7 @@ impl InlineBuilderExt for InlineExpansionBuilder {
             0,
             "paired u32 range requires an even register count"
         );
-        for (i, pair) in registers.chunks_exact(2).enumerate() {
+        for (i, pair) in registers.as_chunks::<2>().0.iter().enumerate() {
             self.load_paired_u32_dirty(base, offset_start + i as i64 * 8, *pair[0], *pair[1]);
         }
     }

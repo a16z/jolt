@@ -309,7 +309,7 @@ mod tests {
             - LinearCombination::variable(variable).scale(Fr::from_u64(4)))
         .into_sparse_row();
 
-        assert!(row.is_empty());
+        assert_eq!(row, []);
     }
 
     #[test]

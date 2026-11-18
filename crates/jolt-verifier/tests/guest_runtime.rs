@@ -3,6 +3,7 @@
 use common::{constants::RAM_START_ADDRESS, jolt_device::MemoryConfig};
 use jolt_host::Program;
 use memory_copy::CopyRuntime;
+use std::io::Result;
 use tracer::emulator::Emulator;
 
 #[path = "guest_runtime/memory_copy.rs"]
@@ -42,6 +43,26 @@ fn size_class_heap_serves_musl_mappings() {
         "shared-heap guest panicked: musl could not map memory beside the Rust heap"
     );
 }
+
+#[test]
+fn large_heap_and_stack_symbols_decode() -> Result<()> {
+    let target = tempfile::tempdir()?;
+    for std in [false, true] {
+        let mut program = Program::new(if std {
+            "large-alloc-guest"
+        } else {
+            "fibonacci-guest"
+        });
+        program.set_std(std);
+        program.set_func(if std { "large_alloc_roundtrip" } else { "fib" });
+        program.set_heap_size(3 << 30);
+        program.set_stack_size(3 << 30);
+        program.build(&target.path().to_string_lossy());
+        let _ = program.decode();
+    }
+    Ok(())
+}
+
 #[test]
 fn memory_copy_abi_no_std() {
     check_memory_copy_abi(false);

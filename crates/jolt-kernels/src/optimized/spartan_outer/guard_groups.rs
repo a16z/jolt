@@ -208,7 +208,7 @@ mod tests {
     };
     use jolt_field::Fr;
     #[cfg(feature = "akita")]
-    use jolt_field::{Fp128, Prime128OffsetA7F7};
+    use jolt_field::{Fp128, Prime128Offset6A23801F};
     use jolt_poly::lagrange::centered_lagrange_evals;
 
     fn check<F: JoltField, const M: usize, const LIMBS: usize>() {
@@ -348,7 +348,7 @@ mod tests {
         #[cfg(feature = "akita")]
         {
             check_folds::<Fp128<{ u128::MAX - 274 }>>();
-            check_folds::<Prime128OffsetA7F7>();
+            check_folds::<Prime128Offset6A23801F>();
         }
     }
 }

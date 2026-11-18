@@ -53,8 +53,8 @@ Key abstractions:
   lands with its first consumer.
 - **`MetalField` trait** (Rust). It is implemented for each supported
   `jolt_field` type. It supplies:
-  - the MSL type spelling, for example `jolt::Fp128<0xFFFFA7F7u>`;
-  - a stable host-name suffix, for example `fp128_a7f7`;
+  - the MSL type spelling, for example `jolt::Fp128<0x6A23801Fu>`;
+  - a stable host-name suffix, for example `fp128_6a23801f`;
   - the device word layout;
   - a checked read-back conversion.
 - **Runtime** (`jolt_metal::runtime`). This is a thin layer over
@@ -254,7 +254,7 @@ implementation, not a refactor of the CPU code.
 ### Performance
 
 Criterion benchmarks (`crates/jolt-metal/benches/field.rs`) for `Fp128`
-(offset `0xA7F7`), `Fp64` (offset 59) and `Ext2` over that `Fp64`:
+(offset `0x6A23801F`), `Fp64` (offset 59) and `Ext2` over that `Fp64`:
 
 - dependent chains of `add`, `mul`, and `square` in registers, plus `mul`
   with four independent chains, reported as operations per second: the ALU
@@ -485,8 +485,8 @@ kernel void jolt_vec_mul(device const F* a [[buffer(0)]],
 generated host name:
 
 ```metal
-template [[host_name("jolt_vec_mul_fp128_a7f7")]] [[kernel]]
-decltype(jolt_vec_mul<jolt::Fp128<0xFFFFA7F7u>>) jolt_vec_mul<jolt::Fp128<0xFFFFA7F7u>>;
+template [[host_name("jolt_vec_mul_fp128_6a23801f")]] [[kernel]]
+decltype(jolt_vec_mul<jolt::Fp128<0x6A23801Fu>>) jolt_vec_mul<jolt::Fp128<0x6A23801Fu>>;
 ```
 
 Kernel source is written once and instantiated per field. No offset value is

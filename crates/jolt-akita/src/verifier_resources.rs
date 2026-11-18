@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex, PoisonError, Weak};
 
 use akita_config::{CommitmentConfig, SetupRequirements, TrustedScheduleCatalog};
 use akita_params::{
-    setup_prefix_slot_field_elements, verifier_setup_matrix_capacity_for_schedule,
+    setup_prefix_slot_field_elements, verifier_setup_matrix_capacity_for_schedule, SetupMode,
     SetupPrefixSlotId,
 };
 use akita_pcs::{AkitaSerialize, Compress, CpuBackend};
@@ -96,8 +96,12 @@ impl AkitaVerifierRequirements {
         }
         for row in rows {
             let layout = row.profiles().opening_layout().map_err(invalid_setup)?;
-            let capacity = verifier_setup_matrix_capacity_for_schedule(row.schedule(), &layout)
-                .map_err(invalid_setup)?;
+            let capacity = verifier_setup_matrix_capacity_for_schedule(
+                row.schedule(),
+                &layout,
+                SetupMode::Check,
+            )
+            .map_err(invalid_setup)?;
             self.retained_field_elements = self
                 .retained_field_elements
                 .max(capacity.num_field_elements);

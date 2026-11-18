@@ -13,18 +13,26 @@
 #![cfg(all(target_arch = "x86_64", target_os = "linux"))]
 #![expect(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use common::constants::REGISTER_COUNT;
+use common::constants::{RAM_START_ADDRESS, REGISTER_COUNT};
 use common::jolt_device::JoltDevice;
-use jolt_platform::JOLT_ADVICE_WRITE_CALL_ID;
+use jolt_platform::{
+    JOLT_ADVICE_WRITE_CALL_ID, JOLT_CYCLE_TRACK_CALL_ID, JOLT_PRINT_CALL_ID, JOLT_PRINT_LINE,
+    JOLT_PRINT_STRING,
+};
 use jolt_riscv::{JoltInstructionKind, JoltInstructionRow, NormalizedOperands};
 use jolt_tracer_x86::harness::{
-    self, run_program, single_row_program, MEM_CAPACITY, SCRATCH_DWORDS, SCRATCH_START, TEST_ADDR,
+    self, run_program, single_row_program, ExitReason, MEM_CAPACITY, SCRATCH_DWORDS, SCRATCH_START,
+    TEST_ADDR,
 };
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
+use std::fs::File;
+use std::io::{Read, Write};
+use std::os::fd::FromRawFd;
 use tracer::emulator::cpu::Cpu;
 use tracer::emulator::terminal::DummyTerminal;
 use tracer::instruction::Instruction;
+use tracer::HaltKind;
 
 const N: usize = 1000;
 const REGS: usize = REGISTER_COUNT as usize;
@@ -92,6 +100,8 @@ const SUPPORTED: &[&str] = &[
     "VirtualXorRot24",
     "VirtualXorRot16",
     "VirtualXorRot63",
+    "VirtualXorRot2",
+    "VirtualXorRot61",
     "VirtualXorRotW16",
     "VirtualXorRotW12",
     "VirtualXorRotW8",
@@ -130,6 +140,8 @@ const SUPPORTED: &[&str] = &[
     "StoreB",
     "StoreH",
     "StoreW",
+    "Success",
+    "Panic",
 ];
 
 fn class_by_marker(marker: &str) -> Class {
@@ -460,16 +472,117 @@ fn fence(rng: &mut StdRng) -> Instance {
 
 fn host_io(rng: &mut StdRng) -> Instance {
     let mut i = base_instance(rng, kind_by_name("VirtualHostIO"));
-    // a0 selects the call: unknown ids are no-ops on both sides; advice
-    // writes append guest bytes to the tape on both sides.
-    if rng.gen() {
-        i.pre_regs[10] = JOLT_ADVICE_WRITE_CALL_ID as u64;
-        i.pre_regs[11] = scratch_slot(rng);
-        i.pre_regs[12] = rng.gen_range(0..48);
+    let layout = JoltDevice::new(&harness::memory_config()).memory_layout;
+    // Both backends must append the same advice bytes and finish the row,
+    // whether they run the call or ignore it.
+    let (ptr, len) = match rng.gen_range(0..8) {
+        0..=2 => (scratch_slot(rng), rng.gen_range(0..48)),
+        3 => (layout.input_start, rng.gen_range(1..16)),
+        // Ranges a guest load rejects: past the memory plane, between the
+        // I/O region and RAM, in an emulator peripheral, starting below the
+        // lowest mapped word, wrapping around the address space, and past the
+        // plane at the top of the `u32` range that print and cycle-marker
+        // pointers use.
+        4 => (RAM_START_ADDRESS + MEM_CAPACITY - 4, 8),
+        5 => (layout.io_end + 1, 4),
+        6 => (0x1020, 4),
+        _ => *[
+            (layout.get_lowest_address() - 4, 8),
+            (u64::MAX - 3, 8),
+            (u64::from(u32::MAX) - 1, 4),
+        ]
+        .get(rng.gen_range(0..3))
+        .unwrap(),
+    };
+    i.pre_regs[11] = ptr;
+    i.pre_regs[12] = len;
+    // Events 1 and 2 are the known print and cycle-marker events.
+    i.pre_regs[13] = if rng.gen() {
+        rng.gen_range(1..=2)
     } else {
-        i.pre_regs[10] = rng.gen::<u32>() as u64 | 1 << 33;
-    }
+        u64::from(rng.gen_range(3..=u32::MAX))
+    };
+    i.pre_regs[10] = match rng.gen_range(0..4) {
+        0 => u64::from(JOLT_PRINT_CALL_ID),
+        1 => u64::from(JOLT_CYCLE_TRACK_CALL_ID),
+        2 => u64::from(JOLT_ADVICE_WRITE_CALL_ID),
+        _ => rng.gen::<u32>() as u64 | 1 << 33,
+    };
     i
+}
+
+/// Runs one `VirtualHostIO` print natively with fd 1 redirected to a pipe,
+/// and returns the bytes it wrote to stdout.
+fn native_print_output(ptr: u64, len: u64, event: u32) -> Vec<u8> {
+    let mut pre_regs = [0u64; REGS];
+    pre_regs[10] = u64::from(JOLT_PRINT_CALL_ID);
+    pre_regs[11] = ptr;
+    pre_regs[12] = len;
+    pre_regs[13] = u64::from(event);
+    let scratch = [u64::from_le_bytes(*b"hi there")];
+    let program = single_row_program(default_row(kind_by_name("VirtualHostIO")));
+
+    let mut fds = [0; 2];
+    // SAFETY: `fds` has room for the two descriptors `pipe` writes.
+    assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0);
+    let [read_end, write_end] = fds;
+    // Nextest runs each test in its own process, so no other test writes to
+    // fd 1 while it points at the pipe.
+    std::io::stdout().flush().unwrap();
+    // SAFETY: duplicates fd 1, which stays open for the whole process.
+    let saved_stdout = unsafe { libc::dup(1) };
+    assert!(saved_stdout >= 0);
+    // SAFETY: both descriptors are open; this function owns `write_end`.
+    assert!(unsafe { libc::dup2(write_end, 1) } >= 0);
+    let outcome = run_program(&program, &pre_regs, &scratch, &[]);
+    std::io::stdout().flush().unwrap();
+    // SAFETY: both descriptors are open; this function owns `saved_stdout`.
+    assert!(unsafe { libc::dup2(saved_stdout, 1) } >= 0);
+    // SAFETY: closes the two descriptors this function owns and no longer
+    // uses. The pipe's last writer closes, so the read below ends.
+    assert_eq!(unsafe { libc::close(saved_stdout) }, 0);
+    // SAFETY: as above.
+    assert_eq!(unsafe { libc::close(write_end) }, 0);
+    let outcome = outcome.unwrap();
+    assert_eq!(
+        outcome.exit,
+        ExitReason::HaltedSuccess as u64,
+        "{:?}",
+        outcome.helper_error
+    );
+
+    // SAFETY: `read_end` is an open pipe descriptor this function owns and
+    // hands to the `File`, which closes it.
+    let mut pipe = unsafe { File::from_raw_fd(read_end) };
+    let mut output = Vec::new();
+    let _ = pipe.read_to_end(&mut output).unwrap();
+    output
+}
+
+#[test]
+fn native_prints_exactly_the_readable_messages() {
+    let layout = JoltDevice::new(&harness::memory_config()).memory_layout;
+    assert_eq!(
+        native_print_output(SCRATCH_START, 8, JOLT_PRINT_LINE),
+        b"hi there\n"
+    );
+    assert_eq!(
+        native_print_output(SCRATCH_START, 2, JOLT_PRINT_STRING),
+        b"hi"
+    );
+    assert_eq!(native_print_output(SCRATCH_START, 8, 3), b"");
+    for (ptr, len) in [
+        (RAM_START_ADDRESS + MEM_CAPACITY - 4, 8),
+        (layout.io_end + 1, 4),
+        (0x1020, 4),
+        (layout.get_lowest_address() - 4, 8),
+    ] {
+        assert_eq!(
+            native_print_output(ptr, len, JOLT_PRINT_STRING),
+            b"",
+            "print at {ptr:#x} of length {len}"
+        );
+    }
 }
 
 fn imm_j_u64(rng: &mut StdRng, kind: JoltInstructionKind) -> Instance {
@@ -571,6 +684,7 @@ fn advice_load(rng: &mut StdRng) -> Instance {
 struct RefOutcome {
     regs: [u64; REGS],
     pc: u64,
+    halted: Option<HaltKind>,
     scratch: Vec<u64>,
     advice_tape: Vec<u8>,
 }
@@ -612,6 +726,7 @@ fn reference_run(instance: &Instance) -> RefOutcome {
     RefOutcome {
         regs,
         pc: cpu.read_pc(),
+        halted: cpu.halted(),
         scratch,
         advice_tape: cpu.advice_tape.clone().into_bytes(),
     }
@@ -633,9 +748,12 @@ fn run_difftest(name: &str, generate: fn(&mut StdRng) -> Instance) {
         .unwrap_or_else(|e| panic!("{name}[{iteration}]: native run failed: {e:?}"));
 
         assert_eq!(
-            native.exit, 1,
-            "{name}[{iteration}]: expected termination, got exit {} ({:?}) row {:?}",
-            native.exit, native.helper_error, instance.row
+            native.exit,
+            ExitReason::HaltedSuccess as u64,
+            "{name}[{iteration}]: expected the terminal halt, got exit {} ({:?}) row {:?}",
+            native.exit,
+            native.helper_error,
+            instance.row
         );
         assert_eq!(
             native.trace_len, 2,
@@ -738,6 +856,8 @@ difftests! {
     diff_xorrot24 => |r| alu_rr(r, K::VirtualXORROT24);
     diff_xorrot16 => |r| alu_rr(r, K::VirtualXORROT16);
     diff_xorrot63 => |r| alu_rr(r, K::VirtualXORROT63);
+    diff_xorrot2 => |r| alu_rr(r, K::VirtualXORROT2);
+    diff_xorrot61 => |r| alu_rr(r, K::VirtualXORROT61);
     diff_xorrotw16 => |r| alu_rr(r, K::VirtualXORROTW16);
     diff_xorrotw12 => |r| alu_rr(r, K::VirtualXORROTW12);
     diff_xorrotw8 => |r| alu_rr(r, K::VirtualXORROTW8);
@@ -782,4 +902,47 @@ difftests! {
     diff_store_b => |r| floor_store(r, kind_by_name("VirtualStoreB"), 1);
     diff_store_h => |r| floor_store(r, kind_by_name("VirtualStoreH"), 2);
     diff_store_w => |r| floor_store(r, kind_by_name("VirtualStoreW"), 4);
+}
+
+/// A halt row writes its link to `rd` and ends the run at its own address,
+/// so neither backend reaches a terminal.
+#[test]
+fn diff_halts() {
+    let mut rng = StdRng::seed_from_u64(0x1717_5EED);
+    for (kind, exit, halt) in [
+        (K::JoltSuccess, ExitReason::HaltedSuccess, HaltKind::Success),
+        (K::JoltPanic, ExitReason::HaltedPanic, HaltKind::Panic),
+    ] {
+        for iteration in 0..N {
+            let mut instance = base_instance(&mut rng, kind);
+            let link_register = rd(&mut rng);
+            instance.row.operands.rd = Some(link_register);
+            instance.row.operands.rs1 = Some(0);
+            let reference = reference_run(&instance);
+            let native = run_program(
+                &single_row_program(instance.row),
+                &instance.pre_regs,
+                &instance.scratch,
+                &instance.advice,
+            )
+            .unwrap_or_else(|e| panic!("{kind:?}[{iteration}]: native run failed: {e:?}"));
+
+            assert_eq!(
+                (native.exit, native.trace_len, native.pc),
+                (exit as u64, 1, TEST_ADDR),
+                "{kind:?}[{iteration}]: native end ({:?})",
+                native.helper_error
+            );
+            assert_eq!(
+                (reference.pc, reference.halted),
+                (TEST_ADDR, Some(halt)),
+                "{kind:?}[{iteration}]: reference end"
+            );
+            assert_eq!(native.regs[link_register as usize], TEST_ADDR + 4);
+            assert_eq!(
+                native.regs, reference.regs,
+                "{kind:?}[{iteration}]: registers diverged"
+            );
+        }
+    }
 }

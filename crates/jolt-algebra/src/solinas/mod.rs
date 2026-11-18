@@ -82,7 +82,7 @@ pub(crate) fn sample_uniform_below<R: rand_core::RngCore>(
     modulus_bits: u32,
 ) -> u128 {
     debug_assert!(modulus > 0);
-    debug_assert_eq!(modulus_bits, u128::BITS - modulus.leading_zeros());
+    debug_assert_eq!(modulus_bits, modulus.bit_width());
     let byte_len = modulus_bits.div_ceil(8) as usize;
     let mask = if modulus_bits == u128::BITS {
         u128::MAX
@@ -148,16 +148,17 @@ pub type Prime48Offset59 = Fp64<{ pm(48, 59) as u64 }>;
 pub type Prime56Offset27 = Fp64<{ pm(56, 27) as u64 }>;
 pub type Prime64Offset59 = Fp64<{ pm(64, 59) as u64 }>;
 pub type Prime128Offset275 = Fp128<{ pm(128, 275) }>;
-/// Prime field for `2^128 − 2^32 + 22537` (`C = 0xFFFF_A7F7`): smooth
-/// multiplicative subgroup of order `2^3 · 3^7 = 17496` (pure radix-3
-/// subgroup `3^7 = 2187`). The default protocol prime. Here `p ≡ 1 (mod 8)`,
-/// so neither `Ext2` (non-residue 2 or −1), `FpExt4` nor `FpExt8` over it is
-/// a field: use it at extension degree 1.
-pub type Prime128OffsetA7F7 = Fp128<FIELD_INLINE_FP128_MODULUS>;
 
-/// The modulus of [`Prime128OffsetA7F7`], the Fp128 field the field-inline
+/// Prime field for `2^128 − 1_780_711_455` (`C = 0x6A23_801F`): smooth
+/// multiplicative subgroup of order `2^5 · 3^3 · 5^8 = 337_500_000`. The
+/// default protocol prime. Here `p ≡ 1 (mod 32)`, so neither `Ext2`
+/// (non-residue 2 or −1), `FpExt4` nor `FpExt8` over it is a field: use it at
+/// extension degree 1.
+pub type Prime128Offset6A23801F = Fp128<FIELD_INLINE_FP128_MODULUS>;
+
+/// The modulus of [`Prime128Offset6A23801F`], the Fp128 field the field-inline
 /// unit computes in under `field-inline-guest-fp128`.
-pub(crate) const FIELD_INLINE_FP128_MODULUS: u128 = pm(128, 0xFFFF_A7F7);
+pub(crate) const FIELD_INLINE_FP128_MODULUS: u128 = pm(128, 0x6A23_801F);
 
 /// Builds the balanced signed-digit table for `1 <= log_basis <= 6`.
 pub fn balanced_digit_lut<F: Ring>(log_basis: u32) -> [F; 64] {
@@ -199,7 +200,9 @@ pub(crate) fn reduce_le_bytes_mod_order<F: Ring>(bytes: &[u8]) -> F {
 mod reduction_tests {
     use num_bigint::BigUint;
 
-    use super::{reduce_le_bytes_mod_order, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
+    use super::{
+        reduce_le_bytes_mod_order, Prime128Offset6A23801F, Prime32Offset99, Prime64Offset59,
+    };
     use crate::PseudoMersenne;
 
     fn check<F: PseudoMersenne>() {
@@ -222,13 +225,15 @@ mod reduction_tests {
     fn word_fold_matches_big_integer_reduction() {
         check::<Prime32Offset99>();
         check::<Prime64Offset59>();
-        check::<Prime128OffsetA7F7>();
+        check::<Prime128Offset6A23801F>();
     }
 }
 
 #[cfg(test)]
 mod sampling_tests {
-    use super::{pm, sample_uniform_below, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
+    use super::{
+        pm, sample_uniform_below, Prime128Offset6A23801F, Prime32Offset99, Prime64Offset59,
+    };
     use crate::Field;
     use rand_core::{Error, RngCore};
 
@@ -315,14 +320,14 @@ mod sampling_tests {
         );
         assert_eq!(fp64_rng.cursor, 16);
 
-        let fp128_modulus = pm(128, 0xFFFF_A7F7);
+        let fp128_modulus = pm(128, 0x6A23_801F);
         let mut fp128_bytes = Vec::from(fp128_modulus.to_le_bytes());
         fp128_bytes.extend_from_slice(&42u128.to_le_bytes());
         let mut fp128_rng = ScriptedRng::new(fp128_bytes);
         assert_eq!(
-            Prime128OffsetA7F7::random(&mut fp128_rng),
-            // SAFETY: 42 is below Prime128OffsetA7F7::MODULUS.
-            unsafe { Prime128OffsetA7F7::from_canonical_u128(42) }
+            Prime128Offset6A23801F::random(&mut fp128_rng),
+            // SAFETY: 42 is below Prime128Offset6A23801F::MODULUS.
+            unsafe { Prime128Offset6A23801F::from_canonical_u128(42) }
         );
         assert_eq!(fp128_rng.cursor, 32);
     }

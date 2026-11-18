@@ -7,7 +7,7 @@ use jolt_claims::OutputClaims;
 use jolt_crypto::VectorCommitment;
 use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
-use jolt_transcript::FieldTranscript;
+use jolt_transcript::{FieldTranscript, PrivateChannel};
 
 #[cfg(not(feature = "akita"))]
 use super::committed_reduction_cycle_phase::{
@@ -25,7 +25,6 @@ use super::inc_claim_reduction::{
 };
 #[cfg(not(feature = "akita"))]
 use super::outputs::{Stage6bCarriedChallenges, Stage6bZkOutput};
-use super::ram_hamming_booleanity::RamHammingBooleanityInputClaims;
 use super::{
     batch::Stage6bDraws,
     booleanity::BooleanityInputClaims,
@@ -371,7 +370,6 @@ pub fn stage6b_input_values_from_upstream<F: JoltField>(
         booleanity: BooleanityInputClaims {
             address_phase: address_claims.booleanity.intermediate,
         },
-        ram_hamming_booleanity: RamHammingBooleanityInputClaims::default(),
         ram_ra_virtualization: ram_ra_virtualization_input_values_from_upstream(stage5),
         instruction_ra_virtualization: instruction_ra_virtualization_input_values_from_upstream(
             stage5,
@@ -423,7 +421,7 @@ pub fn stage6b_input_values_from_upstream<F: JoltField>(
 
 /// Assemble the stage-6b consumed opening *points*. ZK-agnostic: only the RA / inc
 /// members read the upstream output-points aggregates (which both modes expose); the
-/// remaining seven members derive their produced points from their own sumcheck point
+/// remaining members derive their produced points from their own sumcheck point
 /// and read no input point, so their cells come from the generated
 /// `empty_input_points` (empty, and present for present `Option` members exactly as
 /// the generated `derive_opening_points` requires).
@@ -475,7 +473,6 @@ pub fn stage6b_opening_values<F: JoltField>(
         values.push(*opening_claim);
     }
     values.extend(&claims.booleanity.ram_ra);
-    values.extend(claims.ram_hamming_booleanity.opening_values());
     values.extend(claims.ram_ra_virtualization.opening_values());
     values.extend(claims.instruction_ra_virtualization.opening_values());
     #[cfg(not(feature = "akita"))]
@@ -541,9 +538,11 @@ fn append_opening_claims<F, T>(
 {
     // Single-sourced with the prover-curation order: both fronts absorb the
     // `stage6b_opening_values` sequence, so the two transcripts cannot drift.
-    for value in stage6b_opening_values(claims, bytecode_read_raf_points, booleanity_point) {
-        transcript.append(&value);
-    }
+    transcript.append_private(&stage6b_opening_values(
+        claims,
+        bytecode_read_raf_points,
+        booleanity_point,
+    ));
 }
 
 #[cfg(test)]
@@ -559,7 +558,6 @@ mod tests {
     #[cfg(not(feature = "akita"))]
     use super::super::inc_claim_reduction::IncClaimReductionOutputClaims;
     use super::super::instruction_ra_virtualization::InstructionRaVirtualizationOutputClaims;
-    use super::super::ram_hamming_booleanity::RamHammingBooleanityOutputClaims;
     use super::super::ram_ra_virtualization::RamRaVirtualizationOutputClaims;
     use super::*;
     use crate::stages::relations::draw_recording::recorder;
@@ -572,9 +570,9 @@ mod tests {
 
     fn sample_claims() -> (Stage6bOutputClaims<Fr>, u64) {
         #[cfg(all(not(feature = "akita"), not(feature = "field-inline")))]
-        let last = 10;
+        let last = 9;
         #[cfg(all(not(feature = "akita"), feature = "field-inline"))]
-        let last = 11;
+        let last = 10;
         #[cfg(not(feature = "akita"))]
         let (bytecode_read_raf, booleanity) = (
             BytecodeReadRafOutputClaims {
@@ -587,9 +585,9 @@ mod tests {
             },
         );
         #[cfg(all(feature = "akita", not(feature = "field-inline")))]
-        let last = 9;
+        let last = 8;
         #[cfg(all(feature = "akita", feature = "field-inline"))]
-        let last = 10;
+        let last = 9;
         #[cfg(feature = "akita")]
         let (bytecode_read_raf, booleanity) = (
             LatticeBytecodeReadRafOutputClaims {
@@ -603,16 +601,13 @@ mod tests {
             },
         );
         #[cfg(not(feature = "akita"))]
-        let (hamming, ram_ra_virt, instruction_ra_virt) = (fr(6), fr(7), fr(8));
+        let (ram_ra_virt, instruction_ra_virt) = (fr(6), fr(7));
         #[cfg(feature = "akita")]
-        let (hamming, ram_ra_virt, instruction_ra_virt) = (fr(7), fr(8), fr(9));
+        let (ram_ra_virt, instruction_ra_virt) = (fr(7), fr(8));
         (
             Stage6bOutputClaims {
                 bytecode_read_raf,
                 booleanity,
-                ram_hamming_booleanity: RamHammingBooleanityOutputClaims {
-                    ram_hamming_weight: hamming,
-                },
                 ram_ra_virtualization: RamRaVirtualizationOutputClaims {
                     ram_ra: vec![ram_ra_virt],
                 },
@@ -621,8 +616,8 @@ mod tests {
                 },
                 #[cfg(not(feature = "akita"))]
                 inc_claim_reduction: IncClaimReductionOutputClaims {
-                    ram_inc: fr(9),
-                    rd_inc: fr(10),
+                    ram_inc: fr(8),
+                    rd_inc: fr(9),
                 },
                 #[cfg(feature = "field-inline")]
                 field_registers_inc_claim_reduction: FieldRegistersIncClaimReductionOutputClaims {
@@ -680,9 +675,6 @@ mod tests {
         Stage6bOutputClaims {
             bytecode_read_raf,
             booleanity,
-            ram_hamming_booleanity: RamHammingBooleanityOutputClaims {
-                ram_hamming_weight: fr(8),
-            },
             ram_ra_virtualization: RamRaVirtualizationOutputClaims {
                 ram_ra: vec![
                     fr(9);
@@ -800,7 +792,7 @@ mod tests {
             want.append(&value);
         }
 
-        assert_eq!(got.absorbed(), want.absorbed());
+        assert_eq!(got.absorbed().concat(), want.absorbed().concat());
     }
 
     #[test]

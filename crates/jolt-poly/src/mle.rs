@@ -9,6 +9,8 @@ pub enum MleError {
     EqualityArityMismatch { left: usize, right: usize },
     #[error("invalid MLE range [{start}, {end})")]
     InvalidRange { start: u128, end: u128 },
+    #[error("MLE intervals are not canonical: start {start} follows end {previous_end}")]
+    NonCanonicalIntervals { previous_end: u128, start: u128 },
     #[error("MLE arity {arity} exceeds u128 capacity")]
     DomainTooLarge { arity: usize },
     #[error("MLE range end {end} exceeds domain size {domain_size}")]
@@ -63,7 +65,7 @@ where
     }
     // A bounded low table is shared by all contiguous public-memory segments.
     // Each high-address factor is constant for a whole table-width chunk.
-    let entry_bits = (usize::BITS - (entries - 1).leading_zeros()) as usize;
+    let entry_bits = (entries - 1).bit_width() as usize;
     let low_bits = point.len().min(10).min(entry_bits);
     let split = point.len() - low_bits;
     let width = 1usize << low_bits;
@@ -156,6 +158,29 @@ pub fn range_mask_mle_msb<F: JoltField>(
     }
 
     Ok(less_than_mle_msb(range_end, point) - less_than_mle_msb(range_start, point))
+}
+
+/// Evaluate the Boolean mask of canonical disjoint, merged half-open intervals.
+/// Each interval needs two O(log K) prefix evaluations and no domain-sized table.
+pub fn interval_mask_mle_msb<F: JoltField>(
+    intervals: &[(usize, usize)],
+    point: &[F],
+) -> Result<F, MleError> {
+    let mut value = F::zero();
+    let mut previous_end = None;
+    for &(start, end) in intervals {
+        if let Some(previous_end) = previous_end {
+            if start <= previous_end {
+                return Err(MleError::NonCanonicalIntervals {
+                    previous_end: previous_end as u128,
+                    start: start as u128,
+                });
+            }
+        }
+        value += range_mask_mle_msb(start as u128, end as u128, point)?;
+        previous_end = Some(end);
+    }
+    Ok(value)
 }
 
 fn less_than_mle_msb<F: JoltField>(bound: u128, point: &[F]) -> F {
@@ -342,6 +367,78 @@ mod tests {
     }
 
     #[test]
+    fn interval_mask_matches_independent_vertex_sum() {
+        for arity in 0..=5 {
+            let size = 1usize << arity;
+            let points: Vec<Vec<Fr>> = (0..3)
+                .map(|kind| {
+                    (0..arity)
+                        .map(|i| match kind {
+                            0 => Fr::from_u64(i as u64 + 2),
+                            1 => Fr::zero(),
+                            _ => Fr::one(),
+                        })
+                        .collect()
+                })
+                .collect();
+            for (start, end) in
+                (0..size).flat_map(|start| (start + 1..=size).map(move |end| (start, end)))
+            {
+                let mut intervals = vec![(start, end)];
+                if end + 1 < size {
+                    intervals.push((end + 1, size));
+                }
+                for point in &points {
+                    let expected: Fr = (0..size)
+                        .filter(|&word| intervals.iter().any(|&(lo, hi)| lo <= word && word < hi))
+                        .map(|word| {
+                            point
+                                .iter()
+                                .enumerate()
+                                .fold(Fr::one(), |weight, (bit, r)| {
+                                    weight
+                                        * if word & (1 << (arity - bit - 1)) == 0 {
+                                            Fr::one() - r
+                                        } else {
+                                            *r
+                                        }
+                                })
+                        })
+                        .sum();
+                    assert_eq!(interval_mask_mle_msb(&intervals, point), Ok(expected));
+                }
+            }
+            assert_eq!(interval_mask_mle_msb(&[], &points[0]), Ok(Fr::zero()));
+        }
+    }
+
+    #[test]
+    fn interval_mask_rejects_noncanonical_and_out_of_domain_metadata() {
+        let point = [Fr::from_u64(7), Fr::from_u64(11)];
+        for intervals in [
+            vec![(0, 2), (1, 3)],
+            vec![(0, 2), (2, 3)],
+            vec![(2, 3), (0, 1)],
+        ] {
+            assert!(matches!(
+                interval_mask_mle_msb(&intervals, &point),
+                Err(MleError::NonCanonicalIntervals { .. })
+            ));
+        }
+        assert_eq!(
+            interval_mask_mle_msb(&[(0, 5)], &point),
+            Err(MleError::RangeEndOutOfDomain {
+                end: 5,
+                domain_size: 4
+            })
+        );
+        assert_eq!(
+            interval_mask_mle_msb(&[(2, 2)], &point),
+            Err(MleError::InvalidRange { start: 2, end: 2 })
+        );
+    }
+
+    #[test]
     fn range_mask_rejects_invalid_ranges() {
         assert_eq!(
             range_mask_mle_msb::<Fr>(3, 3, &[Fr::zero(), Fr::zero()]),
@@ -365,12 +462,12 @@ mod tests {
 #[cfg(test)]
 mod sparse_segment_table_tests {
     use super::*;
-    use jolt_field::{Fr, Prime128OffsetA7F7};
+    use jolt_field::{Fr, Prime128Offset6A23801F};
 
     #[test]
     fn bounded_low_tables_match_scalar_mle_for_offsets_and_boolean_points() {
         check_sparse_segments::<Fr>();
-        check_sparse_segments::<Prime128OffsetA7F7>();
+        check_sparse_segments::<Prime128Offset6A23801F>();
     }
 
     fn check_sparse_segments<F: JoltField>() {

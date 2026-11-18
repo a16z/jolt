@@ -1,8 +1,9 @@
-# Posts one sticky PR comment classifying the diff into actual code / tests /
-# docs / fixtures (scripts/ci/diff_classifier.py). Informational only: the job
-# never fails the PR — classification errors degrade to a note in the job
-# summary, and fork PRs (whose token cannot write comments) degrade to the
-# job summary alone.
+# Classifies the diff into actual code / tests / docs / fixtures
+# (scripts/ci/diff_classifier.py) and writes the result to the job summary.
+# Informational only: the job never fails the PR — classification errors
+# degrade to a note in the job summary. Its token is read-only; when a run
+# completes, diff-classifier-comment.yml posts the sticky PR comment from the
+# default branch.
 name: PR Diff Classification
 
 on:
@@ -11,7 +12,6 @@ on:
 
 permissions:
   contents: read
-  pull-requests: write
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
@@ -32,7 +32,6 @@ jobs:
           filter: blob:none
 
       - name: Classify diff
-        id: classify
         env:
           BASE_REF: ${{ github.event.pull_request.base.ref }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
@@ -43,46 +42,8 @@ jobs:
               --format markdown \
               --details \
               --output "${RUNNER_TEMP}/diff-classifier.md"; then
-            echo "ok=true" >> "$GITHUB_OUTPUT"
             cat "${RUNNER_TEMP}/diff-classifier.md" >> "$GITHUB_STEP_SUMMARY"
           else
             # Never fail the PR on classification errors.
-            echo "ok=false" >> "$GITHUB_OUTPUT"
-            echo "Diff classification failed; skipping the PR comment." >> "$GITHUB_STEP_SUMMARY"
+            echo "Diff classification failed." >> "$GITHUB_STEP_SUMMARY"
           fi
-
-      # Fork PRs get a read-only token, so the comment step is skipped for
-      # them; the classification above still lands in the job summary.
-      - name: Upsert sticky comment
-        if: steps.classify.outputs.ok == 'true' && github.event.pull_request.head.repo.full_name == github.repository
-        continue-on-error: true
-        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
-        env:
-          COMMENT_PATH: ${{ runner.temp }}/diff-classifier.md
-        with:
-          script: |
-            const fs = require('fs');
-            const marker = '<!-- diff-classifier -->';
-            const body = fs.readFileSync(process.env.COMMENT_PATH, 'utf8');
-            const comments = await github.paginate(github.rest.issues.listComments, {
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              per_page: 100,
-            });
-            const existing = comments.find(c => c.body && c.body.includes(marker));
-            if (existing) {
-              await github.rest.issues.updateComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                comment_id: existing.id,
-                body,
-              });
-            } else {
-              await github.rest.issues.createComment({
-                issue_number: context.issue.number,
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                body,
-              });
-            }

@@ -70,7 +70,8 @@ arch-tests-smoke: build-emulator $(SMOKE_ELF) ## Deliberate-failure smoke test â
 		echo "smoke OK: jolt-emu exited $$rc on deliberate-failure ELF"; \
 	fi
 
-$(SMOKE_ELF): $(SMOKE_DIR)/fail.S $(MAKEFILE_DIR)/tests/arch-tests/jolt/link.ld
+$(SMOKE_ELF): $(SMOKE_DIR)/fail.S $(MAKEFILE_DIR)/tests/arch-tests/jolt/link.ld \
+              $(MAKEFILE_DIR)/tests/arch-tests/jolt/rvmodel_macros.h
 	PATH="/opt/riscv/bin:$$PATH" riscv-none-elf-gcc \
 		-march=rv64imac_zicsr -mabi=lp64 \
 		-nostdlib -nostartfiles \

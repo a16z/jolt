@@ -16,7 +16,7 @@ use std::fmt::{Debug, Write};
 
 #[cfg(feature = "solinas")]
 use jolt_field::{
-    Ext2, ExtField, FpExt4, FpExt8, Prime128Offset275, Prime128OffsetA7F7, Prime24Offset3,
+    Ext2, ExtField, FpExt4, FpExt8, Prime128Offset275, Prime128Offset6A23801F, Prime24Offset3,
     Prime30Offset35, Prime31Offset19, Prime32Offset99, Prime40Offset195, Prime48Offset59,
     Prime56Offset27, Prime64Offset59,
 };
@@ -77,7 +77,7 @@ fn registered_primes_and_valid_towers_round_trip() {
         Prime64Offset59,
         Prime128Offset275,
     );
-    round_trip::<Prime128OffsetA7F7>();
+    round_trip::<Prime128Offset6A23801F>();
 }
 
 #[cfg(feature = "bn254")]
@@ -140,7 +140,7 @@ fn pooled_message_sizes_meet_owner_bounds() {
         }
         assert_eq!(F::challenge_bytes(usize::MAX), None);
     }
-    check::<Prime128OffsetA7F7>([32, 288, 464], [32, 288, 464]);
+    check::<Prime128Offset6A23801F>([32, 288, 464], [32, 288, 464]);
     check::<Prime64Offset59>([24, 152, 240], [24, 160, 248]);
     // Four-byte candidates come in pairs: 25 candidates round up to 26, and
     // 11 to 12.
@@ -219,18 +219,20 @@ fn empty_messages_leave_the_sponge_untouched() {
 
     fn check<H: DuplexSpongeInit<U = u8> + UniformBytes>() {
         let mut prover = prover_transcript::<H>(&SESSION, &INSTANCE);
-        assert!(FieldTranscript::<Fr>::challenge_vector(&mut prover, 0)
-            .unwrap()
-            .is_empty());
+        assert_eq!(
+            FieldTranscript::<Fr>::challenge_vector(&mut prover, 0).unwrap(),
+            [] as [Fr; 0]
+        );
         let mut fresh = prover_transcript::<H>(&SESSION, &INSTANCE);
         assert_eq!(
             prover.verifier_message::<[u8; 16]>(),
             fresh.verifier_message::<[u8; 16]>()
         );
         let mut verifier = verifier_transcript::<H>(&SESSION, &INSTANCE, &[]);
-        assert!(FieldTranscript::<Fr>::challenge_vector(&mut verifier, 0)
-            .unwrap()
-            .is_empty());
+        assert_eq!(
+            FieldTranscript::<Fr>::challenge_vector(&mut verifier, 0).unwrap(),
+            [] as [Fr; 0]
+        );
         let mut fresh = verifier_transcript::<H>(&SESSION, &INSTANCE, &[]);
         assert_eq!(
             verifier.verifier_message::<[u8; 16]>(),
@@ -320,7 +322,12 @@ fn extension_coordinates_follow_the_single_base_pool() {
     fn check<E: ChallengeCodec + ExtField<Base>>() {
         let count = 2 * E::DEGREE;
         let mut tape = vec![0xff; E::challenge_bytes(2).unwrap()];
-        for (value, candidate) in (1u32..).zip(tape.chunks_exact_mut(Base::NUM_BYTES).skip(1)) {
+        for (value, candidate) in (1u32..).zip(
+            tape.as_chunks_mut::<{ Base::NUM_BYTES }>()
+                .0
+                .iter_mut()
+                .skip(1),
+        ) {
             candidate.copy_from_slice(&value.to_le_bytes());
         }
         let bases = Base::decode_challenges(&tape, count).unwrap();
@@ -383,7 +390,7 @@ fn solinas_known_answers() {
     // Pools of 16- and 8-byte candidates are already whole words; the Fp32
     // extension pool rounds its candidate count up to even (R5), so its next
     // squeeze starts at byte 48 instead of 44.
-    known_answer::<Prime128OffsetA7F7>(
+    known_answer::<Prime128Offset6A23801F>(
         1,
         "e1fd4d691fdfd5431ee0b45796a1b3ad",
         "663164ebd1ed79c41375a2c02aae4edf",
@@ -498,7 +505,7 @@ fn append_values_is_unchanged_for_whole_word_encodings() {
         append_values_matches_per_value_absorbs(&elements::<Fr>(len));
         append_values_matches_per_value_absorbs(&elements::<Fq>(len));
         append_values_matches_per_value_absorbs(&elements::<Prime64Offset59>(len));
-        append_values_matches_per_value_absorbs(&elements::<Prime128OffsetA7F7>(len));
+        append_values_matches_per_value_absorbs(&elements::<Prime128Offset6A23801F>(len));
         append_values_matches_per_value_absorbs(&elements::<Prime128Offset275>(len));
         append_values_matches_per_value_absorbs(&elements::<FpExt4<Prime32Offset99>>(len));
         append_values_matches_per_value_absorbs(&elements::<Ext2<Prime64Offset59>>(len));

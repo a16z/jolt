@@ -31,3 +31,5 @@ declare_xorrot!(VirtualXORROT32, 32);
 declare_xorrot!(VirtualXORROT24, 24);
 declare_xorrot!(VirtualXORROT16, 16);
 declare_xorrot!(VirtualXORROT63, 63);
+declare_xorrot!(VirtualXORROT2, 2);
+declare_xorrot!(VirtualXORROT61, 61);

@@ -33,7 +33,8 @@ use jolt_program::execution::{FieldEvent, JoltProgram, TraceData, TraceOutput};
 use jolt_program::field_inline::{
     FieldEncodedValue, FieldInlineTraceData, FieldRegisterRead, FieldRegisterWrite,
 };
-use jolt_program::preprocess::{BytecodePreprocessing, JoltProgramPreprocessing, RAMPreprocessing};
+use jolt_program::preprocess::ram::RamWordMasks;
+use jolt_program::preprocess::JoltProgramPreprocessing;
 use jolt_riscv::{
     JoltInstructionKind, JoltInstructionProfile, JoltInstructionRow, JoltTraceRow,
     NormalizedOperands, RamAccess, RamWrite, RegisterRead, RegisterState, RegisterWrite,
@@ -49,9 +50,7 @@ use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
 use crate::{JoltProverPreprocessing, ProverConfig};
 
 pub(crate) const ENTRY: u64 = RAM_START_ADDRESS;
-// 3, not 2: the last physical cycle must be a noop (constraint 21's
-// ShouldJump convention), so the field-inline fixture's six real rows need padding
-// room behind them.
+// 3, not 2: the field-inline fixture's six real rows do not fit four cycles.
 pub(crate) const LOG_T: usize = 3;
 // Matches the witness backend's `JoltVmWitnessConfig` ram size (64).
 pub(crate) const RAM_LOG_K: usize = 6;
@@ -81,13 +80,17 @@ fn instruction(
 fn fixture_program_preprocessing(
     bytecode: Vec<JoltInstructionRow>,
 ) -> Arc<JoltProgramPreprocessing> {
-    Arc::new(JoltProgramPreprocessing {
-        bytecode: BytecodePreprocessing::preprocess(bytecode, ENTRY, RV64IMAC_JOLT_FIELD_INLINE)
-            .unwrap(),
-        ram: RAMPreprocessing::default(),
-        memory_layout: test_memory_layout(),
-        max_padded_trace_length: 1 << LOG_T,
-    })
+    Arc::new(
+        JoltProgramPreprocessing::new(
+            bytecode,
+            vec![(ENTRY, 0)],
+            test_memory_layout(),
+            ENTRY,
+            1 << LOG_T,
+            RV64IMAC_JOLT_FIELD_INLINE,
+        )
+        .unwrap(),
+    )
 }
 
 pub(crate) fn field_inline_backend(
@@ -149,7 +152,7 @@ fn field_row(instruction: JoltInstructionRow) -> JoltTraceRow {
 
 /// A terminal JAL row: the only hand-craftable last real instruction — its
 /// `Jump` flag turns off the otherwise-unconditional PC-update row 16, and
-/// `ShouldJump` stays 0 because the successor is the noop padding — with the
+/// `ShouldJump` stays 0 because the successor is a no-op or absent — with the
 /// link write (`rd = address + 4`) row 13 demands.
 fn halt_jal_row(offset: usize, rd: u8) -> JoltTraceRow {
     let jal = instruction(JoltInstructionKind::JAL, offset, Some(rd), None, None, 0);
@@ -403,10 +406,10 @@ pub(crate) fn addi_only_preprocessing() -> JoltProverPreprocessing<DoryScheme, P
     prover_preprocessing(addi_only_program().0)
 }
 
-/// The stage-4+ recipes' checked-inputs carrier for the fixture traces,
-/// mirroring what shape validation derives for a field-inline proof at this scale
-/// (no advice, no precommitted objects, full program).
-pub(crate) fn test_checked_inputs() -> CheckedInputs {
+/// The stage recipes' checked-inputs carrier for the fixture traces over
+/// `program`, mirroring what shape validation derives for a field-inline proof
+/// at this scale (no advice, no precommitted objects, full program).
+pub(crate) fn test_checked_inputs(program: &JoltProgramPreprocessing) -> CheckedInputs {
     CheckedInputs {
         public_io: test_public_io(),
         zk: cfg!(feature = "zk"),
@@ -414,6 +417,12 @@ pub(crate) fn test_checked_inputs() -> CheckedInputs {
         ram_K: 1 << RAM_LOG_K,
         entry_address: ENTRY,
         preprocessing_digest: [0u8; 32],
+        ram_word_masks: RamWordMasks::new(
+            program.code_region().unwrap(),
+            &program.memory_layout,
+            1 << RAM_LOG_K,
+        )
+        .unwrap(),
         untrusted_advice_commitment_present: false,
         trusted_advice_commitment_present: false,
         vc_capacity: cfg!(feature = "zk").then_some(MAX_BLINDFOLD_GENERATORS),
@@ -601,6 +610,7 @@ pub(crate) mod twins {
     pub(crate) fn replay_stage2<C: Clone + Encoding>(
         transcript: &mut ProverState<Keccak>,
         config: &ProverConfig,
+        checked: &CheckedInputs,
         public_io: &JoltDevice,
         stage1: &Stage1ProverOutput<Fr, C>,
         stage2: &Stage2ProverOutput<Fr, C>,
@@ -635,6 +645,7 @@ pub(crate) mod twins {
                 read_write_dimensions,
                 log_k,
                 tau_low.clone(),
+                checked.ram_word_masks.clone(),
             ),
             product_remainder: ProductRemainder::new(
                 product_dimensions,
@@ -976,6 +987,7 @@ pub(crate) mod proving {
             let stage2 = prove_stage2::<Fr, DoryScheme, Pedersen<Bn254G1>, ProverState<Keccak>>(
                 self.backend,
                 self.mode,
+                self.checked,
                 self.config,
                 self.public_io,
                 &stage1.clear_output,

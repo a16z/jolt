@@ -6,10 +6,10 @@ The `akita` Cargo feature selects this protocol at compile time. The current imp
 
 ## Field and witness representation
 
-Jolt's Akita path uses `AkitaField`, the upstream `fp128` configuration's alias for `jolt_field::Prime128OffsetA7F7`. Its modulus is
+Jolt's Akita path uses `AkitaField`, the upstream `fp128` configuration's alias for `jolt_field::Prime128Offset6A23801F`. Its modulus is
 
 $$
-p = 2^{128} - 2^{32} + 22537.
+p = 2^{128} - 1780711455.
 $$
 
 The RISC-V execution model and sumcheck-based approach remain shared with Dory, but the commitment layout changes. Akita does not provide the additive commitment homomorphism used by Dory's [random-linear-combination opening](./optimizations/batched-openings.md). Jolt instead commits the trace's one-hot columns as distinct polynomials in one native commitment group, called `OneHotTrace`.
@@ -64,7 +64,8 @@ The verifier derives the expected layouts and roles from preprocessing and proto
 
 Akita uses transparent setup. Jolt supplies versioned schedule catalogs as `.aks` artifacts under `crates/jolt-akita/schedules/`. Preprocessing provisions the grouped schedules needed by the program and advice configuration; the resulting verifier setup carries the catalog used during verification. The proof selects a schedule by digest from that catalog rather than supplying new schedule parameters.
 
-The workspace pins Akita to `8d5821f451e62547113d23fc709c6e806c10d590`.
+The workspace pins Akita to one Git revision, the `rev` of the `akita-*`
+entries under `[workspace.dependencies]` in the root `Cargo.toml`.
 Jolt delegates to Akita's adaptive ring-dimension schedule configuration
 and uses the CPU backend for every fold. Verifier preprocessing streams
 setup-prefix commitments from the public seed and materializes only the
@@ -75,7 +76,7 @@ Akita's planner admits a Module-SIS instance only when its ADPS16 quantum
 Core-SVP estimate is at least 169 bits, the cost of the ML-DSA-65 forgery
 attack (NIST security category 3). Fiat-Shamir grinding and the challenge
 spaces separately target 128 bits. Akita's
-[policy spec](https://github.com/LayerZero-Labs/akita/blob/8d5821f451e62547113d23fc709c6e806c10d590/specs/sis-nist-level3-policy.md)
+[policy spec](https://github.com/LayerZero-Labs/akita/blob/d50f700fb1a292395a717cef0e6f437c7ce2cdb1/specs/sis-nist-level3-policy.md)
 states both targets and their evidence.
 
 `ProverConfig::derive_from_dimensions` selects the single-chunk geometry

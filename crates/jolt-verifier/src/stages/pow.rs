@@ -32,14 +32,14 @@ use crate::VerifierError;
 ///
 /// | Site | Loss | 64-bit extreme (`B = R = 16`) |
 /// |---|---|---|
-/// | Stage 6a | `163 + 2(B + R)` | 227 |
+/// | Stage 6a | `165 + 2(B + R)` | 229 |
 /// | Stage 7 | `82 + 3R + 2B` | 162 |
 /// | Stage 2 | `ℓR + 8` | 69 |
 /// | Stage 1 `tau` | `ℓT + 15` | 55 at `ℓT = 40` |
 /// | Stages 1, 2 `tau_high`, 3, 4, 5, 6b | at most 15 | |
 /// | Stage 8 | `Σ log₂(slot capacity)` over at most 4 objects | a few |
 ///
-/// Stage 6a is the bytecode read-RAF's 62, up to 4 fresh booleanity
+/// Stage 6a is the bytecode read-RAF's 64, up to 4 fresh booleanity
 /// coordinates, `2(N − 1)` for the `N = 32 + B + R + 16 + 1` boolean-checked
 /// openings, and 1 for the batching coefficients. Stage 7 is 3 `γ` powers per
 /// RAM chunk, 2 per instruction and bytecode chunk, 1 per increment digit,
@@ -191,8 +191,8 @@ mod tests {
     /// `2^10` would cost 11.
     #[test]
     fn site_loss_costs_ten_bits_over_a_128_bit_field() {
-        // 2^128 − 0xffff_a7f7, the modulus of `Prime128OffsetA7F7`.
-        let set = ChallengeSetSize::field_order(u128::MAX - 0xffff_a7f6, 1).unwrap();
+        // 2^128 − 0x6a23_801f, the modulus of `Prime128Offset6A23801F`.
+        let set = ChallengeSetSize::field_order(u128::MAX - 0x6a23_801e, 1).unwrap();
         assert_eq!(grind_bits_for_loss(SITE_LOSS, set, SECURITY_BITS), Ok(10));
         assert_eq!(
             grind_bits_for_loss(SITE_LOSS + 1, set, SECURITY_BITS),

@@ -61,7 +61,17 @@ pub fn par_collect_windows<V: Copy + Send, E: Send>(
     count: usize,
     window: impl Fn(usize) -> Result<V, E> + Send + Sync,
 ) -> Result<Vec<V>, E> {
-    let mut out: Vec<V> = Vec::with_capacity(count);
+    par_collect_windows_with_room(count, 0, window)
+}
+
+/// [`par_collect_windows`] into a vector with capacity for `room` more
+/// values, so a consumer that pads the collection does not reallocate it.
+pub fn par_collect_windows_with_room<V: Copy + Send, E: Send>(
+    count: usize,
+    room: usize,
+    window: impl Fn(usize) -> Result<V, E> + Send + Sync,
+) -> Result<Vec<V>, E> {
+    let mut out: Vec<V> = Vec::with_capacity(count.saturating_add(room));
     let spare = &mut out.spare_capacity_mut()[..count];
     let error = FirstErrorLatch::new();
     spare
@@ -123,7 +133,7 @@ mod tests {
     fn par_concat_preserves_order() {
         let parts = vec![vec![1, 2, 3], vec![], vec![4], vec![5, 6]];
         assert_eq!(par_concat(&parts), parts.concat());
-        assert!(par_concat::<u8>(&[]).is_empty());
+        assert_eq!(par_concat::<u8>(&[]), [] as [u8; 0]);
     }
 
     #[test]

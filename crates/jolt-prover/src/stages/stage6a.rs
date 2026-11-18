@@ -215,7 +215,7 @@ mod field_inline_round_trip {
         let mode = ProofMode::<Pedersen<Bn254G1>>::new(None).unwrap();
         let config = test_prover_config();
         let public_io = test_public_io();
-        let checked = test_checked_inputs();
+        let checked = test_checked_inputs(&witness.preprocessing);
         let preprocessing = field_arithmetic_preprocessing();
 
         let mut prover_state = prover_transcript::<Keccak>(
@@ -256,14 +256,21 @@ mod field_inline_round_trip {
             &stage5.clear_output.output_values,
         );
         let zero = Fr::from_u64(0);
-        assert!(appendage.rd_wa_read_write != zero);
+        assert_ne!(appendage.rd_wa_read_write, zero);
 
         let mut transcript = prover_transcript::<Keccak>(
             &jolt_transcript::protocol_tag(b"stage6a-field-inline"),
             b"",
         );
         twins::replay_stage1(&mut transcript, &stage1);
-        twins::replay_stage2(&mut transcript, &config, &public_io, &stage1, &stage2);
+        twins::replay_stage2(
+            &mut transcript,
+            &config,
+            &checked,
+            &public_io,
+            &stage1,
+            &stage2,
+        );
         twins::replay_stage3(&mut transcript, &stage1, &stage2, &stage3);
         twins::replay_stage4(
             &mut transcript,

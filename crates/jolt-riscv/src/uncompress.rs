@@ -125,16 +125,18 @@ pub fn uncompress_rv64_instruction(halfword: u16) -> u32 {
                         return (imm << 20) | (r << 15) | (r << 7) | 0x13;
                     }
                 }
-                if r != 0 && r != 2 {
+                if r != 2 {
                     let nzimm = sign_bit_mask(halfword, 0x1000, 0xfffc_0000)
                         | ((halfword << 5) & 0x20000)
                         | ((halfword << 10) & 0x1f000);
+                    // nzimm = 0 is reserved for every rd, x0 included. With
+                    // rd = x0 and nzimm != 0 the parcel is a HINT.
                     if nzimm != 0 {
+                        if r == 0 {
+                            return 0x13;
+                        }
                         return nzimm | (r << 7) | 0x37;
                     }
-                }
-                if r == 0 {
-                    return 0x13;
                 }
             }
             4 => {
@@ -725,7 +727,7 @@ mod tests {
     fn quadrant0_reserved_encodings_are_illegal() {
         assert_eq!(expand(0x0000), 0xffff_ffff); // defined-illegal all-zero halfword
         assert_eq!(expand(c_addi4spn(5, 0)), 0xffff_ffff); // nzuimm=0 reserved
-        assert_eq!(expand(0x8000), 0xffff_ffff); // funct3=100 unallocated in quadrant 0
+        assert_eq!(expand(0x8000), 0xffff_ffff); // c.lbu (Zcb), not implemented by Jolt
     }
 
     #[test]
@@ -779,10 +781,70 @@ mod tests {
         assert_eq!(expand(ci(0b011, 3, -1)), lui(-1, 3)); // all six bits set
         assert_eq!(expand(ci(0b011, 4, 21)), lui(21, 4)); // 0b010101
         assert_eq!(expand(ci(0b011, 1, 0)), 0xffff_ffff); // nzimm=0 reserved
-        assert_eq!(expand(ci(0b011, 0, 5)), 0x13); // rd=0 emits canonical nop
+        assert_eq!(expand(ci(0b011, 0, 5)), 0x13); // rd=0 hint emits canonical nop
+        assert_eq!(expand(ci(0b011, 0, 0)), 0xffff_ffff); // rd=0, nzimm=0 reserved
         for b in 0..=4 {
             let imm = 1 << b;
             assert_eq!(expand(ci(0b011, 5, imm)), lui(imm, 5));
+        }
+    }
+
+    /// Every RV64C code point the RVC spec reserves, plus the opcode blocks
+    /// holding the Zcb instructions Jolt does not implement, swept over the
+    /// fields the reservation leaves free. Each must come back as the invalid
+    /// word, so the decoder rejects the parcel instead of running it as a
+    /// no-op.
+    #[test]
+    fn reserved_rvc_encodings_are_illegal() {
+        const INVALID: u32 = 0xffff_ffff;
+        // 0x6001: the C.LUI rd=x0, nzimm=0 parcel Sail decodes as C_ILLEGAL.
+        assert_eq!(expand(0x6001), INVALID);
+        for rdp in 0..8 {
+            assert_eq!(expand(c_addi4spn(rdp, 0)), INVALID, "c.addi4spn nzuimm=0");
+        }
+        for rd in 0..32 {
+            // C.LUI nzimm=0 is reserved for every rd; rd=x2 is C.ADDI16SP
+            // nzimm=0, which is reserved too.
+            assert_eq!(expand(ci(0b011, rd, 0)), INVALID, "c.lui rd={rd} nzimm=0");
+        }
+        assert_eq!(expand(c_addi16sp(0)), INVALID);
+        for imm in -32..32 {
+            assert_eq!(expand(ci(0b001, 0, imm)), INVALID, "c.addiw rd=0 imm={imm}");
+        }
+        for offset in (0..256).step_by(4) {
+            assert_eq!(expand(c_lwsp(0, offset)), INVALID, "c.lwsp rd=0");
+        }
+        for offset in (0..512).step_by(8) {
+            assert_eq!(expand(c_ldsp(0, offset)), INVALID, "c.ldsp rd=0");
+        }
+        // c.jr rs1=0
+        assert_eq!(expand(cr(0, 0, 0)), INVALID);
+        // Quadrant 0 funct3=100 and quadrant 1 funct6=100111 with funct2=10
+        // or 11: opcode blocks holding the Zcb instructions Jolt does not
+        // implement and encodings that stay reserved.
+        for low in 0..(1 << 11) {
+            assert_eq!(expand((0b100 << 13) | (low << 2)), INVALID, "q0 funct3=100");
+        }
+        for rdp in 0..8 {
+            for rs2p in 0..8 {
+                assert_eq!(expand(ca(1, 0b10, rdp, rs2p)), INVALID, "ca funct2=10");
+                assert_eq!(expand(ca(1, 0b11, rdp, rs2p)), INVALID, "ca funct2=11");
+            }
+        }
+    }
+
+    /// C.LUI with rd = x2 is the C.ADDI16SP code point, never `lui sp`.
+    #[test]
+    fn c_lui_rd_x2_is_c_addi16sp() {
+        for imm in (-32..32).filter(|&imm| imm != 0) {
+            let word = expand(ci(0b011, 2, imm));
+            assert_eq!(
+                word & 0x7f,
+                0x13,
+                "imm={imm}: expected ADDI, got {word:#010x}"
+            );
+            assert_eq!(bits(word, 19, 15), 2, "imm={imm}: rs1 must be sp");
+            assert_eq!(bits(word, 11, 7), 2, "imm={imm}: rd must be sp");
         }
     }
 
@@ -850,6 +912,7 @@ mod tests {
 
     #[test]
     fn ca_format_reserved_rv64_slots_are_illegal() {
+        // c.mul and c.sext.h (Zcb), which Jolt does not implement.
         assert_eq!(expand(ca(1, 0b10, 0, 0)), 0xffff_ffff);
         assert_eq!(expand(ca(1, 0b11, 5, 3)), 0xffff_ffff);
     }

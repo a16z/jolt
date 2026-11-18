@@ -19,8 +19,9 @@
 //! carries no copy. Each round message is
 //! `Expr::try_evaluate` run pointwise over the remaining hypercube — cost
 //! `O((degree+1) · 2^rounds · |Expr|)` per round, a **test oracle at harness
-//! scale, never a performance path**. It is the reference implementation
-//! optimized kernels are equivalence-tested against.
+//! scale**. It is the reference implementation optimized kernels are
+//! equivalence-tested against. The optimized RAM RAF-evaluation kernel also
+//! runs it in production proofs.
 //!
 //! Two self-checks pin it: the engine's running-claim check
 //! (`s(0) + s(1) == previous_claim`, re-checked per member here), and

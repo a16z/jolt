@@ -6,34 +6,52 @@ license = "MIT"
 description = "Generic BlindFold verifier infrastructure for the Jolt zkVM"
 
 [features]
+default = []
+blindfold = [
+  "dep:jolt-claims",
+  "dep:jolt-crypto",
+  "dep:jolt-r1cs",
+  "dep:jolt-utils",
+  "jolt-sumcheck/committed",
+  "jolt-sumcheck/r1cs",
+]
+parallel = [
+  "dep:rayon",
+  "jolt-poly/parallel",
+  "jolt-sumcheck/parallel",
+  "jolt-claims?/parallel",
+  "jolt-crypto?/parallel",
+]
 # The prove side: `prove` and the proof-of-work search before its challenges,
 # which copies the sponge state. Verifier builds leave it off.
 prover = [
+  "blindfold",
   "jolt-sumcheck/prover",
   "jolt-transcript/prover-grinding",
-  "dep:rayon",
 ]
 
 [lints]
 workspace = true
 
 [dependencies]
-jolt-claims.workspace = true
-jolt-crypto = { workspace = true, features = ["bn254"] }
+jolt-claims = { workspace = true, optional = true }
+jolt-crypto = { workspace = true, optional = true }
 jolt-field.workspace = true
 jolt-poly.workspace = true
-jolt-r1cs.workspace = true
-jolt-sumcheck = { workspace = true, features = ["committed", "r1cs"] }
+jolt-r1cs = { workspace = true, optional = true }
+jolt-sumcheck.workspace = true
 jolt-transcript.workspace = true
-jolt-utils.workspace = true
+jolt-utils = { workspace = true, optional = true }
 rand_core.workspace = true
 rayon = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive"] }
 thiserror.workspace = true
 
 [dev-dependencies]
+jolt-crypto = { workspace = true, features = ["bn254"] }
 jolt-field = { workspace = true, features = ["bn254", "solinas"] }
 jolt-transcript = { workspace = true, features = [
+  "prover-entropy",
   "bn254",
   "solinas",
   "transcript-blake2b",

@@ -1050,7 +1050,7 @@ mod tests {
             relaxed.error_row_commitments,
             vec![identity; protocol.dimensions.error.row_count]
         );
-        assert!(relaxed.eval_commitments.is_empty());
+        assert_eq!(relaxed.eval_commitments, [] as [Bn254G1; 0]);
     }
 
     #[test]

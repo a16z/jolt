@@ -10,7 +10,7 @@ workspace = true
 
 [dependencies]
 jolt-crypto = { workspace = true, features = ["bn254"] }
-jolt-field = { workspace = true }
+jolt-field = { workspace = true, features = ["bn254"] }
 jolt-openings = { workspace = true }
 jolt-poly = { workspace = true }
 jolt-transcript = { workspace = true }
@@ -37,6 +37,7 @@ akita-types.workspace = true
 jolt-profiling = { path = "../jolt-profiling", default-features = false }
 criterion = { workspace = true }
 jolt-transcript = { workspace = true, features = [
+  "prover-entropy",
   "bn254",
   "test-utils",
   "transcript-blake2b",

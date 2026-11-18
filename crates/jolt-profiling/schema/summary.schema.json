@@ -297,11 +297,25 @@
             "null"
           ]
         },
+        "protocol": {
+          "description": "Name of the proof protocol the harness was compiled for; `null` when\nabsent from an older summary.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
         "scale_log2": {
           "description": "log2 of the padded trace length the workload was scaled to.",
           "type": "integer",
           "format": "uint32",
           "minimum": 0
+        },
+        "streaming_families": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
         },
         "timestamp_unix_secs": {
           "type": "integer",

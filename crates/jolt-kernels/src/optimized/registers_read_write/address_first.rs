@@ -5,6 +5,7 @@
 //! checkpoints parallelize the handoff to five cycle tables; the dead address
 //! equality buffer becomes the rs1 table. Gruen factoring handles the tail.
 
+use crate::optimized::support::eq_round_error;
 use core::mem::MaybeUninit;
 
 use jolt_claims::protocols::jolt::geometry::dimensions::REGISTER_ADDRESS_BITS;
@@ -126,8 +127,10 @@ impl<F: JoltField> AddressFirstKernel<F> {
         )
     }
 
+    /// `rd_carry` is the session that receives the rows' `rd` indices for the
+    /// default stage-5 kernel, if any.
     pub(super) fn prepare(
-        session: &mut ProofSession,
+        rd_carry: Option<&mut ProofSession>,
         witness: &dyn JoltWitnessPlane<F>,
         inputs: &ProverInputs<'_, F, RegistersReadWriteChecking<F>>,
     ) -> Result<Self, KernelError<F>> {
@@ -151,20 +154,19 @@ impl<F: JoltField> AddressFirstKernel<F> {
             .collect::<Result<_, _>>()?;
         let mut checkpoints = Vec::with_capacity(rows.len().div_ceil(CHUNK));
         let mut values = [0i128; 1 << REGISTER_ADDRESS_BITS];
-        let rd_indices = rows
-            .iter()
-            .enumerate()
-            .map(|(cycle, row)| {
-                if cycle % CHUNK == 0 {
-                    checkpoints.push(values);
-                }
-                if let Some(rd) = row.rd {
-                    values[usize::from(rd)] += row.inc;
-                }
-                row.rd
-            })
-            .collect();
-        session.park(SharedRdIndices::new(rd_indices, cycles));
+        let rd_indices = rows.iter().enumerate().map(|(cycle, row)| {
+            if cycle % CHUNK == 0 {
+                checkpoints.push(values);
+            }
+            if let Some(rd) = row.rd {
+                values[usize::from(rd)] += row.inc;
+            }
+            row.rd
+        });
+        match rd_carry {
+            Some(session) => session.park(SharedRdIndices::new(rd_indices.collect(), cycles)),
+            None => rd_indices.for_each(drop),
+        }
         let gruen =
             GruenSplitEqPolynomial::new(&inputs.points.rd_write_value, BindingOrder::LowToHigh);
         Ok(Self {
@@ -256,7 +258,8 @@ impl<F: JoltField> AddressFirstKernel<F> {
         UnivariatePoly::from_evals_and_hint(claim, &evals)
     }
 
-    fn bind(&mut self, r: F) {
+    fn bind(&mut self, r: F) -> Result<(), SumcheckError<F>> {
+        let round = self.progress.bound();
         match &mut self.phase {
             Phase::Address {
                 rows,
@@ -360,13 +363,18 @@ impl<F: JoltField> AddressFirstKernel<F> {
                 val,
                 inc,
             } => {
+                let gruen_round = self
+                    .gruen
+                    .round_mut()
+                    .ok_or_else(|| eq_round_error(round))?;
                 for table in [rs1, rs2, wa, val, inc] {
                     let _ = table.bind(r);
                 }
-                self.gruen.bind(r);
+                gruen_round.bind(r);
             }
         }
         self.progress.advance();
+        Ok(())
     }
 }
 
@@ -381,7 +389,7 @@ impl<F: JoltField> ProveRounds<F> for AddressFirstKernel<F> {
         claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
         if let Some(r) = bind {
-            self.bind(r);
+            self.bind(r)?;
         }
         match &self.phase {
             Phase::Address {
@@ -418,31 +426,33 @@ impl<F: JoltField> ProveRounds<F> for AddressFirstKernel<F> {
                     |_x_out, e_out, acc| acc.map(|value| e_out * value),
                     |a, b| [a[0] + b[0], a[1] + b[1]],
                 );
-                self.gruen.checked_cubic(q[0], q[1], claim, round, || {
-                    self.gruen.par_fold_out_in_prefix(
-                        rs1.values.len().div_ceil(2),
-                        F::zero,
-                        |sum, pair, _, weight| {
-                            let row = 2 * pair + 1;
-                            *sum += weight
-                                * summand(
-                                    rs1.value(row),
-                                    rs2.value(row),
-                                    wa.value(row),
-                                    val.value(row),
-                                    inc.value(row),
-                                );
-                        },
-                        |_, weight, sum| weight * sum,
-                        |a, b| a + b,
-                    )
-                })
+                self.gruen
+                    .round()
+                    .ok_or_else(|| eq_round_error(round))?
+                    .checked_cubic(q[0], q[1], claim, round, || {
+                        self.gruen.par_fold_out_in_prefix(
+                            rs1.values.len().div_ceil(2),
+                            F::zero,
+                            |sum, pair, _, weight| {
+                                let row = 2 * pair + 1;
+                                *sum += weight
+                                    * summand(
+                                        rs1.value(row),
+                                        rs2.value(row),
+                                        wa.value(row),
+                                        val.value(row),
+                                        inc.value(row),
+                                    );
+                            },
+                            |_, weight, sum| weight * sum,
+                            |a, b| a + b,
+                        )
+                    })
             }
         }
     }
     fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {
-        self.bind(bind);
-        Ok(())
+        self.bind(bind)
     }
 }
 

@@ -121,6 +121,64 @@ fn csrrs_rd_zero_rs1_zero_becomes_noop_addi() -> Result<(), ExpansionError> {
 }
 
 #[test]
+fn halts_lower_to_one_row_that_links_into_a_temporary() -> Result<(), ExpansionError> {
+    for (source_kind, imm, is_compressed, kind, virtual_sequence_remaining) in [
+        (
+            SourceInstructionKind::JoltSuccess,
+            0,
+            false,
+            JoltInstructionKind::JoltSuccess,
+            None,
+        ),
+        (
+            SourceInstructionKind::EBREAK,
+            1,
+            false,
+            JoltInstructionKind::JoltPanic,
+            Some(0),
+        ),
+        (
+            SourceInstructionKind::EBREAK,
+            1,
+            true,
+            JoltInstructionKind::JoltPanic,
+            Some(0),
+        ),
+    ] {
+        let input = SourceInstruction::new(
+            source_kind,
+            SourceInstructionRow {
+                address: 0x8000_0000,
+                operands: NormalizedOperands {
+                    rd: Some(0),
+                    rs1: Some(0),
+                    rs2: None,
+                    imm,
+                },
+                inline: None,
+                is_compressed,
+            },
+        );
+        let mut allocator = ExpansionAllocator::new();
+        let expanded = rows(expand_instruction(&input, &mut allocator, RV64IMAC_JOLT)?);
+
+        assert_eq!(expanded.len(), 1, "{source_kind:?}");
+        let row = expanded[0];
+        assert_eq!(row.instruction_kind, kind);
+        assert_eq!(row.operands.rd, Some(40));
+        assert_eq!(row.operands.rs1, Some(0));
+        assert_eq!(row.operands.imm, 0);
+        assert_eq!(row.virtual_sequence_remaining, virtual_sequence_remaining);
+        assert_eq!(
+            row.is_first_in_sequence,
+            virtual_sequence_remaining.is_some()
+        );
+        assert_eq!(row.is_compressed, is_compressed);
+    }
+    Ok(())
+}
+
+#[test]
 fn inline_requires_provider() {
     let mut allocator = ExpansionAllocator::new();
     let input = instruction(SourceInstructionKind::Inline, Some(3), false);
@@ -133,7 +191,14 @@ fn inline_requires_provider() {
 
 #[test]
 fn csr_zero_is_rejected() {
-    for instruction_kind in [SourceInstructionKind::CSRRW, SourceInstructionKind::CSRRS] {
+    for instruction_kind in [
+        SourceInstructionKind::CSRRW,
+        SourceInstructionKind::CSRRS,
+        SourceInstructionKind::CSRRC,
+        SourceInstructionKind::CSRRWI,
+        SourceInstructionKind::CSRRSI,
+        SourceInstructionKind::CSRRCI,
+    ] {
         let mut allocator = ExpansionAllocator::new();
         let mut input = source_row(instruction_kind, Some(3), false);
         input.operands.imm = 0;
@@ -474,7 +539,7 @@ fn source_only_expanders_are_not_target_legal() {
         LRD, LRW,
         DIV, DIVU, DIVW, DIVUW, REM, REMU, REMW, REMUW,
         SB, SCD, SCW, SH, SW,
-        CSRRW, CSRRS, EBREAK, ECALL, MRET,
+        CSRRW, CSRRS, CSRRC, CSRRWI, CSRRSI, CSRRCI, EBREAK, ECALL, MRET,
         SLL, SLLI, SLLIW, SLLW, SRL, SRLI, SRA, SRAI,
         SRLIW, SRAIW, SRLW, SRAW,
     }

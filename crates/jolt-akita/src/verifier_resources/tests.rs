@@ -241,7 +241,7 @@ fn every_catalog_holds_the_prefixes_of_the_rows_its_state_admits() {
             descriptor.max_num_batched_polys,
         )
         .unwrap();
-        assert!(!admitted.prefix_slot_ids().is_empty());
+        assert_ne!(admitted.prefix_slot_ids(), []);
         assert!(admitted
             .prefix_slot_ids()
             .iter()

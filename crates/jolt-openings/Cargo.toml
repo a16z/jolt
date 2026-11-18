@@ -29,6 +29,7 @@ parallel = ["jolt-crypto/parallel", "jolt-poly/parallel"]
 jolt-dory.workspace = true
 jolt-crypto = { workspace = true, features = ["bn254"] }
 jolt-transcript = { workspace = true, features = [
+  "prover-entropy",
   "bn254",
   "transcript-blake2b",
 ] }

@@ -15,10 +15,31 @@ macro_rules! debug_writeln {
 use zeroos::foundation::ops::MemoryOps;
 
 extern "C" {
-    static __heap_start: u8;
-    static __heap_end: u8;
-    static __stack_top: u8;
-    static __stack_bottom: u8;
+    // src/linker.ld.template stores full-width addresses so reservations may exceed PC-relative reach.
+    static __jolt_memory_layout: [usize; 4];
+    fn __boot_trace_start();
+}
+
+/// # Safety
+/// Enter only at reset, before the stack or global pointer is initialized.
+#[unsafe(naked)]
+#[link_section = ".text.jolt_boot"]
+#[no_mangle]
+pub unsafe extern "C" fn __jolt_start() -> ! {
+    core::arch::naked_asm!(
+        ".option push",
+        ".option norelax",
+        "lla t0, {layout}",
+        "ld gp, 0(t0)",
+        ".option pop",
+        "ld sp, 8(t0)",
+        "andi sp, sp, -16",
+        "call {trace_start}",
+        "tail {bootstrap}",
+        layout = sym __jolt_memory_layout,
+        trace_start = sym __boot_trace_start,
+        bootstrap = sym zeroos::arch::riscv::__bootstrap,
+    )
 }
 
 /// Install the trap vector (mtvec = _trap_handler).
@@ -56,19 +77,11 @@ pub extern "C" fn __platform_bootstrap() {
     });
 
     {
-        let heap_start = core::ptr::addr_of!(__heap_start) as usize;
-        let heap_end = core::ptr::addr_of!(__heap_end) as usize;
+        // SAFETY: the Jolt linker script provides four aligned, read-only RV64 address cells.
+        let [_, _, heap_start, heap_end] = unsafe { __jolt_memory_layout };
         debug_writeln!("[BOOT] Heap start=0x{:x}, end=0x{:x}", heap_start, heap_end);
         let heap_size = heap_end - heap_start;
         zeroos::foundation::kfn::memory::kinit(heap_start, heap_size);
-
-        let _stack_top = core::ptr::addr_of!(__stack_top) as usize;
-        let _stack_bottom = core::ptr::addr_of!(__stack_bottom) as usize;
-        debug_writeln!(
-            "[BOOT] Stack top=0x{:x}, bottom=0x{:x}",
-            _stack_top,
-            _stack_bottom
-        );
     }
 
     #[cfg(not(target_os = "none"))]

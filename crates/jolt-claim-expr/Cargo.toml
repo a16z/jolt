@@ -1,0 +1,17 @@
+[package]
+name = "jolt-claim-expr"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Protocol-free symbolic claim expressions for Jolt"
+
+[lints]
+workspace = true
+
+[dependencies]
+jolt-algebra.workspace = true
+serde = { workspace = true, features = ["alloc", "derive"] }
+thiserror.workspace = true
+
+[dev-dependencies]
+jolt-algebra = { workspace = true, features = ["bn254"] }

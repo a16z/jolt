@@ -47,6 +47,8 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 
+RUSTUP_TOOLCHAIN="${RUSTUP_TOOLCHAIN:-$(python3 "$MATRIX_TOOL" --matrix "$MATRIX_PATH" toolchain)}"
+export RUSTUP_TOOLCHAIN
 python3 "$MATRIX_TOOL" --matrix "$MATRIX_PATH" validate
 HOST_TRIPLE=$(rustc -Vv | sed -n 's/^host: //p')
 HOST_ARCHITECTURE=$(normalize_architecture "${HOST_TRIPLE%%-*}") || {

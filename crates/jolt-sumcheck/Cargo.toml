@@ -42,6 +42,7 @@ bincode = { workspace = true }
 jolt-crypto = { workspace = true, features = ["bn254"] }
 jolt-field = { workspace = true, features = ["bn254", "solinas", "binary"] }
 jolt-transcript = { workspace = true, features = [
+  "prover-entropy",
   "bn254",
   "solinas",
   "binary",
@@ -62,6 +63,10 @@ required-features = ["prover"]
 
 [[test]]
 name = "extension_fields"
+required-features = ["prover"]
+
+[[test]]
+name = "single"
 required-features = ["prover"]
 
 [[test]]

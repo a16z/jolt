@@ -4,9 +4,11 @@ These scripts reuse `jolt-prover profile --backend optimized`. They build real
 guest ELFs before measurement, run fresh prover processes, verify every successful
 proof, and retain raw samples. There is no reference-backend timing lane.
 
-PR benchmarks are opt-in. A maintainer or administrator adds `benchmark` to a
-same-repository PR; subsequent pushes retain that admission while the label stays
-applied. The target builds both legs using its local Cargo state, then proves.
+PR benchmarks are opt-in. A maintainer or administrator adds `benchmark` to a PR
+into main. On a same-repository PR, subsequent pushes retain that admission while
+the label stays applied. On a fork PR the label admits only the head it was
+applied to; after a push, the label must be removed and applied again.
+The target builds both legs using its local Cargo state, then proves.
 Every main push's new first-parent commits and the nightly run instead build on
 GitHub-hosted runners; the target downloads, verifies and runs those artifacts
 without any Cargo/toolchain fallback. Both routes keep the repository's `release`
@@ -171,7 +173,7 @@ queue timing and do not change the cost of a still-current tip.
 A PR based on a skipped tip retains its medians and signed changes. If there is
 no other unexpired exact-base reference, its check is neutral with reference
 unavailable; the sticky comment still lists executed sizes and qualifying
-changes using a 3% threshold marked as having no observed envelope. A reference
+changes using the trace-size thresholds alone, marked as having no observed envelope. A reference
 from a matching nightly or bootstrap can still apply.
 
 ### Historical PR interval
@@ -277,7 +279,7 @@ raw KiB value; stdout/stderr remain in `process.log`. Nonzero command exits stay
 nonzero; signal termination uses GNU time's `128 + signal` exit status.
 `proof_bytes` is the serialized proof length. `trace_rows` is the modular trace's `proof_len()` before
 padding, not a raw RISC-V instruction count. `padded_trace_rows` is the actual
-`ProverConfig.trace_length`, including the required final no-op and minimum size.
+`ProverConfig.trace_length`, including the minimum size.
 
 All times are full-resolution numeric seconds. Build time is separate from the
 proof metrics. `ci.py prepare` records its hosted interval in `builds.json`.
@@ -312,7 +314,8 @@ No benchmark-target governor, SMT, boost, swap, RAID, or other setting is change
 `host.microcode` comes from `/proc/cpuinfo`. `host.control_plane` records the
 readable `/opt/pika/bin/pika-cli` and `pika-node` SHA256s and the node's `--version`
 output. Unavailable observations are null, never an assumed match. These are
-runtime observations; they are not part of native bundle cache identity.
+runtime observations; they are not part of native bundle cache identity, and
+`host.control_plane` is not part of a calibration key.
 
 The disposable GitHub-hosted builder checks for 40 GB of free disk space, then
 adds a 24 GB swap file, reserving 16 GB of disk space for the build. It uses one
@@ -325,8 +328,10 @@ These are failure limits, not duration estimates.
 ## Manual commands
 
 Run-only execution needs Linux, Python 3.11+ through `uv`, Git for the pinned harness
-checkout, GNU `/usr/bin/time` (Debian/Ubuntu package `time`), `taskset` and `lscpu`. The target also builds opted-in PRs, so it needs the pinned Rust toolchain,
-its `rust-src` component and configured RISC-V targets. The five
+checkout, GNU `/usr/bin/time` (Debian/Ubuntu package `time`), `taskset` and `lscpu`. The target also builds opted-in PRs, so it needs rustup, which installs the
+toolchain, components and RISC-V targets that `rust-toolchain.toml` pins. Add no
+component to that toolchain, `rust-src` in particular: it changes the prover's
+bytes ("One toolchain definition for both builders" below). The five
 prepared guests use `riscv64imac-unknown-none-elf`. The build produces its own
 `jolt` CLI; a stale globally installed CLI is not used.
 
@@ -581,12 +586,11 @@ before any result complete the App check directly.
 The comment shows the base and head medians for end-to-end time and peak RSS,
 with signed percentage changes computed as `100 * (head_median / base_median - 1)`.
 Each row identifies its physical cores, `2^k` trace ceiling and measured base/head
-trace rows. The sticky PR comment shows a row only when the time or peak-RSS
-change exceeds its per-case reporting threshold: the larger of 3% and that
-metric's observed envelope. Selection uses
+trace rows. The sticky PR comment shows a case's row only when its time or
+peak-RSS change exceeds its reporting threshold, defined below. Selection uses
 `100 * (max(head/base, base/head) - 1) > threshold`, so
 increases and decreases use the same scale as the envelope. Each metric's
-threshold is shown next to its signed change; a missing envelope uses 3%, marked
+threshold is shown next to its signed change; a missing envelope is marked
 `no observed envelope`. These observed envelopes do not establish statistical
 significance. The comment links to the full results and benchmark history.
 The comment always lists the distinct core-count/ceiling pairs
@@ -595,6 +599,66 @@ without an exit are not listed as run.
 Only the configured measured repetitions contribute; warmups are excluded.
 Missing repetitions, failed processes and zero denominators remain unavailable
 comparisons. Proof sizes remain in the raw samples.
+
+### Reporting thresholds
+
+Thresholds depend on the trace ceiling, because the spread between runs of one
+binary shrinks as traces grow. `SIZE_THRESHOLDS` in `calibration.py` is their only
+definition; the sticky comment and the check summary render their numbers from it.
+
+| Trace ceiling | Time, size-group mean | Time, one case | Peak RSS, group mean and one case |
+|---|---:|---:|---:|
+| below 2^20 | 3% | 3% | 15% |
+| 2^20 to 2^21 | 3% | 4.5% | 15% |
+| 2^22 to 2^23 | 2% | 2.5% | 9% |
+| 2^24 to 2^26 | 1% | 2% | 3% |
+| 2^27 and above | 1% | 1.5% | 3% |
+
+A case is listed when a metric's change exceeds the larger of its table value and
+that metric's observed envelope for the case ("External calibration lifecycle"
+below). Without a matching reference the table value applies alone. A size group
+is the complete cases of one run sharing a PCS, physical-core count and trace
+ceiling. A group of two or more cases is listed when the geometric mean of its
+head/base median ratios, compared symmetrically like a single case, exceeds the
+group column. A calibration reference holds
+no null for a group mean, so the table applies alone there. A case without a
+trace ceiling uses the largest value of each column.
+
+Each value starts from the sensitivity requested for its row and is raised,
+where needed, to the next 0.5 percentage points above the largest null of its
+statistic within the row's range of sizes. The nulls are the windows of the six
+calibration references published on November 15 and 16, 2026 (main `8a928741`,
+`0537900e`, `11f6519d`, `40dedcdd`, `47b8cba4` and `27c56e54`), and the
+differences between the base legs of PR runs of November 14 to 16 that shared a
+base binary. No null raised the group-mean time column or the peak-RSS column,
+which hold the requested sensitivities. The one-case time column was raised in
+four rows, by nulls of 4.22% at 8-core 2^20, 2.48% at 2^22, 1.53% at 2^24 and
+1.07% at 2^27. The table has no core-count dimension, so the 24-core 2^20 cases,
+whose null reached 2.32%, share the value that the 8-core cases require. The
+suite has no group of two or more cases at 2^27, so no null stands behind that
+group value, and the single 2^27 case does not reach the sensitivity requested
+there.
+
+The values do not clear every published null. Of the 51 references published
+from November 6 to 16, 2026 (44 main revisions), 13 references (12 revisions)
+hold a one-case null at or above its table value:
+
+| Size group | Metric | References with such a null, of those measuring the group | Largest null |
+|---|---|---:|---:|
+| Akita, 24 cores, 2^18 | time | 2 of 44 | 3.47% |
+| Akita, 8 cores, 2^20 | time | 4 of 51 | 5.42% |
+| Akita, 8 cores, 2^20 | peak RSS | 8 of 51 | 23.00% |
+| Akita, 24 cores, 2^22 | peak RSS | 1 of 51 | 9.17% |
+| Akita, 24 cores, 2^24 | time | 1 of 44 | 2.08% |
+
+No group-mean null in those references reaches its group value. The table is
+not raised to these maxima, which would put it outside the requested
+sensitivities. With a matching reference a case's threshold is also at least
+its envelope, so a reference from such a session raises the threshold for runs
+against its revision. Without a matching reference the table applies alone, and
+a comment can list a case of an unchanged binary. The counts above say how many
+references held such a null among their eight windows per case, not how often
+one three-pair comparison produces a listing.
 
 ### External calibration lifecycle
 
@@ -614,24 +678,54 @@ identical legs, the complete configured PR case set, all `22N` zero-exit samples
 alternating order, affinity and metrics.
 It recomputes eight overlapping three-pair windows. For each metric and window,
 `d = 100 * (max(median(A)/median(B), median(B)/median(A)) - 1)`; nonpositive
-denominators are unavailable. The envelope is `0.5 * ceil(max(floor, 1.5 * max(d))
-/ 0.5)`, with time/RSS floors of 3%/2%. Rational arithmetic keeps rounding exact
-at half-percentage-point boundaries. Method: `null-median3-symmetric-envelope-v2`.
+denominators are unavailable. The envelope is `0.5 * ceil(1.5 * max(d) / 0.5)`;
+the reporting thresholds above set the minimum for each trace size.
+Rational arithmetic keeps rounding exact
+at half-percentage-point boundaries. Method: `null-median3-symmetric-envelope-v3`.
 These are observed informational bands, not confidence intervals or verdicts.
 
-Each schema-1 cell key is SHA256 of compact, sorted JSON with no nonfinite
-numbers. Matching requires the exact base revision, metric contract, collector,
-calibration helper and committed suite hashes; Rust/Cargo versions, target ISA,
-flags, profile/config, effective lockfile, native harness hashes and schedules;
-cell/input/guest identities, ordered physical CPU IDs, and every measured base
-sample's trace and padded-row counts. Host identity includes machine ID, kernel,
-microcode, Pika management version and CLI/node hashes, boost, SMT, the complete
-governor map, THP and total swap. These must agree before and after both
-measurements. The host's management node is not a benchmark agent; a Pika update
-invalidates existing references. Missing or unreadable identity evidence makes
-references unavailable. Construction hostname, compiler/linker labels,
-transient free swap, random URS hashes and harness Git SHA alone do not bind;
-the initially empty suite-local Dory cache policy does.
+Each schema-2 cell key is SHA256 of compact, sorted JSON with no nonfinite
+numbers. A reference applies to a PR cell only when the two keys are equal, so
+its band is a null with equal recorded host fields, the same workload and a
+prover equal to the PR's base up to the two sections named below. Every key
+field binds; a field outside the key only describes a run.
+
+| Key fields | Why they bind |
+|---|---|
+| Base prover (`elf-no-build-id-comment-v1` hash, below), guest ELF, input bytes, Akita schedules | What the build gives a measured process to execute and read. |
+| Case ID, workload, PCS, backend, core count, ordered physical CPU IDs, scale, the initially empty suite-local Dory cache policy, and every measured base sample's trace and padded-row counts | The work done and the CPUs it ran on. |
+| Machine ID, kernel release, microcode, boost, SMT, the complete governor map, THP and total swap | Recorded hardware and kernel state that changes the time or RSS of an unchanged binary. |
+| Metric contract, method, normalization, and the hashes of the collector (`run.py`), calibration helper and suite at the harness revision that ran | They define what a sample and a band mean. |
+| Exact base revision | A reference belongs to one main commit, even when another commit builds the same prover. |
+| Rust/Cargo versions, target ISA, flags, profile/config, effective lockfile, native harness hashes | Build inputs. The prover and guest hashes already depend on them; equal hashes with different recorded inputs are inconsistent evidence. |
+
+The host fields must also agree between the start and end snapshots of each run.
+Missing or unreadable evidence for a key field makes references unavailable.
+
+Outside the key: the host's management node (`host.control_plane`), construction
+hostname, compiler/linker labels, installed toolchain components, Cargo job
+count, target-directory reuse, transient free swap, random URS hashes and harness
+Git SHA alone. Any of these that changes the prover is bound through the prover
+hash. The shared libraries that the target loads into the dynamically linked
+prover (libc, libm, libgcc_s and the dynamic loader) are neither keyed nor
+recorded.
+
+The management node is recorded and never compared. No measured process executes
+it, its version and file hashes do not say what it was doing, and no other host
+daemon is keyed, so a Pika update between two runs does not invalidate
+references. An update during a run is not detected, like any other background
+activity on the target. Of the 52 nulls measured from November 6 to 16, five had
+such an update between their snapshots and no other reason to be refused. Against
+the published nulls of the same cases started within 36 hours, three of the five
+were no noisier in mean and maximum time window delta, cells whose time envelope
+exceeds 3% and mean RSS window delta; the other two exceeded the neighbours' maximum on two
+of those four, the largest excess being a maximum time window delta of 5.11%
+against 3.97%.
+
+A reference published under schema 1, which keyed the management node, applies
+to no schema-2 key: the catalog lists the digests of its schema-1 keys, and PR
+ingest requires the reference it recomputes with the current helper to equal the
+published bytes.
 
 An RSS collector change alters the committed runner hash, so references from the
 direct Python `wait4` collector do not match and must be regenerated, even when
@@ -643,6 +737,18 @@ or executable. Hash that copy; execute and byte-verify the untouched originals.
 Normalization failure makes the reference unavailable. This admits metadata
 differences, not RSS equivalence; the measured one-core secp256k1 discrepancy
 above remains unresolved.
+
+`.comment` is not loaded. `.note.gnu.build-id` is: it lies in a read-only
+`PT_LOAD` segment. Two provers with equal normalized hashes can therefore differ
+in loaded bytes, namely the note's 20-byte hash, which covers the whole file
+including `.comment`; every other loaded byte is equal. For base `0537900e` a
+hosted build (cc 13.3.0, ld 2.42, glibc 2.39, one Cargo job) and a local build with
+the same toolchain components (cc 15.2.0, ld 2.46, glibc 2.43, 64 CPUs) differed
+only in these two sections, and objcopy 2.42 and 2.46 produced the same
+normalized bytes. The workspace's Rust sources never refer to the build ID, and
+in the Rust 1.99.1 standard library only the backtrace symbolizer does, to find
+separate debug files. Third-party dependencies, the dynamic loader and the kernel
+were not checked, and no run-time read tracing was done.
 
 Ingest stores recomputed `calibration/reference.json` with full keys, envelopes,
 raw hash, measurement times, producer/ingest identities and plan/build digests.
@@ -664,6 +770,30 @@ unchanged; `comparison.json` archives the validated summary, reference SHA/sourc
 catalog revision and availability reasons. Missing, expired, mismatched or
 unauthenticated references preserve medians and signed deltas, with an explicit
 unavailable reason. Target-supplied calibration overrides remain rejected.
+
+#### One toolchain definition for both builders
+
+A reference is measured on a GitHub-hosted build of main, and a PR's base is
+built on the target. They match only if both builds produce the same prover up
+to the build-ID note and `.comment`, so both builders must use the same toolchain
+and the same home directory, `/home/runner`: the prover embeds source paths
+under Cargo's home. `rust-toolchain.toml` is the only toolchain definition:
+rustup on the target installs exactly what it lists at every toolchain change,
+and the hosted `prepare` job passes no `components` to `setup-rust-toolchain`,
+which then installs from the same file.
+
+An extra component can change the prover. With `rust-src` installed, rustc 1.99.1
+writes that component's path into the panic locations of generic standard-library
+code (`/home/runner/.rustup/toolchains/<toolchain>/lib/rustlib/src/rust/library/…`
+where a toolchain without it writes `/rustc/<commit>/library/…`). For base
+`0537900e` this changed `.rodata`, `.data.rel.ro` and their relocations, and
+shifted the addresses used throughout `.text`.
+
+Nothing checks that the two builders are provisioned alike. A builder with a
+different toolchain or path layout yields a prover with a different hash and the
+PR check reports an unavailable reference; it never applies a band measured on
+another prover. Run the bootstrap acceptance below to compare the two builds
+directly.
 
 ### Bootstrap acceptance before ordinary enablement
 
@@ -696,25 +826,28 @@ not been performed by this source change.
 The verified manual reference remains evidence for the 17-cell hosted null at
 base `e37e6f24`, harness `535840a9` and collector `c6afb17a`. Its original JSON has
 SHA256 `09b4fa3f076d1042724959b8af7479f134fb131b3c4d667b401e6d38cd9dae6b`.
-Its time envelopes are 3–5%, and RSS envelopes are 2–12.5%. The saved reference
+Its time envelopes are 3–5%, and RSS envelopes are 2–12.5%, under the v2 method's
+floors of 3% and 2%; a manual comment reports a v2 file as an unsupported method.
+The saved reference
 and raw results retain their original identities; they are not an automatic
 reference for a later base. Manual output identifies the supplied reference by
 SHA256, but that rendering does not authenticate the source.
 
-The measured method is `null-median3-symmetric-envelope-v2`: ten same-binary null
+The measured method is `null-median3-symmetric-envelope-v3`: ten same-binary null
 pairs supply eight overlapping windows of three pairs. Each window compares the
 two leg medians in both directions and retains the larger percentage increase.
-The informational threshold is 1.5 times the largest window increase, with floors
-of 3% for time and 2% for peak RSS, rounded up to 0.5 percentage points. The
+The envelope is 1.5 times the largest window increase, rounded up to 0.5
+percentage points. The
 windows are not independent observations; no statistical significance or pass/fail
 claim follows. A manual comment using the matching reference displays each cell's
-threshold and observed maximum.
+envelope and observed maximum.
 
 References apply only to three measured repetitions. Match each cell against the
 base leg's revision, binary, guest, input, trace rows, compiler settings and
 effective lockfile, plus its workload, PCS, core count, ordered CPU mask and scale.
-The collector hash, metric contract, host identity, kernel, microcode, control-plane
-identity, boost, SMT, governor map, huge-page setting and total swap must also match.
+The collector hash, metric contract, host identity, kernel, microcode, boost, SMT,
+governor map, huge-page setting and total swap must also match; the host's
+management node does not bind.
 Missing evidence or a mismatch leaves the real medians and signed deltas visible,
 with an unavailable reference and its reason. Candidate binary, guest and trace
 changes are shown, not rejected. A harness Git revision difference alone is not
@@ -740,9 +873,10 @@ starts no target work. No self-hosted GitHub runner or organization registration
 token is needed.
 
 The hosted planner reads the current PR and all issue-event pages. It requires
-an open same-repository PR into main, its current `benchmark` label application,
-and an applier whose current API `role_name` is `maintain` or `admin`, not merely
-`write`. It pins the submitted head and GitHub's merge commit. That commit must
+an open PR into main whose head repository still exists, its current `benchmark`
+label application, and an applier whose current API `role_name` is `maintain` or
+`admin`, not merely `write` or `triage`. It records the head repository and
+branch, and pins the submitted head and GitHub's merge commit. That commit must
 have exactly two parents: a commit on main's fetched first-parent history, then
 the submitted head. GitHub's merge ref can lag main; the comparison uses its
 actual first parent as the base, not a newer unmerged main revision. Calibration
@@ -750,20 +884,58 @@ references match this exact base and expire after 48 hours. If that older base
 has no matching reference, measurements still run with an unavailable reference.
 When GitHub reports `mergeable: false`, planning instead refuses with a request
 to resolve conflicts with main. Unknown (`null`) mergeability does not block planning.
-Replays older than the label application are refused. Later pushes
-remain admitted while the same label application stays current.
+Replays older than the label application are refused.
+
+Under a current maintainer label, PR code runs on the target only if someone
+with write access pushed it or the label was applied to that exact head.
+Pushing a same-repository branch takes write access, so later pushes to a
+same-repository PR remain admitted while the same label application stays
+current. Pushing a fork branch takes none, so a fork PR is admitted only by the
+label event itself, for the head named in that event, and only while that head
+is still the PR's head. A push to a labelled fork PR is refused with the sticky
+comment: a maintainer reviews the new head, then removes and re-applies the
+label. GitHub applies a label to whichever head is current at that instant, so
+a fork push that lands just before the click is the head admitted. The
+benchmark check sits on the submitted head, and the result and refusal comments
+name it; compare it with the reviewed commit.
+
+The planner reads PR content only as Git objects: it fetches the PR's merge ref
+and inspects it with `git show` and `git ls-tree`. No job in `e2e-bench.yml` or
+`e2e-bench-ingest.yml` checks out, builds or runs PR code; their hosted builds
+are for main, nightly and calibration only. The contract tests in
+`e2e-bench-request.yml` do run PR code, as an ordinary `pull_request` job with a
+read-only token and no secrets.
 
 The App repeats admission when enqueueing and immediately before submitting.
-Every request must be a successful `.github/workflows/e2e-bench.yml` run whose
-repository and head repository are `a16z/jolt`. Main push, schedule and manual
-requests must have head branch `main`; the API comparison of the measured SHA
-against main must be `identical` or `ahead`. PR requests must have exactly one
-payload PR with base `main` and the dispatch's PR number. The App rechecks the
-open PR, same-repository head, main base, exact head SHA and current label. All
-issue-event pages must identify the dispatch's latest label event and actor,
-with no later removal. The actor must still hold `maintain` or `admin`. API
-errors refuse admission. For `pull_request_target`, the run's head SHA and branch
-are the submitted PR's; the payload PR's base ref binds it to main.
+Every request must be a successful `.github/workflows/e2e-bench.yml` run in
+`a16z/jolt`. The run's head repository may differ from `a16z/jolt` only for a
+`pull_request_target` run. GitHub takes that event's workflow file and checkout
+from the repository's default branch, whatever the PR's base branch
+([changelog](https://github.blog/changelog/2025-11-07-actions-pull_request_target-and-environment-branch-protections-changes/),
+in effect since December 8, 2025). A fork's `pull_request` run instead runs in
+the context of the PR's merge commit, so its workflow file is the PR's own
+version of the same path and can upload artifacts under the plan and dispatch
+names. The App must refuse such a run before reading any artifact. Main push,
+schedule and manual requests must have head repository `a16z/jolt` and head
+branch `main`; the API comparison of the measured SHA against main must be
+`identical` or `ahead`.
+
+A PR request must come from a `pull_request_target` run and takes its PR number
+from the dispatch. A run that lists pull requests must list exactly one, with
+that number and base `main`. A run that lists none is decided by the PR read
+alone; GitHub lists none for a fork head. The App reads the PR and requires it
+to be open, into `main` of `a16z/jolt`, labelled `benchmark`, at the head SHA
+that the dispatch and the run both name, with the run's head repository and
+head branch. A PR whose head repository was deleted is refused. For a fork head
+the run's actor must also be the label actor. That check is not the head pin:
+the labeller's own push to a labelled fork PR passes it, so the planner's
+refusal of fork `synchronize` events stays the rule that binds a label to one
+head. All issue-event pages must identify the dispatch's latest label event and
+actor, with no later removal. The actor must still hold `maintain` or `admin`.
+API errors refuse admission. Because both checks require the PR's current head
+to be the planned one, a fork push after planning refuses the job. A dispatcher
+without these fork rules refuses every fork-head run: planning succeeds, and no
+check, target job or result comment follows.
 
 The App connects to `jolt-bench` as `runner` with a dedicated forced-command SSH
 key. Its root-owned entry accepts only `submit`, `status`, `fetch` and `remove`
@@ -783,7 +955,7 @@ The worker uses a fixed environment with the `runner` Rust and uv directories
 on PATH and no inherited GitHub, SSH, cloud or Pika credentials. It calls
 `ci.py target`, which uses `local` for PRs and `execute` for
 main/nightly/calibration, then always finalizes the result. The PR path anonymously rechecks the same label,
-branch and head after acquiring the kernel lock and again before proving.
+head repository, branch and head after acquiring the kernel lock and again before proving.
 Removing the label does not terminate a build or proof already running. The App
 submits one job at a time in FIFO order; the kernel lock also serializes manual
 target commands. Submission is size-capped and staged before acquiring the jobs
@@ -795,7 +967,10 @@ process tree has stopped.
 
 PR source, including `build.rs`, executes only on `jolt-bench` as `runner`.
 While a label remains, anyone able to push that same-repository branch can change
-the code that runs without a new label application. Environment filtering is
+the code that runs without a new label application. A labelled fork head runs
+in the same account with the same reach, so labelling a fork PR accepts that
+head's source, build scripts and dependency changes running as `runner`.
+Environment filtering is
 not a sandbox: PR code can change that account's files, warm Cargo state and
 future measurements. Hash validation authenticates neither a persistent host nor
 locally produced PR binaries. This remains accepted persistent-account trust
@@ -875,7 +1050,14 @@ and treats all downloaded files as data.
 
 The default branch's `publication.py` validates provenance, planned revisions,
 build inputs, matrix, sampling, physical affinity and successful metrics. The
-plan and dispatch come from that producer attempt's own artifacts. Main/nightly
+plan and dispatch come from that producer attempt's own artifacts. Ingest and
+the history publisher accept a producer with a fork head only for
+`pull_request_target`, refuse any other fork-head producer before downloading
+its artifacts, and require the run's head repository and branch to equal the
+plan's admitted ones. A PR plan that records no head repository comes from a
+planner that admitted only `a16z/jolt` heads, so both bind it to `a16z/jolt`.
+Main, nightly and calibration producers must have head
+repository `a16z/jolt`. Main/nightly
 manifest and index digests come from the hosted dispatch. PR manifests are checked
 against the plan's pinned native inputs; their binary hashes are target observations,
 not independent hosted-build attestations. The ingest run publishes canonical
@@ -893,11 +1075,11 @@ reference-unavailable reason; executor failures remain failures. Published
 bootstrap acceptance then requires bands for every configured PR probe case.
 PR-tier ingests create or update one sticky `github-actions[bot]` comment linking
 the full table in the ingest attempt's job summary and the history dashboard.
-Only cells exceeding the larger of 3% and their per-metric observed envelope in
+Only cases and size groups exceeding their reporting thresholds in
 either time or peak RSS are listed. Selection compares head/base and base/head
 symmetrically, while the values and signed changes retain the check summary's
 rounding. Each listed metric shows its reporting threshold; missing envelopes
-use 3% and are marked `no observed envelope`. The full table remains in the
+are marked `no observed envelope`. The full table remains in the
 linked results.
 Validated failed or partial PR results replace the comment with
 a comparison-unavailable message. A failed ingest leaves the previous comment

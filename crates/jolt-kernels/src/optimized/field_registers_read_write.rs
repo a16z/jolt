@@ -35,6 +35,7 @@
 //! Like the reference kernel, only the config-pinned field-inline phase split (phase 1
 //! = all cycle rounds, phase 2 = the 4 address rounds) is supported.
 
+use crate::optimized::support::eq_round_error;
 use core::{mem::MaybeUninit, ops::Range};
 
 use crate::field_inline::{FieldIncrementColumn, IncrementRounds};
@@ -668,6 +669,8 @@ impl<F: JoltField> FieldReadWriteKernel<F> {
             &self.inc,
         );
         self.gruen
+            .round()
+            .ok_or_else(|| eq_round_error(round))?
             .checked_cubic(quadratic[0], quadratic[1], previous_claim, round, || {
                 self.entries.q_at_one(
                     self.gruen.e_in_current(),
@@ -677,9 +680,13 @@ impl<F: JoltField> FieldReadWriteKernel<F> {
             })
     }
 
-    fn bind(&mut self, r: F) {
+    fn bind(&mut self, r: F) -> Result<(), SumcheckError<F>> {
+        let round = self.challenges.bound();
         if self.challenges.bound() < self.log_t {
-            self.gruen.bind(r);
+            self.gruen
+                .round_mut()
+                .ok_or_else(|| eq_round_error(round))?
+                .bind(r);
             self.inc.bind(r);
             self.entries.bind(r);
         } else {
@@ -704,6 +711,7 @@ impl<F: JoltField> FieldReadWriteKernel<F> {
             self.address.eq_scalar = self.gruen.current_scalar();
             self.address.inc_scalar = self.inc.value(0);
         }
+        Ok(())
     }
 
     /// The bound opening point, split as `(r_address, r_cycle)` — the same
@@ -765,7 +773,7 @@ impl<F: JoltField> ProveRounds<F> for FieldReadWriteKernel<F> {
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
         if let Some(challenge) = bind {
-            self.bind(challenge);
+            self.bind(challenge)?;
         }
         if self.challenges.bound() < self.log_t {
             self.cycle_round_message(round, previous_claim)
@@ -775,8 +783,7 @@ impl<F: JoltField> ProveRounds<F> for FieldReadWriteKernel<F> {
     }
 
     fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {
-        self.bind(bind);
-        Ok(())
+        self.bind(bind)
     }
 }
 

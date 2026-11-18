@@ -5,10 +5,14 @@ pub const DRAM_BASE: u64 = RAM_START_ADDRESS;
 use crate::emulator::decode_cache::DecodeCache;
 use crate::emulator::memory::Memory;
 use common::constants::{RAM_START_ADDRESS, STACK_CANARY_SIZE};
-use common::jolt_device::JoltDevice;
+use common::jolt_device::{JoltDevice, MemoryLayout};
+use jolt_program::preprocess::{ram::code_region, PreprocessingError};
 use jolt_riscv::{RamRead, RamWrite};
+use std::ops::Range;
+use std::sync::Arc;
 
-use super::cpu::{get_privilege_mode, PrivilegeMode, Trap, TrapType};
+use super::cpu::{PrivilegeMode, Trap, TrapType};
+use super::host_io::HostMemory;
 use super::terminal::Terminal;
 
 #[derive(Clone, Debug)]
@@ -22,11 +26,42 @@ pub struct Mmu {
     /// invalidate it directly when the executable range is written.
     pub decode_cache: DecodeCache,
 
+    /// Installed for Jolt guests by `Emulator::protect_code`.
+    pub(crate) code_guard: Option<CodeGuard>,
+
     pub jolt_device: Option<JoltDevice>,
 
     /// Address translation can be affected `mstatus` (MPRV, MPP in machine mode)
     /// then `Mmu` has copy of it.
     mstatus: u64,
+}
+
+/// A Jolt guest's decoded code. A store must preserve every doubleword of the
+/// code region, and an instruction fetch must start a decoded source
+/// instruction, which the native tracer enforces by compiling only those.
+#[derive(Clone, Debug)]
+pub(crate) struct CodeGuard {
+    /// RAM word indices from `lowest_address`; see [`code_region`].
+    region: Range<usize>,
+    /// Ascending source instruction addresses.
+    instructions: Arc<[u64]>,
+}
+
+impl CodeGuard {
+    /// `sources` holds each decoded source instruction's address and whether
+    /// it is compressed.
+    pub(crate) fn new(
+        sources: &[(u64, bool)],
+        lowest_address: u64,
+    ) -> Result<Self, PreprocessingError> {
+        let region = code_region(sources.iter().copied(), lowest_address)?;
+        let mut instructions: Vec<u64> = sources.iter().map(|&(address, _)| address).collect();
+        instructions.sort_unstable();
+        Ok(Self {
+            region,
+            instructions: instructions.into(),
+        })
+    }
 }
 
 #[derive(Clone, Debug, Copy)]
@@ -42,6 +77,162 @@ enum MemoryAccessType {
     Write,
 }
 
+/// How [`Mmu::translate_address`] maps a virtual address.
+enum Translation {
+    Identity,
+    PageWalk,
+    /// `translate_address` panics with this message.
+    Unsupported(&'static str),
+}
+
+/// Why an access at an effective address falls outside the Jolt memory
+/// layout.
+#[derive(Clone, Copy, Debug)]
+enum AddressFault {
+    IoOverflow,
+    IoUnderflow,
+    UnmappedDevice,
+    HeapOverflow,
+    BeyondHeap,
+}
+
+impl AddressFault {
+    #[cold]
+    #[inline(never)]
+    fn panic(self, layout: &MemoryLayout, ea: u64, is_write: bool) -> ! {
+        let (action, verb) = if is_write {
+            ("Store", "write to")
+        } else {
+            ("Load", "read from")
+        };
+        match self {
+            Self::IoOverflow => {
+                panic!("I/O overflow: Attempted to {verb} 0x{ea:X}. Out of bounds.\n{layout:#?}")
+            }
+            Self::IoUnderflow => {
+                panic!("I/O underflow: Attempted to {verb} 0x{ea:X}. Out of bounds.\n{layout:#?}")
+            }
+            Self::UnmappedDevice => panic!(
+                "Illegal device {}: Unknown memory mapping: 0x{ea:X}\n{layout:#?}",
+                action.to_lowercase(),
+            ),
+            Self::HeapOverflow => panic!(
+                "Heap overflow: attempted to {verb} 0x{ea:X}, which is beyond the heap. \
+                Increase heap_size in MemoryConfig (currently {} bytes).",
+                layout.heap_size,
+            ),
+            Self::BeyondHeap => {
+                panic!("Illegal Memory Access: Attempted to {verb} 0x{ea:X}.\n{layout:#?}")
+            }
+        }
+    }
+}
+
+/// Checks a guest access at effective address `ea` against the Jolt memory
+/// layout.
+#[inline]
+fn address_fault(jolt_device: &JoltDevice, ea: u64, is_write: bool) -> Option<AddressFault> {
+    let layout = &jolt_device.memory_layout;
+    if ea < DRAM_BASE {
+        // Nothing is mapped between `io_end` and DRAM, so any access there faults.
+        // The RAM read-write relation rejects every access to the same words through
+        // its unmapped-word mask N (`jolt_program::preprocess::ram::unmapped_word_intervals`).
+        if ea >= layout.io_end {
+            return Some(AddressFault::IoOverflow);
+        }
+        // Loads below the lowest mapped address fault. Stores there still
+        // reach the unmapped-device check.
+        if !is_write && ea < layout.get_lowest_address() {
+            return Some(AddressFault::IoUnderflow);
+        }
+        // Input and advice stores are admitted here; the protected-store
+        // check then accepts only those that keep every byte's value.
+        let ok = if is_write {
+            jolt_device.is_input(ea)
+                || jolt_device.is_trusted_advice(ea)
+                || jolt_device.is_untrusted_advice(ea)
+                || jolt_device.is_output(ea)
+                || jolt_device.is_panic(ea)
+                || jolt_device.is_termination(ea)
+        } else {
+            device_readable(jolt_device, ea)
+        };
+        (!ok).then_some(AddressFault::UnmappedDevice)
+    } else if is_write {
+        // Stores into the stack canary are checked with the other protected
+        // words (`assert_write_protected_store`), which accepts only stores
+        // that keep the value.
+        (ea >= layout.heap_end).then_some(AddressFault::HeapOverflow)
+    } else {
+        (ea >= layout.heap_end).then_some(AddressFault::BeyondHeap)
+    }
+}
+
+/// Whether [`JoltDevice::load`] serves the byte at `address` (it asserts on
+/// any other address below RAM).
+#[inline]
+fn device_readable(jolt_device: &JoltDevice, address: u64) -> bool {
+    jolt_device.is_input(address)
+        || jolt_device.is_trusted_advice(address)
+        || jolt_device.is_untrusted_advice(address)
+        || jolt_device.is_output(address)
+        || jolt_device.is_panic(address)
+        || jolt_device.is_termination(address)
+        || address <= RAM_START_ADDRESS - 8
+}
+
+/// The emulator peripheral, if any, at a physical address below RAM; the
+/// tracer does not model any of them.
+#[inline]
+fn unsupported_peripheral(address: u64) -> Option<&'static str> {
+    match address {
+        0x00001020..=0x00001fff => Some("dtb"),
+        0x02000000..=0x0200ffff => Some("clint"),
+        0x0C000000..=0x0fffffff => Some("plic"),
+        0x10000000..=0x100000ff => Some("UART"),
+        0x10001000..=0x10001FFF => Some("disk"),
+        _ => None,
+    }
+}
+
+/// Whether a guest load returns normally, without a page walk, at every
+/// effective address in `[start, end)`, for `start < end`. `ram_holds(ea)`
+/// says whether the backend's RAM holds `ea >= DRAM_BASE`, and must hold at
+/// every RAM address below one it holds at. Every tracer backend checks
+/// host-call reads with this, so all of them reject the same calls.
+pub fn identity_loads_succeed(
+    jolt_device: Option<&JoltDevice>,
+    start: u64,
+    end: u64,
+    ram_holds: impl FnOnce(u64) -> bool,
+) -> bool {
+    // In RAM a load fails exactly at or above the heap end or the end of the
+    // backend's RAM, so a range there loads if its last byte does.
+    (start..end.min(DRAM_BASE)).all(|ea| device_load_succeeds(jolt_device, ea))
+        && (end <= DRAM_BASE || ram_load_succeeds(jolt_device, end - 1, ram_holds))
+}
+
+fn device_load_succeeds(jolt_device: Option<&JoltDevice>, ea: u64) -> bool {
+    let Some(jolt_device) = jolt_device else {
+        return false;
+    };
+    // `Mmu::load` also records the containing doubleword (`trace_load`),
+    // which reads all eight of its bytes from the device.
+    let doubleword = ea & !7;
+    address_fault(jolt_device, ea, false).is_none()
+        && unsupported_peripheral(ea).is_none()
+        && (doubleword..doubleword + 8).all(|a| device_readable(jolt_device, a))
+}
+
+fn ram_load_succeeds(
+    jolt_device: Option<&JoltDevice>,
+    ea: u64,
+    ram_holds: impl FnOnce(u64) -> bool,
+) -> bool {
+    jolt_device.is_none_or(|jolt_device| address_fault(jolt_device, ea, false).is_none())
+        && ram_holds(ea)
+}
+
 impl Mmu {
     pub fn new(_terminal: Box<dyn Terminal>) -> Self {
         Mmu {
@@ -50,6 +241,7 @@ impl Mmu {
             privilege_mode: PrivilegeMode::Machine,
             memory: MemoryWrapper::new(),
             decode_cache: DecodeCache::empty(),
+            code_guard: None,
             jolt_device: None,
             mstatus: 0,
         }
@@ -110,71 +302,11 @@ impl Mmu {
 
     #[inline]
     fn assert_effective_address(&self, ea: u64, is_write: bool) {
-        if self.jolt_device.is_none() {
+        let Some(jolt_device) = self.jolt_device.as_ref() else {
             return;
-        }
-
-        let jolt_device = self.jolt_device.as_ref().unwrap();
-        let layout = &jolt_device.memory_layout;
-        let (action, verb) = if is_write {
-            ("Store", "write to")
-        } else {
-            ("Load", "read from")
         };
-
-        if ea < DRAM_BASE {
-            assert!(
-                ea <= layout.io_end,
-                "I/O overflow: Attempted to {verb} 0x{ea:X}. Out of bounds.\n{layout:#?}",
-            );
-            assert!(
-                ea >= layout.get_lowest_address() || ea <= RAM_START_ADDRESS - 8,
-                "I/O underflow: Attempted to {verb} 0x{ea:X}. Out of bounds.\n{layout:#?}",
-            );
-
-            let ok = if is_write {
-                jolt_device.is_output(ea)
-                    || jolt_device.is_panic(ea)
-                    || jolt_device.is_termination(ea)
-            } else {
-                jolt_device.is_input(ea)
-                    || jolt_device.is_trusted_advice(ea)
-                    || jolt_device.is_untrusted_advice(ea)
-                    || jolt_device.is_output(ea)
-                    || jolt_device.is_panic(ea)
-                    || jolt_device.is_termination(ea)
-                    || ea <= RAM_START_ADDRESS - 8
-            };
-            assert!(
-                ok,
-                "Illegal device {}: Unknown memory mapping: 0x{ea:X}\n{layout:#?}",
-                action.to_lowercase(),
-            );
-        } else {
-            if is_write {
-                // These errors aren't necessarily correct as there's no way to distinguish between an
-                // attempt to write to the stack vs heap, but they're trying their best.
-                // The canary is the half-open range [stack_end, stack_end + STACK_CANARY_SIZE):
-                // the linker script places it directly after the program image
-                // (`__stack_bottom == stack_end`) and the stack proper starts right after it.
-                assert!(
-                    ea < layout.stack_end || ea >= layout.stack_end + STACK_CANARY_SIZE,
-                    "Stack overflow: attempted to {verb} 0x{ea:X}, which is in the stack canary region. \
-                    Increase stack_size in MemoryConfig (currently {} bytes).",
-                    layout.stack_size,
-                );
-                assert!(
-                    ea < layout.heap_end,
-                    "Heap overflow: attempted to {verb} 0x{ea:X}, which is beyond the heap. \
-                    Increase heap_size in MemoryConfig (currently {} bytes).",
-                    layout.heap_size,
-                );
-            } else {
-                assert!(
-                    ea < layout.heap_end,
-                    "Illegal Memory Access: Attempted to {verb} 0x{ea:X}.\n{layout:#?}",
-                );
-            }
+        if let Some(fault) = address_fault(jolt_device, ea, is_write) {
+            fault.panic(&jolt_device.memory_layout, ea, is_write);
         }
     }
 
@@ -185,6 +317,19 @@ impl Mmu {
                 trap_type: TrapType::InstructionPageFault,
                 value: v_address,
             }),
+        }
+    }
+
+    /// Faults a Jolt guest's fetch at `pc` unless `pc` starts a decoded source
+    /// instruction, so a jump into data, padding or the middle of an
+    /// instruction stops the run before anything there executes.
+    pub(crate) fn assert_instruction_fetch(&self, pc: u64) {
+        if self
+            .code_guard
+            .as_ref()
+            .is_some_and(|guard| guard.instructions.binary_search(&pc).is_err())
+        {
+            panic!("Instruction fetch at 0x{pc:X} does not start a decoded source instruction.");
         }
     }
 
@@ -211,10 +356,8 @@ impl Mmu {
             false => {
                 let mut data = 0_u32;
                 for i in 0..width {
-                    match self.fetch(v_address.wrapping_add(i)) {
-                        Ok(byte) => data |= (byte as u32) << (i * 8),
-                        Err(e) => return Err(e),
-                    };
+                    let byte = self.fetch(v_address.wrapping_add(i))?;
+                    data |= (byte as u32) << (i * 8);
                 }
                 Ok(data)
             }
@@ -444,28 +587,17 @@ impl Mmu {
         self.assert_effective_load_address(effective_address);
         match effective_address >= DRAM_BASE {
             true => self.memory.read_byte(effective_address),
-            false => match effective_address {
-                0x00001020..=0x00001fff => panic!("load_raw:dtb is unsupported."),
-                0x02000000..=0x0200ffff => panic!("load_raw:clint is unsupported."),
-                0x0C000000..=0x0fffffff => panic!("load_raw:plic is unsupported."),
-                0x10000000..=0x100000ff => panic!("load_raw:UART is unsupported."),
-                0x10001000..=0x10001FFF => panic!("load_raw:disk is unsupported."),
-                _ => {
-                    if let Some(jolt_device) = self.jolt_device.as_ref() {
-                        if jolt_device.is_input(effective_address)
-                            || jolt_device.is_trusted_advice(effective_address)
-                            || jolt_device.is_untrusted_advice(effective_address)
-                            || jolt_device.is_output(effective_address)
-                            || jolt_device.is_panic(effective_address)
-                            || jolt_device.is_termination(effective_address)
-                            || effective_address <= RAM_START_ADDRESS - 8
-                        {
-                            return jolt_device.load(effective_address);
-                        }
-                    }
-                    panic!("Load Failed: Unknown memory mapping {effective_address:X}.");
+            false => {
+                if let Some(name) = unsupported_peripheral(effective_address) {
+                    panic!("load_raw:{name} is unsupported.");
                 }
-            },
+                if let Some(jolt_device) = self.jolt_device.as_ref() {
+                    if device_readable(jolt_device, effective_address) {
+                        return jolt_device.load(effective_address);
+                    }
+                }
+                panic!("Load Failed: Unknown memory mapping {effective_address:X}.");
+            }
         }
     }
 
@@ -485,6 +617,7 @@ impl Mmu {
     /// into the next doubleword.
     fn trace_store(&mut self, effective_address: u64, value: u64, width: u64) -> RamWrite {
         self.assert_effective_store_address(effective_address);
+        self.assert_write_protected_store(effective_address, value, width);
         let offset = effective_address & 7;
         debug_assert!(offset + width <= 8, "store crosses a doubleword");
         let address = effective_address & !7;
@@ -595,6 +728,7 @@ impl Mmu {
         match effective_address >= DRAM_BASE {
             true => {
                 self.assert_effective_store_address(effective_address);
+                self.assert_write_protected_store(effective_address, value as u64, 1);
                 self.memory.write_byte(effective_address, value)
             }
             false => match effective_address {
@@ -604,7 +738,16 @@ impl Mmu {
                 0x10001000..=0x10001FFF => panic!("store_raw:disk is unsupported."),
                 _ => {
                     self.assert_effective_store_address(effective_address);
+                    self.assert_write_protected_store(effective_address, value as u64, 1);
                     if let Some(jolt_device) = self.jolt_device.as_mut() {
+                        // The protected-store check kept this input or advice byte;
+                        // `JoltDevice::store` writes only outputs and the flag latch.
+                        if jolt_device.is_input(effective_address)
+                            || jolt_device.is_trusted_advice(effective_address)
+                            || jolt_device.is_untrusted_advice(effective_address)
+                        {
+                            return;
+                        }
                         return jolt_device.store(effective_address, value);
                     };
 
@@ -612,6 +755,56 @@ impl Mmu {
                 }
             },
         };
+    }
+
+    fn assert_write_protected_store(&mut self, address: u64, value: u64, width: u64) {
+        // One range check per touched word, fused into the existing write; only
+        // protected words need another read. Naturally aligned stores touch one word.
+        let first = address & !7;
+        let last = (address + width - 1) & !7;
+        for word in [first, last]
+            .into_iter()
+            .take(1 + usize::from(first != last))
+        {
+            let Some(device) = self.jolt_device.as_ref() else {
+                return;
+            };
+            let layout = &device.memory_layout;
+            let index = ((word - layout.get_lowest_address()) >> 3) as usize;
+            let canary =
+                word + 7 >= layout.stack_end && word < layout.stack_end + STACK_CANARY_SIZE;
+            if !self
+                .code_guard
+                .as_ref()
+                .is_some_and(|guard| guard.region.contains(&index))
+                && !device.is_input(word)
+                && !device.is_trusted_advice(word)
+                && !device.is_untrusted_advice(word)
+                && !canary
+            {
+                continue;
+            }
+            let stack_size = layout.stack_size;
+            let old = self.load_doubleword_raw(word);
+            let start = address.max(word);
+            let end = (address + width).min(word + 8);
+            let bits = 8 * (end - start);
+            let mask = (u64::MAX >> (64 - bits)) << (8 * (start - word));
+            let replacement = (value >> (8 * (start - address))) << (8 * (start - word));
+            assert_eq!(
+                old & mask,
+                replacement & mask,
+                "Store changes protected doubleword at {word:#x}{}",
+                if canary {
+                    format!(
+                        " (Stack overflow in stack canary region; increase stack_size in \
+                         MemoryConfig, currently {stack_size} bytes)"
+                    )
+                } else {
+                    String::new()
+                },
+            );
+        }
     }
 
     pub fn setup_bytecode(&mut self, p_address: u64, value: u8) {
@@ -640,6 +833,7 @@ impl Mmu {
         {
             true => {
                 self.assert_effective_store_address(effective_address);
+                self.assert_write_protected_store(effective_address, value as u64, 2);
                 self.memory.write_halfword(effective_address, value)
             }
             false => {
@@ -661,6 +855,7 @@ impl Mmu {
         {
             true => {
                 self.assert_effective_store_address(effective_address);
+                self.assert_write_protected_store(effective_address, value as u64, 4);
                 self.memory.write_word(effective_address, value)
             }
             false => {
@@ -682,6 +877,7 @@ impl Mmu {
         {
             true => {
                 self.assert_effective_store_address(effective_address);
+                self.assert_write_protected_store(effective_address, value, 8);
                 self.memory.write_doubleword(effective_address, value)
             }
             false => {
@@ -701,43 +897,46 @@ impl Mmu {
         access_type: &MemoryAccessType,
     ) -> Result<u64, ()> {
         let address = self.get_effective_address(v_address);
-        let p_address = match self.addressing_mode {
-            AddressingMode::None => Ok(address),
-            AddressingMode::SV39 => match self.privilege_mode {
-                PrivilegeMode::Machine => match access_type {
-                    MemoryAccessType::Execute => Ok(address),
-                    _ => match (self.mstatus >> 17) & 1 {
-                        0 => Ok(address),
-                        _ => {
-                            let privilege_mode = get_privilege_mode((self.mstatus >> 11) & 3);
-                            match privilege_mode {
-                                PrivilegeMode::Machine => Ok(address),
-                                _ => {
-                                    let current_privilege_mode = self.privilege_mode;
-                                    self.update_privilege_mode(privilege_mode);
-                                    let result = self.translate_address(v_address, access_type);
-                                    self.update_privilege_mode(current_privilege_mode);
-                                    result
-                                }
-                            }
-                        }
-                    },
-                },
-                PrivilegeMode::User | PrivilegeMode::Supervisor => {
-                    let vpns = [
-                        (address >> 12) & 0x1ff,
-                        (address >> 21) & 0x1ff,
-                        (address >> 30) & 0x1ff,
-                    ];
-                    self.traverse_page(address, 3 - 1, self.ppn, &vpns, access_type)
-                }
-                _ => Ok(address),
-            },
-            AddressingMode::SV48 => {
-                panic!("AddressingMode SV48 is not supported yet.");
+        match self.translation(access_type) {
+            Translation::Identity => Ok(address),
+            Translation::PageWalk => {
+                let vpns = [
+                    (address >> 12) & 0x1ff,
+                    (address >> 21) & 0x1ff,
+                    (address >> 30) & 0x1ff,
+                ];
+                self.traverse_page(address, 3 - 1, self.ppn, &vpns, access_type)
             }
-        };
-        p_address
+            Translation::Unsupported(reason) => panic!("{reason}"),
+        }
+    }
+
+    /// How [`Mmu::translate_address`] maps an address for `access_type` in
+    /// the current addressing mode, privilege mode and `mstatus`.
+    fn translation(&self, access_type: &MemoryAccessType) -> Translation {
+        match self.addressing_mode {
+            AddressingMode::None => Translation::Identity,
+            AddressingMode::SV48 => {
+                Translation::Unsupported("AddressingMode SV48 is not supported yet.")
+            }
+            AddressingMode::SV39 => match self.privilege_mode {
+                // Machine mode translates loads and stores only when MPRV is
+                // set, and then under the privilege mode in MPP.
+                PrivilegeMode::Machine => {
+                    let mprv = (self.mstatus >> 17) & 1 == 1;
+                    if matches!(access_type, MemoryAccessType::Execute) || !mprv {
+                        return Translation::Identity;
+                    }
+                    match (self.mstatus >> 11) & 3 {
+                        0 | 1 => Translation::PageWalk,
+                        3 => Translation::Identity,
+                        _ => Translation::Unsupported("Unknown privilege encoding"),
+                    }
+                }
+                PrivilegeMode::User | PrivilegeMode::Supervisor => Translation::PageWalk,
+                PrivilegeMode::Reserved => Translation::Identity,
+            },
+        }
     }
 
     fn traverse_page(
@@ -847,6 +1046,7 @@ impl Mmu {
                 memory: Memory::empty(),
             },
             decode_cache: self.decode_cache.snapshot_with_empty_entries(),
+            code_guard: self.code_guard.clone(),
             jolt_device: self.jolt_device.clone(),
             mstatus: self.mstatus,
         }
@@ -863,6 +1063,7 @@ impl Mmu {
             // Snapshotted separately (pooled image / checkpoint layer).
             memory: _,
             decode_cache: _,
+            code_guard: _,
             jolt_device: _,
             mstatus,
         } = self;
@@ -880,6 +1081,28 @@ impl Mmu {
         self.addressing_mode = state.addressing_mode;
         self.privilege_mode = state.privilege_mode;
         self.mstatus = state.mstatus;
+    }
+}
+
+impl HostMemory for Mmu {
+    /// Whether [`Mmu::load`] returns without panicking at every address in
+    /// `[start, end)`.
+    fn is_host_readable(&self, start: u64, end: u64) -> bool {
+        // A page walk reads page-table entries with the panicking raw loads.
+        // Jolt never enables paging.
+        matches!(
+            self.translation(&MemoryAccessType::Read),
+            Translation::Identity
+        ) && identity_loads_succeed(
+            self.jolt_device.as_ref(),
+            self.get_effective_address(start),
+            self.get_effective_address(end - 1) + 1,
+            |ea| self.memory.validate_address(ea),
+        )
+    }
+
+    fn load_host_byte(&mut self, address: u64) -> Option<u8> {
+        self.load(address).ok().map(|(byte, _)| byte)
     }
 }
 
@@ -989,8 +1212,10 @@ impl MemoryWrapper {
 #[cfg(test)]
 mod test_mmu {
     use super::*;
+    use crate::emulator::cpu::get_privilege_mode;
     use crate::emulator::terminal::DummyTerminal;
     use common::jolt_device::MemoryConfig;
+    use std::panic::{catch_unwind, set_hook, take_hook, AssertUnwindSafe};
 
     fn setup_mmu() -> Mmu {
         let terminal = Box::new(DummyTerminal::default());
@@ -1011,6 +1236,91 @@ mod test_mmu {
         mmu
     }
 
+    /// `is_host_readable` must hold exactly on the ranges where `load`
+    /// returns normally at every byte, including in the gap between a small I/O region and RAM and under
+    /// SV39 in machine mode, where translation is the identity.
+    #[test]
+    fn host_readable_ranges_are_exactly_those_load_accepts() {
+        const WINDOW: u64 = 16;
+        let small_io = MemoryConfig {
+            max_input_size: 13,
+            max_trusted_advice_size: 3,
+            max_untrusted_advice_size: 0,
+            max_output_size: 5,
+            program_size: Some(1024),
+            ..Default::default()
+        };
+        let mut mmus = vec![setup_mmu(), Mmu::new(Box::new(DummyTerminal::default()))];
+        mmus[1].init_memory(64);
+        let mut device_mmu = Mmu::new(Box::new(DummyTerminal::default()));
+        let device = JoltDevice::new(&small_io);
+        device_mmu.init_memory(device.memory_layout.get_total_memory_size());
+        device_mmu.jolt_device = Some(device);
+        mmus.push(device_mmu);
+        let mut sv39_mmu = Mmu::new(Box::new(DummyTerminal::default()));
+        sv39_mmu.init_memory(64);
+        sv39_mmu.update_addressing_mode(AddressingMode::SV39);
+        mmus.push(sv39_mmu);
+
+        // Silences the panics `catch_unwind` reports while probing loads.
+        let panic_hook = take_hook();
+        set_hook(Box::new(|_| {}));
+        for mut mmu in mmus {
+            let mut addresses = vec![
+                0,
+                8,
+                0x1020,
+                0x1000_1fff,
+                0x1000_2000,
+                DRAM_BASE - 9,
+                DRAM_BASE - 8,
+                DRAM_BASE - 1,
+                DRAM_BASE,
+                DRAM_BASE + 63,
+                DRAM_BASE + 64,
+                u64::MAX - WINDOW - 1,
+            ];
+            if let Some(device) = mmu.jolt_device.as_ref() {
+                let layout = &device.memory_layout;
+                let lowest = layout.get_lowest_address();
+                addresses.extend([lowest - 1, lowest, layout.input_start, layout.termination]);
+                addresses.extend((layout.io_end - 8)..=(layout.io_end + 8));
+                addresses.extend([layout.heap_end - 1, layout.heap_end]);
+            }
+            let mut loads = |address: u64| {
+                catch_unwind(AssertUnwindSafe(|| mmu.load(address)))
+                    .is_ok_and(|result| result.is_ok())
+            };
+            // Every range near a boundary, and every range from the start of
+            // RAM up to 128 bytes, is readable exactly when each of its bytes
+            // loads.
+            let mut windows: Vec<(u64, Vec<bool>)> = addresses
+                .into_iter()
+                .map(|address| {
+                    let low = address.saturating_sub(WINDOW);
+                    (low, (low..=address + WINDOW).map(&mut loads).collect())
+                })
+                .collect();
+            windows.push((
+                DRAM_BASE,
+                (DRAM_BASE..DRAM_BASE + 128).map(&mut loads).collect(),
+            ));
+            for (low, byte_loads) in windows {
+                for start in 0..byte_loads.len() {
+                    for end in start + 1..=byte_loads.len() {
+                        let (range_start, range_end) = (low + start as u64, low + end as u64);
+                        assert_eq!(
+                            mmu.is_host_readable(range_start, range_end),
+                            byte_loads[start..end].iter().all(|&loads| loads),
+                            "range [{range_start:#x}, {range_end:#x})"
+                        );
+                    }
+                }
+            }
+        }
+        set_hook(panic_hook);
+    }
+
     #[test]
     #[should_panic(expected = "Heap overflow")]
     fn test_heap_overflow() {
@@ -1020,9 +1330,7 @@ mod test_mmu {
         mmu.trace_store(overflow_address, 0x13, 1);
     }
 
-    /// The canary occupies `[stack_end, stack_end + STACK_CANARY_SIZE)` (the
-    /// linker script places it immediately after the program image), so the
-    /// first canary byte must be rejected.
+    /// A value-changing store to the first canary byte must be rejected.
     #[test]
     #[should_panic(expected = "Stack overflow")]
     fn test_stack_overflow_first_canary_byte() {
@@ -1067,9 +1375,8 @@ mod test_mmu {
             - 1
             - trusted_advice_size
             - untrusted_advice_size;
-        // Write to address below I/O region - rejected as unknown mapping
-        // (Note: address is in "zero-padding" range so passes underflow check,
-        // but fails device I/O check since it's not a valid write target)
+        // A store below the I/O region skips the load-only underflow fault and
+        // fails the unmapped-device check.
         mmu.store_bytes(invalid_addr, 0xc50513, 2).unwrap();
     }
 
@@ -1267,9 +1574,355 @@ mod test_mmu {
     }
 
     #[test]
+    fn protected_code_stores_preserve_every_lane_before_mutation() {
+        const OLD: u64 = 0x8877_6655_4433_2211;
+        for width in [1u64, 2, 4, 8] {
+            for offset in (0..8).step_by(width as usize) {
+                let mut mmu = setup_mmu();
+                let address = DRAM_BASE + 0x40;
+                mmu.store_doubleword(address, OLD).unwrap();
+                let lowest = mmu
+                    .jolt_device
+                    .as_ref()
+                    .unwrap()
+                    .memory_layout
+                    .get_lowest_address();
+                mmu.code_guard = Some(CodeGuard::new(&[(address + 6, true)], lowest).unwrap());
+                let lane = OLD >> (8 * offset);
+                let store = |mmu: &mut Mmu, value: u64| match width {
+                    1 => mmu.store(address + offset, value as u8),
+                    2 => mmu.store_halfword(address + offset, value as u16),
+                    4 => mmu.store_word(address + offset, value as u32),
+                    _ => mmu.store_doubleword(address + offset, value),
+                };
+                let write = store(&mut mmu, lane).unwrap();
+                assert_eq!((write.pre_value, write.post_value), (OLD, OLD));
+                assert!(catch_unwind(AssertUnwindSafe(|| store(&mut mmu, lane ^ 1))).is_err());
+                assert_eq!(mmu.load_doubleword(address).unwrap().0, OLD);
+                assert_eq!(store(&mut mmu, lane).unwrap().post_value, OLD);
+            }
+        }
+    }
+
+    #[test]
+    fn protected_layout_stores_preserve_every_lane_before_mutation() {
+        const OLD: u64 = 0x8877_6655_4433_2211;
+        for region in 0..4 {
+            for width in [1u64, 2, 4, 8] {
+                for offset in (0..8).step_by(width as usize) {
+                    let mut mmu = setup_mmu();
+                    let device = mmu.jolt_device.as_mut().unwrap();
+                    device.inputs = OLD.to_le_bytes().to_vec();
+                    device.trusted_advice = OLD.to_le_bytes().to_vec();
+                    device.untrusted_advice = OLD.to_le_bytes().to_vec();
+                    let layout = &device.memory_layout;
+                    let address = [
+                        layout.input_start,
+                        layout.trusted_advice_start,
+                        layout.untrusted_advice_start,
+                        layout.stack_end,
+                    ][region];
+                    if region == 3 {
+                        mmu.memory.write_doubleword(address, OLD);
+                    }
+                    let lane = OLD >> (8 * offset);
+                    let store = |mmu: &mut Mmu, value: u64| match width {
+                        1 => mmu.store(address + offset, value as u8),
+                        2 => mmu.store_halfword(address + offset, value as u16),
+                        4 => mmu.store_word(address + offset, value as u32),
+                        _ => mmu.store_doubleword(address + offset, value),
+                    };
+                    let write = store(&mut mmu, lane).unwrap();
+                    assert_eq!((write.pre_value, write.post_value), (OLD, OLD));
+                    assert!(catch_unwind(AssertUnwindSafe(|| store(&mut mmu, lane ^ 1))).is_err());
+                    assert_eq!(mmu.load_doubleword(address).unwrap().0, OLD);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn canary_protection_covers_the_entire_overlapping_doublewords() {
+        for program_size in [1025, 1031] {
+            let mut mmu = setup_mmu();
+            mmu.jolt_device = Some(JoltDevice::new(&MemoryConfig {
+                program_size: Some(program_size),
+                ..Default::default()
+            }));
+            let canary = mmu.jolt_device.as_ref().unwrap().memory_layout.stack_end;
+            for word in [canary & !7, (canary + STACK_CANARY_SIZE - 1) & !7] {
+                for lane in 0..8 {
+                    mmu.store(word + lane, 0).unwrap();
+                    assert!(catch_unwind(AssertUnwindSafe(|| mmu.store(word + lane, 1))).is_err());
+                    assert_eq!(mmu.load_doubleword(word).unwrap().0, 0);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn final_partial_canary_word_accepts_only_unchanged_stores() {
+        let config = MemoryConfig {
+            program_size: Some(1025),
+            stack_size: 0,
+            heap_size: 0,
+            ..Default::default()
+        };
+        let device = JoltDevice::new(&config);
+        assert_eq!(device.memory_layout.heap_end, RAM_START_ADDRESS + 1160);
+        let mut mmu = Mmu::new(Box::new(DummyTerminal::default()));
+        mmu.init_memory(device.memory_layout.get_total_memory_size());
+        mmu.jolt_device = Some(device);
+        let address = RAM_START_ADDRESS + 1152;
+        let write = mmu.store_doubleword(address, 0).unwrap();
+        assert_eq!((write.pre_value, write.post_value), (0, 0));
+        for value in [1, 256] {
+            let error = catch_unwind(AssertUnwindSafe(|| mmu.store_doubleword(address, value)))
+                .expect_err("changed canary word must fail");
+            let message = error.downcast_ref::<String>().expect("protection panic");
+            assert!(message.contains("Store changes protected doubleword"));
+            assert_eq!(mmu.load_doubleword(address).unwrap().0, 0);
+        }
+        for offset in [1160, 1168] {
+            assert!(catch_unwind(AssertUnwindSafe(|| {
+                mmu.store_doubleword(RAM_START_ADDRESS + offset, 0)
+            }))
+            .is_err());
+            assert!(catch_unwind(AssertUnwindSafe(|| {
+                mmu.load_doubleword(RAM_START_ADDRESS + offset)
+            }))
+            .is_err());
+        }
+    }
+
+    #[test]
+    fn conditional_stores_preserve_code_and_canary_words() {
+        use crate::emulator::cpu::Cpu;
+        use crate::instruction::Instruction;
+
+        const OLD: u64 = 0x8877_6655_4433_2211;
+        for canary in [false, true] {
+            for word in [false, true] {
+                for success in [false, true] {
+                    for traced in [false, true] {
+                        let mut cpu = Cpu::new(Box::new(DummyTerminal::default()));
+                        cpu.mmu = setup_mmu();
+                        let layout = &cpu.mmu.jolt_device.as_ref().unwrap().memory_layout;
+                        let address = if canary {
+                            layout.stack_end
+                        } else {
+                            DRAM_BASE + 0x40
+                        };
+                        if !canary {
+                            cpu.mmu.code_guard = Some(
+                                CodeGuard::new(&[(address, false)], layout.get_lowest_address())
+                                    .unwrap(),
+                            );
+                        }
+                        cpu.mmu.memory.write_doubleword(address, OLD);
+                        cpu.x[1] = address as i64;
+                        cpu.x[2] = if success { OLD as i64 } else { 1 };
+                        let funct3 = if word { 2 } else { 3 };
+                        let sc = Instruction::decode(
+                            0x1820_81af | (funct3 << 12),
+                            DRAM_BASE + 0x100,
+                            false,
+                        )
+                        .unwrap();
+                        if success {
+                            let lr = Instruction::decode(
+                                0x1000_822f | (funct3 << 12),
+                                DRAM_BASE + 0xfc,
+                                false,
+                            )
+                            .unwrap();
+                            if traced {
+                                lr.trace(&mut cpu, None);
+                            } else {
+                                lr.execute(&mut cpu);
+                            }
+                        }
+                        if traced {
+                            sc.trace(&mut cpu, None);
+                        } else {
+                            sc.execute(&mut cpu);
+                        }
+                        assert_eq!(cpu.x[3], i64::from(!success));
+                        assert_eq!(cpu.mmu.load_doubleword(address).unwrap().0, OLD);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn raw_code_store_paths_reject_changes() {
+        for width in [1, 2, 4, 8] {
+            let mut mmu = setup_mmu();
+            let lowest = mmu
+                .jolt_device
+                .as_ref()
+                .unwrap()
+                .memory_layout
+                .get_lowest_address();
+            mmu.code_guard = Some(CodeGuard::new(&[(DRAM_BASE, false)], lowest).unwrap());
+            assert!(catch_unwind(AssertUnwindSafe(|| match width {
+                1 => mmu.store_raw(DRAM_BASE, 1),
+                2 => mmu.store_halfword_raw(DRAM_BASE, 1),
+                4 => mmu.store_word_raw(DRAM_BASE, 1),
+                _ => mmu.store_doubleword_raw(DRAM_BASE, 1),
+            }))
+            .is_err());
+            assert_eq!(mmu.load_doubleword(DRAM_BASE).unwrap().0, 0);
+        }
+    }
+
+    #[test]
+    fn atomic_and_successful_conditional_stores_obey_code_protection() {
+        use crate::emulator::cpu::Cpu;
+        use crate::instruction::Instruction;
+
+        for conditional in [false, true] {
+            for trace in [false, true] {
+                let mut cpu = Cpu::new(Box::new(DummyTerminal::default()));
+                cpu.mmu = setup_mmu();
+                let address = DRAM_BASE + 0x40;
+                cpu.mmu.store_doubleword(address, 11).unwrap();
+                let lowest = cpu
+                    .mmu
+                    .jolt_device
+                    .as_ref()
+                    .unwrap()
+                    .memory_layout
+                    .get_lowest_address();
+                cpu.mmu.code_guard = Some(CodeGuard::new(&[(address, false)], lowest).unwrap());
+                cpu.x[1] = address as i64;
+                cpu.x[2] = if conditional { 11 } else { 0 };
+                let instruction = Instruction::decode(
+                    if conditional {
+                        0x1820_b1af
+                    } else {
+                        0x0020_b1af
+                    },
+                    DRAM_BASE + 0x100,
+                    false,
+                )
+                .unwrap();
+                let reserve = Instruction::decode(0x1000_b22f, DRAM_BASE + 0xfc, false).unwrap();
+                if conditional {
+                    if trace {
+                        reserve.trace(&mut cpu, Some(&mut Vec::new()));
+                    } else {
+                        reserve.execute(&mut cpu);
+                    }
+                }
+                if trace {
+                    instruction.trace(&mut cpu, Some(&mut Vec::new()));
+                } else {
+                    instruction.execute(&mut cpu);
+                }
+                assert_eq!(cpu.mmu.load_doubleword(address).unwrap().0, 11);
+                if conditional {
+                    assert_eq!(cpu.x[3], 0, "same-value SC.D must succeed");
+                }
+                cpu.x[2] = if conditional { 12 } else { 1 };
+                if conditional {
+                    if trace {
+                        reserve.trace(&mut cpu, Some(&mut Vec::new()));
+                    } else {
+                        reserve.execute(&mut cpu);
+                    }
+                }
+                assert!(catch_unwind(AssertUnwindSafe(|| {
+                    if trace {
+                        instruction.trace(&mut cpu, Some(&mut Vec::new()));
+                    } else {
+                        instruction.execute(&mut cpu);
+                    }
+                }))
+                .is_err());
+                assert_eq!(cpu.mmu.load_doubleword(address).unwrap().0, 11);
+            }
+        }
+    }
+
+    #[test]
+    fn loads_admit_the_lowest_mapped_word_and_reject_lower_addresses() {
+        let mut mmu = setup_mmu();
+        let lowest = mmu
+            .jolt_device
+            .as_ref()
+            .unwrap()
+            .memory_layout
+            .get_lowest_address();
+        assert_eq!(mmu.load_doubleword(lowest).unwrap().0, 0);
+        for address in [0, lowest - 8] {
+            assert!(catch_unwind(AssertUnwindSafe(|| mmu.load_doubleword(address))).is_err());
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "I/O overflow")]
+    fn loads_reject_the_padding_between_io_end_and_ram() {
+        let mut mmu = setup_mmu();
+        let config = MemoryConfig {
+            max_input_size: 24,
+            max_output_size: 0,
+            max_trusted_advice_size: 0,
+            max_untrusted_advice_size: 0,
+            program_size: Some(1024),
+            ..Default::default()
+        };
+        let device = JoltDevice::new(&config);
+        let io_end = device.memory_layout.io_end;
+        assert_eq!(io_end, RAM_START_ADDRESS - 24);
+        mmu.jolt_device = Some(device);
+        assert_eq!(mmu.load_doubleword(io_end - 8).unwrap().0, 0);
+        let _ = mmu.load_doubleword(io_end);
+    }
+
+    #[test]
     #[should_panic(expected = "must be >= DRAM_BASE")]
     fn setup_bytecode_rejects_device_addresses() {
         let mut mmu = setup_mmu();
         mmu.setup_bytecode(DRAM_BASE - 1, 0x77);
+    }
+
+    /// A program size that is not a multiple of eight leaves the heap's end
+    /// unaligned before rounding. The layout rounds `heap_end` up to a
+    /// doubleword, so the whole last word is heap.
+    #[test]
+    fn last_heap_word_accepts_stores_when_program_size_is_unaligned() {
+        use std::panic::{catch_unwind, AssertUnwindSafe};
+
+        let config = MemoryConfig {
+            program_size: Some(1025),
+            stack_size: 0,
+            heap_size: 8,
+            ..Default::default()
+        };
+        let device = JoltDevice::new(&config);
+        assert_eq!(device.memory_layout.heap_end, RAM_START_ADDRESS + 1168);
+        let mut mmu = Mmu::new(Box::new(DummyTerminal::default()));
+        mmu.init_memory(device.memory_layout.get_total_memory_size());
+        mmu.jolt_device = Some(device);
+        let address = RAM_START_ADDRESS + 1160;
+        let write = mmu.store_doubleword(address, 0).unwrap();
+        assert_eq!((write.pre_value, write.post_value), (0, 0));
+        for value in [1, 256] {
+            let write = mmu.store_doubleword(address, value).unwrap();
+            assert_eq!(write.post_value, value);
+            assert_eq!(mmu.load_doubleword(address).unwrap().0, value);
+        }
+        for offset in [1168, 1176] {
+            assert!(catch_unwind(AssertUnwindSafe(|| {
+                mmu.store_doubleword(RAM_START_ADDRESS + offset, 0)
+            }))
+            .is_err());
+            assert!(catch_unwind(AssertUnwindSafe(|| {
+                mmu.load_doubleword(RAM_START_ADDRESS + offset)
+            }))
+            .is_err());
+        }
     }
 }

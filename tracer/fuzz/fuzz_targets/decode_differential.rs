@@ -32,9 +32,10 @@ use tracer::instruction::{
     amomind::AMOMIND, amominud::AMOMINUD, amominuw::AMOMINUW, amominw::AMOMINW, amoord::AMOORD,
     amoorw::AMOORW, amoswapd::AMOSWAPD, amoswapw::AMOSWAPW, amoxord::AMOXORD, amoxorw::AMOXORW,
     and::AND, andi::ANDI, andn::ANDN, auipc::AUIPC, beq::BEQ, bge::BGE, bgeu::BGEU, blt::BLT,
-    bltu::BLTU, bne::BNE, csrrs::CSRRS, csrrw::CSRRW, div::DIV, divu::DIVU, divuw::DIVUW,
-    divw::DIVW, ebreak::EBREAK, ecall::ECALL, fence::FENCE, jal::JAL, jalr::JALR, lb::LB, lbu::LBU,
-    ld::LD, lh::LH, lhu::LHU, lrd::LRD, lrw::LRW, lui::LUI, lw::LW, lwu::LWU, mret::MRET, mul::MUL,
+    bltu::BLTU, bne::BNE, csrrc::CSRRC, csrrci::CSRRCI, csrrs::CSRRS, csrrsi::CSRRSI, csrrw::CSRRW,
+    csrrwi::CSRRWI, div::DIV, divu::DIVU, divuw::DIVUW, divw::DIVW, ebreak::EBREAK, ecall::ECALL,
+    fence::FENCE, jal::JAL, jalr::JALR, jolt_success::JoltSuccess, lb::LB, lbu::LBU, ld::LD,
+    lh::LH, lhu::LHU, lrd::LRD, lrw::LRW, lui::LUI, lw::LW, lwu::LWU, mret::MRET, mul::MUL,
     mulh::MULH, mulhsu::MULHSU, mulhu::MULHU, mulw::MULW, or::OR, ori::ORI, rem::REM, remu::REMU,
     remuw::REMUW, remw::REMW, sb::SB, scd::SCD, scw::SCW, sd::SD, sh::SH, sll::SLL, slli::SLLI,
     slliw::SLLIW, sllw::SLLW, slt::SLT, slti::SLTI, sltiu::SLTIU, sltu::SLTU, sra::SRA, srai::SRAI,
@@ -85,8 +86,12 @@ fn matches_program_kind_tracer_mask(kind: SourceInstructionKind, word: u32) -> b
         SourceInstructionKind::BLT => matches_tracer_mask::<BLT>(word),
         SourceInstructionKind::BLTU => matches_tracer_mask::<BLTU>(word),
         SourceInstructionKind::BNE => matches_tracer_mask::<BNE>(word),
+        SourceInstructionKind::CSRRC => matches_tracer_mask::<CSRRC>(word),
+        SourceInstructionKind::CSRRCI => matches_tracer_mask::<CSRRCI>(word),
         SourceInstructionKind::CSRRS => matches_tracer_mask::<CSRRS>(word),
+        SourceInstructionKind::CSRRSI => matches_tracer_mask::<CSRRSI>(word),
         SourceInstructionKind::CSRRW => matches_tracer_mask::<CSRRW>(word),
+        SourceInstructionKind::CSRRWI => matches_tracer_mask::<CSRRWI>(word),
         SourceInstructionKind::DIV => matches_tracer_mask::<DIV>(word),
         SourceInstructionKind::DIVU => matches_tracer_mask::<DIVU>(word),
         SourceInstructionKind::DIVUW => matches_tracer_mask::<DIVUW>(word),
@@ -96,6 +101,7 @@ fn matches_program_kind_tracer_mask(kind: SourceInstructionKind, word: u32) -> b
         SourceInstructionKind::FENCE => matches_tracer_mask::<FENCE>(word),
         SourceInstructionKind::JAL => matches_tracer_mask::<JAL>(word),
         SourceInstructionKind::JALR => matches_tracer_mask::<JALR>(word),
+        SourceInstructionKind::JoltSuccess => matches_tracer_mask::<JoltSuccess>(word),
         SourceInstructionKind::LB => matches_tracer_mask::<LB>(word),
         SourceInstructionKind::LBU => matches_tracer_mask::<LBU>(word),
         SourceInstructionKind::LD => matches_tracer_mask::<LD>(word),
@@ -149,10 +155,11 @@ fn matches_program_kind_tracer_mask(kind: SourceInstructionKind, word: u32) -> b
         SourceInstructionKind::XORI => matches_tracer_mask::<XORI>(word),
         // Every word-decodable kind in this build (no `field-inline`, so no
         // FIELD_* arm) is mapped above; `InlineDispatch` is skipped by the
-        // caller before the lookup, and the remaining Virtual* kinds are
-        // sequence-only and never come out of `decode_instruction`. A silent
-        // `true` here would wave a future word-decodable kind through with a
-        // wrong mask assumption, so fail loudly instead.
+        // caller before the lookup, and the remaining Virtual* kinds and
+        // `JoltPanic` (EBREAK's lowering) are sequence-only and never come
+        // out of `decode_instruction`. A silent `true` here would wave a
+        // future word-decodable kind through with a wrong mask assumption, so
+        // fail loudly instead.
         unmapped => panic!(
             "decode_instruction produced {unmapped:?}, which has no tracer mask entry; \
              add it to matches_program_kind_tracer_mask"

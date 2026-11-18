@@ -39,7 +39,7 @@ fn assert_chunks_compose_spaced(
         .trace(&program, inputs.clone())
         .expect("eager record trace failed");
     let expected = eager.trace.rows();
-    assert!(!expected.is_empty());
+    assert_ne!(expected, []);
 
     // Sized from the measured trace so several pauses are guaranteed
     // regardless of how many rows the guest's startup contributes.

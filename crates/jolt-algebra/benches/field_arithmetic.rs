@@ -1,5 +1,5 @@
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use jolt_algebra::{Field, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59, Unreduced};
+use jolt_algebra::{Field, Prime128Offset6A23801F, Prime32Offset99, Prime64Offset59, Unreduced};
 use rand::SeedableRng;
 use rand_chacha::ChaCha20Rng;
 use std::hint::black_box;
@@ -48,12 +48,12 @@ fn bench_product_reduction(c: &mut Criterion) {
     let mut rng = ChaCha20Rng::seed_from_u64(0x4a4f_4c54);
     let values: Vec<_> = (0..SAMPLES)
         .map(|_| {
-            let a = Prime128OffsetA7F7::random(&mut rng);
-            let b = Prime128OffsetA7F7::random(&mut rng);
+            let a = Prime128Offset6A23801F::random(&mut rng);
+            let b = Prime128Offset6A23801F::random(&mut rng);
             let mut sum = a.mul_unreduced(b);
             for _ in 1..32 {
-                let a = Prime128OffsetA7F7::random(&mut rng);
-                let b = Prime128OffsetA7F7::random(&mut rng);
+                let a = Prime128Offset6A23801F::random(&mut rng);
+                let b = Prime128Offset6A23801F::random(&mut rng);
                 sum += a.mul_unreduced(b);
             }
             sum
@@ -62,12 +62,12 @@ fn bench_product_reduction(c: &mut Criterion) {
     let mut group = c.benchmark_group("field reduction");
     let _ = group.throughput(Throughput::Elements(SAMPLES as u64));
     let _ = group.bench_with_input(
-        BenchmarkId::new("reduce_product", "fp128_a7f7"),
+        BenchmarkId::new("reduce_product", "fp128_6a23801f"),
         &values,
         |b, values| {
             b.iter(|| {
                 for &value in values {
-                    let _ = black_box(Prime128OffsetA7F7::reduce_product(black_box(value)));
+                    let _ = black_box(Prime128Offset6A23801F::reduce_product(black_box(value)));
                 }
             });
         },
@@ -78,7 +78,7 @@ fn bench_product_reduction(c: &mut Criterion) {
 fn field_arithmetic(c: &mut Criterion) {
     bench_field::<Prime32Offset99>(c, "fp32_c99");
     bench_field::<Prime64Offset59>(c, "fp64_c59");
-    bench_field::<Prime128OffsetA7F7>(c, "fp128_a7f7");
+    bench_field::<Prime128Offset6A23801F>(c, "fp128_6a23801f");
     bench_product_reduction(c);
 }
 

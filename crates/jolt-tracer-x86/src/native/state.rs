@@ -7,14 +7,22 @@
 use common::constants::{RAM_START_ADDRESS, REGISTER_COUNT};
 use common::jolt_device::{JoltDevice, MemoryLayout};
 use jolt_program::execution::TraceError;
+use jolt_program::expand::{expand_instruction_with_provider, ExpansionAllocator};
+use jolt_riscv::{JoltInstructionRow, RV64IMAC_JOLT_ALL_INLINES};
+use tracer::instruction::{uncompress_instruction, Instruction};
+use tracer::{HaltKind, TracerInlineExpansionProvider};
+
+use super::memory::MemoryPlane;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u64)]
 pub enum ExitReason {
     /// Still running (initial value; never observed on return).
     Running = 0,
-    /// Guest terminated via the PC-stall convention (`j .`).
-    Terminated = 1,
+    /// A PC stall: a jump or taken branch to its own address that a re-run
+    /// repeats (`JoltInstructionRow::self_jump_repeats`). Machine-level runs
+    /// (`run_machine`) accept it; Jolt runs reject it.
+    Stalled = 1,
     /// Guest RAM access outside the memory plane.
     FaultOutOfBounds = 2,
     /// Indirect jump to an address that is not a compiled group start.
@@ -27,6 +35,29 @@ pub enum ExitReason {
     /// Paused at a group boundary having reached `row_limit`; `pc` holds the
     /// resume point, so calling the body again continues the execution.
     Paused = 6,
+    /// A `Success` row (`jolt.success`) ended the run.
+    HaltedSuccess = 7,
+    /// A `Panic` row (EBREAK's lowering) ended the run.
+    HaltedPanic = 8,
+    /// Sequential execution reached `pc`, an address with no bytecode row.
+    FaultMissingRow = 9,
+}
+
+/// Where a run stopped.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum MachineExit {
+    Halted(HaltKind),
+    Stalled { pc: u64 },
+}
+
+impl MachineExit {
+    /// A Jolt run must end at a halt instruction.
+    pub(crate) fn require_halt(self) -> Result<(), TraceError> {
+        match self {
+            Self::Halted(_) => Ok(()),
+            Self::Stalled { pc } => Err(TraceError::EndedWithoutHalt { pc }),
+        }
+    }
 }
 
 /// State shared with generated code. Field offsets are load-bearing.
@@ -63,9 +94,8 @@ pub struct GuestState {
     pub obs_cursor: *mut Observation,
     /// Record mode: one past the last writable slot.
     pub obs_end: *mut Observation,
-    /// Offset of the stack canary from the start of the RAM plane. Stores to
-    /// `[canary_offset, canary_offset + STACK_CANARY_SIZE)` are stack
-    /// overflows and must fault, as they do in the interpreter.
+    /// Offset of the stack canary from the start of the RAM plane. Generated
+    /// stores preserve every doubleword overlapping the canary byte range.
     pub canary_offset: u64,
 }
 
@@ -75,31 +105,66 @@ impl GuestState {
     }
 
     #[expect(clippy::print_stderr)]
-    pub fn check_exit(&self, host: &mut HostContext) -> Result<(), TraceError> {
+    pub(crate) fn check_exit(
+        &self,
+        host: &mut HostContext,
+        plane: &MemoryPlane,
+    ) -> Result<MachineExit, TraceError> {
         match self.exit {
-            e if e == ExitReason::Terminated as u64 => {}
+            e if e == ExitReason::HaltedSuccess as u64 => {
+                Ok(MachineExit::Halted(HaltKind::Success))
+            }
+            e if e == ExitReason::HaltedPanic as u64 => Ok(MachineExit::Halted(HaltKind::Panic)),
+            e if e == ExitReason::Stalled as u64 => Ok(MachineExit::Stalled { pc: self.pc }),
             e if e == ExitReason::FaultOutOfBounds as u64 => {
-                return Err(TraceError::Backend("guest RAM access out of bounds"));
+                Err(TraceError::Backend("guest RAM access out of bounds"))
             }
-            e if e == ExitReason::FaultBadJumpTarget as u64 => {
-                return Err(TraceError::Backend(
-                    "indirect jump to a non-compiled address",
-                ));
-            }
-            e if e == ExitReason::FaultObservationOverflow as u64 => {
-                return Err(TraceError::Backend(
-                    "record pass overflowed the observation buffer (row-count divergence)",
-                ));
-            }
+            e if e == ExitReason::FaultBadJumpTarget as u64 => Err(TraceError::Backend(
+                "indirect jump to a non-compiled address",
+            )),
+            e if e == ExitReason::FaultMissingRow as u64 => Err(TraceError::MissingBytecodePc {
+                address: self.pc,
+                virtual_sequence_remaining: plane
+                    .word_at(self.pc)
+                    .and_then(|word| first_row_sequence_position(word, self.pc)),
+            }),
+            e if e == ExitReason::FaultObservationOverflow as u64 => Err(TraceError::Backend(
+                "record pass overflowed the observation buffer (row-count divergence)",
+            )),
             _ => {
                 if let Some(message) = host.helper_error.take() {
                     eprintln!("jolt-tracer-x86 helper error: {message}");
                 }
-                return Err(TraceError::Backend("host helper reported an error"));
+                Err(TraceError::Backend("host helper reported an error"))
             }
         }
-        Ok(())
     }
+}
+
+/// The sequence position the interpreter reports for a missing row at
+/// `address`: that of the first row it traces for the instruction it decodes
+/// from `word`, the 32 bits it fetches there. `None` is also the answer for a
+/// word the interpreter cannot decode or expand, where it panics.
+fn first_row_sequence_position(word: u32, address: u64) -> Option<u16> {
+    let is_compressed = word & 0x3 != 0x3;
+    let word = if is_compressed {
+        uncompress_instruction(word & 0xffff)
+    } else {
+        word
+    };
+    let source = Instruction::decode(word, address, is_compressed)
+        .ok()?
+        .source_instruction();
+    // Not `Instruction::inline_sequence`: it runs this expansion and panics
+    // where the expansion fails.
+    let rows = expand_instruction_with_provider(
+        &source,
+        &mut ExpansionAllocator::new(),
+        &mut TracerInlineExpansionProvider::new(),
+        RV64IMAC_JOLT_ALL_INLINES,
+    )
+    .ok()?;
+    JoltInstructionRow::from(*rows.first()?).virtual_sequence_remaining
 }
 
 /// One row's dynamic values, written by generated code in record mode.

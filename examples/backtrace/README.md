@@ -31,7 +31,7 @@ The `panicked: true` indicates Jolt successfully detected the guest panic throug
 
 ## Backtrace Output Reference
 
-The `JOLT_BACKTRACE` environment variable controls how much information is shown when a guest panics. Below are the outputs for every combination of guest mode and backtrace level.
+The `JOLT_BACKTRACE` environment variable controls how much information is shown when a guest panics. The excerpts below illustrate each guest mode and backtrace level. Addresses, frame numbers, and cycle counts depend on the toolchain.
 
 ### no_std guest
 
@@ -43,7 +43,7 @@ cargo run --release -p backtrace --no-default-features --features nostd
 
 ```
 PANIC: panicked at examples/backtrace/guest-nostd/src/lib.rs:33:5: backtrace demo (no-std)
-ERROR tracer: Guest program terminated due to panic after 3696 cycles.
+ERROR tracer: Guest program halted at ebreak (abnormal end) after 3696 cycles.
   <no backtrace available>
 note: run `trace_and_analyze` with `JOLT_BACKTRACE=1` environment variable to enable backtraces
 ```
@@ -58,27 +58,25 @@ JOLT_BACKTRACE=1 cargo run --release -p backtrace --no-default-features --featur
 
 ```
 PANIC: panicked at examples/backtrace/guest-nostd/src/lib.rs:33:5: backtrace demo (no-std)
-ERROR tracer: Guest program terminated due to panic after 3696 cycles.
-Guest Program panicked in "core::fmt::write" at ".../library/core/src/fmt/mod.rs:1471:9"
+ERROR tracer: Guest program halted at ebreak (abnormal end) after 1020 cycles.
+Guest Program panicked in "core::fmt::write" at ".../library/core/src/fmt/mod.rs:1665:20"
 stack backtrace:
-   0: 0x80000b38 - core::fmt::write
-                               at .../library/core/src/fmt/mod.rs:1471:9
+   0: 0x80000c52 - core::fmt::write
+                               at .../library/core/src/fmt/mod.rs:1665:20
    ...
-  15: 0x800017f4 - __rustc::rust_begin_unwind
-  16: 0x800003c2 - core::panicking::panic_fmt
-                               at .../library/core/src/panicking.rs:75:14
-  17: 0x800001ea - backtrace_guest_nostd::level_two
-  18: 0x80000192 - backtrace_guest_nostd::level_one
-  19: 0x80000208 - main
-  20: 0x80000d12 - __default_main_entry
-  21: 0x80000d3c - __platform_bootstrap
-  22: 0x80000034 - __bootstrap
-  23: 0x8000002c - __bootstrap
-  24: 0x80000018 - _start
+  14: 0x80000bcc - core::panicking::panic_fmt
+                               at .../library/core/src/panicking.rs:80:14
+   ...
+  16: 0x80000ae4 - backtrace_guest_nostd::level_one
+  17: 0x80000b34 - main
+  18: 0x8000152a - __default_main_entry
+  19: 0x80000994 - __bootstrap
+  20: 0x8000098c - __bootstrap
+  21: 0x80000018 - __jolt_start
 note: run with `JOLT_BACKTRACE=full` environment variable to display extended emulator state info
 ```
 
-Symbolized function names and source locations are displayed. The full call chain from `_start` through `level_one` → `level_two` → `panic_fmt` is visible.
+Symbolized function names and source locations are displayed. This Rust 1.99.1 excerpt includes `__jolt_start`, `level_one`, and `panic_fmt`; intermediate frames are omitted.
 
 #### `JOLT_BACKTRACE=full`
 
@@ -88,29 +86,27 @@ JOLT_BACKTRACE=full cargo run --release -p backtrace --no-default-features --fea
 
 ```
 PANIC: panicked at examples/backtrace/guest-nostd/src/lib.rs:33:5: backtrace demo (no-std)
-ERROR tracer: Guest program terminated due to panic after 3696 cycles.
-Guest Program panicked in "core::fmt::write" at ".../library/core/src/fmt/mod.rs:1471:9"
+ERROR tracer: Guest program halted at ebreak (abnormal end) after 1020 cycles.
+Guest Program panicked in "core::fmt::write" at ".../library/core/src/fmt/mod.rs:1665:20"
 stack backtrace:
    ...
-  16: 0x800003c2 - core::panicking::panic_fmt
-                               at .../library/core/src/panicking.rs:75:14
-                   registers: ra=0x800013be, sp=0x80102fc0, gp=0x80003700, ...
-                   cycle: 357
-  17: 0x800001ea - backtrace_guest_nostd::level_two
-                   registers: ra=0x800001e6, sp=0x80102fd0, gp=0x80003700, ...
-                   cycle: 351
-  18: 0x80000192 - backtrace_guest_nostd::level_one
-                   registers: ra=0x8000018e, sp=0x80103030, gp=0x80003700, ...
-                   cycle: 326
-  19: 0x80000208 - main
-                   registers: ra=0x80000204, sp=0x80103070, gp=0x80003700, ...
-                   cycle: 313
-  20: 0x80000d12 - __default_main_entry
-                   registers: ra=0x7ffffd0e, sp=0x80103090, gp=0x80003700, ...
-                   cycle: 296
-  ...
-  24: 0x80000018 - _start
-                   registers: ra=0x80001014, sp=0x801030a0, gp=0x80003700
+  14: 0x80000bcc - core::panicking::panic_fmt
+                               at .../library/core/src/panicking.rs:80:14
+                   registers: ra=0x80001bc8, sp=0x80103420, gp=0x80003a80, ...
+                   cycle: 202
+   ...
+  16: 0x80000ae4 - backtrace_guest_nostd::level_one
+                   registers: ra=0x80000ae0, sp=0x80103480, gp=0x80003a80, ...
+                   cycle: 174
+  17: 0x80000b34 - main
+                   registers: ra=0x80000b30, sp=0x801034c0, gp=0x80003a80, ...
+                   cycle: 161
+  18: 0x8000152a - __default_main_entry
+                   registers: ra=0x80000526, sp=0x801034e0, gp=0x80003a80, ...
+                   cycle: 149
+   ...
+  21: 0x80000018 - __jolt_start
+                   registers: ra=0x80002014, sp=0x801034f0, gp=0x80003a80, ...
                    cycle: 6
 ```
 
@@ -134,12 +130,12 @@ stack backtrace:
    1:         0x8000180e - <unknown>
    ...
   11:         0x80034e48 - <unknown>
-ERROR tracer: Guest program terminated due to panic after 463691 cycles.
+ERROR tracer: Guest program halted at ebreak (abnormal end) after 463691 cycles.
   <no backtrace available>
 note: run `trace_and_analyze` with `JOLT_BACKTRACE=1` environment variable to enable backtraces
 ```
 
-The guest's own std backtrace fires but shows `<unknown>` because symbols are stripped in release builds. The tracer has no symbolized backtrace either.
+The guest's own std backtrace fires but shows `<unknown>`. The tracer has no symbolized backtrace either.
 
 #### `JOLT_BACKTRACE=1`
 
@@ -153,7 +149,7 @@ backtrace demo (std)
 stack backtrace:
    0:         0x800112b2 - <unknown>
    ...
-ERROR tracer: Guest program terminated due to panic after 463691 cycles.
+ERROR tracer: Guest program halted at ebreak (abnormal end) after 463691 cycles.
 stack backtrace:
    0: 0x800067b2 - trap_handler
    1: 0x800001f6 - _default_trap_handler
@@ -184,7 +180,7 @@ JOLT_BACKTRACE=full cargo run --release -p backtrace --no-default-features --fea
 
 ```
 ...
-ERROR tracer: Guest program terminated due to panic after 463691 cycles.
+ERROR tracer: Guest program halted at ebreak (abnormal end) after 463691 cycles.
 stack backtrace:
    0: 0x800067b2 - trap_handler
                    registers: ra=0x800001fa, sp=0x80157e00, gp=0x80056b60, ...
@@ -236,8 +232,8 @@ The tracer **always** records a software call stack by watching every JAL/JALR i
 
 When the guest panics, what `JOLT_BACKTRACE` controls is **symbol resolution**:
 
-- **Unset**: The tracer has the call stack but doesn't have access to symbols (stripped ELF) or the ELF path. It prints `<no backtrace available>`.
-- **`=1`**: The `jolt build` step skips `-Cstrip=symbols`, preserving symbol/debug info in the ELF. The tracer then uses `addr2line` on the **host** to resolve call-site addresses → function names + file:line. Zero extra guest cycles.
+- **Unset**: The tracer has the call stack but not the ELF path. It prints `<no backtrace available>`.
+- **`=1`**: The `jolt build` step skips `-Cstrip=debuginfo`, preserving DWARF debug information in the ELF. The tracer then uses `addr2line` on the **host** to resolve call-site addresses → function names + file:line. Zero extra guest cycles.
 - **`=full`**: Same as `=1`, plus prints register snapshots and cycle counts per frame.
 
 #### 2. Guest-side backtrace (controlled by `backtrace = "dwarf"`)
@@ -248,7 +244,7 @@ This only affects **std guests**. When `backtrace = "dwarf"` is set in `#[jolt::
 - Enables std's built-in panic handler to do **DWARF unwinding inside the guest** as emulated RISC-V instructions
 - The guest writes its backtrace via `write()` syscalls, which the emulator intercepts and prints to stdout
 
-This is the `<unknown>` output you see for std guests — it's the **guest code itself** printing a backtrace, but symbols are stripped in release builds so it can only show raw addresses. This guest-side unwinding is expensive (~446k extra cycles vs ~17k with `"off"`).
+This is the `<unknown>` output you see for std guests — it's the **guest code itself** printing a backtrace, and it has no symbol resolver, so it can only show raw addresses. This guest-side unwinding is expensive (~446k extra cycles vs ~17k with `"off"`).
 
 For **no_std guests**, there is no built-in panic handler that does unwinding, so `backtrace = "dwarf"` has essentially no effect.
 
@@ -260,7 +256,7 @@ Both mechanisms run "in the emulator", but at different layers:
 |---|---|---|
 | **What runs** | Host code (addr2line on the host CPU) | Emulated RISC-V code (DWARF unwinder in guest) |
 | **When** | After guest terminates | During guest execution (part of panic handler) |
-| **Modifies generated code?** | No (only preserves symbols) | Yes (adds frame pointer prologues) |
+| **Modifies generated code?** | No (only preserves debug information) | Yes (adds frame pointer prologues) |
 | **Extra guest cycles** | 0 | ~446k for std, negligible for no_std |
 | **Affects no_std?** | Yes (full backtrace) | No (no built-in unwinder) |
 | **Affects std?** | Yes (full backtrace) | Yes (enables guest-side `<unknown>` backtrace) |

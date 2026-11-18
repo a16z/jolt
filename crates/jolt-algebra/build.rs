@@ -114,7 +114,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             "fp64_mul_body.inc",
             "fp128_add.S",
             "fp128_add_body.inc",
-            "fp128_load_a7f7.inc",
+            "fp128_load_6a23801f.inc",
             "fp128_sub.S",
             "fp128_sub_body.inc",
             "fp128_mul.S",

@@ -5,6 +5,7 @@ use jolt_r1cs::{ConstraintMatrices, ConstraintMatrixEvalError, SparseRow};
 use jolt_sumcheck::{append_compressed_round, CompressedSumcheckProof};
 use jolt_transcript::{require_no_pow, Encoding, FieldTranscript, Transcript};
 use rand_core::RngCore;
+#[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
 use crate::{BlindFoldProof, BlindFoldProtocol, ProverError, WitnessCoordinate};
@@ -709,18 +710,29 @@ where
             });
         }
     }
-    // At most one job per worker: ark-ec's msm_bigint_wnaf builds a 2-thread pool per
-    // chunk (variable_base/mod.rs:853), so more outer jobs than workers oversubscribe.
-    let rows_per_job = rows.len().div_ceil(rayon::current_num_threads()).max(1);
-    Ok(rows
-        .par_chunks(rows_per_job)
-        .zip(blindings.par_chunks(rows_per_job))
-        .flat_map_iter(|(rows, blindings)| {
-            rows.iter()
-                .zip(blindings)
-                .map(|(row, blinding)| VC::commit(setup, row, blinding))
-        })
-        .collect())
+    #[cfg(feature = "parallel")]
+    {
+        // At most one job per worker: ark-ec's msm_bigint_wnaf builds a 2-thread pool per
+        // chunk (variable_base/mod.rs:853), so more outer jobs than workers oversubscribe.
+        let rows_per_job = rows.len().div_ceil(rayon::current_num_threads()).max(1);
+        Ok(rows
+            .par_chunks(rows_per_job)
+            .zip(blindings.par_chunks(rows_per_job))
+            .flat_map_iter(|(rows, blindings)| {
+                rows.iter()
+                    .zip(blindings)
+                    .map(|(row, blinding)| VC::commit(setup, row, blinding))
+            })
+            .collect())
+    }
+    #[cfg(not(feature = "parallel"))]
+    {
+        Ok(rows
+            .iter()
+            .zip(blindings)
+            .map(|(row, blinding)| VC::commit(setup, row, blinding))
+            .collect())
+    }
 }
 
 fn open_committed_rows<F, VC>(
@@ -963,7 +975,11 @@ fn matrix_vector_product<F>(rows: &[SparseRow<F>], vector: &[F]) -> Vec<F>
 where
     F: JoltField,
 {
-    rows.par_iter().map(|row| dot(row, vector)).collect()
+    #[cfg(feature = "parallel")]
+    let rows = rows.par_iter();
+    #[cfg(not(feature = "parallel"))]
+    let rows = rows.iter();
+    rows.map(|row| dot(row, vector)).collect()
 }
 
 fn linear_form_project_columns<F>(

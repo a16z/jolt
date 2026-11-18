@@ -11,7 +11,7 @@
 use crate::emulator::cpu::{ChunkCpuState, Cpu, HostIo};
 use crate::emulator::decode_cache::DecodeCache;
 use crate::emulator::memory::Memory;
-use crate::emulator::mmu::ChunkMmuState;
+use crate::emulator::mmu::{ChunkMmuState, CodeGuard};
 use crate::emulator::terminal::DummyTerminal;
 use crate::emulator::Emulator;
 use crate::instruction::Cycle;
@@ -32,8 +32,9 @@ pub struct ChunkCheckpoint {
 
 impl ChunkCheckpoint {
     /// Capture at a tick boundary of a pass-1 emulator. Workers replay by
-    /// tick count, never by stall detection, so no termination-heuristic
-    /// state is carried.
+    /// tick count, never by stall detection, so the stall flag is not
+    /// carried; the halt state is architectural and travels with the CPU
+    /// state.
     #[expect(clippy::expect_used)]
     pub fn capture(emulator: &Emulator) -> Self {
         let cpu = emulator.get_cpu();
@@ -147,20 +148,23 @@ impl ChunkWorker {
         Self::from_seed(
             src.mmu.jolt_device.clone(),
             src.mmu.decode_cache.snapshot_with_empty_entries(),
+            src.mmu.code_guard.clone(),
         )
     }
 
     /// Like [`ChunkWorker::new`], but from pre-cloned static parts — the
     /// pipeline takes the seed before pass-1 starts mutating the emulator
     /// and each worker thread builds its own CPU from it.
-    pub fn from_seed(
+    pub(crate) fn from_seed(
         jolt_device: Option<common::jolt_device::JoltDevice>,
         decode_template: DecodeCache,
+        code_guard: Option<CodeGuard>,
     ) -> Self {
         let mut cpu = Cpu::new(Box::new(DummyTerminal {}));
         cpu.set_host_io(HostIo::Replay);
         cpu.mmu.jolt_device = jolt_device;
         cpu.mmu.decode_cache = decode_template.clone();
+        cpu.mmu.code_guard = code_guard;
         ChunkWorker {
             cpu,
             decode_template,
@@ -246,18 +250,20 @@ impl PassOne {
     }
 
     /// Execute one tick. Returns `false` (without ticking further) once the
-    /// program has terminated. Termination matches `trace()` exactly: a PC
-    /// stall, or a step that would emit zero rows (trap/WFI tick — observed
-    /// here as a zero `trace_len` delta, which the execute path shares).
+    /// program has stopped. Stopping matches `trace()` exactly: a halt, a PC
+    /// stall, or a step that emits zero rows (trap/WFI tick — observed here as
+    /// a zero `trace_len` delta, which the execute path shares). Only a halt
+    /// ends a Jolt run; `finish_emulator` rejects the others.
     pub fn step(&mut self) -> bool {
         if self.done {
             return false;
         }
-        if self.emulator.get_cpu().has_stalled() {
+        let cpu = self.emulator.get_cpu();
+        if cpu.halted().is_some() || cpu.has_stalled() {
             self.done = true;
             return false;
         }
-        let ticks_before = self.emulator.get_cpu().trace_len;
+        let ticks_before = cpu.trace_len;
         self.emulator.tick(None);
         if self.emulator.get_cpu().trace_len == ticks_before {
             self.done = true;
@@ -327,8 +333,9 @@ fn demote_worker_thread() {
 pub const DEFAULT_CHUNK_ROWS: usize = 1 << 20;
 
 /// Default output capacity in rows (matches the serial path's reserve).
-/// Chunks beyond this fall back to a copy-assembled suffix (correct, just
-/// slower) — see `run_two_pass`; `JOLT_TRACER_CAPACITY_ROWS` overrides.
+/// Chunks beyond this use separate allocations; `run_two_pass` flattens
+/// them, while the execution backend converts them directly to proof rows.
+/// `JOLT_TRACER_CAPACITY_ROWS` overrides this reservation.
 pub const DEFAULT_CAPACITY_ROWS: usize = 1 << 24;
 
 #[derive(Clone, Copy, Debug)]
@@ -338,7 +345,7 @@ pub struct TwoPassConfig {
     pub chunk_rows: usize,
     /// Output vec capacity reserved up front. Workers write their rows
     /// directly into disjoint windows of it; if the trace outgrows it, the
-    /// remaining chunks are assembled by copy instead.
+    /// remaining chunks use separate allocations.
     pub capacity_rows: usize,
 }
 
@@ -361,7 +368,7 @@ struct ChunkJob<'trace> {
     rows: usize,
     /// Destination window inside the output vec's spare capacity (disjoint
     /// across chunks, in chunk order). `None` = capacity exhausted; the
-    /// worker ships its rows back for copy assembly instead.
+    /// worker returns an owned chunk instead.
     window: Option<&'trace mut [core::mem::MaybeUninit<Cycle>]>,
 }
 
@@ -408,8 +415,33 @@ pub(crate) static TEST_CORRUPT_BOUNDARY_STATE: std::sync::atomic::AtomicBool =
 ///
 /// In-flight memory is bounded by the job-queue depth: at most
 /// `2*workers (queued) + workers (executing) + 1 (capturing)` full images.
-#[expect(clippy::expect_used)]
 pub fn run_two_pass(emulator: Emulator, config: &TwoPassConfig) -> (Vec<Cycle>, Emulator) {
+    let (chunks, emulator) = run_two_pass_chunks(emulator, config);
+    (chunks.into_flat(), emulator)
+}
+
+pub(crate) struct TraceChunks {
+    pub(crate) prefix: Vec<Cycle>,
+    pub(crate) suffix: Vec<Vec<Cycle>>,
+}
+
+impl TraceChunks {
+    fn into_flat(self) -> Vec<Cycle> {
+        let mut trace = self.prefix;
+        let total_overflow: usize = self.suffix.iter().map(Vec::len).sum();
+        trace.reserve(total_overflow);
+        for rows in self.suffix {
+            trace.extend(rows);
+        }
+        trace
+    }
+}
+
+#[expect(clippy::expect_used)]
+pub(crate) fn run_two_pass_chunks(
+    emulator: Emulator,
+    config: &TwoPassConfig,
+) -> (TraceChunks, Emulator) {
     use core::mem::MaybeUninit;
     use std::sync::mpsc;
     use std::sync::Mutex;
@@ -437,6 +469,7 @@ pub fn run_two_pass(emulator: Emulator, config: &TwoPassConfig) -> (Vec<Cycle>, 
     let (out_tx, out_rx) = mpsc::channel::<(usize, Vec<Cycle>)>();
     let worker_panicked = std::sync::atomic::AtomicBool::new(false);
 
+    let seed_code = emulator.get_cpu().mmu.code_guard.clone();
     let mut pass1 = PassOne::new(emulator);
 
     let windowed_rows = std::thread::scope(|scope| {
@@ -453,10 +486,11 @@ pub fn run_two_pass(emulator: Emulator, config: &TwoPassConfig) -> (Vec<Cycle>, 
             let out_tx = out_tx.clone();
             let seed_device = seed_device.clone();
             let seed_decode = seed_decode.clone();
+            let seed_code = seed_code.clone();
             scope.spawn(move || {
                 let _panic_guard = PanicGuard(worker_panicked);
                 demote_worker_thread();
-                let mut worker = ChunkWorker::from_seed(seed_device, seed_decode);
+                let mut worker = ChunkWorker::from_seed(seed_device, seed_decode, seed_code);
                 let mut scratch: Vec<Cycle> = Vec::new();
                 loop {
                     // Hold the lock only for the dequeue; idle workers block
@@ -656,10 +690,11 @@ pub fn run_two_pass(emulator: Emulator, config: &TwoPassConfig) -> (Vec<Cycle>, 
         .iter()
         .zip(overflow.iter().skip(1))
         .all(|((a, _), (b, _))| a + 1 == *b));
-    let total_overflow: usize = overflow.iter().map(|(_, rows)| rows.len()).sum();
-    trace.reserve(total_overflow);
-    for (_, rows) in overflow {
-        trace.extend(rows);
-    }
-    (trace, pass1.into_emulator())
+    (
+        TraceChunks {
+            prefix: trace,
+            suffix: overflow.into_iter().map(|(_, rows)| rows).collect(),
+        },
+        pass1.into_emulator(),
+    )
 }

@@ -616,8 +616,8 @@ def validate_metrics(metrics, case):
         if not isinstance(result[key], int) or result[key] <= 0:
             raise ValueError(f'{key} must be a positive integer')
     padded = result['padded_trace_rows']
-    if padded & (padded - 1) or padded <= result['trace_rows']:
-        raise ValueError('padded trace does not cover the proof rows and final no-op')
+    if padded & (padded - 1) or padded < result['trace_rows']:
+        raise ValueError('padded trace must be a power of two covering the proof rows')
     if result['e2e_s'] < result['prove_s'] + result['setup_s']:
         raise ValueError('end-to-end interval does not contain prove and setup')
     public_output = metrics['public_output']
@@ -809,6 +809,9 @@ def render_comment(result, out):
         return html.escape(str(value) if value is not None else 'unavailable').replace(
             '|', '&#124;').replace('`', '&#96;').replace('\n', ' ')
 
+    def ceiling_label(scale):
+        return f'2^{scale}' if scale is not None else 'unavailable'
+
     if result.get('schema_version') != 1:
         raise ValueError('unsupported result schema')
     lines = ['<!-- jolt-e2e-benchmark-v1 -->', '## End-to-end CPU proofs', '',
@@ -842,12 +845,12 @@ def render_comment(result, out):
                           len(diff['text']) > MAX_HARNESS_DIFF or len(code) > MAX_HARNESS_DIFF else '', ''])
     identities = ['| Workload / PCS / physical cores / trace ceiling | Base / head raw,padded rows | Base / head binary SHA256 | Base / head guest SHA256 |',
                   '|---|---|---|---|']
-    notable_rows = []
+    notable_rows, groups = [], {}
     for case in result['cases']:
         name = case['workload']
         if not re.fullmatch(r'[a-z0-9-]+', name) or case['pcs'] not in ('dory', 'akita'):
             raise ValueError('invalid workload or PCS in comment data')
-        ceiling = f"2^{case['scale_log2']}" if case['scale_log2'] is not None else 'unavailable'
+        ceiling = ceiling_label(case['scale_log2'])
         measurements = {leg: [sample for sample in case['samples']
                               if sample['leg'] == leg and sample['phase'] == 'measure']
                         for leg in ('base', 'head')}
@@ -871,7 +874,7 @@ def render_comment(result, out):
         changes = {key: f'{(ratio - 1) * 100:+.2f}%' if ratio is not None else 'unavailable (zero base)'
                    for key, ratio in ratios.items()}
         calibrated, reason = calibration.for_case(result, case)
-        basis = {key: (f"{calibrated[key]['threshold_pct']:.2f}% "
+        basis = {key: (f"{calibrated[key]['envelope_pct']:.2f}% "
                        f"(max symmetric null {calibrated[key]['max_symmetric_window_delta_pct']:.2f}%)"
                        if calibrated else f'unavailable: {text(reason)}') for key in base}
         for key in base:
@@ -884,8 +887,7 @@ def render_comment(result, out):
         time_values = f"{base['e2e_s']:.6f} / {head['e2e_s']:.6f} | {changes['e2e_s']}"
         rss_values = f"{base['peak_rss_bytes']:.0f} / {head['peak_rss_bytes']:.0f} | {changes['peak_rss_bytes']}"
         lines.append(f"{label} {time_values} | {basis['e2e_s']} | {rss_values} | {basis['peak_rss_bytes']} |")
-        thresholds = {key: max(3.0, calibrated[key]['threshold_pct'])
-                      if calibrated else 3.0 for key in base}
+        thresholds = calibration.case_thresholds(case['scale_log2'], calibrated)
         if any(base[key] and Fraction(str(max(base[key], head[key]))) >
                Fraction(str(min(base[key], head[key]))) * (1 + Fraction(str(thresholds[key])) / 100)
                for key in base):
@@ -894,6 +896,7 @@ def render_comment(result, out):
                                 for key in base}
             notable_rows.append(f"{label} {time_values} | {threshold_labels['e2e_s']} | "
                                 f"{rss_values} | {threshold_labels['peak_rss_bytes']} |")
+        groups.setdefault((case['pcs'], case['physical_cores'], case['scale_log2']), []).append(ratios)
         rows, binaries, guests = [], [], []
         for leg in ('base', 'head'):
             rows.append('; '.join(f'{raw},{padded}' for raw, padded in sorted({
@@ -904,13 +907,34 @@ def render_comment(result, out):
             guests.append(text((build.get('guests', {}).get(name, {}).get('elf', {}).get('sha256') or 'unavailable')[:12]))
         identities.append(f"| {name} / {case['pcs']} / {case['physical_cores']} / {ceiling} | {' / '.join(rows)} | "
                           f"{' / '.join(binaries)} | {' / '.join(guests)} |")
+    group_table = []
+    for (pcs, cores, scale), members in groups.items():
+        for key, metric in (('e2e_s', 'End-to-end time'), ('peak_rss_bytes', 'Peak RSS')):
+            member_ratios = [member[key] for member in members]
+            # A zero median leaves a case without a ratio to average.
+            if len(member_ratios) < 2 or not all(member_ratios):
+                continue
+            mean = statistics.geometric_mean(member_ratios)
+            threshold = calibration.size_thresholds(scale)['group'][key]
+            if 100 * (max(mean, 1 / mean) - 1) > threshold:
+                group_table.append(
+                    f'| {pcs} | {cores} | {ceiling_label(scale)} | {len(member_ratios)} | {metric} | '
+                    f'{(mean - 1) * 100:+.2f}% | {threshold:.2f}% | '
+                    f'{(min(member_ratios) - 1) * 100:+.2f}% to {(max(member_ratios) - 1) * 100:+.2f}% |')
+    if group_table:
+        group_table[:0] = [
+            '| PCS | Physical cores | Trace ceiling | Cases | Metric | Signed mean change | Threshold | Range over cases |',
+            '|---|---:|---:|---:|---|---:|---:|---|']
+        lines += ['', 'Size groups (complete cases sharing a PCS, physical-core count and trace ceiling) of two or '
+                  'more cases whose geometric-mean head/base ratio exceeds its trace-size threshold, compared '
+                  'symmetrically. No envelope is observed for a group mean.', '', *group_table]
     manual = result['suite'].get('calibration') or {}
     source = manual.get('source') or {}
     if len(identities) > 2:
         lines += ['', 'Identity SHA256s below are abbreviated to 12 characters; raw JSON retains the full hashes.', '', *identities]
     if result.get('external_references') is not None:
         external = result['external_references']
-        lines += ['', 'External reference method: null-median3-symmetric-envelope-v2. '
+        lines += ['', f'External reference method: {calibration.METHOD}. '
                   'Ten pairs produce eight overlapping median-of-three windows; informational bands only.',
                   f"Catalog revision: `{text(external['catalog_revision'])}`."]
         applied = {item['sha256']: item['source'] for item in result.get('comparison_references', {}).values()}
@@ -920,11 +944,10 @@ def render_comment(result, out):
                       f"(https://github.com/a16z/jolt/actions/runs/{run_id}/attempts/{attempt})."]
     elif manual.get('status') == 'measured':
         lines += ['', f"Supplied reference method: `{text(manual.get('method'))}`. "
-                  'The supported v2 method requires 10 same-binary null pairs and eight overlapping 3-pair windows, '
+                  f'The supported method, {calibration.METHOD}, requires 10 same-binary null pairs and eight overlapping 3-pair windows, '
                   'which are not independent. Each window takes each leg’s median, then the larger '
                   'of the head/base and base/head percentage increases. The displayed reference is '
-                  '1.5 times the largest window increase, with floors of 3% time and 2% RSS, rounded up '
-                  'to 0.5 percentage points.', '',
+                  '1.5 times the largest window increase, rounded up to 0.5 percentage points.', '',
                   f"Reference source: run `{text(source.get('run_id'))}`, raw result SHA256 "
                   f"`{text(source.get('result_sha256'))}`, {text(source.get('started_at'))} "
                   f"through {text(source.get('finished_at'))}.", '',
@@ -961,7 +984,7 @@ def render_comment(result, out):
     lines.extend(harness_notes)
     Path(out).parent.mkdir(parents=True, exist_ok=True)
     Path(out).write_text('\n'.join(lines))
-    return notable_rows
+    return notable_rows, group_table
 
 
 def suite(args):

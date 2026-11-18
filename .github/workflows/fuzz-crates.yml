@@ -126,23 +126,39 @@ jobs:
         with:
           toolchain: nightly-2026-08-24
           components: llvm-tools-preview,rust-src
-          targets: ${{ matrix.workspace == 'jolt-eval' && 'riscv64imac-unknown-none-elf' || '' }}
+          target: ${{ matrix.workspace == 'jolt-eval' && 'riscv64imac-unknown-none-elf' || '' }}
+          cache: false
       - name: Install pinned cargo-fuzz
-        uses: taiki-e/install-action@682ce6c3c696a4cd5168a05f98e51aa02b877941 # v2
+        uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2
         with:
           tool: cargo-fuzz@0.13.2
+      # Caches follow rust.yml's strategy: only main saves, because a
+      # PR-scoped entry is unreadable by other pull requests and evicts main's
+      # entries from the repository's shared 10 GB cache quota.
+      - name: Cache guest builder dependencies
+        if: matrix.workspace == 'jolt-eval'
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          shared-key: fuzz-guest-builder
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Install guest builder
         if: matrix.workspace == 'jolt-eval'
-        run: cargo install --path . --locked
-      - name: Cache fuzz builds
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        run: cargo install --path . --locked --force --profile ci --target-dir target
+      - name: Restore fuzz builds
+        id: fuzz-build
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ${{ matrix.directory }}/target
           key: fuzz-build-v1-${{ runner.os }}-${{ matrix.workspace }}-${{ hashFiles(format('{0}/Cargo.lock', matrix.directory)) }}
           restore-keys: |
             fuzz-build-v1-${{ runner.os }}-${{ matrix.workspace }}-
+      # libFuzzer runs every restored input before it first checks
+      # -max_total_time, so the replay is not bounded by a target's budget.
+      # Pull requests therefore start from the checked-in seeds
+      # and regressions only; every other run still replays the corpus.
       - name: Restore trusted corpus
         id: corpus
+        if: github.event_name != 'pull_request'
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ${{ matrix.directory }}/corpus
@@ -153,6 +169,12 @@ jobs:
       # target source must fail here, before the timed phases.
       - name: Build fuzz targets
         run: python3 scripts/fuzz.py --workspace "${{ matrix.workspace }}" --target-triple x86_64-unknown-linux-gnu build
+      - name: Save fuzz builds
+        if: github.ref == 'refs/heads/main' && steps.fuzz-build.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ${{ matrix.directory }}/target
+          key: ${{ steps.fuzz-build.outputs.cache-primary-key }}
       - name: Replay seeds and regressions
         run: python3 scripts/fuzz.py --workspace "${{ matrix.workspace }}" --target-triple x86_64-unknown-linux-gnu replay
       - name: Run ${{ steps.profile.outputs.name }} fuzz profile
@@ -166,17 +188,6 @@ jobs:
       - name: Minimize weekly corpus
         if: success() && steps.profile.outputs.name == 'weekly'
         run: python3 scripts/fuzz.py --workspace "${{ matrix.workspace }}" --target-triple x86_64-unknown-linux-gnu cmin
-      # Coverage builds carry -C instrument-coverage instead of ASan; giving
-      # them their own target dir (and cache) keeps the two instrumentation
-      # flavors from invalidating each other's artifacts every week.
-      - name: Cache coverage builds
-        if: success() && steps.profile.outputs.name == 'weekly'
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
-        with:
-          path: ${{ matrix.directory }}/target-coverage
-          key: fuzz-coverage-build-v1-${{ runner.os }}-${{ matrix.workspace }}-${{ hashFiles(format('{0}/Cargo.lock', matrix.directory)) }}
-          restore-keys: |
-            fuzz-coverage-build-v1-${{ runner.os }}-${{ matrix.workspace }}-
       - name: Generate weekly coverage
         if: success() && steps.profile.outputs.name == 'weekly'
         run: python3 scripts/fuzz.py --workspace "${{ matrix.workspace }}" --target-triple x86_64-unknown-linux-gnu coverage

@@ -13,6 +13,10 @@
 //!
 //! The `csrw csr, rs` pseudo-instruction is `csrrw x0, csr, rs` (rd=0, discard old value).
 //! The full `csrrw rd, csr, rs` swaps rd ← old_CSR, CSR ← rs.
+//!
+//! Writes are legalized as on an M-mode-only hart: mstatus keeps only MIE and
+//! MPIE (MPP reads as M), mtvec keeps its old MODE when a reserved MODE is
+//! written, and mepc clears bit 0. See `jolt_program::expand::control_flow::csr`.
 
 use crate::instruction::registers::i::RegisterStateI;
 
@@ -32,21 +36,11 @@ declare_riscv_instr!(
 );
 
 impl CSRRW {
-    fn csr_address(&self) -> u16 {
-        (self.operands.imm & 0xfff) as u16
-    }
-
-    fn exec(&self, cpu: &mut Cpu, _: &mut <CSRRW as RISCVInstruction>::RamAccess) {
-        let csr_addr = self.csr_address();
-        let rs1_val = cpu.x[self.operands.rs1 as usize] as u64;
-
-        let old_val = cpu.read_csr_raw(csr_addr);
-
-        cpu.write_csr_raw(csr_addr, rs1_val);
-
-        if self.operands.rd != 0 {
-            cpu.write_register(self.operands.rd as usize, cpu.sign_extend(old_val as i64));
-        }
+    /// CSRRW has no single-step form. The CSRs live in virtual registers that
+    /// only the inline sequence updates, so a direct update of `cpu.csr` could
+    /// disagree with it. Callers must use `trace`.
+    fn exec(&self, _cpu: &mut Cpu, _: &mut <CSRRW as RISCVInstruction>::RamAccess) {
+        panic!("CSRRW must use trace(), not exec()");
     }
 }
 
@@ -94,8 +88,9 @@ mod tests {
 
         // Choose distinct values so that if the inline sequence accidentally uses
         // the post-clobber rs1 value, the test will fail.
-        let old_vr_val: u64 = 0x2222_3333;
+        let old_vr_val: u64 = 0x2222_3331;
         let write_val: u64 = 0x1111_0000;
+        assert_eq!(old_vr_val & 2, 0, "mtvec starts with a legal MODE");
 
         // Set up the virtual register (single source of truth)
         cpu.x[34] = old_vr_val as i64; // vr34 = mtvec
