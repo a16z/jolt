@@ -685,9 +685,21 @@ jobs:
         with:
           files: .
 
+  # One job per feature set. The generated project's release profile
+  # (codegen-units = 1, fat LTO) compiles jolt-sdk and then links on a single
+  # thread, about three quarters of each build, so builds queued in one job
+  # leave most of the runner idle.
   test-sdk:
-    name: jolt binary check
+    name: jolt binary check (${{ matrix.variant }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: default
+            run: cargo run --release
+          - variant: field-inline
+            run: cargo run --release -q --message-format=short --features field-inline
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions-rust-lang/setup-rust-toolchain@a188e68d0fd2bd36ad51dccb2b07ba6e75105f30 # v2
@@ -702,9 +714,11 @@ jobs:
         run: cargo install --path . --locked --force --profile ci --target-dir target
 
       - name: Guest function selection invalidates cached builds
+        if: matrix.variant == 'default'
         run: python3 jolt-sdk/tests/guest_function_cache.py
 
       - name: Guest memory layout invalidates cached builds
+        if: matrix.variant == 'default'
         run: python3 jolt-sdk/tests/guest_layout_cache.py
 
       - name: Use the `jolt` binary to generate code
@@ -715,11 +729,21 @@ jobs:
 
       - name: Make sure the generated code runs
         working-directory: ./sample_project
-        run: cargo run --release
+        run: ${{ matrix.run }}
 
-      - name: Make sure the generated code runs with field-inline
-        working-directory: ./sample_project
-        run: cargo run --release -q --message-format=short --features field-inline
+  # Join gate so the check name "jolt binary check" still covers every variant.
+  test-sdk-gate:
+    name: jolt binary check
+    runs-on: ubuntu-latest
+    needs: test-sdk
+    if: always()
+    steps:
+      - name: Check variant results
+        run: |
+          if [ "${{ needs.test-sdk.result }}" != "success" ]; then
+            echo "Variant result: ${{ needs.test-sdk.result }}"
+            exit 1
+          fi
 
   test-wasm-verify:
     name: WASM Verifier E2E
