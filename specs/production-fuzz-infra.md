@@ -49,7 +49,7 @@ manifests -> discovery -> workspace jobs
                           scheduled main: save corpus
 ```
 
-PR and manual runs may restore trusted corpora but cannot publish new corpus
+Pull-request runs restore no trusted corpus; push and manual runs may. None can publish new corpus
 state. Only successful scheduled main runs save corpora and prune superseded
 cache entries. Crashes are uploaded for triage; important fixed cases become
 reviewed regression inputs.
@@ -58,7 +58,7 @@ Checkout credentials are not persisted. Fuzz jobs have read access to contents
 and write access to Actions for cache pruning; the repository token is passed to
 that pruning step only. Public artifacts are not an embargoed disclosure channel.
 
-ASan and coverage builds use separate target directories and caches. The runner
+ASan and coverage builds use separate target directories; only ASan builds are cached. The runner
 passes the coverage directory through cargo-fuzz's explicit `--target-dir` option.
 Per-input length, timeout, and RSS limits bound mutation work. Target budgets
 must leave room for compilation, replay, minimization, and coverage under the
