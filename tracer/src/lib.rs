@@ -1209,7 +1209,8 @@ mod tests {
         for chunk_ticks in [1usize, 29, 97, total_ticks + 5] {
             let mut pass1 = PassOne::new(setup_emulator(&elf, &INPUTS, &[], &[], &memory_config));
             let mut pool = SnapshotPool::new();
-            let mut chunks: Vec<(ChunkCheckpoint, Vec<u64>, usize)> = Vec::new();
+            let mut chunks: Vec<(ChunkCheckpoint, usize)> = Vec::new();
+            let mut images: Vec<Vec<u64>> = Vec::new();
             loop {
                 let checkpoint = pass1.checkpoint();
                 let image = pool.capture(&pass1.emulator().get_cpu().mmu.memory.memory);
@@ -1218,7 +1219,8 @@ mod tests {
                     ticks += 1;
                 }
                 if ticks > 0 {
-                    chunks.push((checkpoint, image, ticks));
+                    chunks.push((checkpoint, ticks));
+                    images.push(image);
                 } else {
                     pool.put(image);
                 }
@@ -1227,18 +1229,20 @@ mod tests {
                 }
             }
             assert_eq!(
-                chunks.iter().map(|(_, _, t)| t).sum::<usize>(),
+                chunks.iter().map(|(_, t)| t).sum::<usize>(),
                 total_ticks,
                 "chunk tick counts must cover the program"
             );
 
             let mut worker = ChunkWorker::new(pass1.emulator());
             let mut replayed: Vec<Cycle> = Vec::new();
-            for (idx, (checkpoint, image, ticks)) in chunks.iter().enumerate() {
-                let previous = worker.install_chunk(checkpoint, image.clone());
+            // Images move into the worker, as in `run_two_pass`: a clone
+            // copies, and so commits, the whole RAM backing once per chunk.
+            for (idx, ((checkpoint, ticks), image)) in chunks.iter().zip(images).enumerate() {
+                let previous = worker.install_chunk(checkpoint, image);
                 pool.put(previous);
                 worker.run_ticks(*ticks, &mut replayed);
-                if let Some((next, _, _)) = chunks.get(idx + 1) {
+                if let Some((next, _)) = chunks.get(idx + 1) {
                     if let Some(diff) = next.diff_vs_cpu(worker.cpu()) {
                         panic!("boundary mismatch after chunk {idx} (size {chunk_ticks}): {diff}");
                     }
