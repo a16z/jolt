@@ -5,10 +5,20 @@ on:
     branches: [main]
   pull_request:
     branches: ["**", main]
-    paths-ignore:
-      - "specs/**"
-      - "*.md"
-      - ".claude/**"
+    # Skips changes confined to documentation that no job here reads; typos
+    # runs from spell-check.yml, which has no path filter. `paths-ignore` takes
+    # no exceptions, so the exclusions are `!` patterns, and a later pattern wins.
+    paths:
+      - "**"
+      - "!specs/**"
+      - "!.claude/**"
+      - "!**/*.md"
+      - "!book/src/**"
+      - "!book/theme/**"
+      - "!imgs/**"
+      # The `style` job runs scripts.tests.test_ai_merge_gate, which reads these.
+      - ".claude/skills/verifier-classifier/SKILL.md"
+      - "scripts/tests/fixtures/**"
 
 env:
   RUSTFLAGS: -D warnings
@@ -25,6 +35,10 @@ concurrency:
 # saves it, and only on main. Per-job caches previously totaled >10 GB, and
 # PR-scoped saves (refs/pull/*/merge, which no other run can restore) evicted
 # main's entries, blowing the repository cache quota so every run started cold.
+# The toolchain action's built-in cache saves on every ref, so
+# setup-rust-toolchain steps set `cache: false`. The cache service matches an
+# entry on its key and on a hash of the cached path list, so a job restores a
+# shared entry only if its `cache-directories` equals the saver's.
 jobs:
   fmt:
     runs-on: ubuntu-latest
@@ -79,6 +93,12 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: actions-rust-lang/setup-rust-toolchain@a188e68d0fd2bd36ad51dccb2b07ba6e75105f30 # v2
+        with:
+          cache: false
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          shared-key: field-stack
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Install nextest
         uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2
         with:
@@ -360,6 +380,7 @@ jobs:
         with:
           shared-key: release-tests
           save-if: false
+          cache-directories: ~/.cache/dory
       - name: Install nextest
         uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2
         with:
@@ -615,12 +636,17 @@ jobs:
         with:
           shared-key: release-tests
           save-if: false
+          cache-directories: ~/.cache/dory
       - name: Install nextest
         uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2
         with:
           tool: nextest
+      # akita-planner runs at most three schedule searches at once, a memory
+      # bound, unless AKITA_SCHEDULE_GEN_JOBS raises it. The K=16 field-inline
+      # grid test sets this step's wall time with 20 full searches of under
+      # 1 GB each, so it gets every runner CPU.
       - name: Run jolt-akita with field-inline
-        run: cargo nextest run --cargo-profile ci -p jolt-akita --features field-inline
+        run: AKITA_SCHEDULE_GEN_JOBS=$(nproc) cargo nextest run --cargo-profile ci -p jolt-akita --features field-inline
 
   # The three jobs below run unit suites that build no guest, so they skip the
   # guest toolchain and the jolt CLI: jolt-kernels has no dependency path to
@@ -731,7 +757,7 @@ jobs:
       # sweep (tampering/field_inline.rs), backed by fixtures the modular
       # prover generates at test time.
       - name: Run jolt-verifier field-inline fixture and tamper suites
-        run: cargo nextest run --cargo-profile ci -p jolt-verifier --features prover-fixtures,field-inline --test-threads 1
+        run: cargo nextest run --cargo-profile ci -p jolt-verifier --features prover-fixtures,field-inline
 
   test-verifier-akita-fixtures:
     runs-on: ubuntu-latest
@@ -770,7 +796,7 @@ jobs:
       # proof-shape, and presence tamper sweeps (tampering/akita.rs), backed
       # by fixtures the real Akita prover generates at test time.
       - name: Run jolt-verifier akita fixture and tamper suites
-        run: cargo nextest run --cargo-profile ci -p jolt-verifier --features akita,prover-fixtures --test-threads 1
+        run: cargo nextest run --cargo-profile ci -p jolt-verifier --features akita,prover-fixtures
 
   test-verifier-akita-field-inline-fixtures:
     runs-on: ubuntu-latest
@@ -805,7 +831,7 @@ jobs:
         with:
           tool: nextest
       - name: Run jolt-verifier with prover-fixtures,field-inline,akita
-        run: cargo nextest run --cargo-profile ci -p jolt-verifier --features prover-fixtures,field-inline,akita --test-threads 1
+        run: cargo nextest run --cargo-profile ci -p jolt-verifier --features prover-fixtures,field-inline,akita
 
   test-verifier-zk-fixtures:
     runs-on: ubuntu-latest
@@ -845,18 +871,48 @@ jobs:
       # step existed they were clippy-only, so the golden BlindFold shape pins
       # in completeness/zk.rs could go stale without any lane noticing.
       - name: Run jolt-verifier fixtures with zk feature
-        run: cargo nextest run --cargo-profile ci -p jolt-verifier --features prover-fixtures,zk --test-threads 1 --cargo-quiet
+        run: cargo nextest run --cargo-profile ci -p jolt-verifier --features prover-fixtures,zk --cargo-quiet
 
-  typos:
+  # One job per feature set. The generated project's release profile
+  # (codegen-units = 1, fat LTO) compiles jolt-sdk and then links on a single
+  # thread, about three quarters of each build, so builds queued in one job
+  # leave most of the runner idle.
+  test-sdk:
+    name: jolt binary check (${{ matrix.variant }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: default
+            run: cargo run --release
+          - variant: field-inline
+            run: cargo run --release -q --message-format=short --features field-inline
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: crate-ci/typos@2611abd15acb0c2e317fb9e45855aabb8b35a414 # v1.52.1
+      - uses: actions-rust-lang/setup-rust-toolchain@a188e68d0fd2bd36ad51dccb2b07ba6e75105f30 # v2
         with:
-          files: .
+          cache: false
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          shared-key: release-tests
+          save-if: false
+          cache-directories: ~/.cache/dory
+      - name: Build and install jolt CLI
+        run: cargo install --path . --locked --force --profile ci --target-dir target
 
-  test-sdk:
-    name: jolt binary check
+      - name: Use the `jolt` binary to generate code
+        run: jolt new sample_project
+
+      - name: Use checked-out SDK in generated project
+        run: python3 scripts/ci/use_checkout_sdk.py sample_project
+
+      - name: Make sure the generated code runs
+        working-directory: ./sample_project
+        run: ${{ matrix.run }}
+
+  test-sdk-guest-cache:
+    name: jolt binary check (guest cache)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -877,19 +933,20 @@ jobs:
       - name: Guest memory layout invalidates cached builds
         run: python3 jolt-sdk/tests/guest_layout_cache.py
 
-      - name: Use the `jolt` binary to generate code
-        run: jolt new sample_project
-
-      - name: Use checked-out SDK in generated project
-        run: python3 scripts/ci/use_checkout_sdk.py sample_project
-
-      - name: Make sure the generated code runs
-        working-directory: ./sample_project
-        run: cargo run --release
-
-      - name: Make sure the generated code runs with field-inline
-        working-directory: ./sample_project
-        run: cargo run --release -q --message-format=short --features field-inline
+  # Join gate so the check name "jolt binary check" still covers the jobs split from it.
+  test-sdk-gate:
+    name: jolt binary check
+    runs-on: ubuntu-latest
+    needs: [test-sdk, test-sdk-guest-cache]
+    if: always()
+    steps:
+      - name: Check results
+        run: |
+          if [ "${{ needs.test-sdk.result }}" != "success" ] || [ "${{ needs.test-sdk-guest-cache.result }}" != "success" ]; then
+            echo "Sample project result: ${{ needs.test-sdk.result }}"
+            echo "Guest cache result: ${{ needs.test-sdk-guest-cache.result }}"
+            exit 1
+          fi
 
   test-wasm-verify:
     name: WASM Verifier E2E
@@ -1117,7 +1174,7 @@ jobs:
         with:
           tool: nextest
       - name: Run verifier fixtures
-        run: cargo nextest run --cargo-profile ci -p jolt-verifier --features prover-fixtures --test-threads 1 --cargo-quiet
+        run: cargo nextest run --cargo-profile ci -p jolt-verifier --features prover-fixtures --cargo-quiet
 
   test-inlines:
     name: Test inlines

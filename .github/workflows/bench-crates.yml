@@ -57,6 +57,8 @@ jobs:
           fetch-depth: 2
 
       - uses: actions-rust-lang/setup-rust-toolchain@a188e68d0fd2bd36ad51dccb2b07ba6e75105f30 # v2
+        with:
+          cache: false
 
       - name: Resolve base and head
         id: refs
