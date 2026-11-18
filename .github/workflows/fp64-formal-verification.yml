@@ -60,6 +60,7 @@ jobs:
       - uses: actions-rust-lang/setup-rust-toolchain@a188e68d0fd2bd36ad51dccb2b07ba6e75105f30 # v2
         with:
           toolchain: nightly
+          cache: false
       - name: Install cargo-fuzz
         uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2
         with:
@@ -77,6 +78,7 @@ jobs:
       - uses: actions-rust-lang/setup-rust-toolchain@a188e68d0fd2bd36ad51dccb2b07ba6e75105f30 # v2
         with:
           toolchain: nightly
+          cache: false
       - name: Install cargo-fuzz
         uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2
         with:
@@ -98,6 +100,7 @@ jobs:
         with:
           # Must match proofs/hol-light/fp64-certified-builds.json.
           toolchain: "1.99.1"
+          cache: false
 
       - name: Validate the matrix and artifact checker
         run: |
@@ -141,6 +144,7 @@ jobs:
         with:
           # Must match proofs/hol-light/fp64-certified-builds.json.
           toolchain: "1.99.1"
+          cache: false
 
       - name: Install proof dependencies
         run: |
@@ -207,6 +211,7 @@ jobs:
         with:
           # Must match proofs/hol-light/fp64-certified-builds.json.
           toolchain: "1.99.1"
+          cache: false
 
       - name: Confirm the native target
         run: |
@@ -276,6 +281,7 @@ jobs:
         with:
           # Must match proofs/hol-light/fp64-certified-builds.json.
           toolchain: "1.99.1"
+          cache: false
 
       - name: Install proof dependencies
         run: |
