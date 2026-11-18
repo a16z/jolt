@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795023993352,
+  "lastUpdate": 1795024082944,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -264682,6 +264682,270 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 891160,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "atretyakov@a16z.com",
+            "name": "Andrew Tretyakov",
+            "username": "0xAndoroid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "35f8e19b79ec36a3f4c7ca5a747cf179b333c8a7",
+          "message": "ci(formal-verification): reuse the built HOL Light across proof runs (#2501)\n\n* ci(formal-verification): reuse the built HOL Light across proof runs\n\nThe Fp64 and Fp128 proof jobs spent 60-75% of their time building tools\nbefore any proof ran. Three causes, three changes:\n\n- `opam init` compiled OCaml 5.5.2 for a default switch that no step uses\n  (155-289 s on x86-64 Linux and macOS). `--bare` skips that switch.\n- The HOL Light build (local opam switch with OCaml 5.4.0, Camlp5, zarith,\n  then `make`) ran from source in every run (389-598 s). It now lives in\n  proofs/hol-light/build-hol-light.sh, and the jobs restore its output\n  directory from the Actions cache under a key made of the runner image\n  name and version, the CPU architecture and the hash of that script.\n  Only runs that are not pull requests save an entry.\n- The build floated on the live opam-repository. The script pins an\n  opam-repository commit, so the key now names every input the script\n  selects, and pins Camlp5 before installing ledit on Linux as the macOS\n  job already did, which removes a second Camlp5 build.\n\nThe proof steps are unchanged and run in full on every triggering run.\n\n* ci(formal-verification): key the HOL Light cache on installed tool versions\n\nThe first key named the runner image, the architecture and the build\nscript, but the install steps fetch opam, GMP and PCRE2 at whatever\nversion apt or Homebrew serves, so a package upgrade could leave the key\nunchanged while a fresh build would differ. The script now prints the\nkey itself and hashes those three versions with the image name and\nversion, the kernel and architecture, and its own content.\n\n* ci(formal-verification): run Fp64 proofs when the HOL Light build script changes\n\nThe Fp64 workflow's path filters did not match\nproofs/hol-light/build-hol-light.sh, so a change to the pins in that\nscript alone ran the Fp128 proofs but not the Fp64 ones.\n\nThe script also registered its opam repository under the fixed name\n`pinned`. opam refuses to re-register a name at another URL, so a rerun\nin a persistent opam root after a pin bump failed. The name now carries\nthe commit.",
+          "timestamp": "2026-11-18T11:46:38-05:00",
+          "tree_id": "561af093b4bb4b64dd2721e77e7444c9abcb622f",
+          "url": "https://github.com/a16z/jolt/commit/35f8e19b79ec36a3f4c7ca5a747cf179b333c8a7"
+        },
+        "date": 1795024075310,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 3.7992,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 888372,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.2252,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 464116,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 464100,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 464024,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.6895,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 463844,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-mem",
+            "value": 888552,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 1.5264,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 464236,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 3.9395,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 464104,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 4.6973,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 117976,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.6341,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 892012,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.532,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 463784,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.3891,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 464432,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 20.8878,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 464120,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 4.88,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 463804,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 29.7552,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 724228,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 13.9233,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 599436,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 60.162,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 627692,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.5121,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 464268,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.7377,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 464128,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 14.7783,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 889240,
             "unit": "KB",
             "extra": ""
           }
