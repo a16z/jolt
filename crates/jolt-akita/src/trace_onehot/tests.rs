@@ -385,6 +385,7 @@ fn assert_production_kernels_match_materialized<const D: usize>(
         committed_zero_column,
         num_digits,
         rows,
+        None,
     );
 }
 
@@ -421,6 +422,7 @@ fn assert_prefix_kernels_match_materialized<const D: usize>(
     committed_zero_column: Option<usize>,
     num_digits: usize,
     prefix: usize,
+    subring: Option<usize>,
 ) {
     const COLUMNS: usize = 3;
     let columns = TraceOneHotColumn::new(
@@ -455,9 +457,19 @@ fn assert_prefix_kernels_match_materialized<const D: usize>(
     let num_blocks = RootPolyShape::<AkitaField, D>::num_ring_elems(source).div_ceil(num_positions);
     let backend = test_backend();
     let challenges = (0..num_blocks * COLUMNS)
-        .map(|block| SparseChallenge {
-            positions: vec![0, (block % (D - 1) + 1) as u32].into(),
-            coeffs: vec![1, -1].into(),
+        .map(|block| match subring {
+            None => SparseChallenge {
+                positions: vec![0, (block % (D - 1) + 1) as u32].into(),
+                coeffs: vec![1, -1].into(),
+            },
+            Some(dimension) => SparseChallenge {
+                positions: (0..31)
+                    .map(|i| (((i * 73 + block) % dimension) * (D / dimension)) as u32)
+                    .collect(),
+                coeffs: (0..31)
+                    .map(|i| if (i + block) % 2 == 0 { 2 } else { -1 })
+                    .collect(),
+            },
         })
         .collect::<Vec<_>>();
     for num_chunks in [1, 2, 4, 8] {
@@ -511,6 +523,7 @@ fn assert_prefix_kernels_match_materialized<const D: usize>(
         .unwrap();
         assert_eq!(streamed, materialized);
         for mode in [
+            DecomposeRotationMode::Auto,
             DecomposeRotationMode::Dense,
             DecomposeRotationMode::Sparse,
             DecomposeRotationMode::Compact,
@@ -573,11 +586,32 @@ fn assert_prefix_kernels_match_materialized<const D: usize>(
 }
 
 #[test]
+fn subring_decomposition_matches_materialized_onehot() {
+    for subring in [64, 128] {
+        for prefix in [0, 1, 3, 31, 63, 64] {
+            for k in [16, 256] {
+                for positions in [1, 8, 128] {
+                    assert_prefix_kernels_match_materialized::<512>(
+                        k,
+                        64,
+                        positions,
+                        Some(1),
+                        2,
+                        prefix,
+                        Some(subring),
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn zero_suffix_kernels_match_materialized_onehot() {
     for prefix in [0, 1, 3, 4, 5, 17, 31, 32] {
-        assert_prefix_kernels_match_materialized::<64>(16, 32, 4, Some(1), 2, prefix);
-        assert_prefix_kernels_match_materialized::<512>(16, 32, 1, Some(1), 2, prefix);
-        assert_prefix_kernels_match_materialized::<64>(256, 32, 16, Some(1), 2, prefix);
+        assert_prefix_kernels_match_materialized::<64>(16, 32, 4, Some(1), 2, prefix, None);
+        assert_prefix_kernels_match_materialized::<512>(16, 32, 1, Some(1), 2, prefix, None);
+        assert_prefix_kernels_match_materialized::<64>(256, 32, 16, Some(1), 2, prefix, None);
     }
 }
 

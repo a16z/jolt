@@ -33,7 +33,6 @@ where
     let booleanity_address_claims =
         relations::booleanity::BooleanityAddressPhase::new(booleanity_dimensions);
     let booleanity_claims = relations::booleanity::BooleanityCyclePhase::new(booleanity_dimensions);
-    let ram_hamming_claims = relations::ram::HammingBooleanity::new(trace_dimensions);
     let ram_ra_claims =
         relations::ram::RaVirtualization::new(formula_dimensions.ram_ra_virtualization);
     let instruction_ra_claims = relations::instruction::RaVirtualization::new(
@@ -67,7 +66,6 @@ where
         bytecode_rounds,
         booleanity_address_claims.rounds(),
         booleanity_claims.rounds(),
-        ram_hamming_claims.rounds(),
         ram_ra_claims.rounds(),
         instruction_ra_claims.rounds(),
         inc_claims.rounds(),

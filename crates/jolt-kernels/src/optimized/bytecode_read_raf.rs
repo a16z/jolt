@@ -80,8 +80,8 @@ use super::instruction_read_raf::InstructionCycleRow;
 use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa};
 use super::support::{
     bind_all, eq_table, gamma_powers, map_reduce_chunks, merge_evals, pair, par_sum_pair_groups,
-    par_sum_pair_groups_reusing, repeat_hash, repeats_often, round_poly_from_skipped_evals,
-    RepeatCache, RoundProgress,
+    par_sum_pair_groups_reusing, repeat_hash, repeats_often_in_window,
+    round_poly_from_skipped_evals, RepeatCache, RoundProgress,
 };
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -1189,8 +1189,9 @@ const CYCLE_CHUNK: usize = 4096;
 /// A window in which repeated PC groups are detected and merged.
 #[derive(Clone, Copy)]
 struct CycleGrouping {
-    /// Distinct groups the merge cache holds, and the sampled block length.
+    /// Distinct groups budgeted for the merge cache.
     entries: usize,
+    sample_groups: usize,
     /// Groups per map-reduce task; repeated groups merge only within one task.
     #[cfg(feature = "parallel")]
     batch: usize,
@@ -1199,11 +1200,13 @@ struct CycleGrouping {
 }
 
 impl CycleGrouping {
+    const SHORT_ENTRIES: usize = 64;
     const LONG_ENTRIES: usize = 2048;
     const LONG_BATCH: usize = 16384;
 
     const SHORT: Self = Self {
-        entries: 64,
+        entries: Self::SHORT_ENTRIES,
+        sample_groups: Self::SHORT_ENTRIES,
         #[cfg(feature = "parallel")]
         batch: CYCLE_CHUNK,
         min_groups: 0,
@@ -1213,6 +1216,7 @@ impl CycleGrouping {
     /// win more from merging than they lose to parallelism.
     const LONG: Self = Self {
         entries: Self::LONG_ENTRIES,
+        sample_groups: Self::LONG_BATCH,
         #[cfg(feature = "parallel")]
         batch: Self::LONG_BATCH,
         min_groups: Self::LONG_BATCH,
@@ -1244,10 +1248,19 @@ impl BytecodePcChunks {
         [CycleGrouping::SHORT, CycleGrouping::LONG]
             .into_iter()
             .find(|plan| {
+                let long_sample = self.selectors.len() > 4;
+                #[cfg(feature = "parallel")]
+                let long_sample =
+                    long_sample && groups.div_ceil(plan.batch) >= rayon::current_num_threads();
                 groups >= plan.min_groups
-                    && repeats_often(
+                    && repeats_often_in_window(
                         groups,
                         plan.entries,
+                        if long_sample {
+                            plan.sample_groups
+                        } else {
+                            plan.entries
+                        },
                         |y| self.group_hash(y, width),
                         |a, b| self.same_group(a, b, width),
                     )
