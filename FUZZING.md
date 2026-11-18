@@ -146,9 +146,13 @@ largest budgets, and hot parser/no-panic targets the smallest.
 
 A budget is time spent mutating. libFuzzer measures `-max_total_time` from
 process start and executes every corpus input before it first tests the limit,
-so `run` first replays the corpus directories alone (`-runs=0`) and then starts
-the fuzzing run with the budget plus the duration of that replay. A target's
-wall time is therefore its budget plus two replays of its corpus.
+so `run` builds the target, replays the corpus directories alone (`-runs=0`),
+and then starts the fuzzing run with the budget plus the duration of that
+replay. The fuzzing run replays the same inputs again before it mutates, so the
+budget holds only to within the difference between the two replays: where a
+replay lasts many times the budget, a few percent of difference between them is
+the whole budget. A target's wall time is its budget plus two replays of its
+corpus.
 
 The current allocations are priors, not measurements. Before materially
 changing a budget, run the [calibration procedure](specs/production-fuzz-infra.md#budget-calibration) and reallocate toward targets that still reach
