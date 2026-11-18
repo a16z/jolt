@@ -1,9 +1,7 @@
 use jolt_claims::protocols::jolt::TracePolynomialOrder;
 use jolt_crypto::VectorCommitment;
 use jolt_openings::CommitmentScheme;
-use jolt_program::preprocess::{
-    JoltProgramPreprocessing, PreprocessingError as ProgramPreprocessingError,
-};
+use jolt_program::preprocess::JoltProgramPreprocessing;
 use jolt_verifier::JoltVerifierPreprocessing;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -23,10 +21,19 @@ pub(crate) fn validate_committed_mode(
             reason: "declared bytecode size differs from padded rows".to_owned(),
         });
     }
-    program
-        .bytecode
-        .validate_branch_offsets()
-        .map_err(ProgramPreprocessingError::from)?;
+    // A committed key carries no rows, so its verifier can reject only entry
+    // index 0 (`ProgramPreprocessing::validate_entry_row`).
+    require_entry_instruction(program)
+}
+
+/// Bytecode read-RAF pins cycle 0 to the entry row; were that row a no-op, an
+/// all-padding trace would verify under either panic claim.
+fn require_entry_instruction(program: &JoltProgramPreprocessing) -> Result<(), PreprocessingError> {
+    if program.bytecode.entry_instruction().is_none() {
+        return Err(PreprocessingError::InvalidProgram {
+            reason: "entry address does not name an instruction row".to_owned(),
+        });
+    }
     Ok(())
 }
 
@@ -54,11 +61,8 @@ impl TryFrom<Arc<JoltProgramPreprocessing>> for JoltSharedPreprocessing {
     // Fails the SDK's fallible `preprocess_shared_*` entry point early; the
     // verifier re-checks in `validate_inputs`.
     fn try_from(program: Arc<JoltProgramPreprocessing>) -> Result<Self, Self::Error> {
-        if program.bytecode.entry_instruction().is_none() {
-            return Err(PreprocessingError::InvalidProgram {
-                reason: "entry address does not name an instruction row".to_owned(),
-            });
-        }
+        let _ = program.code_region()?;
+        require_entry_instruction(&program)?;
         Ok(Self { program })
     }
 }
@@ -128,43 +132,8 @@ mod tests {
         assert_eq!(*decoded.program, program);
     }
 
-    #[cfg(all(not(feature = "akita"), not(feature = "field-inline")))]
-    #[test]
-    fn key_builders_recheck_branch_offsets_in_existing_preprocessing() {
-        use crate::dory;
-        use jolt_program::preprocess::PreprocessingError as ProgramPreprocessingError;
-        use jolt_verifier::VerifierError;
-
-        let branch = JoltInstructionRow {
-            instruction_kind: JoltInstructionKind::BEQ,
-            address: RAM_START_ADDRESS as usize,
-            operands: NormalizedOperands {
-                rs1: Some(1),
-                rs2: Some(2),
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        let mut program = program_with_entry(vec![branch], RAM_START_ADDRESS);
-        program.bytecode.bytecode[1].operands.imm = 4096;
-        let shared = JoltSharedPreprocessing::new(program.clone()).unwrap();
-        assert!(matches!(
-            dory::from_shared(shared),
-            Err(PreprocessingError::Verifier(
-                VerifierError::InvalidBranchOffset(_)
-            ))
-        ));
-        assert!(matches!(
-            dory::preprocess_committed(program),
-            Err(PreprocessingError::Program(
-                ProgramPreprocessingError::InvalidBranchOffset(_)
-            ))
-        ));
-    }
-
     #[test]
     fn shared_preprocessing_rejects_an_entry_without_an_instruction_row() {
-        // An entry absent from the bytecode, and one naming the padding row.
         for program in [
             program_with_entry(Vec::new(), RAM_START_ADDRESS),
             program_with_entry(vec![addi_at_ram_start()], 0),
@@ -183,6 +152,24 @@ mod tests {
                 .is_err()
             );
         }
+    }
+
+    #[test]
+    fn shared_preprocessing_rejects_an_invalid_memory_layout() {
+        let mut program = program_with_entry(vec![addi_at_ram_start()], RAM_START_ADDRESS);
+        program.memory_layout.heap_end += 1;
+        assert!(matches!(
+            JoltSharedPreprocessing::new(program.clone()),
+            Err(PreprocessingError::Program(_))
+        ));
+        let encoded = bincode::serde::encode_to_vec(&program, bincode::config::standard()).unwrap();
+        assert!(
+            bincode::serde::decode_from_slice::<JoltSharedPreprocessing, _>(
+                &encoded,
+                bincode::config::standard()
+            )
+            .is_err()
+        );
     }
 }
 

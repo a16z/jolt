@@ -355,13 +355,12 @@ mod tests {
                 }
             })
             .collect();
-        assert_eq!(input_ids.len(), 7);
+        assert_eq!(input_ids.len(), 6);
         assert_eq!(
             UniskipInputs::<Fr> {
                 base: base::ProductUniskipInputClaims {
                     product: Fr::from_u64(0),
                     should_branch: Fr::from_u64(0),
-                    jump: Fr::from_u64(0),
                     halt: Fr::from_u64(0),
                     halt_panic: Fr::from_u64(0),
                 },

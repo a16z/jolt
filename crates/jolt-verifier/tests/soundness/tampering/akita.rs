@@ -225,7 +225,7 @@ fn visit_stage2<F: JoltField>(claims: &mut Stage2OutputClaims<F>, f: &mut dyn Fn
     let ProductRemainderOutputClaims {
         left_instruction_input,
         right_instruction_input,
-        jump_flag,
+        is_noop,
         write_lookup_output_to_rd,
         lookup_output,
         branch_flag,
@@ -247,7 +247,7 @@ fn visit_stage2<F: JoltField>(claims: &mut Stage2OutputClaims<F>, f: &mut dyn Fn
         inc,
         left_instruction_input,
         right_instruction_input,
-        jump_flag,
+        is_noop,
         write_lookup_output_to_rd,
         lookup_output,
         branch_flag,

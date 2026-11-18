@@ -419,6 +419,9 @@ mod halting {
         SelfJump,
         /// `JALR x5, 0(x6)` with x6 = 0: a jump to address 0, as a halt's is.
         JalrToZero,
+        /// `BEQ x0, x0` whose offset is minus its own address: a taken branch
+        /// to address 0, so rows 15 and 16 hold before padding.
+        BranchToZero,
         /// The first row of a two-row JALR sequence whose target is 0; the
         /// second exists only in the bytecode. Row 14 holds, so stage 1 can
         /// reject it only through the sequence rule, row 17
@@ -504,6 +507,17 @@ mod halting {
             End::ArbitraryJump => row(Kind::JAL, None, 4),
             End::SelfJump => row(Kind::JAL, None, 0),
             End::JalrToZero => row(Kind::JALR, Some(6), 0),
+            End::BranchToZero => JoltInstructionRow {
+                instruction_kind: Kind::BEQ,
+                address: address(end_row),
+                operands: NormalizedOperands {
+                    rs1: Some(0),
+                    rs2: Some(0),
+                    imm: -(address(end_row) as i128),
+                    ..NormalizedOperands::default()
+                },
+                ..JoltInstructionRow::default()
+            },
             End::ExpansionMidpoint => JoltInstructionRow {
                 virtual_sequence_remaining: Some(1),
                 is_first_in_sequence: true,
@@ -1112,20 +1126,23 @@ mod halting {
         }
     }
 
-    /// Row 14 holds for a jump to address 0 into padding; lane 3 refuses it
-    /// under either claim because the row is not a halt.
+    /// The equality rows hold for a jump or a taken branch to address 0 into
+    /// padding; lane 3 refuses both under either claim because the row is
+    /// not a halt.
     #[test]
-    fn jump_into_padding_is_rejected_in_stage2() {
-        let (witness, _) = run(MIN_PADDED_TRACE_LENGTH, End::JalrToZero);
-        for claimed_panic in [false, true] {
-            let (stage1, lane, _) = prove_lane(&witness, claimed_panic).unwrap();
-            assert!(
-                matches!(
-                    replay_lane(&stage1, &lane, claimed_panic),
-                    Err(VerifierError::StageClaimOutputMismatch { stage: 2 })
-                ),
-                "panic = {claimed_panic}"
-            );
+    fn non_halt_ends_at_address_zero_are_rejected_in_stage2() {
+        for end in [End::JalrToZero, End::BranchToZero] {
+            let (witness, _) = run(MIN_PADDED_TRACE_LENGTH, end);
+            for claimed_panic in [false, true] {
+                let (stage1, lane, _) = prove_lane(&witness, claimed_panic).unwrap();
+                assert!(
+                    matches!(
+                        replay_lane(&stage1, &lane, claimed_panic),
+                        Err(VerifierError::StageClaimOutputMismatch { stage: 2 })
+                    ),
+                    "{end:?}, panic = {claimed_panic}"
+                );
+            }
         }
     }
 

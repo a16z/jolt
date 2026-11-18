@@ -12,7 +12,7 @@ use crate::{
 };
 
 /// The RV64 constraints under each claimed panic bit; they differ only in
-/// the jump lane's output (row 21's `C`), which the extracted Lean definition
+/// the halt lane's output (row 21's `C`), which the extracted Lean definition
 /// selects with its `claimed_panic` parameter.
 pub struct ZkLeanR1CSConstraints<J> {
     success: ConstraintMatrices<Fr>,
@@ -183,7 +183,7 @@ mod tests {
     use crate::constants::RV64IParameterSet;
 
     #[test]
-    fn extracted_constraints_branch_only_the_jump_lane() {
+    fn extracted_constraints_branch_only_the_halt_lane() {
         let mut output = Vec::new();
         ZkLeanR1CSConstraints::<RV64IParameterSet>::extract()
             .zklean_pretty_print(&mut output, 0)

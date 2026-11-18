@@ -69,7 +69,7 @@ The e2e matrix, the verifier soundness and fixture suites, and the tracer and x8
 - **x86.** The same words through `run_machine` and record mode, faults beyond the domain, host calls that read gap values, gap and padding values carried across checkpoints, and an interpreter-vs-x86 parity test on a hand-assembled ELF that compares rows, dimensions, final memory and device.
 - **Verifier.** `verifier_accepts_loads_and_stores_on_padding_words` (`crates/jolt-verifier/tests/soundness/ram_guards.rs`) verifies load and store witnesses at the first gap word, the first padding word and the last domain word under the production write-protection mask; the file's other tests keep their assertions. A unit test pins the IoMask from `ram_output_check_publics` at boundary words of a small layout, and checks that it returns zero for a layout with no input or output capacity.
 - **Codec.** `retired_identifiers_are_rejected_without_shifting_live_tags` pins `Reserved2`.
-- **Fixtures.** The six verifier fuzz bundles are regenerated, and `FIXTURE_MAGIC` moves to `JVCF0019`. The eight program-digest goldens pass unchanged.
+- **Fixtures.** The six verifier fuzz bundles are regenerated, and `FIXTURE_MAGIC` moves to `JVCF0021`. The eight program-digest goldens pass unchanged.
 
 ### Performance
 

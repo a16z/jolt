@@ -420,33 +420,6 @@ fn inline_provider_output_is_validated_and_stamped() {
 }
 
 #[test]
-fn registered_inline_rejects_an_unencodable_branch() {
-    struct BranchProvider;
-
-    impl InlineExpansionProvider for BranchProvider {
-        fn expand_inline(
-            &mut self,
-            instruction: &SourceInstruction,
-            _profile: JoltInstructionProfile,
-        ) -> Result<ExpandedInstructionSequence, ExpansionError> {
-            let mut builder = InlineExpansionBuilder::new(*instruction.row());
-            builder.emit_b(Kind::BEQ, 1, 2, 4096);
-            builder.finalize()
-        }
-    }
-
-    assert!(matches!(
-        expand_instruction_with_provider(
-            &instruction(SourceInstructionKind::Inline, Some(3), false),
-            &mut ExpansionAllocator::new(),
-            &mut BranchProvider,
-            RV64IMAC_JOLT,
-        ),
-        Err(ExpansionError::InvalidBranchOffset(_))
-    ));
-}
-
-#[test]
 fn inline_provider_memory_offsets_must_fit_twelve_bits() -> Result<(), ExpansionError> {
     struct MemoryProvider {
         kind: SourceInstructionKind,

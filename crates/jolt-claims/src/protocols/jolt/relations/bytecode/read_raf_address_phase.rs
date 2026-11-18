@@ -106,8 +106,8 @@ pub struct BytecodeReadRafAddressPhaseInputClaims<C> {
     pub outer_field_advice_limb: C,
     #[opening(PC, from = SpartanOuter)]
     pub outer_pc: C,
-    #[opening(OpFlags(CircuitFlags::Jump), from = SpartanProductVirtualization)]
-    pub product_jump: C,
+    #[opening(InstructionFlags(InstructionFlags::IsNoop), from = SpartanProductVirtualization)]
+    pub product_is_noop: C,
     #[opening(InstructionFlags(InstructionFlags::Branch), from = SpartanProductVirtualization)]
     pub product_branch: C,
     #[opening(OpFlags(CircuitFlags::WriteLookupOutputToRD), from = SpartanProductVirtualization)]

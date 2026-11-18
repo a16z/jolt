@@ -11,7 +11,7 @@
 //! |-------|-------------|
 //! | `[0]` | Constant 1 |
 //! | `[1..=NUM_R1CS_INPUTS]` | R1CS inputs (registers, flags, PC, lookups) |
-//! | Next two columns | Product factor variables (`Branch`, `NextIsNoop`) |
+//! | Next three columns | Product factor variables (`Branch`, `NextIsNoop`, `IsNoop`) |
 //!
 //! # Constraint forms
 //!
@@ -20,7 +20,9 @@
 
 use jolt_riscv::{CircuitFlags, NUM_CIRCUIT_FLAGS};
 
-use crate::protocols::jolt::geometry::spartan::PRODUCT_JUMP_LANE_OUTPUT;
+use crate::protocols::jolt::geometry::spartan::{
+    PRODUCT_HALT_LANE_LEFT_FACTOR, PRODUCT_HALT_LANE_OUTPUT,
+};
 
 /// Constant-1 wire.
 pub const V_CONST: usize = 0;
@@ -69,9 +71,10 @@ const _: () = assert!(V_FLAG_ADD_OPERANDS == V_LOOKUP_OUTPUT + 1);
 
 pub const V_BRANCH: usize = 1 + NUM_R1CS_INPUTS;
 pub const V_NEXT_IS_NOOP: usize = V_BRANCH + 1;
+pub const V_IS_NOOP: usize = V_NEXT_IS_NOOP + 1;
 
 pub const NUM_R1CS_INPUTS: usize = 20 + NUM_CIRCUIT_FLAGS;
-pub const NUM_PRODUCT_FACTORS: usize = 2;
+pub const NUM_PRODUCT_FACTORS: usize = 3;
 pub const NUM_VARS_PER_CYCLE: usize = 1 + NUM_R1CS_INPUTS + NUM_PRODUCT_FACTORS;
 pub const NUM_EQ_CONSTRAINTS: usize = 19;
 pub const NUM_PRODUCT_CONSTRAINTS: usize = 3;
@@ -141,6 +144,7 @@ pub const RV64_VARIABLE_NAMES: [&str; NUM_VARS_PER_CYCLE] = {
     }
     names[V_BRANCH] = "Branch";
     names[V_NEXT_IS_NOOP] = "NextIsNoop";
+    names[V_IS_NOOP] = "IsNoop";
     names
 };
 
@@ -166,7 +170,7 @@ pub const RV64_CONSTRAINT_NAMES: [&str; NUM_CONSTRAINTS_PER_CYCLE] = [
     "MustStartSequenceFromBeginning",
     "Product",
     "ShouldBranch",
-    "JumpHasSuccessorUnlessHalt",
+    "NextIsNoopEqIsNoopUnlessHalt",
 ];
 
 pub const fn const_column() -> usize {
@@ -437,9 +441,12 @@ fn append_product_constraints<F: Field>(
     b_rows.push(row::<F>(&[(V_BRANCH, 1)]));
     c_rows.push(row::<F>(&[(V_SHOULD_BRANCH, 1)]));
 
-    a_rows.push(row::<F>(&[(V_FLAG_JUMP, 1)]));
-    b_rows.push(row::<F>(&[(V_CONST, 1), (V_NEXT_IS_NOOP, -1)]));
-    let jump_lane_output: Vec<(usize, i128)> = PRODUCT_JUMP_LANE_OUTPUT
+    a_rows.push(row::<F>(&[(
+        V_CONST,
+        i128::from(PRODUCT_HALT_LANE_LEFT_FACTOR),
+    )]));
+    b_rows.push(row::<F>(&[(V_NEXT_IS_NOOP, 1), (V_IS_NOOP, -1)]));
+    let halt_lane_output: Vec<(usize, i128)> = PRODUCT_HALT_LANE_OUTPUT
         .iter()
         .map(|term| {
             (
@@ -448,7 +455,7 @@ fn append_product_constraints<F: Field>(
             )
         })
         .collect();
-    c_rows.push(row::<F>(&jump_lane_output));
+    c_rows.push(row::<F>(&halt_lane_output));
 }
 
 /// Build only the Jolt RV64 equality-conditional constraints.
@@ -474,13 +481,13 @@ pub fn rv64_spartan_outer_constraints<F: Field>() -> ConstraintMatrices<F> {
 /// - 19 equality-conditional: `guard · (left − right) = 0` → A=guard, B=left−right, C=0
 /// - 3 product: `left · right = output` → A=left, B=right, C=output
 ///
-/// Row 21's output is product lane 3's (`PRODUCT_JUMP_LANE_OUTPUT`), which
+/// Row 21's output is product lane 3's (`PRODUCT_HALT_LANE_OUTPUT`), which
 /// depends on the statement's claimed panic bit. The proof system checks these
 /// rows through the Spartan outer and product relations, never through this
 /// full-trace matrix.
 ///
 /// Variable layout matches the constants in this module: the constant, all R1CS
-/// inputs, then the two product factors.
+/// inputs, then the three product factors.
 pub fn rv64_trace_constraints<F: Field>(claimed_panic: bool) -> ConstraintMatrices<F> {
     let (mut a_rows, mut b_rows, mut c_rows) = rv64_eq_constraint_rows();
     a_rows.reserve(NUM_PRODUCT_CONSTRAINTS);
@@ -508,16 +515,18 @@ mod tests {
     use jolt_riscv::CIRCUIT_FLAGS;
     use num_traits::Zero;
 
-    /// A no-op cycle: const=1, all else zero. All eq-conditional guards
-    /// evaluate to 0 (Load=0, Store=0, etc.) except constraint 16
-    /// (NextUnexpPCUpdateOtherwise) whose guard = 1−0−0 = 1.
-    /// Constraint 16 requires: NextUnexpPC = UnexpPC + 4 − 4·DoNotUpdate − 2·IsCompressed.
+    /// A no-op cycle followed by another: const, DoNotUpdate, IsNoop and
+    /// NextIsNoop are 1, all else zero. Constraint 16
+    /// (NextUnexpPCUpdateOtherwise), whose guard is 1−0−0 = 1, requires
+    /// NextUnexpPC = UnexpPC + 4 − 4·DoNotUpdate − 2·IsCompressed.
     /// For the no-op (DoNotUpdate=1): NextUnexpPC = UnexpPC + 4 − 4 = UnexpPC.
     /// With both at 0 this holds.
     fn noop_witness() -> Vec<Fr> {
         let mut w = vec![Fr::zero(); NUM_VARS_PER_CYCLE];
         w[V_CONST] = Fr::from_u64(1);
         w[V_FLAG_DO_NOT_UPDATE_UNEXPANDED_PC] = Fr::from_u64(1);
+        w[V_IS_NOOP] = Fr::from_u64(1);
+        w[V_NEXT_IS_NOOP] = Fr::from_u64(1);
         w
     }
 
@@ -624,7 +633,7 @@ mod execution_witness_tests {
     const MUST_START_SEQUENCE_FROM_BEGINNING: usize = 18;
     const PRODUCT_EQ_LEFT_TIMES_RIGHT: usize = 19;
     const SHOULD_BRANCH_EQ_LOOKUP_TIMES_BRANCH: usize = 20;
-    const JUMP_LANE: usize = 21;
+    const HALT_LANE: usize = 21;
 
     fn check(witness: &[Fr], claimed_panic: bool) -> Result<(), usize> {
         rv64_trace_constraints::<Fr>(claimed_panic).check_witness(witness)
@@ -1132,7 +1141,7 @@ mod execution_witness_tests {
     fn jal_rejects_a_padding_successor() {
         let w = with_cell(&jal_witness(), V_NEXT_IS_NOOP, Fr::from_u64(1));
         for claimed_panic in [false, true] {
-            assert_eq!(check(&w, claimed_panic), Err(JUMP_LANE));
+            assert_eq!(check(&w, claimed_panic), Err(HALT_LANE));
         }
     }
 
@@ -1243,12 +1252,12 @@ mod execution_witness_tests {
     }
 
     /// A jump to address 0 meets row 14 before padding, whose next address is 0,
-    /// but is not a halt, so the jump lane rejects it.
+    /// but is not a halt, so the halt lane rejects it.
     #[test]
     fn last_row_rejects_a_jump_to_zero() {
         let w = at_last_row(&jalr_to_zero_witness());
         for claimed_panic in [false, true] {
-            assert_eq!(check(&w, claimed_panic), Err(JUMP_LANE));
+            assert_eq!(check(&w, claimed_panic), Err(HALT_LANE));
         }
     }
 
@@ -1353,7 +1362,7 @@ mod execution_witness_tests {
             let claimed_panic = kind != JoltInstructionKind::JoltPanic;
             assert_eq!(
                 check(&at_last_row(&w), claimed_panic),
-                Err(JUMP_LANE),
+                Err(HALT_LANE),
                 "{kind:?}"
             );
         }
@@ -1375,30 +1384,33 @@ mod execution_witness_tests {
         }
     }
 
-    /// Flag tuples `(Jump, Halt, HaltPanic)` no instruction carries, on rows
-    /// whose equality rows hold: a halt flag without `Jump`, and `HaltPanic`
-    /// without `Halt`. The jump lane rejects each under both claims.
+    /// Row 21 over every boolean `(IsNoop, Halt, HaltPanic, NextIsNoop)` and both
+    /// claims, on a row whose equality rows hold whatever those cells are. A real
+    /// row keeps the run real, padding stays padding, and only a halt of the
+    /// claimed kind starts it; the lane admits no other assignment.
     #[test]
-    fn jump_lane_rejects_flag_tuples_no_instruction_carries() {
-        let halt_without_jump = with_cell(&add_witness(), V_FLAG_HALT, Fr::from_u64(1));
-        let mut cases = vec![
-            halt_without_jump.clone(),
-            with_cell(&halt_without_jump, V_FLAG_HALT_PANIC, Fr::from_u64(1)),
-            with_cell(&add_witness(), V_FLAG_HALT_PANIC, Fr::from_u64(1)),
-        ];
-        let (kind, virtual_sequence_remaining, is_compressed) = HALTS[1];
-        cases.push(with_cell(
-            &at_last_row(&halt_witness(
-                kind,
-                virtual_sequence_remaining,
-                is_compressed,
-            )),
-            V_FLAG_HALT,
-            Fr::zero(),
-        ));
-        for w in cases {
-            for claimed_panic in [false, true] {
-                assert_eq!(check(&w, claimed_panic), Err(JUMP_LANE));
+    fn halt_lane_truth_table() {
+        for claimed_panic in [false, true] {
+            for bits in 0..16u8 {
+                let [is_noop, halt, halt_panic, next_is_noop] =
+                    [0, 1, 2, 3].map(|bit| (bits >> bit) & 1 == 1);
+                let mut w = cycle_witness();
+                w[V_FLAG_DO_NOT_UPDATE_UNEXPANDED_PC] = Fr::from_u64(1);
+                w[V_IS_NOOP] = Fr::from_bool(is_noop);
+                w[V_FLAG_HALT] = Fr::from_bool(halt);
+                w[V_FLAG_HALT_PANIC] = Fr::from_bool(halt_panic);
+                w[V_NEXT_IS_NOOP] = Fr::from_bool(next_is_noop);
+                let admitted = match (is_noop, halt, halt_panic, next_is_noop) {
+                    (false, false, false, false) | (true, false, false, true) => true,
+                    (false, true, kind, true) => kind == claimed_panic,
+                    _ => false,
+                };
+                assert_eq!(
+                    check(&w, claimed_panic),
+                    if admitted { Ok(()) } else { Err(HALT_LANE) },
+                    "IsNoop {is_noop}, Halt {halt}, HaltPanic {halt_panic}, \
+                     NextIsNoop {next_is_noop}, panic {claimed_panic}"
+                );
             }
         }
     }

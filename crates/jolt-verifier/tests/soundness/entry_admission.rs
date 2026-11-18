@@ -11,9 +11,6 @@ use jolt_crypto::VectorCommitment;
 use jolt_openings::CommitmentScheme;
 use jolt_verifier::{JoltVerifierPreprocessing, ProgramPreprocessing, VerifierError};
 
-/// The key a verifier builds for the same program with its entry on the
-/// padding row: address 0 for a full program, entry index 0 for a committed
-/// one.
 fn with_padding_entry<PCS, VC>(
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
 ) -> JoltVerifierPreprocessing<PCS, VC>

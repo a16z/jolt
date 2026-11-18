@@ -137,7 +137,7 @@ impl<F: JoltField> ConcreteSumcheck<F> for ProductRemainder<F> {
         let output = ProductRemainderOutputClaims {
             left_instruction_input: opening_point.clone(),
             right_instruction_input: opening_point.clone(),
-            jump_flag: opening_point.clone(),
+            is_noop: opening_point.clone(),
             write_lookup_output_to_rd: opening_point.clone(),
             lookup_output: opening_point.clone(),
             branch_flag: opening_point.clone(),
@@ -223,7 +223,7 @@ mod tests {
         ProductRemainderOutputClaims {
             left_instruction_input: fr(2),
             right_instruction_input: fr(3),
-            jump_flag: fr(5),
+            is_noop: fr(5),
             write_lookup_output_to_rd: fr(7),
             lookup_output: fr(11),
             branch_flag: fr(13),
@@ -288,14 +288,14 @@ mod tests {
         let left_lanes = [
             outputs.left_instruction_input,
             outputs.lookup_output,
-            outputs.jump_flag,
+            Fr::from_u64(2),
             field_inline.rs1_value,
             field_inline.rs1_value,
         ];
         let right_lanes = [
             outputs.right_instruction_input,
             outputs.branch_flag,
-            Fr::from_u64(1) - outputs.next_is_noop,
+            outputs.next_is_noop - outputs.is_noop,
             field_inline.rs2_value,
             field_inline.rd_value,
         ];

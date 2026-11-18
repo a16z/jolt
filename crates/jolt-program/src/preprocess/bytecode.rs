@@ -2,8 +2,8 @@
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::{ALIGNMENT_FACTOR_BYTECODE, RAM_START_ADDRESS};
 use jolt_riscv::{
-    CircuitFlags, Flags, InvalidBranchOffset, JoltInstruction, JoltInstructionKind,
-    JoltInstructionProfile, JoltInstructionRow,
+    CircuitFlags, Flags, JoltInstruction, JoltInstructionKind, JoltInstructionProfile,
+    JoltInstructionRow,
 };
 
 #[cfg(feature = "field-inline")]
@@ -56,13 +56,6 @@ impl BytecodePreprocessing {
             pc_map,
             entry_address,
         })
-    }
-
-    /// Key builders may receive previously serialized rows that bypassed `preprocess`.
-    pub fn validate_branch_offsets(&self) -> Result<(), InvalidBranchOffset> {
-        self.bytecode
-            .iter()
-            .try_for_each(JoltInstructionRow::validate_branch_offset)
     }
 
     pub fn entry_bytecode_index(&self) -> Option<usize> {
@@ -139,7 +132,7 @@ impl BytecodePCMapper {
     }
 
     pub fn try_new(bytecode: &[JoltInstructionRow]) -> Result<Self, PreprocessingError> {
-        let mut slots = vec![PcSlot::default(); Self::validate_offsets_and_count_slots(bytecode)?];
+        let mut slots = vec![PcSlot::default(); Self::index_count(bytecode)?];
         if let Some(first) = slots.first_mut() {
             first.virtual_sequence_length = 1;
         }
@@ -281,14 +274,12 @@ impl BytecodePCMapper {
         (address - RAM_START_ADDRESS as usize) / ALIGNMENT_FACTOR_BYTECODE + 1
     }
 
-    fn validate_offsets_and_count_slots(
-        bytecode: &[JoltInstructionRow],
-    ) -> Result<usize, PreprocessingError> {
-        let mut max_address = 0;
-        for row in bytecode {
-            row.validate_branch_offset()?;
-            max_address = max_address.max(row.address);
-        }
+    fn index_count(bytecode: &[JoltInstructionRow]) -> Result<usize, PreprocessingError> {
+        let max_address = bytecode
+            .iter()
+            .map(|instruction| instruction.address)
+            .max()
+            .unwrap_or(0);
         if max_address == 0 {
             Ok(1)
         } else {
@@ -340,10 +331,7 @@ mod tests {
     #[cfg(feature = "field-inline")]
     use crate::field_inline::FieldInlineInstructionError;
     use crate::RV64I;
-    use jolt_riscv::{
-        InvalidBranchOffset, JoltInstructionKind, JoltInstructionRow, NormalizedOperands,
-        RV64IMAC_JOLT,
-    };
+    use jolt_riscv::{JoltInstructionKind, JoltInstructionRow, NormalizedOperands, RV64IMAC_JOLT};
     #[cfg(feature = "field-inline")]
     use jolt_riscv::{FIELD_REGISTER_COUNT, RV64IMAC_JOLT_FIELD_INLINE};
 
@@ -460,7 +448,6 @@ mod tests {
             instruction_kind,
             ..instruction(address, virtual_sequence_remaining)
         };
-        // A halt as the last row of a multi-row instruction, and as its first.
         for run in [
             vec![
                 instruction(0x8000_0004, Some(1)),
@@ -506,7 +493,6 @@ mod tests {
             preprocessing.entry_instruction(),
             preprocessing.bytecode.get(1)
         );
-        // Address 0 resolves to the padding sentinel; 0x8000_0008 to no row.
         for entry_address in [0, 0x8000_0008] {
             let moved = BytecodePreprocessing {
                 entry_address,
@@ -636,43 +622,6 @@ mod tests {
         let preprocessed =
             BytecodePreprocessing::preprocess(vec![clean], 0x8000_0000, RV64IMAC_JOLT).unwrap();
         assert_eq!(preprocessed.code_size, 2);
-    }
-
-    #[test]
-    fn conditional_branches_require_an_encodable_b_type_offset() {
-        let address = 0x8000_0000;
-        let branch = JoltInstructionRow {
-            instruction_kind: JoltInstructionKind::BEQ,
-            address,
-            operands: NormalizedOperands {
-                rs1: Some(1),
-                rs2: Some(2),
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        let preprocess = |mut row: JoltInstructionRow, offset| {
-            row.operands.imm = offset;
-            BytecodePreprocessing::preprocess(vec![row], address as u64, RV64IMAC_JOLT)
-        };
-        for offset in [-4096, 0, 4094] {
-            assert!(preprocess(branch, offset).is_ok());
-        }
-        for offset in [-4098, -1, 1, 4096, i128::MIN, i128::MAX] {
-            assert_eq!(
-                preprocess(branch, offset).unwrap_err(),
-                PreprocessingError::InvalidBranchOffset(InvalidBranchOffset { address, offset })
-            );
-        }
-        let jump = JoltInstructionRow {
-            instruction_kind: JoltInstructionKind::JAL,
-            operands: NormalizedOperands {
-                rd: Some(1),
-                ..Default::default()
-            },
-            ..branch
-        };
-        assert!(preprocess(jump, 4096).is_ok());
     }
 
     #[test]

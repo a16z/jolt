@@ -1899,7 +1899,7 @@ mod tests {
                     product_remainder: stage2::outputs::ProductRemainderOutputClaims {
                         left_instruction_input: zero,
                         right_instruction_input: zero,
-                        jump_flag: zero,
+                        is_noop: zero,
                         write_lookup_output_to_rd: zero,
                         lookup_output: zero,
                         branch_flag: zero,

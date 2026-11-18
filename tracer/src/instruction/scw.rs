@@ -297,10 +297,8 @@ mod tests {
         );
     }
 
-    /// SC.W to a non-RAM (I/O) address must be rejected by the
-    /// inline-sequence RAM-range constraint. Without this constraint, the
-    /// failure-path store would write public outputs via the byte-level store
-    /// handler, mutating the proof's public I/O.
+    /// SC.W to a non-RAM (I/O) address must fail the RAM guard that
+    /// `expand_sc_success` emits.
     #[test]
     #[should_panic(expected = "assertion failed")]
     fn test_scw_to_io_rejected() {

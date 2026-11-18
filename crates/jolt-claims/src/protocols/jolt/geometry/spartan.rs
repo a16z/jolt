@@ -183,47 +183,47 @@ where
 
 /// One term of product lane 3's output: `(constant + per_panic·Π)·OpFlags(flag)`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct JumpLaneTerm {
+pub(crate) struct HaltLaneTerm {
     pub(crate) flag: CircuitFlags,
     pub(crate) constant: i8,
     pub(crate) per_panic: i8,
 }
 
-/// The single owner of product lane 3, whose factors are `Jump` and
-/// `1 − NextIsNoop`: every cycle satisfies
-/// `Jump·(1 − NextIsNoop) = Jump − (1 − 2Π)·Halt − 2·HaltPanic`, with `Π` the
-/// claimed panic bit. For boolean flags this holds only when an ordinary jump
-/// has a real successor (so it is not the last cycle), or a halt is followed by
-/// padding (or is the last cycle) and its `HaltPanic` equals `Π`, or the row
-/// carries none of the three flags; excluding every other assignment needs a
-/// field characteristic other than 2 and 3. This `−2` form keeps lane 3's
-/// full-trace coefficients in `{±1, −2}`, which the z3 and zklean coefficient
-/// tables accept.
-pub(crate) const PRODUCT_JUMP_LANE_OUTPUT: [JumpLaneTerm; 3] = [
-    JumpLaneTerm {
-        flag: CircuitFlags::Jump,
-        constant: 1,
-        per_panic: 0,
-    },
-    JumpLaneTerm {
+/// Product lane 3's constant left factor; its right factor is
+/// `NextIsNoop − IsNoop`.
+pub const PRODUCT_HALT_LANE_LEFT_FACTOR: u8 = 2;
+
+/// The output of product lane 3: every cycle satisfies
+/// `2·(NextIsNoop − IsNoop) = (2 − Π)·Halt + HaltPanic`, with `Π` the claimed
+/// panic bit. Over boolean flags the left side is −2, 0 or 2, and the output
+/// is 0 on a row with neither flag, 2 on a halt whose `HaltPanic` equals `Π`,
+/// and 1 or 3 on a halt of the other kind or on `HaltPanic` without `Halt`.
+/// A field of characteristic other than 2, 3 and 5 keeps −2, 0, 1, 2 and 3
+/// distinct, so the lane holds exactly when `IsNoop` is unchanged across a
+/// cycle that carries neither flag, or rises from 0 to 1 across a halt of the
+/// claimed kind. The lane does not read `Jump`: that a halt is a jump is a
+/// fact about the halt kinds, pinned by jolt-riscv's
+/// `halt_flags_mark_exactly_the_halt_kinds`.
+pub(crate) const PRODUCT_HALT_LANE_OUTPUT: [HaltLaneTerm; 2] = [
+    HaltLaneTerm {
         flag: CircuitFlags::Halt,
-        constant: -1,
-        per_panic: 2,
+        constant: 2,
+        per_panic: -1,
     },
-    JumpLaneTerm {
+    HaltLaneTerm {
         flag: CircuitFlags::HaltPanic,
-        constant: -2,
+        constant: 1,
         per_panic: 0,
     },
 ];
 
-/// [`PRODUCT_JUMP_LANE_OUTPUT`] over the Spartan-outer flag openings, with `Π`
+/// [`PRODUCT_HALT_LANE_OUTPUT`] over the Spartan-outer flag openings, with `Π`
 /// the `ClaimedPanic` derived public.
-pub(crate) fn product_jump_lane_output<F>() -> JoltExpr<F>
+pub(crate) fn product_halt_lane_output<F>() -> JoltExpr<F>
 where
     F: Ring,
 {
-    PRODUCT_JUMP_LANE_OUTPUT
+    PRODUCT_HALT_LANE_OUTPUT
         .into_iter()
         .fold(JoltExpr::zero(), |output, term| {
             let flag = opening(outer_opening(JoltVirtualPolynomial::OpFlags(term.flag)));
@@ -269,9 +269,9 @@ pub fn lookup_output_product() -> JoltOpeningId {
     )
 }
 
-pub fn jump_flag_product() -> JoltOpeningId {
+pub fn is_noop_product() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
-        JoltVirtualPolynomial::OpFlags(CircuitFlags::Jump),
+        JoltVirtualPolynomial::InstructionFlags(InstructionFlags::IsNoop),
         JoltRelationId::SpartanProductVirtualization,
     )
 }

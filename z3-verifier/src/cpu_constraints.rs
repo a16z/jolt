@@ -3,7 +3,7 @@
 
 use crate::{Z3_RANDOM_SEED, Z3_TIMEOUT_MS};
 use jolt_claims::protocols::composed::r1cs::rv64::{
-    self, NUM_R1CS_INPUTS, NUM_VARS_PER_CYCLE, V_BRANCH, V_CONST, V_NEXT_IS_NOOP,
+    self, NUM_R1CS_INPUTS, NUM_VARS_PER_CYCLE, V_BRANCH, V_CONST, V_IS_NOOP, V_NEXT_IS_NOOP,
 };
 use jolt_field::{Fr, Ring};
 use jolt_r1cs::SparseRow;
@@ -189,6 +189,7 @@ impl JoltState {
             V_CONST => Int::from(1),
             V_BRANCH => self.instruction_flags[InstructionFlags::Branch as usize].clone(),
             V_NEXT_IS_NOOP => self.next_is_noop.clone(),
+            V_IS_NOOP => self.instruction_flags[InstructionFlags::IsNoop as usize].clone(),
             _ => inputs[index - 1].clone(),
         })
     }

@@ -1,5 +1,3 @@
-use jolt_riscv::InvalidBranchOffset;
-
 #[derive(Debug, thiserror::Error)]
 pub enum ExpansionError {
     #[error("no virtual registers available in {pool} pool")]
@@ -42,6 +40,4 @@ pub enum ExpansionError {
     InlineProviderRequired,
     #[error("expansion placed a halt inside a multi-row sequence")]
     HaltInSequence,
-    #[error(transparent)]
-    InvalidBranchOffset(#[from] InvalidBranchOffset),
 }

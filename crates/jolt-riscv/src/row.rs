@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "field-inline")]
 use crate::field_inline_operand_shape;
-use crate::{Flags, InstructionFlags, JoltInstruction, JoltInstructionKind};
+use crate::JoltInstructionKind;
 
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(
@@ -82,28 +82,7 @@ pub struct JoltInstructionRow {
     pub is_compressed: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-#[error("branch at {address:#x} has offset {offset}, expected an even signed 13-bit displacement")]
-pub struct InvalidBranchOffset {
-    pub address: usize,
-    pub offset: i128,
-}
-
 impl JoltInstructionRow {
-    /// Taken branches must keep the B-type displacement bound for the halt rule to exclude padding.
-    pub fn validate_branch_offset(&self) -> Result<(), InvalidBranchOffset> {
-        let offset = self.operands.imm;
-        if (!(-4096..=4094).contains(&offset) || offset % 2 != 0)
-            && JoltInstruction::from(*self).instruction_flags()[InstructionFlags::Branch]
-        {
-            return Err(InvalidBranchOffset {
-                address: self.address,
-                offset,
-            });
-        }
-        Ok(())
-    }
-
     /// Exclusive bound on [`Self::flag_class`]: one past the largest
     /// instruction tag, shifted above the four low key bits.
     pub const FLAG_CLASS_KEYS: usize = {
