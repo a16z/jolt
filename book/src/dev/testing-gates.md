@@ -156,3 +156,4 @@ The `field_inline_limbs` prover test binary exercises both matching and foreign
 modulus guest ELFs in the Dory and Akita field-inline lanes. The Dory
 `field_inline_e2e` suite also attempts to prove a trace that advises the modulus
 as the limb representation of zero; the proof path must reject it.
+<!-- Path-filter measurement for #2497; this pull request is not for merge. -->
