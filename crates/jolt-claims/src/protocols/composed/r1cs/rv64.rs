@@ -20,7 +20,9 @@
 
 use jolt_riscv::{CircuitFlags, NUM_CIRCUIT_FLAGS};
 
-use crate::protocols::jolt::geometry::spartan::PRODUCT_HALT_LANE_OUTPUT;
+use crate::protocols::jolt::geometry::spartan::{
+    PRODUCT_HALT_LANE_LEFT_FACTOR, PRODUCT_HALT_LANE_OUTPUT,
+};
 
 /// Constant-1 wire.
 pub const V_CONST: usize = 0;
@@ -436,7 +438,10 @@ fn append_product_constraints<F: Field>(
     b_rows.push(row::<F>(&[(V_BRANCH, 1)]));
     c_rows.push(row::<F>(&[(V_SHOULD_BRANCH, 1)]));
 
-    a_rows.push(row::<F>(&[(V_CONST, 1)]));
+    a_rows.push(row::<F>(&[(
+        V_CONST,
+        i128::from(PRODUCT_HALT_LANE_LEFT_FACTOR),
+    )]));
     b_rows.push(row::<F>(&[(V_NEXT_IS_NOOP, 1), (V_IS_NOOP, -1)]));
     let halt_lane_output: Vec<(usize, i128)> = PRODUCT_HALT_LANE_OUTPUT
         .iter()
@@ -1379,9 +1384,7 @@ mod execution_witness_tests {
     /// Row 21 over every boolean `(IsNoop, Halt, HaltPanic, NextIsNoop)` and both
     /// claims, on a row whose equality rows hold whatever those cells are. A real
     /// row keeps the run real, padding stays padding, and only a halt of the
-    /// claimed kind starts it. The lane admits one more assignment, which no
-    /// instruction kind carries: a no-op that is a success halt, with a real
-    /// successor, under `panic = true`.
+    /// claimed kind starts it; the lane admits no other assignment.
     #[test]
     fn halt_lane_truth_table() {
         for claimed_panic in [false, true] {
@@ -1397,7 +1400,6 @@ mod execution_witness_tests {
                 let admitted = match (is_noop, halt, halt_panic, next_is_noop) {
                     (false, false, false, false) | (true, false, false, true) => true,
                     (false, true, kind, true) => kind == claimed_panic,
-                    (true, true, false, false) => claimed_panic,
                     _ => false,
                 };
                 assert_eq!(

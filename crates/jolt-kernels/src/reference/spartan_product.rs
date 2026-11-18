@@ -34,7 +34,7 @@ use jolt_claims::protocols::field_inline::{FieldInlinePolynomialId, FieldInlineV
 use jolt_claims::protocols::jolt::geometry::spartan::{
     branch_flag_product, is_noop_product, left_instruction_input_product, lookup_output_product,
     next_is_noop_product, right_instruction_input_product, virtual_instruction_product,
-    write_lookup_output_to_rd_product,
+    write_lookup_output_to_rd_product, PRODUCT_HALT_LANE_LEFT_FACTOR,
 };
 use jolt_claims::protocols::jolt::JoltOpeningId;
 use jolt_claims::protocols::jolt::{JoltDerivedId, SpartanProductVirtualizationPublic};
@@ -186,7 +186,7 @@ impl<F: JoltField> SpartanProductKernel<F> {
     fn composed_lane_factors(&self, weights: &[F], j: usize) -> Result<(F, F), KernelError<F>> {
         let left = weights[0] * self.left_instruction_input[j]
             + weights[1] * self.lookup_output[j]
-            + weights[2];
+            + weights[2] * F::from_u64(u64::from(PRODUCT_HALT_LANE_LEFT_FACTOR));
         let right = weights[0] * self.right_instruction_input[j]
             + weights[1] * self.branch_flag[j]
             + weights[2] * (self.next_is_noop[j] - self.is_noop[j]);

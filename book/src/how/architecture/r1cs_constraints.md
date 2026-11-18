@@ -57,29 +57,31 @@ After the halt, the trace holds only padding no-ops up to its power-of-two lengt
 Two constraints implement this end rule:
 
 - Row 14 (`NextUnexpPCEqLookupIfJump`) is $\textsf{Jump} \cdot (\textsf{NextUnexpandedPC} - \textsf{LookupOutput}) = 0$, so every jump's successor address is its lookup output, and a halt's is 0.
-- Row 21 (`NextIsNoopEqIsNoopUnlessHalt`, lane 3 of Spartan product virtualization) has factors $1$ and $\textsf{NextIsNoop} - \textsf{IsNoop}$, and its output depends on the statement's panic bit $\Pi$:
+- Row 21 (`NextIsNoopEqIsNoopUnlessHalt`, lane 3 of Spartan product virtualization) has factors $2$ and $\textsf{NextIsNoop} - \textsf{IsNoop}$, and its output depends on the statement's panic bit $\Pi$:
 
 $$
-\textsf{NextIsNoop} - \textsf{IsNoop} = (1 - 2\Pi) \cdot \textsf{Halt} + 2 \cdot \textsf{HaltPanic}
+2 \cdot (\textsf{NextIsNoop} - \textsf{IsNoop}) = (2 - \Pi) \cdot \textsf{Halt} + \textsf{HaltPanic}
 $$
 
 $\Pi$ is the verifier's `panic` input, which enters the claim only as the derived public `SpartanProductVirtualizationPublic::ClaimedPanic`.
 `PRODUCT_HALT_LANE_OUTPUT` in `jolt-claims` owns this output; the verifier, the optimized prover kernel and BlindFold evaluate the same expression, and the reference kernel computes the lane from the trace.
 $\textsf{IsNoop}$ is 1 on a padding row.
 $\textsf{NextIsNoop}$ is the next row's $\textsf{IsNoop}$, and 1 at the last cycle $T-1$.
-On a halt the output is $1 + 2 \cdot (\textsf{HaltPanic} - \Pi)$, so the lane reduces per row to:
+On a halt the output is $2 - \Pi + \textsf{HaltPanic}$, so the lane reduces per row to:
 
 | Row | (IsNoop, Halt, HaltPanic) | Lane 3 reduces to | Forces |
 |---|---|---|---|
-| Real, not a halt | (0, 0, 0) | $\textsf{NextIsNoop} = 0$ | a real successor, so not the last cycle |
-| Padding | (1, 0, 0) | $\textsf{NextIsNoop} = 1$ | padding or the end follows |
-| `jolt.success` | (0, 1, 0) | $\textsf{NextIsNoop} = 1 - 2\Pi$ | $\Pi = 0$, and padding or the end follows |
-| `EBREAK` | (0, 1, 1) | $\textsf{NextIsNoop} = 3 - 2\Pi$ | $\Pi = 1$, and padding or the end follows |
+| Real, not a halt | (0, 0, 0) | $2 \cdot \textsf{NextIsNoop} = 0$ | a real successor, so not the last cycle |
+| Padding | (1, 0, 0) | $2 \cdot (\textsf{NextIsNoop} - 1) = 0$ | padding or the end follows |
+| `jolt.success` | (0, 1, 0) | $2 \cdot \textsf{NextIsNoop} = 2 - \Pi$ | $\Pi = 0$, and padding or the end follows |
+| `EBREAK` | (0, 1, 1) | $2 \cdot \textsf{NextIsNoop} = 3 - \Pi$ | $\Pi = 1$, and padding or the end follows |
 
-The excluded cases need a field characteristic other than 2 and 3: a success halt under $\Pi = 1$ would need $\textsf{NextIsNoop} = -1$, and an `EBREAK` halt under $\Pi = 0$ would need $\textsf{NextIsNoop} = 3$.
-Both proof fields qualify.
-Under either value of $\Pi$, the lane also rejects `HaltPanic` without `Halt`.
-It admits a row with both `IsNoop` and `Halt`, and it does not read `Jump`, so it treats `Halt` without `Jump` as a halt. No instruction kind carries either combination, and bytecode read-RAF binds each cycle's flags to its bytecode row's: the verifier computes them from the row's kind for a full program, and trusts the committed flag lanes of a committed one, as for every flag.
+No other assignment of the four cells satisfies the lane.
+The left side is $-2$, $0$ or $2$, and the output is 0 only on a row with neither flag and 2 only on a halt whose `HaltPanic` equals $\Pi$; a halt of the other kind, and `HaltPanic` without `Halt`, give 1 or 3.
+In particular a padding row that carries a halt flag fails, whatever follows it.
+This needs a field characteristic other than 2, 3 and 5, which keeps $-2$, $0$, $1$, $2$ and $3$ distinct; both proof fields qualify.
+The lane does not read `Jump`, so it treats `Halt` without `Jump` as a halt; no instruction kind carries that combination.
+Bytecode read-RAF binds each cycle's flags to its bytecode row's: the verifier computes them from the row's kind for a full program, and trusts the committed flag lanes of a committed one, as for every flag.
 
 Only a halt can precede padding, and only padding can follow it.
 Bytecode read-RAF pins cycle 0 to the entry row, which is real.

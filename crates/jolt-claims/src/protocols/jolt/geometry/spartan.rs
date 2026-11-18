@@ -189,27 +189,30 @@ pub(crate) struct HaltLaneTerm {
     pub(crate) per_panic: i8,
 }
 
-/// The output of product lane 3, whose factors are the constant 1 and
-/// `NextIsNoop − IsNoop`: every cycle satisfies
-/// `NextIsNoop − IsNoop = (1 − 2Π)·Halt + 2·HaltPanic`, with `Π` the claimed
-/// panic bit. On a halt the output is `1 + 2·(HaltPanic − Π)`, so, except on
-/// a row that is both a no-op and a halt, boolean flags satisfy the lane only
-/// when `IsNoop` is unchanged across a non-halt cycle, or rises from 0 to 1
-/// across a halt whose `HaltPanic` equals `Π`: a mismatched halt needs
-/// `NextIsNoop` to be −1 or 3, which a field of characteristic other than 2
-/// and 3 excludes. The lane admits a no-op row that carries `Halt` (under
-/// `Π = 1`, with a real successor) and does not read `Jump`; that no kind is
-/// both a no-op and a halt, and that `Halt` implies `Jump`, is pinned by
-/// jolt-riscv's `halt_flags_mark_exactly_the_halt_kinds`.
+/// Product lane 3's constant left factor; its right factor is
+/// `NextIsNoop − IsNoop`.
+pub const PRODUCT_HALT_LANE_LEFT_FACTOR: u8 = 2;
+
+/// The output of product lane 3: every cycle satisfies
+/// `2·(NextIsNoop − IsNoop) = (2 − Π)·Halt + HaltPanic`, with `Π` the claimed
+/// panic bit. Over boolean flags the left side is −2, 0 or 2, and the output
+/// is 0 on a row with neither flag, 2 on a halt whose `HaltPanic` equals `Π`,
+/// and 1 or 3 on a halt of the other kind or on `HaltPanic` without `Halt`.
+/// A field of characteristic other than 2, 3 and 5 keeps −2, 0, 1, 2 and 3
+/// distinct, so the lane holds exactly when `IsNoop` is unchanged across a
+/// cycle that carries neither flag, or rises from 0 to 1 across a halt of the
+/// claimed kind. The lane does not read `Jump`: that a halt is a jump is a
+/// fact about the halt kinds, pinned by jolt-riscv's
+/// `halt_flags_mark_exactly_the_halt_kinds`.
 pub(crate) const PRODUCT_HALT_LANE_OUTPUT: [HaltLaneTerm; 2] = [
     HaltLaneTerm {
         flag: CircuitFlags::Halt,
-        constant: 1,
-        per_panic: -2,
+        constant: 2,
+        per_panic: -1,
     },
     HaltLaneTerm {
         flag: CircuitFlags::HaltPanic,
-        constant: 2,
+        constant: 1,
         per_panic: 0,
     },
 ];

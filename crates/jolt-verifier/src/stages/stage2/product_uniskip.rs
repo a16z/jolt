@@ -194,7 +194,7 @@ mod tests {
             let lane_values = [
                 inputs.product,
                 inputs.should_branch,
-                Fr::from_i64(if claimed_panic { 21 } else { 55 }),
+                Fr::from_u64(if claimed_panic { 36 } else { 53 }),
                 field_product,
                 field_inv_product,
             ];

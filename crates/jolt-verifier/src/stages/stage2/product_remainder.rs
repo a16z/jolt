@@ -288,7 +288,7 @@ mod tests {
         let left_lanes = [
             outputs.left_instruction_input,
             outputs.lookup_output,
-            Fr::from_u64(1),
+            Fr::from_u64(2),
             field_inline.rs1_value,
             field_inline.rs1_value,
         ];
