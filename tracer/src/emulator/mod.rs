@@ -25,6 +25,7 @@ pub mod decode_cache;
 pub mod default_terminal;
 pub mod elf_analyzer;
 pub mod host_io;
+pub mod io_gap;
 pub mod memory;
 pub mod mmu;
 pub mod terminal;
@@ -267,31 +268,40 @@ impl Emulator {
 
         assert_eq!(header.e_width, 64, "tracer only supports RV64 ELF inputs");
 
-        if self.tohost_addr != 0 {
+        // The backing's end is the interpreter's only RAM access bound, so a
+        // layout's RAM domain caps it in either mode.
+        let layout_ram_size = self
+            .cpu
+            .get_mut_mmu()
+            .jolt_device
+            .as_ref()
+            .map(|jolt_device| {
+                jolt_device
+                    .memory_layout
+                    .ram_size()
+                    .unwrap_or_else(|error| panic!("{error}"))
+            });
+        let memory_capacity = if self.tohost_addr != 0 {
             // WARNING: a `tohost` symbol is how riscv-tests ELFs are
             // recognized; a Jolt guest built by a foreign toolchain that
-            // defines one silently loses the layout-derived memory sizing
-            // configured below.
+            // defines one silently loses its layout's RAM past the
+            // riscv-tests capacity.
             #[cfg(feature = "std")]
-            if self.cpu.get_mut_mmu().jolt_device.is_some() {
+            if layout_ram_size.is_some_and(|size| size > TEST_MEMORY_CAPACITY) {
                 tracing::warn!(
                     "ELF defines a `tohost` symbol, so the tracer is entering riscv-tests mode: \
-                    emulator memory is sized to the riscv-tests test capacity instead of the \
-                    Jolt memory layout. If this is a Jolt guest, do not emit a `tohost` symbol."
+                    emulator memory is capped at the riscv-tests test capacity, below the RAM of \
+                    the Jolt memory layout. If this is a Jolt guest, do not emit a `tohost` \
+                    symbol."
                 );
             }
             self.is_test = true;
-            self.cpu.get_mut_mmu().init_memory(TEST_MEMORY_CAPACITY);
+            layout_ram_size.map_or(TEST_MEMORY_CAPACITY, |size| size.min(TEST_MEMORY_CAPACITY))
         } else {
             self.is_test = false;
-            let memory_capacity =
-                if let Some(jolt_device) = self.cpu.get_mut_mmu().jolt_device.as_ref() {
-                    jolt_device.memory_layout.get_total_memory_size()
-                } else {
-                    PROGRAM_MEMORY_CAPACITY
-                };
-            self.cpu.get_mut_mmu().init_memory(memory_capacity);
-        }
+            layout_ram_size.unwrap_or(PROGRAM_MEMORY_CAPACITY)
+        };
+        self.cpu.get_mut_mmu().init_memory(memory_capacity);
 
         for header in &program_data_section_headers {
             let sh_addr = header.sh_addr;
@@ -436,6 +446,7 @@ mod tests {
     use super::elf_analyzer::test_elf::{build_elf64, StrtabOrder, TestSymbol};
     use super::*;
     use crate::emulator::default_terminal::DefaultTerminal;
+    use common::jolt_device::MemoryConfig;
     use jolt_riscv::JOLT_SUCCESS_WORD;
 
     const TOHOST_ADDR: u64 = 0x8000_3000;
@@ -492,6 +503,34 @@ mod tests {
             emulator.get_address_of_symbol(&"nonexistent".to_string()),
             None
         );
+    }
+
+    /// A `tohost` ELF traced with a device keeps the test capacity only up to
+    /// the layout's RAM domain, whose end still bounds every RAM access.
+    #[test]
+    fn riscv_tests_mode_backs_no_ram_past_the_layout_domain() {
+        // The 1280 bytes from the lowest address, RAM_START_ADDRESS - 64, to
+        // `heap_end`, RAM_START_ADDRESS + 1216, pad to a 256-word domain
+        // ending at RAM_START_ADDRESS + 1984.
+        let device = JoltDevice::new(&MemoryConfig {
+            max_input_size: 16,
+            max_output_size: 16,
+            max_trusted_advice_size: 0,
+            max_untrusted_advice_size: 0,
+            stack_size: 0,
+            heap_size: 64,
+            program_size: Some(1024),
+        });
+        let mut emulator = Emulator::new(Box::new(DefaultTerminal::default()));
+        emulator.get_mut_cpu().get_mut_mmu().jolt_device = Some(device);
+        emulator.setup_program(&build_elf64(
+            &tohost_program(5),
+            &tohost_symbols(),
+            StrtabOrder::GnuLd,
+        ));
+        let memory = &emulator.get_cpu().mmu.memory;
+        assert!(memory.validate_address(RAM_START_ADDRESS + 1976));
+        assert!(!memory.validate_address(RAM_START_ADDRESS + 1984));
     }
 
     /// LLD emits `.shstrtab` before `.strtab`. Symbol names must still be

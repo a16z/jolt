@@ -1390,9 +1390,9 @@ impl Cpu {
     /// register file (including virtual registers), the CSR array, clock, wfi,
     /// privilege mode, the LR/SC reservation triple, the advice tape (data and
     /// read position), `executed_instrs`, `trace_len` (row-uniform across
-    /// trace and execute modes), JoltDevice outputs, and the halt state.
-    /// Excludes host-side bookkeeping (markers, call stack) and the dead `f`
-    /// registers. Memory is not compared — callers hash it separately.
+    /// trace and execute modes), JoltDevice outputs, the I/O gap, and the halt
+    /// state. Excludes host-side bookkeeping (markers, call stack) and the
+    /// dead `f` registers. RAM is not compared — callers hash it separately.
     pub fn arch_state_diff(&self, other: &Cpu) -> Option<String> {
         if self.trace_len != other.trace_len {
             return Some(format!(
@@ -1483,6 +1483,9 @@ impl Cpu {
             }
             (None, None) => {}
             _ => return Some("jolt_device: present vs absent".to_string()),
+        }
+        if self.mmu.io_gap != other.mmu.io_gap {
+            return Some("io_gap: contents differ".to_string());
         }
         None
     }
@@ -1807,7 +1810,7 @@ mod test_cpu {
             ..Default::default()
         });
         cpu.get_mut_mmu()
-            .init_memory(device.memory_layout.get_total_memory_size());
+            .init_memory(device.memory_layout.ram_size().unwrap());
         cpu.get_mut_mmu().jolt_device = Some(device);
         cpu
     }
@@ -1852,8 +1855,10 @@ mod test_cpu {
             .unwrap()
             .memory_layout
             .clone();
-        // Past the heap, an emulator peripheral, and the gap above the I/O region.
-        for ptr in [layout.heap_end, 0x1020, layout.io_end] {
+        // Across the end of the RAM domain, an emulator peripheral, and below
+        // the lowest mapped address.
+        let domain_end = DRAM_BASE + layout.ram_size().unwrap();
+        for ptr in [domain_end - 2, 0x1020, layout.get_lowest_address() - 4] {
             let ptr32 = u32::try_from(ptr).unwrap();
             cpu.handle_jolt_print(ptr32, 4, JOLT_PRINT_LINE);
             cpu.handle_jolt_cycle_marker(ptr32, 4, JOLT_CYCLE_MARKER_START);
@@ -2058,20 +2063,28 @@ mod test_cpu {
         };
         let layout = JoltDevice::new(&config).memory_layout;
         let scratch = DRAM_BASE + 32;
+        let ram_size = layout.ram_size().unwrap();
+        let domain_end = DRAM_BASE + ram_size;
         for (address, tape) in [
             (layout.get_lowest_address() - 1, None),
-            (layout.heap_end, None),
             (layout.get_lowest_address(), Some(0)),
+            (layout.io_end, Some(0xcd)),
+            (DRAM_BASE - 1, Some(0)),
             (scratch, Some(0xab)),
+            (layout.heap_end, Some(0xef)),
+            (domain_end - 1, Some(0)),
+            (domain_end, None),
         ] {
             let mut cpu = create_cpu();
-            cpu.mmu.init_memory(layout.get_total_memory_size() + 8);
+            cpu.mmu.init_memory(ram_size);
             cpu.mmu.jolt_device = Some(JoltDevice::new(&config));
             // VirtualHostIO, as in test_run_two_pass_replays_advice_writes.
             for (i, byte) in 0x0000_205bu32.to_le_bytes().into_iter().enumerate() {
                 cpu.mmu.store_raw(DRAM_BASE + i as u64, byte);
             }
             cpu.mmu.store_raw(scratch, 0xab);
+            cpu.mmu.store_raw(layout.io_end, 0xcd);
+            cpu.mmu.store_raw(layout.heap_end, 0xef);
             cpu.update_pc(DRAM_BASE);
             cpu.x[10] = i64::from(JOLT_ADVICE_WRITE_CALL_ID);
             cpu.x[11] = address as i64;

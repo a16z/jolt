@@ -1,10 +1,10 @@
 //! The stage 2 `RamReadWriteChecking` sumcheck instance.
 //!
-//! Owns the RAM read-write opening-point derivation and the `EqCycle`,
-//! `WriteProtectedEqCycle` and `UnmappedEqCycle` public-value computations, in
-//! lockstep with the BlindFold constraint's `ram::read_write_checking` formula.
-//! The output check evaluates the cycle equality once and each mask once, in
-//! O(log T + s·log K) field operations for `s` mask intervals.
+//! Owns the RAM read-write opening-point derivation and the `EqCycle` and
+//! `WriteProtectedEqCycle` public-value computations, in lockstep with the
+//! BlindFold constraint's `ram::read_write_checking` formula. The output check
+//! evaluates the cycle equality once and the write-protected mask once, in
+//! O(log T + s·log K) field operations for the mask's `s` intervals.
 
 use jolt_claims::protocols::jolt::relations;
 pub use jolt_claims::protocols::jolt::relations::ram::{
@@ -16,7 +16,6 @@ use jolt_claims::protocols::jolt::{
 use jolt_claims::{OutputClaims, SumcheckChallenges, SymbolicSumcheck};
 use jolt_field::JoltField;
 use jolt_poly::{interval_mask_mle_msb, try_eq_mle};
-use jolt_program::preprocess::ram::RamWordMasks;
 
 use crate::stages::relations::ConcreteSumcheck;
 use crate::stages::stage1::Stage1ClearOutput;
@@ -42,7 +41,7 @@ pub struct RamReadWriteChecking<F: JoltField> {
     dimensions: ReadWriteDimensions,
     ram_log_k: usize,
     product_tau_low: Vec<F>,
-    masks: RamWordMasks,
+    write_protected_word_intervals: Vec<(usize, usize)>,
 }
 
 impl<F: JoltField> RamReadWriteChecking<F> {
@@ -50,14 +49,14 @@ impl<F: JoltField> RamReadWriteChecking<F> {
         dimensions: ReadWriteDimensions,
         ram_log_k: usize,
         product_tau_low: Vec<F>,
-        masks: RamWordMasks,
+        write_protected_word_intervals: Vec<(usize, usize)>,
     ) -> Self {
         Self {
             symbolic: relations::ram::ReadWriteChecking::new(dimensions),
             dimensions,
             ram_log_k,
             product_tau_low,
-            masks,
+            write_protected_word_intervals,
         }
     }
 }
@@ -96,27 +95,24 @@ impl<F: JoltField> RamReadWriteChecking<F> {
 
     /// The public weight `id` at the opening point, from its address half and
     /// the cycle equality there: `EqCycle` itself, or that equality times the
-    /// mask's multilinear extension at `r_address`. Evaluates at most one mask.
+    /// write-protected mask's multilinear extension at `r_address`.
     fn public_value(
         &self,
         id: RamReadWritePublic,
         r_address: &[F],
         eq_cycle: F,
     ) -> Result<F, VerifierError> {
-        let intervals = match id {
-            RamReadWritePublic::EqCycle => return Ok(eq_cycle),
-            RamReadWritePublic::WriteProtectedEqCycle => &self.masks.write_protected,
-            RamReadWritePublic::UnmappedEqCycle => &self.masks.unmapped,
-        };
-        Ok(eq_cycle * mask_mle(intervals, r_address)?)
+        match id {
+            RamReadWritePublic::EqCycle => Ok(eq_cycle),
+            RamReadWritePublic::WriteProtectedEqCycle => {
+                Ok(eq_cycle * mask_mle(&self.write_protected_word_intervals, r_address)?)
+            }
+            RamReadWritePublic::Reserved2(retired) => match retired {},
+        }
     }
 
     pub fn write_protected_word_intervals(&self) -> &[(usize, usize)] {
-        &self.masks.write_protected
-    }
-
-    pub fn unmapped_word_intervals(&self) -> &[(usize, usize)] {
-        &self.masks.unmapped
+        &self.write_protected_word_intervals
     }
 
     pub fn dimensions(&self) -> ReadWriteDimensions {
@@ -156,11 +152,11 @@ impl<F: JoltField> ConcreteSumcheck<F> for RamReadWriteChecking<F> {
         })
     }
 
-    /// Evaluates the cycle equality once, and each mask once because each
-    /// masked weight occurs once in the output expression. The generic
+    /// Evaluates the cycle equality once, and the write-protected mask once
+    /// because its weight occurs once in the output expression. The generic
     /// evaluator calls [`derive_output_term`](Self::derive_output_term) per
-    /// leaf, and `EqCycle` weights three of the five claims, so it would
-    /// evaluate the cycle equality six times.
+    /// leaf, and `EqCycle` weights three of the four claims, so it would
+    /// evaluate the cycle equality five times.
     fn expected_output(
         &self,
         _input_points: &RamReadWriteInputClaims<Vec<F>>,
@@ -246,20 +242,17 @@ mod tests {
 
     /// The output check equals the relation's output expression with each
     /// public term computed by brute force: the cycle equality as a product of
-    /// per-variable factors and each mask as a sum over all `2^log_k` addresses.
+    /// per-variable factors and the mask as a sum over all `2^log_k` addresses.
     #[test]
     fn expected_output_matches_brute_force_public_terms() {
         let (log_t, log_k) = (4, 5);
         let tau: Vec<Fr> = (11..).take(log_t).map(fr).collect();
-        let masks = RamWordMasks {
-            write_protected: vec![(0, 2), (3, 6)],
-            unmapped: vec![(6, 9), (20, 32)],
-        };
+        let intervals = vec![(0, 2), (3, 6), (20, 32)];
         let relation = RamReadWriteChecking::new(
             ReadWriteDimensions::new(log_t, log_k, 2, 1),
             log_k,
             tau.clone(),
-            masks.clone(),
+            intervals.clone(),
         );
         let point: Vec<Fr> = (0..).take(log_k + log_t).map(|i| fr(3 + 2 * i)).collect();
         let (r_address, r_cycle) = point.split_at(log_k);
@@ -268,8 +261,7 @@ mod tests {
             .zip(r_cycle)
             .map(|(&t, &r)| t * r + (Fr::one() - t) * (Fr::one() - r))
             .product();
-        let write_protected = mask_by_hypercube_sum(&masks.write_protected, r_address);
-        let unmapped = mask_by_hypercube_sum(&masks.unmapped, r_address);
+        let write_protected = mask_by_hypercube_sum(&intervals, r_address);
 
         let output_points = RamReadWriteOutputClaims {
             val: point.clone(),
@@ -295,7 +287,7 @@ mod tests {
                     Ok(match public_id {
                         RamReadWritePublic::EqCycle => eq_cycle,
                         RamReadWritePublic::WriteProtectedEqCycle => eq_cycle * write_protected,
-                        RamReadWritePublic::UnmappedEqCycle => eq_cycle * unmapped,
+                        RamReadWritePublic::Reserved2(retired) => match *retired {},
                     })
                 },
             )

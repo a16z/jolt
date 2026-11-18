@@ -3,7 +3,7 @@ use std::{path::PathBuf, sync::Arc};
 
 use jolt_program::execution::{
     ChunkedExecutionBackend, ExecutionBackend, ExecutionDimensions, ExecutionSummary, JoltProgram,
-    MemoryImage, RamAddressBounds, TraceData, TraceError, TraceInputs, TraceOutput,
+    RamAddressBounds, TraceData, TraceError, TraceInputs, TraceOutput,
 };
 use jolt_program::preprocess::BytecodePreprocessing;
 #[cfg(feature = "field-inline")]
@@ -15,6 +15,7 @@ use common::jolt_device::JoltDevice;
 
 use crate::emulator::cpu::AdviceTape;
 use crate::emulator::decode_cache::DecodeCache;
+use crate::emulator::io_gap::final_memory_image;
 use crate::emulator::mmu::CodeGuard;
 use crate::emulator::Emulator;
 use crate::instruction::Cycle;
@@ -67,7 +68,7 @@ impl TracerBackend {
             &inputs.memory_config,
             inputs.advice_tape.map(AdviceTape::from_bytes),
         );
-        let ((data, dimensions), (advice_tape, final_memory, device)) =
+        let ((data, dimensions), (advice_tape, final_memory, io_gap, device)) =
             if let Some(config) = crate::parallel_config_from_env() {
                 let (chunks, finished) = crate::parallel::run_two_pass_chunks(emulator, &config);
                 let finished = crate::finish_emulator(finished)?;
@@ -110,9 +111,10 @@ impl TracerBackend {
             dimensions,
             Arc::new(data),
             device,
-            Some(MemoryImage {
-                bytes: final_memory.materialized_nonzero_bytes(),
-            }),
+            Some(final_memory_image(
+                &io_gap,
+                final_memory.materialized_nonzero_bytes(),
+            )),
             Some(advice_tape.into_bytes()),
         ))
     }
@@ -449,15 +451,17 @@ impl TracerBackend {
             });
         }
 
-        let (advice_tape, final_memory, device) = crate::finish_emulator(pass.into_emulator())?;
+        let (advice_tape, final_memory, io_gap, device) =
+            crate::finish_emulator(pass.into_emulator())?;
 
         Ok(ExecutionSummary {
             checkpoints,
             trace_len,
             device,
-            final_memory: Some(MemoryImage {
-                bytes: final_memory.materialized_nonzero_bytes(),
-            }),
+            final_memory: Some(final_memory_image(
+                &io_gap,
+                final_memory.materialized_nonzero_bytes(),
+            )),
             advice_tape: Some(advice_tape.into_bytes()),
         })
     }
@@ -767,10 +771,12 @@ mod tests {
     use super::*;
     use crate::emulator::elf_analyzer::test_elf::{build_elf64, StrtabOrder};
     use crate::parallel::{run_two_pass, TwoPassConfig};
-    use crate::LazyTracer;
+    use crate::{GeneralizedLazyTraceIter, LazyTracer};
+    use common::constants::RAM_START_ADDRESS;
     use common::jolt_device::MemoryConfig;
     use jolt_program::execution::{TraceError, TraceInputs};
-    use jolt_riscv::{JoltInstructionKind, JOLT_SUCCESS_WORD};
+    use jolt_riscv::{JoltInstructionKind, RamAccess, JOLT_SUCCESS_WORD};
+    use std::collections::BTreeMap;
 
     #[cfg(feature = "field-inline")]
     use crate::{
@@ -871,7 +877,7 @@ mod tests {
                 chunk_rows: 1,
                 capacity_rows: 64,
             };
-            let (_, _, device) = crate::finish_emulator(run_two_pass(emulator, &config).1)
+            let (_, _, _, device) = crate::finish_emulator(run_two_pass(emulator, &config).1)
                 .expect("two-pass run ends at the halt");
             assert_eq!(device.panic, panics);
 
@@ -913,6 +919,136 @@ mod tests {
                 panic.downcast_ref::<String>(),
                 Some(&TraceError::EndedWithoutHalt { pc: 0x8000_0004 }.to_string())
             );
+        }
+    }
+
+    /// The I/O gap and the heap padding are zero-initialized read/write memory
+    /// under every driver. With one-row chunks and checkpoints, a store and
+    /// its reload replay from different resume points, which must carry the
+    /// stored values; the final image keys them by absolute address.
+    #[test]
+    fn padding_words_are_read_write_under_every_driver() {
+        /// `ld rd, offset(x1)`.
+        fn ld(rd: u32, offset: i32) -> u32 {
+            (((offset as u32) & 0xfff) << 20) | (1 << 15) | (0b011 << 12) | (rd << 7) | 0x03
+        }
+        /// `sd` (`funct3` 3) or `sb` (`funct3` 0) `rs2, offset(x1)`.
+        fn store(funct3: u32, rs2: u32, offset: i32) -> u32 {
+            let imm = (offset as u32) & 0xfff;
+            ((imm >> 5) << 25)
+                | (rs2 << 20)
+                | (1 << 15)
+                | (funct3 << 12)
+                | ((imm & 0x1f) << 7)
+                | 0x23
+        }
+        /// `addi rd, x0, imm`.
+        fn li(rd: u32, imm: i32) -> u32 {
+            (((imm as u32) & 0xfff) << 20) | (rd << 7) | 0x13
+        }
+
+        // `io_end` is RAM_START_ADDRESS - 32 and `heap_end` RAM_START_ADDRESS
+        // + 1216; the 1280 bytes from the lowest address, RAM_START_ADDRESS -
+        // 64, pad to a 256-word domain ending at RAM_START_ADDRESS + 1984.
+        let memory_config = MemoryConfig {
+            max_input_size: 16,
+            max_output_size: 16,
+            max_trusted_advice_size: 0,
+            max_untrusted_advice_size: 0,
+            stack_size: 0,
+            heap_size: 64,
+            program_size: Some(1024),
+        };
+        // The first and last gap words, then the first and last padding words.
+        let offsets = [-32, -8, 1216, 1976];
+        // `auipc x1, 0` sets x1 to RAM_START_ADDRESS. Each word is loaded,
+        // stored and reloaded; then `sb` merges x2's low byte, 0xb8, into the
+        // second byte of the first gap word, which is reloaded.
+        let mut text = vec![0x0000_0097];
+        for offset in offsets {
+            text.extend([
+                ld(3, offset),
+                li(2, offset),
+                store(3, 2, offset),
+                ld(3, offset),
+            ]);
+        }
+        text.extend([store(0, 2, -31), ld(3, -32), JOLT_SUCCESS_WORD]);
+        let elf = build_elf64(&text, &[], StrtabOrder::GnuLd);
+        let address = |offset: i32| RAM_START_ADDRESS.wrapping_add_signed(offset.into());
+        let gap_word = 0xffff_ffff_ffff_b8e0;
+        let mut expected_loads = Vec::new();
+        for offset in offsets {
+            expected_loads.extend([(address(offset), 0), (address(offset), offset as u64)]);
+        }
+        expected_loads.push((address(-32), gap_word));
+
+        let (lazy, cycles, _, _, _) = crate::trace(&elf, None, &[], &[], &[], &memory_config, None);
+        assert_eq!(lazy.collect::<Vec<_>>(), cycles);
+        let (checkpoints, _) = crate::trace_checkpoints(&elf, &[], &[], &[], &memory_config, 1);
+        let resumed: Vec<Cycle> = checkpoints
+            .into_iter()
+            .flat_map(GeneralizedLazyTraceIter::new)
+            .collect();
+        assert_eq!(resumed, cycles);
+        let emulator = crate::create_emulator(&elf, None, &[], &[], &[], &memory_config, None);
+        let config = TwoPassConfig {
+            workers: 2,
+            chunk_rows: 1,
+            capacity_rows: 128,
+        };
+        assert_eq!(run_two_pass(emulator, &config).0, cycles);
+
+        let program = jolt_program::build_jolt_program(&elf).expect("prepare program");
+        let inputs = TraceInputs {
+            memory_config,
+            ..Default::default()
+        };
+        let mut backend = TracerBackend::new();
+        let eager = backend.trace(&program, inputs.clone()).expect("trace");
+        let rows = eager.trace.rows();
+        let loads: Vec<(u64, u64)> = rows
+            .iter()
+            .filter(|row| row.instruction().instruction_kind == JoltInstructionKind::LD)
+            .filter_map(|row| match row.ram_access() {
+                RamAccess::Read(read) => Some((read.address, read.value)),
+                RamAccess::Write(_) | RamAccess::NoOp => None,
+            })
+            .collect();
+        assert_eq!(loads, expected_loads);
+
+        let summary = backend
+            .execute_chunked(&program, inputs, 1, 1)
+            .expect("chunked execute");
+        let replayed: Vec<JoltTraceRow> = summary
+            .checkpoints
+            .iter()
+            .flat_map(|checkpoint| {
+                backend
+                    .replay_chunk(checkpoint)
+                    .expect("replay")
+                    .rows()
+                    .to_vec()
+            })
+            .collect();
+        assert_eq!(replayed, rows);
+        assert_eq!(summary.final_memory, eager.final_memory);
+
+        let image = eager.final_memory.expect("final memory").bytes;
+        assert!(image.windows(2).all(|pair| pair[0].0 < pair[1].0));
+        let image: BTreeMap<u64, u8> = image.into_iter().collect();
+        let word = |address: u64| {
+            u64::from_le_bytes(std::array::from_fn(|byte| {
+                image.get(&(address + byte as u64)).copied().unwrap_or(0)
+            }))
+        };
+        for (offset, value) in [
+            (-32, gap_word),
+            (-8, -8i64 as u64),
+            (1216, 1216),
+            (1976, 1976),
+        ] {
+            assert_eq!(word(address(offset)), value, "offset {offset}");
         }
     }
 

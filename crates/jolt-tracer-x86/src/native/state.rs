@@ -9,6 +9,7 @@ use common::jolt_device::{JoltDevice, MemoryLayout};
 use jolt_program::execution::TraceError;
 use jolt_program::expand::{expand_instruction_with_provider, ExpansionAllocator};
 use jolt_riscv::{JoltInstructionRow, RV64IMAC_JOLT_ALL_INLINES};
+use tracer::emulator::io_gap::IoGapMemory;
 use tracer::instruction::{uncompress_instruction, Instruction};
 use tracer::{HaltKind, TracerInlineExpansionProvider};
 
@@ -23,7 +24,8 @@ pub enum ExitReason {
     /// repeats (`JoltInstructionRow::self_jump_repeats`). Machine-level runs
     /// (`run_machine`) accept it; Jolt runs reject it.
     Stalled = 1,
-    /// Guest RAM access outside the memory plane.
+    /// Guest RAM access at or past the end of the RAM domain, where the
+    /// memory plane ends.
     FaultOutOfBounds = 2,
     /// Indirect jump to an address that is not a compiled group start.
     FaultBadJumpTarget = 3,
@@ -285,6 +287,9 @@ pub const fn reg_offset(register: u8) -> i32 {
 /// code directly (only through `extern "C"` helpers), so layout is free.
 pub struct HostContext {
     pub device: JoltDevice,
+    /// The I/O gap `[io_end, RAM_START_ADDRESS)` between the device's I/O
+    /// segments and RAM.
+    pub io_gap: IoGapMemory,
     /// Runtime advice tape bytes (append-only; reads go through the cursor).
     pub advice_tape: Vec<u8>,
     /// Read cursor into `advice_tape` (advice-load kinds).

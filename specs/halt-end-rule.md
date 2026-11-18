@@ -22,7 +22,7 @@ The changes are:
 1. **Halt flags.** `CircuitFlags` gains `Halt` and `HaltPanic`, after `IsLastInSequence` and before the field-inline flags: 16 circuit flags in base builds, 26 with `field-inline`. `JoltSuccess` (the row `jolt.success` lowers to) carries `{Jump, Halt}`; `JoltPanic` (the row `EBREAK` and `c.ebreak` lower to) carries `{Jump, Halt, HaltPanic}`. Both kinds are table-free, so their lookup output is 0.
 2. **End rule.** `ShouldJump` is deleted; its serialized slot becomes `JoltVirtualPolynomial::Reserved12`. Row 14 (`NextUnexpPCEqLookupIfJump`) becomes `Jump·(NextUnexpandedPC − LookupOutput) = 0`, so every jump target is checked and a halt jumps to address 0. Product row 21 (`JumpHasSuccessorUnlessHalt`, lane 3) keeps the factors `Jump` and `1 − NextIsNoop`, and its output becomes `Jump − (1 − 2Π)·Halt − 2·HaltPanic`, where `Π` is the claimed panic bit.
 3. **Panic claim.** `Π` enters a claim only as the appended derived public `SpartanProductVirtualizationPublic::ClaimedPanic = F::from(public_io.panic)`. `PRODUCT_JUMP_LANE_OUTPUT` in `jolt-claims` owns the lane-3 output; R1CS row 21, the product uni-skip input, the clear verifier, the optimized prover kernel and BlindFold use it, and the reference kernel computes the lane from the trace. The product remainder relation rejects the id.
-4. **Memory.** `MemoryLayout` loses `panic` and `termination`. The I/O region pads to `next_pow2(io_words + 1)` words, so an unmapped guard word always follows the outputs: `io_end = output_end ≤ RAM_START_ADDRESS − 8`. The device has no panic latch; the tracers set `JoltDevice.panic` from the halt kind. ValIo holds only the input and output segments, and the witness synthesizes no flag words.
+4. **Memory.** `MemoryLayout` loses `panic` and `termination`. The I/O region pads to `next_pow2(io_words + 1)` words, so a reserved word, the first word of the I/O gap, always follows the outputs: `io_end = output_end ≤ RAM_START_ADDRESS − 8`. The device has no panic latch; the tracers set `JoltDevice.panic` from the halt kind. ValIo holds only the input and output segments, and the witness synthesizes no flag words.
 5. **SDK.** The `#[jolt::provable]` epilogue writes the outputs, then executes `jolt.success`. `jolt_panic` is deleted; `__platform_exit` and `__platform_abort` execute `ebreak`.
 6. **Admission.** A halt must be a whole source instruction (I2′), and the entry row must be a real instruction (I3′).
 7. **Trace rows.** The trace-row metadata word stores the six instruction flags other than `IsNoop`, which the row derives from `bytecode_pc == 0`, and the immediate's sign moves to row-control bit 7, so 26 circuit flags fit.
@@ -35,7 +35,7 @@ The changes are:
 - **I1: flags sit exactly on the halts.** `Halt` implies `Jump`, `HaltPanic` implies `Halt`, and only `JoltSuccess` and `JoltPanic` carry them; both are table-free. Registry tests pin this (`halt_flags_mark_exactly_the_halt_kinds`, `table_free_jumps_are_exactly_the_halts`). Bytecode read-RAF binds each cycle's flags to its bytecode row; full-mode verification recomputes the rows' flags from their kinds, and committed mode trusts preprocessing, as for every flag.
 - **I2′: a halt is a whole source instruction.** Its `pc_map` slot has length 1. `BytecodePCMapper::try_new` rejects a multi-row instruction that contains a halt (`PreprocessingError::HaltInSequence`), and expansion rejects a halt among the final rows of a multi-row sequence, including halts reached through nested or inline expansion (`ExpansionError::HaltInSequence`). Without I2′, a halt as the last row of a longer sequence would end the proof inside an instruction.
 - **I3′: the entry row is a real instruction.** Bytecode read-RAF pins cycle 0 to the key's entry row; were that row padding, an all-padding trace would verify under either value of `Π`. `ProgramPreprocessing::validate_entry_row` runs in `validate_inputs` and `validate_inputs_from_parts`: full mode requires `entry_instruction()` and fails with `VerifierError::EntryNotInstruction`; committed mode rejects entry index 0 and trusts the authenticated key for the rest. The Dory full-program prover and the SDK's shared preprocessing refuse a padding entry when they build `JoltSharedPreprocessing`; every prover's stage 0 refuses it through `validate_inputs_from_parts` (`EntryNotInstruction`). Every prover also refuses an empty trace, or one that does not end at a halt (`ProverError::TraceDoesNotEndInHalt`).
-- **Guard word.** Mask N of the RAM read-write sumcheck covers `[io_end, RAM_START_ADDRESS)`, which now starts at the guard word, so the constraints reject any access to it, not only the tracers. `MemoryLayout::try_new` reserves the word; verifier-key admission does not recheck it, since the key's layout is trusted preprocessing.
+- **The word at `io_end`.** `MemoryLayout::try_new` reserves it, so every layout has a nonempty I/O gap `[io_end, RAM_START_ADDRESS)`. It is the first I/O-gap word, ordinary zero-initialized read/write memory ([`accessible-ram-padding.md`](./accessible-ram-padding.md)); the output check ends at `output_end`, so no value stored there is an output.
 - **Tracer agreement.** Every driver (eager, chunked, two-pass parallel replay, lazy and the native x86 tracer) stops at the first halt and reports `panic` exactly when the halt is `EBREAK`'s. A run that stops anywhere else, such as at a `j .` self-loop, fails with `TraceError::EndedWithoutHalt`.
 
 ### Non-Goals
@@ -56,8 +56,7 @@ The changes are:
 - [ ] Every e2e matrix case, in clear, ZK and Akita modes for both instruction profiles, verifies under its panic status and is rejected under the opposite one; `panic_halt` proves `panic = true`.
 - [ ] Verification under a key whose entry names a padding row fails with `EntryNotInstruction` in full and committed mode, in clear, ZK, Akita and field-inline builds; the prover rejects a padding entry and an empty trace.
 - [ ] Preprocessing and expansion reject a halt inside a multi-row instruction; the expansion golden fixtures are unchanged.
-- [ ] A verifier witness that loads or stores the guard word is rejected by the unmapped-word term in stage 2, not only by the tracers.
-- [ ] Every layout keeps an unmapped guard word after the outputs; the default layout keeps its input and output addresses.
+- [ ] Every layout keeps a reserved I/O-gap word after the outputs; the default layout keeps its input and output addresses.
 - [ ] Every tracer driver ends at the halt and reports `panic` from its kind; the public I/O memory is the same for both panic claims.
 
 ### Testing Strategy
@@ -80,11 +79,11 @@ The e2e matrix (`crates/jolt-prover/tests/e2e_matrix.rs`) runs in clear, ZK and 
 |---|---|
 | Halt flags | `jolt-riscv` (flags, registry, trace-row metadata), `jolt-lookup-tables` (tests) |
 | End rule and panic claim | `jolt-claims` (R1CS rows 14 and 21, `PRODUCT_JUMP_LANE_OUTPUT`, `ClaimedPanic`, outer openings), `jolt-kernels` (outer and product kernels, default and streaming, `ProductUniskipUpstream`), `jolt-witness`, `jolt-verifier` (stages 1–2, BlindFold), `jolt-prover`, `z3-verifier` and `zklean-extractor` (full-trace matrices per claim) |
-| Memory and device | `common` (layout, device), `jolt-program` (ValIo, unmapped-word intervals), `jolt-witness`, `tracer`, `jolt-tracer-x86` |
+| Memory and device | `common` (layout, device), `jolt-program` (ValIo), `jolt-witness`, `tracer`, `jolt-tracer-x86` |
 | SDK | `jolt-sdk` (epilogue, exit paths), the memory-ops guest |
 | Admission | `jolt-program` (`HaltInSequence`, `entry_instruction`), `jolt-verifier` (`validate_entry_row`), `jolt-prover` (preprocessing, `TraceDoesNotEndInHalt`) |
 
-The halt instructions themselves (decoding `jolt.success`, `EBREAK`'s `Panic` row, every tracer driver stopping at a halt, the SDK emitting `jolt.success`) and the unmapped-word mask N are prerequisites, not part of this change.
+The halt instructions themselves (decoding `jolt.success`, `EBREAK`'s `Panic` row, every tracer driver stopping at a halt, the SDK emitting `jolt.success`) and the unmapped-word mask N, since retired by [`accessible-ram-padding.md`](./accessible-ram-padding.md), were prerequisites, not part of this change.
 
 `Π` crosses the optimized `UniskipKernel` seam in `ProductUniskipUpstream { openings, claimed_panic }`, because the optimized front rebuilds the uni-skip input at its base nodes; the reference front brute-forces the lane and ignores it. The full-trace builders take the claim as a parameter (`rv64_trace_constraints(claimed_panic)`), since a public column cannot express the product `Π·Halt`. The program-preprocessing digest domains move to `v4` (Dory) and `v3` (Akita), field-inline variants included: the memory layout loses two fields, and a key for the old protocol must not match one for the new.
 
@@ -100,7 +99,7 @@ The halt instructions themselves (decoding `jolt.success`, `EBREAK`'s `Panic` ro
 
 ## Documentation
 
-The book's R1CS page gains "Ending a run" (row 14, lane 3 and its case table, the admission checks); the RAM page's mask-N and output-check text describe the guard word and drop the status words; the foreign-toolchain contract in the guest page says how a run ends; the testing-gates page records the wrong-claim check. `field-inline-protocol.md`, `unified-trace-row.md`, `proof-trace-row-layout.md`, `m-mode-trap-csr-semantics.md` and `ram-guards.md` are updated.
+The book's R1CS page gains "Ending a run" (row 14, lane 3 and its case table, the admission checks); the RAM page's output-check text drops the status words; the foreign-toolchain contract in the guest page says how a run ends; the testing-gates page records the wrong-claim check. `field-inline-protocol.md`, `unified-trace-row.md`, `proof-trace-row-layout.md`, `m-mode-trap-csr-semantics.md` and `ram-guards.md` are updated.
 
 ## Execution
 
@@ -109,5 +108,5 @@ Fixture and digest changes: `FIXTURE_MAGIC` moves to `JVCF0018`, the program-dig
 ## References
 
 - jolt-qed (Lean model of Jolt against the Sail RISC-V model): restrictions 5a `PanicStoresOne`, 5b `TerminationThenStall` and 5d `ClaimsNoPanic`.
-- [`ram-guards.md`](./ram-guards.md): the unmapped-word mask N that rejects accesses to the guard word.
+- [`accessible-ram-padding.md`](./accessible-ram-padding.md): the I/O gap, which starts at the reserved word after the outputs, is zero-initialized read/write memory.
 - [`m-mode-trap-csr-semantics.md`](./m-mode-trap-csr-semantics.md): `EBREAK` halts the hart.

@@ -21,8 +21,7 @@ use jolt_platform::{
 };
 use jolt_riscv::{JoltInstructionKind, JoltInstructionRow, NormalizedOperands};
 use jolt_tracer_x86::harness::{
-    self, run_program, single_row_program, ExitReason, MEM_CAPACITY, SCRATCH_DWORDS, SCRATCH_START,
-    TEST_ADDR,
+    self, run_program, single_row_program, ExitReason, SCRATCH_DWORDS, SCRATCH_START, TEST_ADDR,
 };
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -470,6 +469,15 @@ fn fence(rng: &mut StdRng) -> Instance {
     base_instance(rng, JoltInstructionKind::FENCE)
 }
 
+/// The end of the harness layout's RAM domain, where the memory plane ends.
+fn ram_domain_end() -> u64 {
+    RAM_START_ADDRESS
+        + JoltDevice::new(&harness::memory_config())
+            .memory_layout
+            .ram_size()
+            .unwrap()
+}
+
 fn host_io(rng: &mut StdRng) -> Instance {
     let mut i = base_instance(rng, kind_by_name("VirtualHostIO"));
     let layout = JoltDevice::new(&harness::memory_config()).memory_layout;
@@ -478,13 +486,19 @@ fn host_io(rng: &mut StdRng) -> Instance {
     let (ptr, len) = match rng.gen_range(0..8) {
         0..=2 => (scratch_slot(rng), rng.gen_range(0..48)),
         3 => (layout.input_start, rng.gen_range(1..16)),
-        // Ranges a guest load rejects: past the memory plane, between the
-        // I/O region and RAM, in an emulator peripheral, starting below the
-        // lowest mapped word, wrapping around the address space, and past the
-        // plane at the top of the `u32` range that print and cycle-marker
-        // pointers use.
-        4 => (RAM_START_ADDRESS + MEM_CAPACITY - 4, 8),
-        5 => (layout.io_end + 1, 4),
+        // The I/O gap, a range from its end into RAM, and the heap padding.
+        4 => *[
+            (layout.io_end, 8),
+            (RAM_START_ADDRESS - 4, 8),
+            (layout.heap_end, 8),
+        ]
+        .get(rng.gen_range(0..3))
+        .unwrap(),
+        // Ranges a guest load rejects: across the end of the RAM domain, in
+        // an emulator peripheral, starting below the lowest mapped word,
+        // wrapping around the address space, and past the domain at the top
+        // of the `u32` range that print and cycle-marker pointers use.
+        5 => (ram_domain_end() - 4, 8),
         6 => (0x1020, 4),
         _ => *[
             (layout.get_lowest_address() - 4, 8),
@@ -571,9 +585,12 @@ fn native_prints_exactly_the_readable_messages() {
         b"hi"
     );
     assert_eq!(native_print_output(SCRATCH_START, 8, 3), b"");
+    assert_eq!(
+        native_print_output(layout.io_end + 1, 4, JOLT_PRINT_STRING),
+        [0; 4]
+    );
     for (ptr, len) in [
-        (RAM_START_ADDRESS + MEM_CAPACITY - 4, 8),
-        (layout.io_end + 1, 4),
+        (ram_domain_end() - 4, 8),
         (0x1020, 4),
         (layout.get_lowest_address() - 4, 8),
     ] {
@@ -691,8 +708,11 @@ struct RefOutcome {
 
 fn reference_run(instance: &Instance) -> RefOutcome {
     let mut cpu = Cpu::new(Box::new(DummyTerminal {}));
-    cpu.get_mut_mmu().jolt_device = Some(JoltDevice::new(&harness::memory_config()));
-    cpu.get_mut_mmu().init_memory(MEM_CAPACITY);
+    let device = JoltDevice::new(&harness::memory_config());
+    // The RAM the native harness maps.
+    cpu.get_mut_mmu()
+        .init_memory(device.memory_layout.ram_size().unwrap());
+    cpu.get_mut_mmu().jolt_device = Some(device);
     for (slot, &dword) in instance.scratch.iter().enumerate() {
         let _ = cpu
             .mmu

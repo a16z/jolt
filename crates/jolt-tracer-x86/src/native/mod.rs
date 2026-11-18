@@ -17,6 +17,7 @@ use jolt_riscv::{
     CircuitFlags, JoltInstructionKind, JoltInstructionRow, JoltTraceRow, RamAccess, RamRead,
     RamWrite, RegisterRead, RegisterState, RegisterWrite,
 };
+use tracer::emulator::io_gap::{final_memory_image, IoGapMemory};
 
 use compile::CompiledProgram;
 use memory::MemoryPlane;
@@ -154,12 +155,12 @@ impl X86TracerBackend {
             &inputs.untrusted_advice,
         )?;
 
-        let plane_size = device.memory_layout.get_total_memory_size();
-        let mut plane = MemoryPlane::new(plane_size as usize)?;
+        let mut plane = MemoryPlane::for_layout(&device.memory_layout)?;
         plane.init_from_image(&program.memory_init)?;
 
         let mut host = HostContext {
             device,
+            io_gap: IoGapMemory::default(),
             advice_tape: inputs.advice_tape.clone().unwrap_or_default(),
             advice_cursor: 0,
             helper_error: None,
@@ -199,9 +200,7 @@ impl X86TracerBackend {
             observations,
             compiled,
             device: host.device,
-            final_memory: MemoryImage {
-                bytes: plane.materialized_nonzero_bytes(),
-            },
+            final_memory: final_memory_image(&host.io_gap, plane.materialized_nonzero_bytes()),
             advice_tape: host.advice_tape,
         })
     }
@@ -227,12 +226,12 @@ impl X86TracerBackend {
             &inputs.untrusted_advice,
         )?;
 
-        let plane_size = device.memory_layout.get_total_memory_size();
-        let mut plane = MemoryPlane::new(plane_size as usize)?;
+        let mut plane = MemoryPlane::for_layout(&device.memory_layout)?;
         plane.init_from_image(&program.memory_init)?;
 
         let mut host = HostContext {
             device,
+            io_gap: IoGapMemory::default(),
             advice_tape: inputs.advice_tape.clone().unwrap_or_default(),
             advice_cursor: 0,
             helper_error: None,
@@ -261,9 +260,7 @@ impl X86TracerBackend {
         Ok(RunOutput {
             trace_len: guest.trace_len as usize,
             device: host.device,
-            final_memory: MemoryImage {
-                bytes: plane.materialized_nonzero_bytes(),
-            },
+            final_memory: final_memory_image(&host.io_gap, plane.materialized_nonzero_bytes()),
             advice_tape: host.advice_tape,
             exit,
         })
@@ -478,6 +475,7 @@ struct Boundary {
     device_trusted_advice: Vec<u8>,
     device_untrusted_advice: Vec<u8>,
     device_outputs: Vec<u8>,
+    io_gap: IoGapMemory,
     advice_tape: Vec<u8>,
     advice_cursor: usize,
 }
@@ -498,6 +496,7 @@ impl Boundary {
             device_trusted_advice: host.device.trusted_advice.clone(),
             device_untrusted_advice: host.device.untrusted_advice.clone(),
             device_outputs: host.device.outputs.clone(),
+            io_gap: host.io_gap.clone(),
             advice_tape: host.advice_tape.clone(),
             advice_cursor: host.advice_cursor,
         })
@@ -554,12 +553,12 @@ impl ChunkedExecutionBackend for X86TracerBackend {
             &inputs.untrusted_advice,
         )?;
 
-        let plane_size = device.memory_layout.get_total_memory_size();
-        let mut plane = MemoryPlane::new(plane_size as usize)?;
+        let mut plane = MemoryPlane::for_layout(&device.memory_layout)?;
         plane.init_from_image(&program.memory_init)?;
 
         let mut host = HostContext {
             device,
+            io_gap: IoGapMemory::default(),
             advice_tape: inputs.advice_tape.clone().unwrap_or_default(),
             advice_cursor: 0,
             helper_error: None,
@@ -631,9 +630,10 @@ impl ChunkedExecutionBackend for X86TracerBackend {
             checkpoints,
             trace_len,
             device: host.device,
-            final_memory: Some(MemoryImage {
-                bytes: plane.materialized_nonzero_bytes(),
-            }),
+            final_memory: Some(final_memory_image(
+                &host.io_gap,
+                plane.materialized_nonzero_bytes(),
+            )),
             advice_tape: Some(host.advice_tape),
         })
     }
@@ -649,6 +649,7 @@ impl ChunkedExecutionBackend for X86TracerBackend {
 
         let mut host = HostContext {
             device,
+            io_gap: boundary.io_gap.clone(),
             advice_tape: boundary.advice_tape.clone(),
             advice_cursor: boundary.advice_cursor,
             helper_error: None,

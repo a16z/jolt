@@ -37,6 +37,7 @@ pub use jolt_riscv::InlineExtension;
 pub use trace_row::cycle_to_trace_row;
 
 use crate::emulator::{
+    io_gap::IoGapMemory,
     memory::{Memory, MemoryData},
     Emulator,
 };
@@ -66,7 +67,7 @@ fn env_rows(name: &str, default: usize) -> usize {
 ///   observing the pristine pre-execution state (the streaming-commitment
 ///   prover re-executes the program through it)
 /// * `Vec<Cycle>` — the complete execution trace
-/// * `Memory` — final guest memory state
+/// * `Memory` — final guest RAM state (without the I/O gap)
 /// * `JoltDevice` — final I/O device state
 /// * `AdviceTape` — the populated advice tape
 ///
@@ -132,7 +133,7 @@ pub fn trace(
         }
     };
 
-    let (advice_tape_result, final_memory_state, jolt_device) =
+    let (advice_tape_result, final_memory_state, _, jolt_device) =
         finish_emulator(emulator).expect("a guest run must end at a halt instruction");
     (
         lazy_trace_iter,
@@ -147,10 +148,10 @@ pub fn trace(
 /// [`execute`], and the chunked fast pass). A Jolt run must end at a halt
 /// instruction; a run that stopped anywhere else returns
 /// [`TraceError::EndedWithoutHalt`]. Reports a panic halt (log + backtrace),
-/// then extracts the advice tape, final memory, and device.
+/// then extracts the advice tape, final RAM, I/O gap, and device.
 pub(crate) fn finish_emulator(
     mut emulator: Emulator,
-) -> Result<(AdviceTape, Memory, JoltDevice), TraceError> {
+) -> Result<(AdviceTape, Memory, IoGapMemory, JoltDevice), TraceError> {
     let cpu = emulator.get_cpu();
     let Some(halt) = cpu.halted() else {
         return Err(TraceError::EndedWithoutHalt { pc: cpu.read_pc() });
@@ -161,8 +162,10 @@ pub(crate) fn finish_emulator(
 
     let advice_tape = emulator.take_advice_tape();
     let jolt_device = emulator.take_jolt_device();
-    let final_memory = emulator.get_mut_cpu().mmu.memory.memory.take_memory();
-    Ok((advice_tape, final_memory, jolt_device))
+    let mmu = &mut emulator.get_mut_cpu().mmu;
+    let final_memory = mmu.memory.memory.take_memory();
+    let io_gap = std::mem::take(&mut mmu.io_gap);
+    Ok((advice_tape, final_memory, io_gap, jolt_device))
 }
 
 /// Logs a run that ended at Jolt's failure halt, with the guest backtrace.
@@ -219,7 +222,7 @@ pub fn execute(
     }
 
     let executed = emulator.get_cpu().trace_len;
-    let (advice_tape_result, _final_memory, jolt_device) =
+    let (advice_tape_result, _, _, jolt_device) =
         finish_emulator(emulator).expect("a guest run must end at a halt instruction");
     (executed, jolt_device, advice_tape_result)
 }

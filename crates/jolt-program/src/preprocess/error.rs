@@ -55,8 +55,6 @@ pub enum PreprocessingError {
     InvalidWriteProtectedIntervals(&'static str),
     #[error("bytecode length overflows the packed PC index (u32)")]
     BytecodeTooLarge,
-    #[error("invalid unmapped RAM intervals: {0}")]
-    InvalidUnmappedIntervals(&'static str),
     #[error(
         "bytecode instruction at index {bytecode_index} (address {address:#x}) halts inside a multi-row instruction; a halt must be a whole source instruction"
     )]

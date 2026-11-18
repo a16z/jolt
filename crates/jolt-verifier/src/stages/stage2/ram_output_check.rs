@@ -44,9 +44,10 @@ impl<F: JoltField> RamOutputCheck<F> {
 
 /// `(EqAddress, IoMask, ValIo)` at the produced output address point — one
 /// value per derived multilinear: `eq(output_address_challenges, addr)`, the
-/// `[io_start, io_end)` range mask, and the committed public-IO value. Shared
-/// by the stage-2 clear path and the BlindFold statement builder so the
-/// algebra lives in one place.
+/// `[input_start, output_end)` range mask (zero when the layout has no input or
+/// output capacity), and the committed public-IO value. Shared by the stage-2
+/// clear path and the BlindFold statement builder so the algebra lives in one
+/// place.
 pub(crate) fn ram_output_check_publics<F: JoltField>(
     public_memory: &PublicIoMemory,
     output_address_challenges: &[F],
@@ -54,12 +55,16 @@ pub(crate) fn ram_output_check_publics<F: JoltField>(
 ) -> Result<(F, F, F), VerifierError> {
     let output_eq =
         try_eq_mle(output_address_challenges, ram_output_address).map_err(public_input_failed)?;
-    let output_mask = range_mask_mle_msb(
-        public_memory.io_mask_start,
-        public_memory.io_mask_end,
-        ram_output_address,
-    )
-    .map_err(public_input_failed)?;
+    let output_mask = if public_memory.io_mask_start == public_memory.io_mask_end {
+        F::zero()
+    } else {
+        range_mask_mle_msb(
+            public_memory.io_mask_start,
+            public_memory.io_mask_end,
+            ram_output_address,
+        )
+        .map_err(public_input_failed)?
+    };
     let io_num_vars = public_memory.io_num_vars();
     let split = ram_output_address
         .len()
@@ -172,8 +177,44 @@ impl<F: JoltField> ConcreteSumcheck<F> for RamOutputCheck<F> {
 #[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
+    use common::constants::RAM_START_ADDRESS;
     use common::jolt_device::{JoltDevice, MemoryConfig};
-    use jolt_field::Fr;
+    use jolt_field::{Fr, One, Zero};
+    use jolt_poly::boolean_point_msb;
+
+    /// The IoMask is one from `input_start` through the last output word and
+    /// zero from `io_end`, the first I/O gap word, through the last word below
+    /// RAM. Without input or output capacity the mask is empty and zero.
+    #[test]
+    fn io_mask_covers_inputs_and_outputs_but_not_the_io_gap() {
+        let device = |max_input_size, max_output_size| {
+            JoltDevice::new(&MemoryConfig {
+                program_size: Some(1024),
+                max_trusted_advice_size: 0,
+                max_untrusted_advice_size: 0,
+                max_input_size,
+                max_output_size,
+                ..Default::default()
+            })
+        };
+        let io_mask = |device: &JoltDevice, address: u64| {
+            let word = device.memory_layout.remapped_word_address(address).unwrap();
+            let point = boolean_point_msb::<Fr>(4, usize::try_from(word).unwrap());
+            let public_memory = PublicIoMemory::new(device).unwrap();
+            ram_output_check_publics(&public_memory, &point, &point)
+                .unwrap()
+                .1
+        };
+        let io = device(16, 16);
+        let layout = &io.memory_layout;
+        assert_eq!(io_mask(&io, layout.input_start), Fr::one());
+        assert_eq!(io_mask(&io, layout.output_end - 1), Fr::one());
+        assert_eq!(io_mask(&io, layout.io_end), Fr::zero());
+        assert_eq!(io_mask(&io, RAM_START_ADDRESS - 1), Fr::zero());
+
+        let no_io = device(0, 0);
+        assert_eq!(io_mask(&no_io, no_io.memory_layout.input_start), Fr::zero());
+    }
 
     /// The `instance_point_offset` override must place the relation's own
     /// rounds exactly at the batch tail, and reject batch vectors shorter

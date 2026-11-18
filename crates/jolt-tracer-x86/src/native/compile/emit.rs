@@ -390,8 +390,9 @@ impl FloorAlignment {
 }
 
 impl DynasmEmitter {
-    /// `Ld`: fast path hits the RAM plane; device/unaligned/OOB funnel to the
-    /// slow helper. Clobbers rax/rcx/rdx (+ helper scratch on the cold path).
+    /// `Ld`: fast path hits the RAM plane; device, I/O-gap, unaligned and
+    /// out-of-bounds addresses funnel to the slow helper. Clobbers rax/rcx/rdx
+    /// (+ helper scratch on the cold path).
     fn emit_load_doubleword(e: &mut Emitter, row: &JoltInstructionRow) {
         // EA = (x[rs1] as u64).wrapping_add(imm as i32 as u64) — exact cast chain.
         let offset = row.operands.imm as i32;
@@ -462,7 +463,8 @@ impl DynasmEmitter {
         if e.mode == EmitMode::Record {
             // The reference records the doubleword address and the stored
             // value; the pre-value is captured on whichever path performs the
-            // write (fast path below, helper for the device region).
+            // write (the fast path below, or the slow or protected-word
+            // helper).
             e.obs_reload();
             dynasm!(e.ops
                 ; .arch x64

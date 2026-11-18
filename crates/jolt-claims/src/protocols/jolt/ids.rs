@@ -49,8 +49,8 @@ pub enum RamReadWritePublic {
     EqCycle,
     /// Cycle equality times the write-protected-word mask C.
     WriteProtectedEqCycle,
-    /// Cycle equality times the unmapped-word mask N.
-    UnmappedEqCycle,
+    // Reserved codec slot; uninhabited and rejected during deserialization.
+    Reserved2(RetiredIdentifier),
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
@@ -567,6 +567,23 @@ mod tests {
         assert!(
             bincode::serde::decode_from_slice::<BytecodeClaimReductionPublic, _>(&[0, 0], config)
                 .is_err()
+        );
+        for (id, tag) in [
+            (RamReadWritePublic::EqCycle, vec![0]),
+            (RamReadWritePublic::WriteProtectedEqCycle, vec![1]),
+        ] {
+            assert_eq!(bincode::serde::encode_to_vec(id, config).unwrap(), tag);
+        }
+        assert_eq!(
+            bincode::serde::encode_to_vec(
+                JoltDerivedId::RamReadWrite(RamReadWritePublic::WriteProtectedEqCycle),
+                config
+            )
+            .unwrap(),
+            vec![0, 1]
+        );
+        assert!(
+            bincode::serde::decode_from_slice::<RamReadWritePublic, _>(&[2, 0], config).is_err()
         );
         for (id, tag) in [
             (JoltRelationId::RamRaVirtualization, vec![13]),

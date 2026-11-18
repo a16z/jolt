@@ -59,6 +59,16 @@ pub enum MemoryLayoutError {
         len: u64,
         max: u64,
     },
+    /// A public I/O segment, `len` bytes from `start`, does not lie inside
+    /// `[mask_start, mask_end)`, the input and output words the RAM output
+    /// check binds.
+    IoOutsideOutputCheck {
+        region: &'static str,
+        start: u64,
+        len: u64,
+        mask_start: u64,
+        mask_end: u64,
+    },
 }
 
 impl Display for MemoryLayoutError {
@@ -105,6 +115,16 @@ impl Display for MemoryLayoutError {
             Self::IoTooLong { region, len, max } => write!(
                 f,
                 "{region} too long: got {len} bytes, max is {max} bytes (the configured size rounded up to a multiple of eight)"
+            ),
+            Self::IoOutsideOutputCheck {
+                region,
+                start,
+                len,
+                mask_start,
+                mask_end,
+            } => write!(
+                f,
+                "{region} of {len} bytes at {start:#x} does not fit inside [{mask_start:#x}, {mask_end:#x}), the input and output words the RAM output check binds"
             ),
         }
     }
@@ -235,6 +255,9 @@ impl JoltDevice {
         })
     }
 
+    /// The byte at `address` in the I/O segments, or 0 below them. The
+    /// segments cover `[lowest_address, io_end)`; the tracers serve the I/O
+    /// gap and RAM themselves, so an address at or above `io_end` panics.
     pub fn load(&self, address: u64) -> u8 {
         if self.is_input(address) {
             let internal_address = self.convert_read_address(address);
@@ -255,7 +278,11 @@ impl JoltDevice {
             let internal_address = self.convert_write_address(address);
             self.outputs.get(internal_address).copied().unwrap_or(0)
         } else {
-            assert!(address <= RAM_START_ADDRESS - 8);
+            assert!(
+                address < self.memory_layout.io_end,
+                "JoltDevice::load requires an address below io_end ({:#X}), got {address:#X}",
+                self.memory_layout.io_end,
+            );
             0
         }
     }
@@ -302,6 +329,11 @@ impl JoltDevice {
 
     pub fn is_output(&self, address: u64) -> bool {
         address >= self.memory_layout.output_start && address < self.memory_layout.output_end
+    }
+
+    /// Whether `address` is in the I/O gap `[io_end, RAM_START_ADDRESS)`.
+    pub fn is_io_gap(&self, address: u64) -> bool {
+        address >= self.memory_layout.io_end && address < RAM_START_ADDRESS
     }
 
     fn convert_read_address(&self, address: u64) -> usize {
@@ -367,6 +399,18 @@ impl Default for MemoryConfig {
     }
 }
 
+/// The guest memory map, in ascending addresses:
+/// - `[lowest, io_end)`: the I/O segments (advice, inputs, outputs), served by
+///   [`JoltDevice`], where `lowest` is [`Self::get_lowest_address`].
+/// - `[io_end, RAM_START_ADDRESS)`: the I/O gap, zero-initialized read/write
+///   memory. LR/SC accept only addresses at or above `RAM_START_ADDRESS`.
+/// - `[RAM_START_ADDRESS, heap_end)`: program image, stack canary, stack, heap.
+/// - `[heap_end, lowest + 8 * max_ram_k)`: heap padding, zero-initialized
+///   read/write memory ([`Self::max_ram_k`], [`Self::ram_size`]).
+///
+/// The tracers reject loads and stores below `lowest` and every access at or
+/// past the end of the domain. Stores to code, canary, input and advice words
+/// must keep their values.
 #[derive(Default, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(
     feature = "std",
@@ -391,10 +435,10 @@ pub struct MemoryLayout {
     pub stack_end: u64,
     pub heap_size: u64,
     pub heap_end: u64,
-    /// Exclusive end of the I/O region. `try_new` sets it to `output_end` and
-    /// pads the region so that the doubleword at `io_end` is an unmapped guard
-    /// word (`io_end <= RAM_START_ADDRESS - 8`); verifier-key admission does
-    /// not recheck this.
+    /// Exclusive end of the I/O segments and start of the I/O gap. `try_new`
+    /// sets it to `output_end` and pads the region so that the gap holds at
+    /// least the doubleword at `io_end` (`io_end <= RAM_START_ADDRESS - 8`);
+    /// verifier-key admission does not recheck this.
     pub io_end: u64,
 }
 
@@ -484,8 +528,8 @@ impl MemoryLayout {
             });
         }
 
-        // One unmapped guard word after the outputs keeps `io_end` below
-        // `RAM_START_ADDRESS` for every layout.
+        // Reserving a doubleword past the outputs keeps the I/O gap nonempty
+        // for every layout: `io_end <= RAM_START_ADDRESS - 8`.
         let io_region_bytes = max_input_size
             .checked_add(max_trusted_advice_size)
             .and_then(|s| s.checked_add(max_untrusted_advice_size))
@@ -567,9 +611,9 @@ impl MemoryLayout {
             .ok_or(MemoryLayoutError::SizeOverflow { region: "stack" })?;
 
         // heap grows *up* (increasing addresses) from the top of the stack.
-        // `heap_end` is rounded up to a doubleword (as the linker rounds
-        // `__heap_end`) so that the tracer's `heap_end` bound and the verifier's
-        // unmapped-word mask, which starts at `heap_end`, cut at the same word.
+        // `heap_end` is rounded up to a doubleword, as the linker rounds
+        // `__heap_end`: `max_ram_k` counts whole doublewords up to it, so the
+        // heap's last doubleword stays inside the RAM domain.
         let heap_end = stack_start
             .checked_add(heap_size)
             .ok_or(MemoryLayoutError::SizeOverflow { region: "heap" })
@@ -617,7 +661,8 @@ impl MemoryLayout {
     }
 
     /// Computes and admits the maximum padded RAM domain for this layout.
-    /// Both construction and verifier-key admission use this sizing law.
+    /// Construction, verifier-key admission and the tracers' memory bound
+    /// ([`Self::ram_size`]) all use this sizing law.
     pub fn max_ram_k(&self) -> Result<usize, MemoryLayoutError> {
         self.validate_heap_end()?;
         let lowest_address = self.get_lowest_address();
@@ -640,6 +685,22 @@ impl MemoryLayout {
             });
         }
         Ok(max_ram_k)
+    }
+
+    /// Bytes from `RAM_START_ADDRESS` to the end of the admitted RAM domain,
+    /// `lowest + 8 * max_ram_k`: the program image, canary, stack, heap and
+    /// heap padding. The tracers back and admit exactly these RAM bytes.
+    pub fn ram_size(&self) -> Result<u64, MemoryLayoutError> {
+        let max_ram_k = self.max_ram_k()?;
+        let lowest_address = self.get_lowest_address();
+        let end = u128::from(lowest_address) + 8 * max_ram_k as u128;
+        // `max_ram_k` bounds `end` by 2^64, so the difference always fits.
+        u64::try_from(end.saturating_sub(u128::from(RAM_START_ADDRESS))).map_err(|_| {
+            MemoryLayoutError::RamAddressSpaceOverflow {
+                lowest_address,
+                max_ram_k,
+            }
+        })
     }
 
     pub fn get_lowest_address(&self) -> u64 {
@@ -665,11 +726,6 @@ impl MemoryLayout {
     pub fn remapped_word_address(&self, address: u64) -> Result<u64, MemoryLayoutError> {
         self.remap_word_address(address)?
             .ok_or(MemoryLayoutError::ZeroAddress)
-    }
-
-    /// Returns the total emulator memory (program + canary + stack + heap).
-    pub fn get_total_memory_size(&self) -> u64 {
-        self.heap_end - RAM_START_ADDRESS
     }
 }
 
@@ -896,11 +952,11 @@ mod tests {
         assert_eq!(layout.get_lowest_address(), region_start);
     }
 
-    /// The padded I/O region always reserves the doubleword at `io_end`, so an
-    /// unmapped guard word follows the outputs, including when the I/O words
-    /// fill one doubleword short of a power of two.
+    /// The padded I/O region always reserves the doubleword at `io_end`, so
+    /// the I/O gap after the outputs is never empty, including when the I/O
+    /// words fill one doubleword short of a power of two.
     #[test]
-    fn layouts_keep_an_unmapped_guard_word() {
+    fn layouts_keep_an_io_gap_word() {
         let config = |advice: u64, input: u64, output: u64| MemoryConfig {
             program_size: Some(1024),
             max_trusted_advice_size: advice,
@@ -918,8 +974,8 @@ mod tests {
                 RAM_START_ADDRESS - 64,
                 RAM_START_ADDRESS - 32,
             ),
-            // Three I/O words, with and without outputs: the guard word is
-            // the region's last word.
+            // Three I/O words, with and without outputs: the gap is the
+            // region's last word.
             (
                 config(0, 16, 8),
                 RAM_START_ADDRESS - 32,
@@ -981,10 +1037,10 @@ mod tests {
         assert_eq!(layout.stack_end, RAM_START_ADDRESS + 1000);
         let stack_start = layout.stack_end + STACK_CANARY_SIZE + 104;
         assert_eq!(layout.heap_end, stack_start + 16);
-        assert_eq!(
-            layout.get_total_memory_size(),
-            layout.heap_end - RAM_START_ADDRESS
-        );
+        // 1312 bytes from the lowest address (RAM_START_ADDRESS - 64) to
+        // `heap_end` pad to 256 words, so the domain ends at
+        // RAM_START_ADDRESS - 64 + 2048.
+        assert_eq!(layout.ram_size(), Ok(1984));
     }
 
     #[test]

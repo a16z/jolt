@@ -4,10 +4,12 @@
 //! the whole doubleword at `mem_base + (guest_addr - RAM_START_ADDRESS)`.
 //! Untouched pages cost no physical memory (`MAP_NORESERVE`).
 //!
-//! Addresses below `RAM_START_ADDRESS` (the `JoltDevice` I/O region) never
-//! reach this plane; generated code routes them to `extern "C"` helpers.
+//! Addresses below `RAM_START_ADDRESS` (the `JoltDevice` I/O segments and the
+//! I/O gap) never reach this plane; generated code routes them to
+//! `extern "C"` helpers.
 
 use common::constants::RAM_START_ADDRESS;
+use common::jolt_device::MemoryLayout;
 use jolt_program::execution::TraceError;
 
 pub struct MemoryPlane {
@@ -47,6 +49,11 @@ impl MemoryPlane {
             base: base.cast::<u8>(),
             size,
         })
+    }
+
+    /// Map the plane for `layout`: its RAM up to the end of the RAM domain.
+    pub fn for_layout(layout: &MemoryLayout) -> Result<Self, TraceError> {
+        Self::new(layout.ram_size()? as usize)
     }
 
     /// Write the program image (`(guest_address, byte)` pairs) into the plane.
@@ -94,10 +101,9 @@ impl MemoryPlane {
         unsafe { self.base.copy_from_nonoverlapping(image.as_ptr(), len) };
     }
 
-    /// Copy out all nonzero bytes as `(address, byte)` pairs, RAM-relative
-    /// (address 0 = `RAM_START_ADDRESS`) — the convention the reference
-    /// backend's `Memory::materialized_nonzero_bytes` uses for
-    /// `TraceOutput::final_memory`.
+    /// Copy out all nonzero bytes as `(offset, byte)` pairs in ascending
+    /// order, keyed by offset from `RAM_START_ADDRESS`, as
+    /// `final_memory_image` takes them.
     pub fn materialized_nonzero_bytes(&self) -> Vec<(u64, u8)> {
         let mut bytes = Vec::new();
         // SAFETY: new maps size bytes, all readable.

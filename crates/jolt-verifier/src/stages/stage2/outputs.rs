@@ -238,7 +238,6 @@ mod tests {
         spartan::SpartanProductDimensions,
     };
     use jolt_field::{Fr, Ring};
-    use jolt_program::preprocess::ram::RamWordMasks;
     use jolt_program::preprocess::PublicIoMemory;
     use jolt_transcript::FieldTranscript;
 
@@ -257,12 +256,7 @@ mod tests {
         }))
         .unwrap();
         Stage2BatchSumchecks::<Fr> {
-            ram_read_write: RamReadWriteChecking::new(
-                dimensions,
-                log_k,
-                Vec::new(),
-                RamWordMasks::default(),
-            ),
+            ram_read_write: RamReadWriteChecking::new(dimensions, log_k, Vec::new(), Vec::new()),
             product_remainder: ProductRemainder::new(
                 SpartanProductDimensions::new(log_t),
                 fr(1),

@@ -101,7 +101,7 @@ cargo nextest run -p jolt-prover --features prover-fixtures -E 'binary(e2e_matri
 cargo nextest run -p jolt-prover --features prover-fixtures,zk -E 'binary(e2e_matrix)' --cargo-quiet
 cargo nextest run -p jolt-prover --features akita,prover-fixtures -E 'binary(e2e_matrix)' --cargo-quiet
 
-# Field-inline profile: field_ops, field_limbs, muldiv, exact_domain, and panic_halt.
+# Field-inline profile: field_ops, field_limbs, muldiv, exact_domain, panic_halt, and ram_padding.
 cargo nextest run -p jolt-prover --features prover-fixtures,field-inline -E 'binary(e2e_matrix)' --cargo-quiet
 cargo nextest run -p jolt-prover --features prover-fixtures,field-inline,zk -E 'binary(e2e_matrix)' --cargo-quiet
 cargo nextest run -p jolt-prover --features prover-fixtures,field-inline,akita -E 'binary(e2e_matrix)' --cargo-quiet

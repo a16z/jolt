@@ -3,9 +3,10 @@
 //! differential tests and the iai microbenchmarks.
 
 use common::constants::{RAM_START_ADDRESS, REGISTER_COUNT};
-use common::jolt_device::{JoltDevice, MemoryConfig};
+use common::jolt_device::{JoltDevice, MemoryConfig, MemoryLayout};
 use jolt_program::execution::{JoltProgram, TraceError};
 use jolt_riscv::{JoltInstructionKind, JoltInstructionRow, NormalizedOperands};
+use tracer::emulator::io_gap::IoGapMemory;
 
 /// The row-emission seam, re-exported so emitter A/B experiments (benches,
 /// integration tests, the Alternative 11 stencil spike) can build their own
@@ -23,11 +24,11 @@ pub const TEST_ADDR: u64 = RAM_START_ADDRESS + 0x1000;
 /// RAM scratch region seeded identically on both sides for memory-op rows.
 pub const SCRATCH_START: u64 = RAM_START_ADDRESS + 0x2000;
 pub const SCRATCH_DWORDS: usize = 512;
-pub const MEM_CAPACITY: u64 = 1 << 20;
+const HEAP_SIZE: u64 = 1 << 20;
 
 pub fn memory_config() -> MemoryConfig {
     MemoryConfig {
-        heap_size: MEM_CAPACITY,
+        heap_size: HEAP_SIZE,
         program_size: Some(1024),
         ..Default::default()
     }
@@ -116,7 +117,7 @@ impl Prepared {
     ) -> Result<Self, TraceError> {
         Ok(Self {
             compiled: CompiledProgram::compile(program)?,
-            plane: MemoryPlane::new(MEM_CAPACITY as usize)?,
+            plane: MemoryPlane::for_layout(&MemoryLayout::new(&memory_config()))?,
             entry: program.entry_address,
             pre_regs,
         })
@@ -126,6 +127,7 @@ impl Prepared {
     pub fn run_once(&mut self) -> Result<u64, TraceError> {
         let mut host = HostContext {
             device: JoltDevice::new(&memory_config()),
+            io_gap: IoGapMemory::default(),
             advice_tape: Vec::new(),
             advice_cursor: 0,
             helper_error: None,
@@ -181,11 +183,11 @@ pub fn run_program(
 ) -> Result<Outcome, TraceError> {
     let compiled = CompiledProgram::compile(program)?;
 
-    let plane = MemoryPlane::new(MEM_CAPACITY as usize)?;
+    let plane = MemoryPlane::for_layout(&MemoryLayout::new(&memory_config()))?;
     let base = plane.base();
     for (i, &dword) in scratch.iter().enumerate() {
         let offset = (SCRATCH_START - RAM_START_ADDRESS) as usize + i * 8;
-        // SAFETY: scratch region is far inside MEM_CAPACITY.
+        // SAFETY: the scratch region lies inside the plane.
         unsafe {
             base.add(offset)
                 .cast::<u8>()
@@ -195,6 +197,7 @@ pub fn run_program(
 
     let mut host = HostContext {
         device: JoltDevice::new(&memory_config()),
+        io_gap: IoGapMemory::default(),
         advice_tape: advice.to_vec(),
         advice_cursor: 0,
         helper_error: None,
@@ -223,7 +226,7 @@ pub fn run_program(
     for (i, slot) in scratch_out.iter_mut().enumerate() {
         let offset = (SCRATCH_START - RAM_START_ADDRESS) as usize + i * 8;
         let mut bytes = [0u8; 8];
-        // SAFETY: scratch region is far inside MEM_CAPACITY.
+        // SAFETY: the scratch region lies inside the plane.
         unsafe {
             base.add(offset).cast::<u8>().copy_to(bytes.as_mut_ptr(), 8);
         }

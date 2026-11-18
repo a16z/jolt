@@ -78,8 +78,9 @@ impl<F: JoltField> SumcheckChallenges<F> for RamOutputCheckChallenges<F> {
 }
 
 /// The RAM output-check sumcheck: pins `Val_final` against the committed
-/// public I/O value on the I/O region — `eq · mask · (val_final − val_io)` —
-/// with each derived leaf one multilinear; no input claim.
+/// public I/O value on the input and output words —
+/// `eq · mask · (val_final − val_io)` — with each derived leaf one
+/// multilinear; no input claim.
 #[derive(Clone)]
 pub struct OutputCheck {
     shape: ReadWriteDimensions,
