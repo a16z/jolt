@@ -49,7 +49,7 @@ manifests -> discovery -> workspace jobs
                           scheduled main: save corpus
 ```
 
-PR and manual runs may restore trusted corpora but cannot publish new corpus
+Pull-request runs restore no trusted corpus; push and manual runs may. None can publish new corpus
 state. Only successful scheduled main runs save corpora and prune superseded
 cache entries. Crashes are uploaded for triage; important fixed cases become
 reviewed regression inputs.

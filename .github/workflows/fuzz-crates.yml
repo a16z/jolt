@@ -141,8 +141,13 @@ jobs:
           key: fuzz-build-v1-${{ runner.os }}-${{ matrix.workspace }}-${{ hashFiles(format('{0}/Cargo.lock', matrix.directory)) }}
           restore-keys: |
             fuzz-build-v1-${{ runner.os }}-${{ matrix.workspace }}-
+      # libFuzzer runs every restored input before it first checks
+      # -max_total_time, so the replay is not bounded by a target's budget and
+      # uses it up. Pull requests therefore start from the checked-in seeds
+      # and regressions only; every other run still replays the corpus.
       - name: Restore trusted corpus
         id: corpus
+        if: github.event_name != 'pull_request'
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ${{ matrix.directory }}/corpus
