@@ -144,6 +144,16 @@ missing, non-integer, or non-positive budget. `check` and `inventory` report
 each workspace's total runtime per profile; soundness-focused targets get the
 largest budgets, and hot parser/no-panic targets the smallest.
 
+A budget is time spent mutating. libFuzzer measures `-max_total_time` from
+process start and executes every corpus input before it first tests the limit,
+so `run` builds the target, replays the corpus directories alone (`-runs=0`),
+and then starts the fuzzing run with the budget plus the duration of that
+replay. The fuzzing run replays the same inputs again before it mutates, so the
+budget holds only to within the difference between the two replays: where a
+replay lasts many times the budget, a few percent of difference between them is
+the whole budget. A target's wall time is its budget plus two replays of its
+corpus.
+
 The current allocations are priors, not measurements. Before materially
 changing a budget, run the [calibration procedure](specs/production-fuzz-infra.md#budget-calibration) and reallocate toward targets that still reach
 new high-value states. A plateaued soundness target keeps a baseline budget;
@@ -158,7 +168,7 @@ without forcing every verifier fuzz target into that feature mode.
 
 Each `run` invocation prints libFuzzer status lines, final statistics
 (`-print_final_stats=1`), and a runner `[stats]` line per target with exit
-status, focus, budget, and elapsed time. The signals to read:
+status, focus, budget, corpus replay time, and elapsed time. The signals to read:
 
 - **exec/s** — throughput. High values on a protocol target often mean inputs
   are rejected before reaching the interesting path, not that fuzzing is going
@@ -187,7 +197,8 @@ budgets](#target-budgets)); the workflow passes only the profile name.
 
 | Profile | Trigger | Corpus cache | Extras |
 |---------|---------|--------------|--------|
-| `pr` | pull request / push to main | restore only | |
+| `pr` | pull request | none | |
+| `pr` | push to main | restore only | |
 | `daily` | cron `17 4 * * *` | restore + save on success | |
 | `weekly` | cron `43 3 * * 0` | restore + save on success | `cmin` + coverage upload |
 | manual | `workflow_dispatch` | restore only | chosen profile |
@@ -196,8 +207,8 @@ Use `scripts/fuzz.py inventory` for current targets and per-workspace runtimes.
 Coverage builds use `fuzz/target-coverage/`, cached separately from ASan builds.
 
 All profiles validate the configuration and replay seeds and regressions
-before mutation. Pull-request jobs may consume the latest trusted corpus but
-never publish new corpus state — only successful scheduled runs on the default
+before mutation. Pull-request jobs mutate from those inputs alone; every other run, a
+manual `pr` run included, restores the corpus. Only successful scheduled runs on the default
 branch save a new cache, so contributor-controlled code and inputs cannot
 poison trusted state. A failed run never replaces the previous cache.
 
