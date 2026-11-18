@@ -61,6 +61,7 @@ impl TryFrom<Arc<JoltProgramPreprocessing>> for JoltSharedPreprocessing {
     // Fails the SDK's fallible `preprocess_shared_*` entry point early; the
     // verifier re-checks in `validate_inputs`.
     fn try_from(program: Arc<JoltProgramPreprocessing>) -> Result<Self, Self::Error> {
+        let _ = program.code_region()?;
         require_entry_instruction(&program)?;
         Ok(Self { program })
     }
@@ -152,6 +153,24 @@ mod tests {
                 .is_err()
             );
         }
+    }
+
+    #[test]
+    fn shared_preprocessing_rejects_an_invalid_memory_layout() {
+        let mut program = program_with_entry(vec![addi_at_ram_start()], RAM_START_ADDRESS);
+        program.memory_layout.heap_end += 1;
+        assert!(matches!(
+            JoltSharedPreprocessing::new(program.clone()),
+            Err(PreprocessingError::Program(_))
+        ));
+        let encoded = bincode::serde::encode_to_vec(&program, bincode::config::standard()).unwrap();
+        assert!(
+            bincode::serde::decode_from_slice::<JoltSharedPreprocessing, _>(
+                &encoded,
+                bincode::config::standard()
+            )
+            .is_err()
+        );
     }
 }
 
