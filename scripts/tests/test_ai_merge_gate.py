@@ -58,7 +58,7 @@ def comment(login, body, edited=False, kind="User", actor_id=None):
             "lastEditedAt": "2026-10-30T12:00:00Z" if edited else None, "fullDatabaseId": "11"}
 
 
-def attestation(sha=HEAD, number=7, skill="ci-code-review", model="GPT-6 Astra", effort="max"):
+def attestation(sha=HEAD, number=7, skill="ci-code-review", model="GPT-6.2 Astra", effort="max"):
     return (f"This pull request #{number} has been reviewed at commit {sha} using skill {skill} "
             f"and model {model} with {effort} reasoning effort, and no issues were found.")
 
@@ -695,12 +695,13 @@ class AiMergeGateTests(unittest.TestCase):
             (valid, "success"),
             (f"Review complete.\r\n{valid}\r\n", "success"),
             *((attestation(skill="Independent security review", model=model, effort=effort), "success")
-              for model, effort in [("GPT-6 Astra", "max"), ("GPT-6 Astra", "xhigh"),
+              for model, effort in [("GPT-6.2 Astra", "max"), ("GPT-6.2 Astra", "xhigh"),
                                     ("Claude Opus 5.5", "max"), ("Claude Opus 5.5", "xhigh"),
                                     ("Claude Fable 5.2", "max"), ("Claude Fable 5.2", "xhigh")]),
             # Only those exact model and effort spellings count: no aliases, API IDs or case variants.
             (attestation(model="Astra"), "neutral"),
-            (attestation(model="gpt-6-astra"), "neutral"),
+            (attestation(model="gpt-6.2-astra"), "neutral"),
+            (attestation(model="GPT-6 Astra"), "neutral"),
             (attestation(model="GPT-6.1 Sol"), "neutral"),
             (attestation(model="claude opus 5.5"), "neutral"),
             (attestation(effort="Max"), "neutral"),
