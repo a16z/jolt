@@ -204,7 +204,7 @@ budgets](#target-budgets)); the workflow passes only the profile name.
 | manual | `workflow_dispatch` | restore only | chosen profile |
 
 Use `scripts/fuzz.py inventory` for current targets and per-workspace runtimes.
-Coverage builds use `fuzz/target-coverage/`, cached separately from ASan builds.
+Coverage builds use `fuzz/target-coverage/`, separate from ASan builds, and are not cached.
 
 All profiles validate the configuration and replay seeds and regressions
 before mutation. Pull-request jobs mutate from those inputs alone; every other run, a
