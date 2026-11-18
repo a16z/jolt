@@ -152,12 +152,13 @@ Then:
 
 ## A Jolt change that breaks jeth
 
-The `test-prover-akita` CI job runs `prepare` for both blocks, so a change that
-jeth's guest cannot build against, or that makes it reject a checked-in input,
-fails on the pull request that makes it. jeth can adopt such a change only
-after it is on Jolt's main. That pull request therefore removes the
-`ethereum-block` cases from `suites.json` and the CI step, and the pull request
-that moves the pin to a jeth commit built for the new Jolt restores them.
+The `test-prover-ethereum-block` CI job runs `prepare` for both blocks, so a
+change that jeth's guest cannot build against, or that makes it reject a
+checked-in input, fails on the pull request that makes it. jeth can adopt such
+a change only after it is on Jolt's main. That pull request therefore removes
+the `ethereum-block` cases from `suites.json` and that CI job, and the pull
+request that moves the pin to a jeth commit built for the new Jolt restores
+them.
 
 A change that jeth's three inline crates cannot compile against fails every
 build of `jolt-prover` with `profiling`. That pull request also removes the
