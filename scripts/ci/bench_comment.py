@@ -1,15 +1,23 @@
 #!/usr/bin/env python3
-"""Render the bench-crates PR comparison comment from two Criterion baselines.
+"""Shard and render the bench-crates PR comparison.
 
-Reads every ``<criterion-dir>/**/{base_run,pr_run}/estimates.json`` pair saved
-by ``cargo bench -- --save-baseline {base_run,pr_run}`` and prints a GitHub
-Markdown comment to stdout: per benchmark, the faster run is bolded, and when
-the relative difference exceeds ``NOISE_THRESHOLD`` the Δ cell is colored
+The workflow spreads the benchmarks over parallel runners. Each shard runs its
+share at the merge target (``--save-baseline base_run``) and then at the PR
+(``--save-baseline pr_run``) on one runner, and uploads ``target/criterion``
+beside ``target/bench-listings/{base_run,pr_run}.txt``, the stdout of
+``cargo bench -- --list`` on each leg.
+
+Usage: bench_comment.py filter <shard> <shards> <base-listing> <leg-listing>
+       bench_comment.py render <base-sha> <head-sha> <shards-dir>
+
+``filter`` prints the Criterion FILTER regex selecting shard ``<shard>`` of
+``<shards>`` on the leg that printed ``<leg-listing>``.
+
+``render`` reads one directory per shard under ``<shards-dir>`` and prints a
+GitHub Markdown comment to stdout: per benchmark, the faster run is bolded, and
+when the relative difference exceeds ``NOISE_THRESHOLD`` the Δ cell is colored
 (green = PR faster, red = PR slower) via GitHub's client-side math rendering
 (``$\\color{..}..$``), the only inline text coloring GitHub Markdown supports.
-
-Usage: bench_comment.py <base-sha> <head-sha> [criterion-dir]
-
 The SHAs (merge target, PR head) are display-only. The first output line is the
 HTML marker the workflow's comment step uses to upsert the sticky PR comment.
 """
@@ -17,6 +25,7 @@ HTML marker the workflow's comment step uses to upsert the sticky PR comment.
 from __future__ import annotations
 
 import json
+import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -36,6 +45,32 @@ TABLE_HEADER = (
 )
 
 
+def listed_ids(listing: Path) -> list[str]:
+    """Benchmark ids in the stdout of ``cargo bench -- --list``.
+
+    Criterion lists a benchmark by its title, which is its id only up to 100
+    characters; ``load_shards`` rejects a longer one as unmeasured.
+    """
+    suffix = ": benchmark"
+    return [
+        line.removesuffix(suffix)
+        for line in listing.read_text().splitlines()
+        if line.endswith(suffix)
+    ]
+
+
+def shard_filter(shard: int, shards: int, base_ids: list[str], leg_ids: list[str]) -> str:
+    """Criterion FILTER regex for one shard's share of a leg's benchmarks.
+
+    Ids are dealt round-robin from the base leg's sorted ids followed by the
+    sorted ids only this leg lists, so a benchmark the PR keeps has the same
+    shard on both legs, and thus one runner for both runs, whatever the PR
+    adds or removes.
+    """
+    order = sorted(set(base_ids)) + sorted(set(leg_ids) - set(base_ids))
+    return f"^(?:{'|'.join(map(re.escape, order[shard::shards]))})$"
+
+
 def load_baseline(criterion_dir: Path, name: str) -> dict[str, tuple[float, float]]:
     """Map benchmark full_id -> (mean, std_dev), both in nanoseconds."""
     out: dict[str, tuple[float, float]] = {}
@@ -49,6 +84,26 @@ def load_baseline(criterion_dir: Path, name: str) -> dict[str, tuple[float, floa
             est["std_dev"]["point_estimate"],
         )
     return out
+
+
+def load_shards(shard_dirs: list[Path], name: str) -> dict[str, tuple[float, float]]:
+    """Merge the shards' ``name`` baselines.
+
+    Each shard derives its share from its own listing, so listings that
+    differed between runners would drop or duplicate benchmarks. Exits unless
+    every listed benchmark was measured by exactly one shard.
+    """
+    merged: dict[str, tuple[float, float]] = {}
+    listed: set[str] = set()
+    for shard_dir in shard_dirs:
+        listed.update(listed_ids(shard_dir / "bench-listings" / f"{name}.txt"))
+        results = load_baseline(shard_dir / "criterion", name)
+        if repeated := sorted(merged.keys() & results.keys()):
+            sys.exit(f"{name}: measured by more than one shard: {repeated}")
+        merged.update(results)
+    if unmeasured := sorted(listed - merged.keys()):
+        sys.exit(f"{name}: listed but measured by no shard: {unmeasured}")
+    return merged
 
 
 def time_cell(mean_ns: float, sd_ns: float, bold: bool) -> str:
@@ -94,18 +149,13 @@ def render_row(name: str, base: tuple[float, float], pr: tuple[float, float]) ->
     return Row(f"| {' | '.join(cells)} |", pct, significant)
 
 
-def main() -> int:
-    if len(sys.argv) not in (3, 4):
-        print(__doc__, file=sys.stderr)
-        return 2
-    base_sha, head_sha = sys.argv[1], sys.argv[2]
-    criterion_dir = Path(sys.argv[3]) if len(sys.argv) == 4 else Path("target/criterion")
-
-    base = load_baseline(criterion_dir, "base_run")
-    pr = load_baseline(criterion_dir, "pr_run")
+def render(base_sha: str, head_sha: str, shards_dir: Path) -> int:
+    shard_dirs = sorted(shards_dir.iterdir())
+    base = load_shards(shard_dirs, "base_run")
+    pr = load_shards(shard_dirs, "pr_run")
     common = sorted(set(base) & set(pr))
     if not common:
-        print(f"no benchmark pairs found under {criterion_dir}", file=sys.stderr)
+        print(f"no benchmark pairs found under {shards_dir}", file=sys.stderr)
         return 1
 
     rows = [render_row(name, base[name], pr[name]) for name in common]
@@ -115,10 +165,12 @@ def main() -> int:
         MARKER,
         "## Benchmark comparison (crates)",
         "",
-        f"Same-runner A/B: `base_run` = {base_sha[:9]} (merge target) vs "
+        f"Same-runner A/B per benchmark: `base_run` = {base_sha[:9]} (merge target) vs "
         f"`pr_run` = {head_sha[:9]} (PR head merged onto it). "
         f"Bold = faster run; Δ colored when the difference exceeds the "
-        f"±{NOISE_THRESHOLD:.0%} noise threshold.",
+        f"±{NOISE_THRESHOLD:.0%} noise threshold. "
+        f"The benchmarks are spread over {len(shard_dirs)} runners, so compare "
+        f"times within a row, not between rows.",
         "",
     ]
     if significant:
@@ -150,6 +202,20 @@ def main() -> int:
 
     print("\n".join(lines))
     return 0
+
+
+def main() -> int:
+    match sys.argv[1:]:
+        case ["filter", shard, shards, base_listing, leg_listing]:
+            base_ids = listed_ids(Path(base_listing))
+            leg_ids = listed_ids(Path(leg_listing))
+            print(shard_filter(int(shard), int(shards), base_ids, leg_ids))
+            return 0
+        case ["render", base_sha, head_sha, shards_dir]:
+            return render(base_sha, head_sha, Path(shards_dir))
+        case _:
+            print(__doc__, file=sys.stderr)
+            return 2
 
 
 if __name__ == "__main__":

@@ -5,7 +5,7 @@ Jolt uses [Spartan](./spartan.md) to prove its R1CS constraints.
 
 ## Enforcing state transition
 
-The R1CS constraints defined in `constraints.rs` include conditions ensuring that the program counter (PC) is updated correctly for each execution step.
+The R1CS constraints defined in `jolt-claims/src/protocols/composed/r1cs/rv64.rs` include conditions ensuring that the program counter (PC) is updated correctly for each execution step.
 These constraints capture:
 
 - The "normal" case, where the PC is incremented to point to the next instruction in the bytecode

@@ -85,18 +85,32 @@ pub(crate) fn repeats_often(
     hash: impl Fn(usize) -> u64,
     same: impl Fn(usize, usize) -> bool,
 ) -> bool {
-    if block_len == 0 || len < block_len {
+    repeats_often_in_window(len, block_len, block_len, hash, same)
+}
+
+/// Samples complete windows with the caller's cache capacity; clearing the
+/// sample sooner can hide repeats that the execution window would merge.
+pub(crate) fn repeats_often_in_window(
+    len: usize,
+    entries: usize,
+    window_len: usize,
+    hash: impl Fn(usize) -> u64,
+    same: impl Fn(usize, usize) -> bool,
+) -> bool {
+    if entries == 0 || window_len == 0 || len < window_len {
         return false;
     }
-    let blocks = len.div_ceil(block_len);
-    let samples = blocks.min(SAMPLE_BLOCKS);
-    let mut cache = RepeatCache::new(block_len);
+    let blocks = len.div_ceil(window_len);
+    // Spend the same sample budget on longer windows, rather than increasing
+    // the serial work used to select an evaluation path.
+    let samples = blocks.min((SAMPLE_BLOCKS * entries / window_len).max(1));
+    let mut cache = RepeatCache::new(entries);
     let mut hits = 0;
     let mut sampled = 0;
     for sample in 0..samples {
         cache.clear();
-        let start = sample * blocks / samples * block_len;
-        for row in start..(start + block_len).min(len) {
+        let start = sample * blocks / samples * window_len;
+        for row in start..(start + window_len).min(len) {
             sampled += 1;
             hits += usize::from(
                 cache
@@ -112,7 +126,25 @@ pub(crate) fn repeats_often(
 
 #[cfg(test)]
 mod tests {
-    use super::{repeats_often, RepeatCache};
+    use super::{repeats_often, repeats_often_in_window, RepeatCache};
+
+    #[test]
+    fn window_sampling_preserves_cache_capacity() {
+        let period = 3072;
+        let sample = |entries| {
+            repeats_often_in_window(
+                1 << 17,
+                entries,
+                16384,
+                |row| (row % period) as u64,
+                |a, b| a % period == b % period,
+            )
+        };
+        // The long window repeats each key, but the small direct-mapped cache
+        // evicts every representative before the key appears again.
+        assert!(sample(2048));
+        assert!(!sample(64));
+    }
 
     #[test]
     fn colliding_keys_stay_separate_representatives() {

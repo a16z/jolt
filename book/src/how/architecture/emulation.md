@@ -30,6 +30,9 @@ This model has the following consequences for privileged instructions:
   See `specs/m-mode-trap-csr-semantics.md` for the argument and the exact sequences.
 
 - **EBREAK** halts the hart, as M-mode `ebreak` does under a debugger that has set `dcsr.ebreakm`.
+  It is Jolt's failure halt; `jolt.success` (the word `0x0000305B`) is the success halt.
+  A Jolt run must end at one of the two: the tracer rejects a run that stops anywhere else,
+  such as at a `j .` self-loop, with `TraceError::EndedWithoutHalt`.
 
 - **The R1CS constraint system has no privilege-mode or interrupt semantics.**
   CSR virtual registers (vr34–vr39) are treated as ordinary registers by the memory-checking circuit.

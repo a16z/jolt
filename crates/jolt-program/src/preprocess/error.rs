@@ -1,8 +1,11 @@
+use super::ram::RamDomainError;
 #[cfg(feature = "field-inline")]
 use crate::field_inline::FieldInlineInstructionError;
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum PreprocessingError {
+    #[error(transparent)]
+    RamDomain(#[from] RamDomainError),
     #[error("bytecode instruction is not legal in the selected target profile: {0:?}")]
     IllegalTargetInstruction(jolt_riscv::JoltInstructionKind),
     #[error("bytecode instruction address is invalid for bytecode indexing: {0:#x}")]
@@ -44,8 +47,14 @@ pub enum PreprocessingError {
         address: usize,
         length: usize,
     },
+    #[error("invalid code region: {0}")]
+    InvalidCodeRegion(&'static str),
+    #[error("invalid write-protected RAM intervals: {0}")]
+    InvalidWriteProtectedIntervals(&'static str),
     #[error("bytecode length overflows the packed PC index (u32)")]
     BytecodeTooLarge,
+    #[error("invalid unmapped RAM intervals: {0}")]
+    InvalidUnmappedIntervals(&'static str),
     #[cfg(feature = "field-inline")]
     #[error("invalid field-inline instruction: {0}")]
     InvalidFieldInlineInstruction(#[from] FieldInlineInstructionError),

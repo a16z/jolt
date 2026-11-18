@@ -44,9 +44,9 @@ impl<F: JoltField> PrepareKernel<F, RamRafEvaluation<F>> for OptimizedBackend {
     }
 }
 
-/// The streaming stage-2 RAF slot: `ra_folded` sums over the session's
-/// [`RamEventLog`], each access's weight one split-eq product, in
-/// `O(events + √T + K)`.
+/// The streaming stage-2 RAF slot: [`fold_parts`](super::ram_trace::fold_parts)
+/// sums `ra_folded` over the session's [`RamEventLog`], each access's weight
+/// one split-eq product, in `O(events + √T + K)`.
 pub struct StreamingRamRafEvaluation;
 
 impl<F: JoltField> PrepareKernel<F, RamRafEvaluation<F>> for StreamingRamRafEvaluation {
@@ -59,13 +59,18 @@ impl<F: JoltField> PrepareKernel<F, RamRafEvaluation<F>> for StreamingRamRafEval
         prepare_folded(inputs, |log_t, tau_low, addresses| {
             let log = RamEventLog::shared(session, witness, log_t, addresses)?;
             let eq_cycle = TensorEqTable::new(tau_low);
-            let mut ra_folded = vec![F::zero(); addresses];
-            for event in log.events() {
-                if let Some(address) = event.address {
-                    ra_folded[address as usize] += eq_cycle.evaluate_index(event.cycle as usize);
-                }
-            }
-            Ok(ra_folded)
+            Ok(super::ram_trace::fold_parts(
+                log.events(),
+                addresses,
+                |ra_folded, _, events| {
+                    for event in events {
+                        if let Some(address) = event.address {
+                            ra_folded[address as usize] +=
+                                eq_cycle.evaluate_index(event.cycle as usize);
+                        }
+                    }
+                },
+            ))
         })
     }
 }
@@ -118,6 +123,8 @@ mod tests {
     use jolt_claims::NoChallenges;
     use jolt_field::{Fr, Ring};
     use jolt_witness::TraceBackend;
+    #[cfg(feature = "parallel")]
+    use rayon::ThreadPoolBuilder;
 
     use super::super::testing::{
         assert_parity, ram_fixture, random_scalars, silent_ram_fixture, with_ram_fixture,
@@ -146,6 +153,31 @@ mod tests {
     fn matches_reference_without_ram_events() {
         let shape = FixtureShape { log_t: 4, ram_k: 8 };
         run_parity(&silent_ram_fixture(shape), shape);
+    }
+
+    #[test]
+    fn matches_reference_across_fold_parts() {
+        let shape = FixtureShape { log_t: 6, ram_k: 4 };
+        let ops = (0..40)
+            .map(|i| match i % 3 {
+                0 => RamOp::Write {
+                    word: 2 + i % 2,
+                    post: i,
+                },
+                1 => RamOp::Read { word: 2 + i % 2 },
+                _ => RamOp::None,
+            })
+            .collect();
+        let witness = ram_fixture(shape, Vec::new(), ops);
+        let check = || run_parity(&witness, shape);
+        #[cfg(feature = "parallel")]
+        ThreadPoolBuilder::new()
+            .num_threads(4)
+            .build()
+            .unwrap()
+            .install(check);
+        #[cfg(not(feature = "parallel"))]
+        check();
     }
 
     /// The default and streaming slots against the reference tier at every

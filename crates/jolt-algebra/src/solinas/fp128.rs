@@ -1137,6 +1137,12 @@ impl<const P: u128> Field for Fp128<P> {
 
     #[inline(always)]
     fn mul_add(self, rhs: Self, addend: Self) -> Self {
+        #[cfg(all(feature = "field-inline-guest", target_arch = "riscv64"))]
+        if Self::FIELD_INLINE {
+            return Self::from_inline_limbs(crate::field_inline::mul_add(
+                &self.0, &rhs.0, &addend.0,
+            ));
+        }
         Self(Self::mul_add_raw(self.0, rhs.0, addend.0))
     }
 
@@ -1210,7 +1216,7 @@ impl<const P: u128> CanonicalEncoding for Fp128<P> {
     }
 }
 
-crate::impl_serde_bytes!(impl[const P: u128] Fp128<P>, 16);
+mod word_decode;
 
 impl<const P: u128> WithAccumulator for Fp128<P> {
     type SumAccumulator = Fp128SumAccumulator<P>;
@@ -1438,8 +1444,8 @@ mod tests {
 
 /// Multiplication and inversion: native Solinas arithmetic, or the
 /// field-inline path on a RISC-V guest that routes this field (see
-/// [`Self::FIELD_INLINE`]). Addition stays in software, where a two-limb add
-/// costs about what a field-inline round trip does.
+/// [`Self::FIELD_INLINE`]); `Field::mul_add` takes the same route. A lone
+/// addition stays in software, where it costs about what a round trip does.
 impl<const P: u128> Fp128<P> {
     #[inline(always)]
     fn inline_mul(a: Self, b: Self) -> Self {

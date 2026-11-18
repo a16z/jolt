@@ -15,7 +15,7 @@ A guest can observe the difference: `mstatus` reads 0 at reset instead of `0x180
 A guest also cannot use the other four Zicsr instructions (`CSRRC`, `CSRRWI`, `CSRRSI`, `CSRRCI`): the decoder rejects them and the tracer panics, although the `riscv` crate that jolt-sdk depends on emits `CSRRC` to disable interrupts.
 This spec changes the four sequences so that they compute exactly what the specification prescribes for this hart, and adds the four missing Zicsr instructions with the same semantics. The result also matches the Sail RISC-V model configured the same way, except for one WLRL policy noted below (`mcause`).
 The change adds rows for CSR legalization and trap return, saves one row per trap entry, uses only instruction kinds that Jolt already proves, and changes no constraint.
-It also records why the LR/SC sequences and `EBREAK` stay as they are, and why tracer panics are acceptable as halting failures.
+It also records why the LR/SC sequences stay as they are, why `EBREAK` is Jolt's failure halt, and why tracer panics are acceptable as halting failures.
 
 The motivation is formal verification: a proof that Jolt's expansions refine the Sail model needs the two to agree on every reachable state, and these were the system-level places where they disagreed.
 
@@ -487,8 +487,8 @@ The specification says a failed SC "does not write to memory" (`src/unpriv/zalrs
 On Jolt's single hart with no devices in RAM, writing the value already there changes no observable state: no other hart can see the write, no reservation of another hart exists to invalidate, and the next load returns the same value. So the architectural state matches the specification.
 
 What does differ is which permission checks apply. The specification allows a failed SC to be treated as a store for memory protection (`zalrsc.adoc:21`, `norm:sc_failed_as_store`), and Sail runs the store access check on a failed SC as well.
-Jolt's only extra check on this store is the tracer's stack-canary guard, which panics on writes into the 128 bytes above the stack. A successful SC there panics too. So the difference only loses completeness (a program that should run cannot be proved), not soundness.
-Changing it would need a branch or a conditional-store row kind for no observable gain.
+Jolt's only extra check on this store is the protected-word guard, which rejects a store that changes a byte of a doubleword holding a source instruction or overlapping the 128-byte stack canary. The tracers and the RAM read-write relation both enforce it: the tracers refuse the store, and the relation's protected-word term rejects the nonzero increment the store would leave (`specs/ram-guards.md`). A failed SC writes back the value already there, which both accept, so treating it as a store costs nothing; only a successful SC that changes such a word fails, which loses completeness (a program that should run cannot be proved), not soundness.
+Skipping the store on failure would need a branch or a conditional-store row kind for no observable gain.
 
 ### 2. Misaligned LR raises `E_Load_Addr_Align` or `E_SAMO_Addr_Align`
 
@@ -523,10 +523,10 @@ Guest programs pinning the policy (all pass on `main` and on this branch): `lr_s
 
 ## Tracer panics are halting failures
 
-Several states have no Jolt step, and in each the tracer panics. Most are architectural faults, where the specification takes an exception: a misaligned `LR`/`SC`, an `LR`/`SC` below `RAM_START`, an unsupported CSR or instruction word. One is a host guard with no architectural counterpart: a store into the stack canary, where the specification takes an ordinary step.
+Several states have no Jolt step, and in each the tracer panics. Most are architectural faults, where the specification takes an exception: a misaligned `LR`/`SC`, an `LR`/`SC` below `RAM_START`, a load or store outside Jolt's memory map (below `lowest_address`, from `io_end` up to `RAM_START`, or at or above `heap_end`; an access fault in a model that maps only Jolt's I/O region and RAM), an unsupported CSR or instruction word. Two are host guards with no architectural counterpart. The protected-word guard, which the constraints enforce as well, rejects a store that changes a byte of a doubleword in the code region or overlapping the stack canary, where the specification takes an ordinary step. The fetch guard rejects an instruction fetch at an address that starts no decoded source instruction, where the specification executes whatever the memory holds.
 A panic ends trace generation before the trace is complete. Rows emitted before it may exist, but no complete trace does, so no proof is produced and the verifier is never asked to accept any claim about that execution. This is acceptable: the guest halts with a failure instead of continuing, which is a completeness loss (a program the specification would continue to run cannot be proved), never a soundness loss.
-Soundness does not rest on the tracer panicking. Where the specification would take an exception, a trace that continues without one fails the constraints (RAM checking rejects the offset bits of a misaligned address, the `LR`/`SC` assertion `RAM_START ≤ addr` fails below `RAM_START`, and an unsupported word or CSR never reaches the bytecode). Where the panic is the stack-canary guard, a trace that continues describes a step the specification also takes.
-For a refinement proof the relation is: from such a state Jolt has no successor, while the specification takes an exception (architectural faults) or an ordinary step (the stack canary). A refinement statement of the form "every Jolt step is a specification step" holds there trivially; it should not be weakened to model the exception.
+Soundness does not rest on the tracer panicking: a trace that continues past any of these states fails the constraints. Where the specification would take an exception, RAM checking rejects the offset bits of a misaligned address, the `LR`/`SC` assertion `RAM_START ≤ addr` fails below `RAM_START`, RAM read-write checking rejects an access outside the memory map (its access-count term with RAF evaluation rejects an address outside the proof's RAM domain, which starts at `lowest_address`, and its unmapped-word term rejects a word from `io_end` up to `RAM_START` or at or above `heap_end`), and an unsupported word or CSR never reaches the bytecode. Where the panic is the protected-word guard, the store leaves a nonzero increment on a protected doubleword, which the protected-word term of RAM read-write checking rejects. Where it is the fetch guard, the instruction it stops is not in the committed bytecode, so no bytecode row can stand for it.
+For a refinement proof the relation is: from such a state Jolt has no successor, while the specification takes an exception (architectural faults), an ordinary step (the protected-word guard) or executes whatever the memory holds (the fetch guard). A refinement statement of the form "every Jolt step is a specification step" holds there trivially; it should not be weakened to model the exception.
 
 ## Reserved compressed encodings are rejected
 
@@ -540,14 +540,17 @@ With D/Zcd enabled, `C.FLDSP` with `rd = f0` is legal, but both decompressors re
 
 ## `EBREAK` halts the hart
 
-`EBREAK` expands to `JAL t, 0`, a self-jump that the tracer treats as termination.
+`EBREAK` and `c.ebreak` lower to one `Panic` row, Jolt's failure halt: a table-free jump (lookup output 0) that writes its link to an instruction temporary.
+Every tracer ends the run there.
+`jolt.success` (the custom-2 word `0x0000_305B`) is the success halt and lowers to the matching `Success` row; the SDK's `#[jolt::provable]` epilogue executes it right after storing the termination word.
+Which halt ends the run is not part of the proved claim: the constraints accept any final jump, and the public panic bit comes from the panic and termination words that ValIo binds (`PublicIoMemory::new` in `crates/jolt-program/src/preprocess/public_io.rs`), so a program that stores the termination word and then executes `EBREAK` without writing the panic word proves `panic = false`.
 The unprivileged specification says `EBREAK` "is used to return control to a debugging environment" (`src/unpriv/rv32.adoc:901`, `norm:ebreak_debug_env_op`).
 The debug specification makes that precise: with `dcsr.ebreakm = 1`, "`ebreak` instructions in M-mode enter Debug Mode" (`xml/core_registers.xml:158`), and in Debug Mode the hart is halted, so "there is no forward progress in the normal instruction stream" (`Sdext.adoc:22`).
 Entering Debug Mode is not a trap, so `mepc`, `mcause`, `mtval` and `mstatus` stay unchanged.
 
-So Jolt implements an M-only hart whose external debugger has set `dcsr.ebreakm`. The end of the trace is the halt, and the final state is the state before `EBREAK`.
+So Jolt implements an M-only hart whose external debugger has set `dcsr.ebreakm`. The end of the trace is the halt, and the final architectural state is the state before `EBREAK`.
 A model with `ebreakm = 0` would instead take a breakpoint exception (cause 3, `mepc = mtval = pc`); that is a configuration difference, not a bug, so the model should be configured with `ebreakm = 1`.
-No code changes.
+A run that ends at `EBREAK` is an abnormal end: the SDK's panic, abort and exit paths execute it.
 
 ## Evaluation
 
@@ -575,7 +578,7 @@ Module docs in `crates/jolt-program/src/expand/control_flow/{csr,csr_immediate,e
 
 - **`mcause` write policy.** `mcause`'s exception code is WLRL, so any deterministic result of an illegal write is allowed (`priv-csrs.adoc:653`). Jolt stores every write raw. Sail's `legalize_cause` (sail-riscv `model/core/sys_regs.sail`, checked at `8118453`) instead keeps the previous value when the written code is not one the hart supports; a write of all ones tells them apart. Matching Sail would need a membership test over the supported codes in straight-line rows. Software writes only legal codes to WLRL fields, so the cheaper choice is to configure the model's `legalize_cause` as raw storage for Jolt, which is the assumption here.
 
-- **Faults instead of panics.** A misaligned `LR`/`SC` and an `LR`/`SC` below `RAM_START` make the tracer panic where the specification takes an exception; a store into the stack canary panics on a host guard where the specification takes an ordinary step. All are halting failures (see "Tracer panics are halting failures"), so they cost completeness only. Turning the architectural faults into traps would need conditional control flow in expansions; nothing here depends on it.
+- **Faults instead of panics.** A misaligned `LR`/`SC`, an `LR`/`SC` below `RAM_START` and a load or store outside the memory map make the tracer panic where the specification takes an exception; a store that changes a doubleword in the code region or overlapping the stack canary is rejected by the tracers and by the RAM constraints where the specification takes an ordinary step; and a fetch at an address that starts no decoded source instruction panics on the fetch guard where the specification executes whatever the memory holds. All are halting failures (see "Tracer panics are halting failures"), so they cost completeness only. Turning the architectural faults into traps would need conditional control flow in expansions; nothing here depends on it.
 
 ## References
 

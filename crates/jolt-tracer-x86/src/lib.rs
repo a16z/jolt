@@ -23,7 +23,7 @@
 mod native;
 
 #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
-pub use native::X86TracerBackend;
+pub use native::{RunOutput, X86TracerBackend};
 
 #[doc(hidden)]
 #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
