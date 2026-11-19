@@ -23,6 +23,7 @@ blake2-inline = [
   "jolt-transcript?/blake2-inline",
   "jolt-verifier?/blake2-inline",
 ]
+keccak-inline = ["jolt-transcript?/keccak-inline"]
 debug = ["zeroos?/debug"]
 zk = ["jolt-prover?/zk", "jolt-verifier?/zk"]
 # Akita-backed proving for the recursion flow. Not additive: it compiles out

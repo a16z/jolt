@@ -1,8 +1,12 @@
 use crate::{RATE_IN_BYTES, RATE_IN_U64};
+use sealed::Sealed;
 
 const HASH_LEN: usize = 32;
 
-pub struct Keccak256 {
+/// A streaming hash over the Keccak-256 sponge (rate 136 bytes, 32-byte
+/// output) whose first padding byte is `PAD`. Only [`Keccak256`] and
+/// [`Sha3_256`] can be constructed.
+pub struct Sponge256<const PAD: u8> {
     state: [u64; 25],
     buffer: [u64; RATE_IN_U64],
     /// Number of bytes in the buffer, always below `RATE_IN_BYTES`: `update`
@@ -10,7 +14,23 @@ pub struct Keccak256 {
     buffer_len: usize,
 }
 
-impl Keccak256 {
+/// Keccak-256: the original `0x01` pad byte.
+pub type Keccak256 = Sponge256<0x01>;
+/// SHA3-256 (FIPS 202): the `0x06` pad byte.
+pub type Sha3_256 = Sponge256<0x06>;
+
+mod sealed {
+    use super::{Keccak256, Sha3_256};
+
+    pub trait Sealed {}
+    impl Sealed for Keccak256 {}
+    impl Sealed for Sha3_256 {}
+}
+
+impl<const PAD: u8> Sponge256<PAD>
+where
+    Self: Sealed,
+{
     #[inline(always)]
     pub fn new() -> Self {
         Self {
@@ -51,11 +71,11 @@ impl Keccak256 {
     /// Reads hash digest and consumes the hasher.
     #[inline(always)]
     pub fn finalize(mut self) -> [u8; HASH_LEN] {
-        // Keccak padding is `0x01 .. 0x80`; both markers share a byte when
-        // `buffer_len == RATE_IN_BYTES - 1` (0x81).
+        // Keccak padding is `PAD .. 0x80`; both markers share a byte when
+        // `buffer_len == RATE_IN_BYTES - 1`.
         let buffer_len = self.buffer_len;
         let bytes = self.buffer_bytes();
-        bytes[buffer_len] = 0x01;
+        bytes[buffer_len] = PAD;
         bytes[buffer_len + 1..].fill(0);
         bytes[RATE_IN_BYTES - 1] |= 0x80;
 
@@ -63,13 +83,13 @@ impl Keccak256 {
         to_bytes(self.state)
     }
 
-    /// Computes Keccak-256 hash in one call.
+    /// Computes the hash in one call.
     /// Optimized for virtual cycles by avoiding intermediate buffer for final block.
     #[inline(always)]
     pub fn digest(input: &[u8]) -> [u8; HASH_LEN] {
         let mut state = [0u64; 25];
         let remaining = absorb_full_blocks(&mut state, input);
-        absorb_final(&mut state, remaining);
+        absorb_final(&mut state, remaining, PAD);
         to_bytes(state)
     }
 
@@ -91,7 +111,10 @@ impl Keccak256 {
     }
 }
 
-impl Default for Keccak256 {
+impl<const PAD: u8> Default for Sponge256<PAD>
+where
+    Self: Sealed,
+{
     fn default() -> Self {
         Self::new()
     }
@@ -147,13 +170,13 @@ fn absorb_full_blocks<'a>(state: &mut [u64; 25], input: &'a [u8]) -> &'a [u8] {
 
 /// Pads the final partial block (`input.len() < RATE_IN_BYTES`) and absorbs it.
 #[inline(always)]
-fn absorb_final(state: &mut [u64; 25], input: &[u8]) {
+fn absorb_final(state: &mut [u64; 25], input: &[u8], pad: u8) {
     let mut block = [0u64; RATE_IN_U64];
     // SAFETY: `[u64; RATE_IN_U64]` is exactly `RATE_IN_BYTES` initialized
     // bytes and `u8` has no alignment requirement.
     let bytes: &mut [u8; RATE_IN_BYTES] = unsafe { &mut *block.as_mut_ptr().cast() };
     bytes[..input.len()].copy_from_slice(input);
-    bytes[input.len()] = 0x01;
+    bytes[input.len()] = pad;
     bytes[RATE_IN_BYTES - 1] |= 0x80;
     // SAFETY: `block` is a fresh 8-byte aligned local distinct from `state`.
     unsafe { keccak256_absorb_permute(state.as_mut_ptr(), block.as_ptr().cast()) };
@@ -237,12 +260,54 @@ mod tests {
                 "Keccak256: aligned vs unaligned mismatch at size {size}"
             );
 
-            use sha3::{Digest, Keccak256 as RefKeccak};
+            use sha3::{Digest, Keccak256 as RefKeccak, Sha3_256 as RefSha3};
             let expected: [u8; 32] = RefKeccak::digest(&aligned).into();
             assert_eq!(
                 aligned_result, expected,
                 "Keccak256: result doesn't match reference at size {size}"
             );
+
+            let expected: [u8; 32] = RefSha3::digest(&aligned).into();
+            assert_eq!(
+                Sha3_256::digest(&aligned),
+                expected,
+                "Sha3_256: result doesn't match reference at size {size}"
+            );
+            assert_eq!(
+                Sha3_256::digest(unaligned),
+                expected,
+                "Sha3_256: aligned vs unaligned mismatch at size {size}"
+            );
+        }
+    }
+
+    /// FIPS 202 known answers, and every two-part split of inputs around one
+    /// and two rate blocks through the streaming interface.
+    #[test]
+    fn test_sha3_256_known_answers_and_split_updates() {
+        use hex_literal::hex;
+        use sha3::{Digest, Sha3_256 as RefSha3};
+
+        assert_eq!(
+            Sha3_256::digest(b""),
+            hex!("a7ffc6f8bf1ed76651c14756a061d662f580ff4de43b49fa82d80a4b80f8434a")
+        );
+        assert_eq!(
+            Sha3_256::digest(b"abc"),
+            hex!("3a985da74fe225b2045c172d6bd390bd855f086e3e9d525b46bfe24511431532")
+        );
+
+        for size in [0, 1, 135, 136, 137, 271, 272, 273] {
+            let input: Vec<u8> = (0..size).map(|i| (i * 37 + 11) as u8).collect();
+            let expected: [u8; 32] = RefSha3::digest(&input).into();
+            for split in 0..=size {
+                let (first, second) = input.split_at(split);
+                let mut hasher = Sha3_256::new();
+                hasher.update(first);
+                hasher.update(&[]);
+                hasher.update(second);
+                assert_eq!(hasher.finalize(), expected, "size {size}, split {split}");
+            }
         }
     }
 }
