@@ -847,7 +847,8 @@ impl MacroBuilder {
         // aborts must leave no proof: the abort path spoils it inside this
         // span. Public inputs and trusted advice are fixed by the verifier's
         // statement: their decode panic is a true outcome, which stays
-        // provable.
+        // provable. They are decoded first, so that their allocations cannot
+        // fail on heap that a value the prover chose already holds.
         let untrusted_advice_args_fetch = if self.untrusted_func_args.is_empty() {
             quote! {}
         } else {
@@ -903,8 +904,8 @@ impl MacroBuilder {
 
         let decode_and_call = quote! {
             #(#pub_args_fetch;)*
-            #untrusted_advice_args_fetch
             #(#trusted_advice_args_fetch;)*
+            #untrusted_advice_args_fetch
             #check_input_len
             #block
         };

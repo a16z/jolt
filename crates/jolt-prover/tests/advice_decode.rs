@@ -106,22 +106,25 @@ fn malformed_untrusted_advice_input_spoils_the_proof() {
 }
 
 /// The decoder reserves the vector a length declares before it can reject
-/// anything, and an allocation the heap refuses aborts the guest.
+/// anything, and an allocation the heap refuses aborts the guest. Each vector
+/// here fits the heap alone: the refused reservation is the untrusted one only
+/// because the entry point decodes untrusted advice last.
 #[test]
 fn untrusted_advice_input_too_large_for_the_heap_spoils_the_proof() {
     let mut guest = Program::new("advice-demo-guest");
     guest.set_std(true);
     guest.set_func("block_total");
     guest.set_heap_size(1 << 20);
+    // One byte each as advice, 264 bytes each in a decoded vector.
+    let pinned = postcard::to_stdvec(&vec![None::<[u64; 32]>; 1000]).expect("serialize the blocks");
 
     let blocks = postcard::to_stdvec(&vec![Some([3u64; 32]), None]).expect("serialize the blocks");
-    let (_, trace, _, device) = guest.trace(&[], &blocks, &[]);
+    let (_, trace, _, device) = guest.trace(&[], &blocks, &pinned);
     assert!(!device.panic);
     assert!(!spoiled(&trace));
 
-    // One byte each as advice, 264 bytes each in the decoded vector.
-    let blocks = postcard::to_stdvec(&vec![None::<[u64; 32]>; 4000]).expect("serialize the blocks");
-    let (_, trace, _, device) = guest.trace(&[], &blocks, &[]);
+    let blocks = postcard::to_stdvec(&vec![None::<[u64; 32]>; 3000]).expect("serialize the blocks");
+    let (_, trace, _, device) = guest.trace(&[], &blocks, &pinned);
     assert!(
         spoiled(&trace),
         "advice the heap cannot hold must spoil the proof, not only abort"
