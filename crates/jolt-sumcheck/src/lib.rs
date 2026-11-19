@@ -149,7 +149,7 @@ pub use prover::prove_uniskip_committed;
 #[cfg(feature = "prover")]
 pub use prover::{
     prove_batch, prove_uniskip_clear, MemberFinish, MemberRound, ProveRounds, ProvedBatch,
-    ProvedUniskip, ProvedUniskipCommitted, RoundScheduler, SequentialRounds,
+    ProvedUniskip, ProvedUniskipCommitted, RoundScheduler, SendRounds, SequentialRounds,
 };
 #[cfg(feature = "r1cs")]
 pub use r1cs::{
