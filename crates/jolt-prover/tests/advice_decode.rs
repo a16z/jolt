@@ -1,5 +1,5 @@
 //! Prover-chosen advice that the SDK cannot decode, traced. The guest sees
-//! none of it before the decode, so the SDK must reach `spoil_proof`'s
+//! none of it before the decode, so the SDK must execute `spoil_proof`'s
 //! unsatisfiable assertion: a guest panic alone is a provable outcome.
 
 #![cfg(all(
@@ -15,21 +15,23 @@ use jolt_program::image::decode_elf;
 use tracer::instruction::Cycle;
 use tracer::AdviceTape;
 
-struct Run {
-    device: JoltDevice,
-    /// The trace holds spoil_proof's unsatisfiable assertion.
-    spoiled: bool,
-    advice_tape: Vec<u8>,
+/// Honest VirtualAssertEQ rows panic the tracer on unequal operands, so an
+/// unequal row is the SDK spoiling the proof.
+fn spoiled(trace: &[Cycle]) -> bool {
+    trace.iter().any(|cycle| {
+        matches!(cycle, Cycle::VirtualAssertEQ(row)
+            if row.register_state.rs1 != row.register_state.rs2)
+    })
 }
 
-fn trace(
+/// Traces `elf` over `advice_tape` and also returns the tape the run leaves,
+/// which a compute_advice build has written.
+fn trace_with_tape(
     guest: &Program,
     elf: &[u8],
     inputs: &[u8],
-    untrusted_advice: &[u8],
-    trusted_advice: &[u8],
     advice_tape: Option<Vec<u8>>,
-) -> Run {
+) -> (Vec<Cycle>, JoltDevice, Vec<u8>) {
     let image = decode_elf(elf, guest.instruction_profile()).expect("decode the guest ELF");
     let memory_config = MemoryConfig {
         program_size: Some(image.program_end - RAM_START_ADDRESS),
@@ -39,22 +41,12 @@ fn trace(
         elf,
         None,
         inputs,
-        untrusted_advice,
-        trusted_advice,
+        &[],
+        &[],
         &memory_config,
         advice_tape.map(AdviceTape::from_bytes),
     );
-    // Honest VirtualAssertEQ rows panic the tracer on unequal operands, so an
-    // unequal row is spoil_proof's.
-    let spoiled = trace.iter().any(|cycle| {
-        matches!(cycle, Cycle::VirtualAssertEQ(row)
-            if row.register_state.rs1 != row.register_state.rs2)
-    });
-    Run {
-        device,
-        spoiled,
-        advice_tape: advice_tape.into_bytes(),
-    }
+    (trace, device, advice_tape.into_bytes())
 }
 
 /// A `Vec` length the guest heap cannot hold fails inside the tape decoder,
@@ -75,51 +67,64 @@ fn unreservable_vec_length_on_the_advice_tape_spoils_the_proof() {
     let inputs = postcard::to_stdvec(&(vec![2usize, 5, 3], vec![3usize, 2, 7, 5]))
         .expect("serialize the sets");
 
-    let first_pass = trace(&guest, &first_pass_elf, &inputs, &[], &[], None);
-    let honest = trace(
-        &guest,
-        &elf,
-        &inputs,
-        &[],
-        &[],
-        Some(first_pass.advice_tape.clone()),
-    );
-    assert!(!honest.device.panic);
-    assert!(!honest.spoiled);
+    let (_, _, honest_tape) = trace_with_tape(&guest, &first_pass_elf, &inputs, None);
+    let (trace, device, _) = trace_with_tape(&guest, &elf, &inputs, Some(honest_tape.clone()));
+    assert!(!device.panic);
+    assert!(!spoiled(&trace));
 
     // Past `isize::MAX` bytes, and past the heap.
     for length in [u64::MAX, 1 << 40] {
         // Every word of the tape is the length, wherever the decoder reads it.
-        let tape = length
-            .to_le_bytes()
-            .repeat(first_pass.advice_tape.len() / 8);
-        let run = trace(&guest, &elf, &inputs, &[], &[], Some(tape));
+        let tape = length.to_le_bytes().repeat(honest_tape.len() / 8);
+        let (trace, device, _) = trace_with_tape(&guest, &elf, &inputs, Some(tape));
         assert!(
-            run.spoiled,
+            spoiled(&trace),
             "a Vec of {length} elements must spoil the proof, not only panic"
         );
-        assert!(run.device.panic);
+        assert!(device.panic);
     }
 }
 
 #[test]
 fn malformed_untrusted_advice_input_spoils_the_proof() {
     let mut guest = Program::new("advice-consumer-guest");
-    guest.build(&default_target_dir().to_string_lossy());
-    let elf = guest.get_elf_contents().expect("the proving build");
     let public_sum = postcard::to_stdvec(&12u64).expect("serialize the public input");
     let trusted = postcard::to_stdvec(&7u64).expect("serialize the trusted advice");
 
     let untrusted = postcard::to_stdvec(&5u64).expect("serialize the untrusted advice");
-    let honest = trace(&guest, &elf, &public_sum, &untrusted, &trusted, None);
-    assert!(!honest.device.panic);
-    assert!(!honest.spoiled);
+    let (_, trace, _, device) = guest.trace(&public_sum, &untrusted, &trusted);
+    assert!(!device.panic);
+    assert!(!spoiled(&trace));
 
     // No `u64` varint is longer than ten bytes.
-    let run = trace(&guest, &elf, &public_sum, &[0xff; 11], &trusted, None);
+    let (_, trace, _, device) = guest.trace(&public_sum, &[0xff; 11], &trusted);
     assert!(
-        run.spoiled,
+        spoiled(&trace),
         "undecodable untrusted advice must spoil the proof, not only panic"
     );
-    assert!(run.device.panic);
+    assert!(device.panic);
+}
+
+/// The decoder reserves the vector a length declares before it can reject
+/// anything, and an allocation the heap refuses aborts the guest.
+#[test]
+fn untrusted_advice_input_too_large_for_the_heap_spoils_the_proof() {
+    let mut guest = Program::new("advice-demo-guest");
+    guest.set_std(true);
+    guest.set_func("block_total");
+    guest.set_heap_size(1 << 20);
+
+    let blocks = postcard::to_stdvec(&vec![Some([3u64; 32]), None]).expect("serialize the blocks");
+    let (_, trace, _, device) = guest.trace(&[], &blocks, &[]);
+    assert!(!device.panic);
+    assert!(!spoiled(&trace));
+
+    // One byte each as advice, 264 bytes each in the decoded vector.
+    let blocks = postcard::to_stdvec(&vec![None::<[u64; 32]>; 4000]).expect("serialize the blocks");
+    let (_, trace, _, device) = guest.trace(&[], &blocks, &[]);
+    assert!(
+        spoiled(&trace),
+        "advice the heap cannot hold must spoil the proof, not only abort"
+    );
+    assert!(device.panic);
 }

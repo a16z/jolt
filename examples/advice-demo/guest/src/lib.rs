@@ -1,4 +1,4 @@
-use jolt::{end_cycle_tracking, start_cycle_tracking, AdviceTapeIO, JoltPod};
+use jolt::{end_cycle_tracking, start_cycle_tracking, AdviceTapeIO, JoltPod, UntrustedAdvice};
 
 /// Factors u8 n into two u8 factors (a, b)
 /// With a <= b such that a * b = n
@@ -251,4 +251,12 @@ fn advice_demo(n: u8, a: Vec<usize>, b: Vec<usize>) {
 #[jolt::provable]
 fn subset(a: Vec<usize>, b: Vec<usize>) {
     verify_subset(&a, &b);
+}
+
+/// Sums the first word of each present block. The entry point decodes `blocks`
+/// before this body runs, reserving what their length declares, which
+/// `crates/jolt-prover/tests/advice_decode.rs` drives past the heap.
+#[jolt::provable(heap_size = 1048576)]
+fn block_total(blocks: UntrustedAdvice<Vec<Option<[u64; 32]>>>) -> u64 {
+    blocks.iter().flatten().map(|block| block[0]).sum()
 }

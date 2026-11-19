@@ -1,9 +1,8 @@
-/// Makes proof unsatisfiable.
-/// On RISC-V, emits a VirtualAssertEQ(0, 1) that the prover cannot satisfy, then panics.
-/// On all other targets, panics directly.
+/// Emits a VirtualAssertEQ(0, 1) that the prover cannot satisfy, and returns.
+/// For a halt path that is already ending the run; guest code calls [`spoil_proof`].
+#[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
 #[inline(always)]
-pub fn spoil_proof() -> ! {
-    #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
+pub fn emit_unsatisfiable_assertion() {
     unsafe {
         let u = 0u64;
         let v = 1u64;
@@ -16,6 +15,15 @@ pub fn spoil_proof() -> ! {
             options(nostack)
         );
     }
+}
+
+/// Makes proof unsatisfiable.
+/// On RISC-V, emits a VirtualAssertEQ(0, 1) that the prover cannot satisfy, then panics.
+/// On all other targets, panics directly.
+#[inline(always)]
+pub fn spoil_proof() -> ! {
+    #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
+    emit_unsatisfiable_assertion();
     panic!("proof spoiled");
 }
 
