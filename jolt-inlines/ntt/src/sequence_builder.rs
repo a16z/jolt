@@ -5,6 +5,11 @@ use jolt_inlines_sdk::host::{
 
 use crate::{DEGREE, FUNCT3, FUNCT7, OPCODE};
 
+/// Selector 8 requires doubleword-aligned state, twist and stage-table arrays.
+/// Paired stage-table loads require 8-byte alignment even when the instruction
+/// is emitted directly; `forward_ntt64` supplies aligned copies when needed.
+/// Its expansion differs from the scalar-load schedule, so existing guest
+/// ELFs require traces and preprocessing generated with this expansion.
 pub struct ForwardNtt64;
 
 struct NttBuilder {
@@ -15,6 +20,20 @@ struct NttBuilder {
 }
 
 impl NttBuilder {
+    fn new(
+        mut asm: InlineExpansionBuilder,
+        operands: InlineOperands,
+    ) -> Result<Self, ExpansionError> {
+        let values = asm.allocate_inline_array::<DEGREE>()?;
+        let scratch = asm.allocate_inline_array::<10>()?;
+        Ok(Self {
+            asm,
+            operands,
+            values,
+            scratch,
+        })
+    }
+
     fn build(mut self) -> Result<ExpandedInstructionSequence, ExpansionError> {
         let [psi, twiddles, p, pinv, temp, _, _, _, weight, one] = self.scratch.map(|r| *r);
         self.asm.emit_ld(Kind::LD, psi, self.operands.rs2, 0);
@@ -39,23 +58,40 @@ impl NttBuilder {
             self.asm.emit_i(Kind::SRAI, temp, temp, 32);
             self.mont_mul(*self.values[i + 1], *self.values[i + 1], temp);
         }
-        // Every stage's first twiddle is the Montgomery form of 1, so a
-        // product with it reduces a butterfly sum in five rows.
-        self.asm.emit_ld(Kind::LW, one, twiddles, 0);
+        // Every stage starts with the Montgomery identity weight. A paired
+        // load supplies it without an unaligned word-load expansion.
+        self.asm.emit_ld(Kind::LD, one, twiddles, 0);
+        self.asm.emit_i(Kind::ADDIW, one, one, 0);
         let mut len = DEGREE / 2;
         while len != 0 {
-            // The stage starts at an odd i32 offset except at len=1; LW
-            // expansion handles that alignment without loading outside the table.
-            for j in 0..len {
-                self.asm
-                    .emit_ld(Kind::LW, temp, twiddles, (len - 1 + j) as i64 * 4);
-                for start in (0..DEGREE).step_by(2 * len) {
+            let groups = len;
+            for group in 0..groups {
+                let twiddle = if len == 1 {
+                    one
+                } else {
+                    let index = len - 1 + group;
+                    // forward_ntt64 establishes doubleword alignment. Each
+                    // pair stays inside the table; mont_mul preserves weight.
+                    if group == 0 || index & 1 == 0 {
+                        self.asm
+                            .emit_ld(Kind::LD, weight, twiddles, (index & !1) as i64 * 4);
+                    }
+                    if index & 1 == 0 {
+                        self.asm.emit_i(Kind::ADDIW, temp, weight, 0);
+                    } else {
+                        self.asm.emit_i(Kind::SRAI, temp, weight, 32);
+                    }
+                    temp
+                };
+                let pairs = DEGREE / (2 * len);
+                for pair in 0..pairs {
+                    let (start, j) = (pair * 2 * len, group);
                     let u = *self.values[start + j];
                     let v = *self.values[start + j + len];
                     self.asm.emit_r(Kind::SUBW, psi, u, v);
                     self.asm.emit_r(Kind::ADDW, u, u, v);
                     self.mont_mul(u, u, one);
-                    self.mont_mul(v, psi, temp);
+                    self.mont_mul(v, psi, twiddle);
                 }
             }
             len /= 2;
@@ -99,17 +135,9 @@ impl InlineOp for ForwardNtt64 {
     const NAME: &'static str = "NTT64_I32_FORWARD";
 
     fn build_sequence(
-        mut asm: InlineExpansionBuilder,
+        asm: InlineExpansionBuilder,
         operands: InlineOperands,
     ) -> Result<ExpandedInstructionSequence, ExpansionError> {
-        let values = asm.allocate_inline_array::<DEGREE>()?;
-        let scratch = asm.allocate_inline_array::<10>()?;
-        NttBuilder {
-            asm,
-            operands,
-            values,
-            scratch,
-        }
-        .build()
+        NttBuilder::new(asm, operands)?.build()
     }
 }

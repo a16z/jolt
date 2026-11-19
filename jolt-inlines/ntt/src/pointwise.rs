@@ -5,8 +5,10 @@ use crate::OPCODE;
 use crate::{reduce, DEGREE};
 
 pub const DOT_PRODUCTS: usize = 6;
-#[cfg(any(feature = "host", target_arch = "riscv64"))]
+#[cfg(feature = "host")]
 pub const DOT_FUNCT7: u32 = 9;
+#[cfg(any(feature = "host", target_arch = "riscv64"))]
+pub const DOT_NONNEGATIVE_FUNCT7: u32 = 10;
 
 /// Add six pointwise products to a 64-coefficient Montgomery accumulator.
 ///
@@ -14,7 +16,9 @@ pub const DOT_FUNCT7: u32 = 9;
 /// `acc[i] += sum(lhs[j][i] * rhs[j][i]) / 2^32 (mod p)`, returning canonical
 /// residues. `pinv` is `p^-1 mod 2^32`. A shorter dot can pad with zero arrays.
 /// Other inputs follow explicit wrapping integer arithmetic. Unaligned arrays
-/// use the portable path; the inline requires doubleword-aligned paired loads.
+/// use the portable path, as do negative moduli. Selector 10 requires a
+/// nonnegative modulus and doubleword-aligned paired loads; selector 9 retains
+/// the signed wrapping semantics for every modulus.
 /// Unlike `forward_ntt64`, it does not copy to aligned buffers: copying thirteen
 /// arrays would cost more than the portable loop.
 #[inline]
@@ -26,7 +30,8 @@ pub fn pointwise_dot64(
     pinv: i32,
 ) {
     #[cfg(target_arch = "riscv64")]
-    if (acc.as_ptr() as usize).trailing_zeros() >= 3
+    if p >= 0
+        && (acc.as_ptr() as usize).trailing_zeros() >= 3
         && lhs
             .iter()
             .chain(&rhs)
@@ -43,7 +48,7 @@ pub fn pointwise_dot64(
             core::arch::asm!(
                 ".insn r {opcode}, 0, {funct7}, x0, {acc}, {params}",
                 opcode = const OPCODE,
-                funct7 = const DOT_FUNCT7,
+                funct7 = const DOT_NONNEGATIVE_FUNCT7,
                 acc = in(reg) acc.as_mut_ptr(),
                 params = in(reg) params.as_ptr(),
                 options(nostack),
