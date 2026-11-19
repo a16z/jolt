@@ -287,7 +287,8 @@ where
     match stage1 {
         Stage1Output::Clear(stage1) => {
             let claims = &proof.clear_claims()?.stage2;
-            let uniskip_relation = ProductUniskip::new(product_dimensions, tau_high);
+            let uniskip_relation =
+                ProductUniskip::new(product_dimensions, tau_high, checked.public_io.panic);
             let uniskip_input_values = product_uniskip_input_values_from_stage1(stage1);
             let uniskip_input_claim =
                 uniskip_relation.input_claim(&uniskip_input_values, &NoChallenges::default())?;

@@ -35,6 +35,7 @@ use self::mmu::CodeGuard;
 use self::terminal::Terminal;
 
 use common::constants::{DEFAULT_HEAP_SIZE, RAM_START_ADDRESS};
+use common::jolt_device::JoltDevice;
 use jolt_program::execution::TraceError;
 #[cfg(not(feature = "field-inline"))]
 use jolt_riscv::RV64IMAC_JOLT_ALL_INLINES;
@@ -109,6 +110,25 @@ impl Emulator {
     /// Take ownership of the advice tape, replacing it with an empty one
     pub fn take_advice_tape(&mut self) -> cpu::AdviceTape {
         std::mem::take(&mut self.cpu.advice_tape)
+    }
+
+    /// Takes the run's device with its public panic bit set from the halt
+    /// that ended the run: the bit claims a failure halt (EBREAK), and no
+    /// guest memory backs it.
+    #[expect(
+        clippy::expect_used,
+        reason = "create_emulator installs the device before any run"
+    )]
+    pub(crate) fn take_jolt_device(&mut self) -> JoltDevice {
+        let panicked = self.cpu.halted() == Some(HaltKind::Panic);
+        let mut device = self
+            .cpu
+            .get_mut_mmu()
+            .jolt_device
+            .take()
+            .expect("JoltDevice was not initialized");
+        device.panic = panicked;
+        device
     }
 
     /// Method for running [`riscv-tests`](https://github.com/riscv/riscv-tests) program.

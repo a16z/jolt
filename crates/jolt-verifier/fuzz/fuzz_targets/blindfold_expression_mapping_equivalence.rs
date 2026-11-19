@@ -138,6 +138,7 @@ fuzz_target!(|data: &[u8]| {
         JoltDerivedId::from(ProgramImageClaimReductionPublic::FinalScale),
         JoltDerivedId::from(SpartanShiftPublic::EqPlusOneProduct),
         JoltDerivedId::from(SpartanProductVirtualizationPublic::TauKernel),
+        JoltDerivedId::from(SpartanProductVirtualizationPublic::ClaimedPanic),
         JoltDerivedId::from(SpartanOuterPublic::AzWeight(0)),
         JoltDerivedId::from(SpartanOuterPublic::BzConstant),
         JoltDerivedId::from(RegistersReadWritePublic::EqCycle),

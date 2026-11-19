@@ -22,9 +22,14 @@ ends at `ebreak`, with `panic = true`.
 The shared runner checks each guest's output against a natively computed
 value, its panic status, the halt that ends its run (`jolt.success`, or
 `ebreak` for a panic), its trace bound, and field activity, then proves it with
-the optimized backend. The compiled protocol selects Dory clear by default,
-Dory ZK with `zk`, or Akita with `akita`. The mode is part of every test name
-(`matrix::clear::sha2`, `matrix::zk::field_ops`,
+the optimized backend. The proof must verify under the guest's panic status
+and fail under the opposite one. The flipped claim changes the statement and
+so diverges the transcript before stage 1: this checks statement binding, not
+the end rule. The lane-3 signal is the base-build engine twin
+`lane_three_binds_the_claimed_panic_bit` in `engine_twins.rs`, which flips the
+claim only in the product uni-skip input. The compiled protocol selects Dory
+clear by default, Dory ZK with `zk`, or Akita with `akita`. The mode is part
+of every test name (`matrix::clear::sha2`, `matrix::zk::field_ops`,
 `matrix::akita::muldiv`). CI runs each profile table in all three
 modes, so a guest added to either table gains all three arms at once.
 Specialized checks (tampering, committed programs, forced one-hot sizes)

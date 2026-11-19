@@ -176,22 +176,6 @@ impl TraceBackend {
             )?;
             populate_ram_bytes(&mut state, start, &self.trace.device.outputs, "output")?;
         }
-
-        let panic_index =
-            self.remapped_required_address(self.trace.device.memory_layout.panic, "panic")?;
-        set_ram_word(
-            &mut state,
-            panic_index,
-            self.trace.device.panic as u64,
-            "panic",
-        )?;
-        if !self.trace.device.panic {
-            let termination_index = self.remapped_required_address(
-                self.trace.device.memory_layout.termination,
-                "termination",
-            )?;
-            set_ram_word(&mut state, termination_index, 1, "termination")?;
-        }
         Ok(state)
     }
 
@@ -298,22 +282,6 @@ pub(crate) fn populate_ram_bytes(
         })
         .collect::<Vec<_>>();
     populate_ram_words(state, start, &words, label)
-}
-
-pub(crate) fn set_ram_word(
-    state: &mut [u64],
-    index: usize,
-    word: u64,
-    label: &'static str,
-) -> Result<(), WitnessError> {
-    let Some(slot) = state.get_mut(index) else {
-        return Err(WitnessError::InvalidWitnessData {
-            label: JOLT_VM_LABEL,
-            reason: format!("{label} memory index {index} exceeds ram_k {}", state.len()),
-        });
-    };
-    *slot = word;
-    Ok(())
 }
 
 pub(crate) fn populate_ram_words(

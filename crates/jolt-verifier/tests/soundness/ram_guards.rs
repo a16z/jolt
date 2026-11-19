@@ -297,7 +297,8 @@ fn verifier_rejects_protected_io_and_canary_changes_with_or_without_restoration(
 /// Mask N covers the I/O padding below RAM and the heap padding from `heap_end`
 /// to the end of the address domain. A malicious witness that loads or stores
 /// there passes the relation without N and fails it with N, at the first gap
-/// word, at the first heap-padding word, and at the domain's last word.
+/// word (the guard word right after the outputs), at the first heap-padding
+/// word, and at the domain's last word.
 #[test]
 fn verifier_rejects_loads_and_stores_on_unmapped_words() {
     let layout = MemoryLayout::new(&MemoryConfig {
@@ -315,6 +316,7 @@ fn verifier_rejects_loads_and_stores_on_unmapped_words() {
     let word = |address: u64| ((address - layout.get_lowest_address()) / 8) as usize;
     let gap = (word(layout.io_end), word(RAM_START_ADDRESS));
     let heap_padding = word(layout.heap_end);
+    assert_eq!(gap.0, word(layout.output_end));
     assert!(gap.0 < gap.1);
     assert!(heap_padding < ram_k - 1);
     assert_eq!(masks.unmapped, [gap, (heap_padding, ram_k)]);

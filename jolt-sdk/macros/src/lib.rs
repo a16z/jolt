@@ -784,7 +784,6 @@ impl MacroBuilder {
         let max_output_len = memory_layout.max_output_size as usize;
         let max_untrusted_advice_len = memory_layout.max_untrusted_advice_size as usize;
         let max_trusted_advice_len = memory_layout.max_trusted_advice_size as usize;
-        let termination_bit = memory_layout.termination as usize;
 
         let get_input_slice = quote! {
             let __jolt_input_ptr = #input_start as *const u8;
@@ -914,7 +913,6 @@ impl MacroBuilder {
             },
         };
 
-        let panic_fn = self.make_panic(memory_layout.panic);
         let declare_alloc = self.make_allocator();
 
         // Boot code (__jolt_start) is provided by jolt-sdk's runtime boot module.
@@ -935,28 +933,8 @@ impl MacroBuilder {
                 #get_trusted_advice_slice
                 #decode_and_call
                 #handle_return
-                unsafe {
-                    ::core::ptr::write_volatile(#termination_bit as *mut u8, 1);
-                }
                 // `jolt.success` (custom-2, funct3 3) ends the run; the epilogue is its only emitter.
                 unsafe { ::core::arch::asm!(".insn i 0x5B, 3, x0, x0, 0", options(noreturn)); }
-            }
-
-            #panic_fn
-        }
-    }
-
-    /// Generate `jolt_panic()`: writes 1 to the panic byte, then halts at `ebreak`, Jolt's
-    /// failure halt. The runtime's abort path (`__platform_abort`) calls it.
-    fn make_panic(&self, panic_address: u64) -> TokenStream2 {
-        quote! {
-            #[cfg(feature = "guest")]
-            #[no_mangle]
-            pub extern "C" fn jolt_panic() -> ! {
-                unsafe {
-                    ::core::ptr::write_volatile(#panic_address as *mut u8, 1);
-                    ::core::arch::asm!("ebreak", options(noreturn));
-                }
             }
         }
     }

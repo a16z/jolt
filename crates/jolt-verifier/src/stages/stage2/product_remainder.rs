@@ -137,7 +137,7 @@ impl<F: JoltField> ConcreteSumcheck<F> for ProductRemainder<F> {
         let output = ProductRemainderOutputClaims {
             left_instruction_input: opening_point.clone(),
             right_instruction_input: opening_point.clone(),
-            jump_flag: opening_point.clone(),
+            is_noop: opening_point.clone(),
             write_lookup_output_to_rd: opening_point.clone(),
             lookup_output: opening_point.clone(),
             branch_flag: opening_point.clone(),
@@ -183,11 +183,13 @@ impl<F: JoltField> ConcreteSumcheck<F> for ProductRemainder<F> {
                         "product remainder Lagrange weight index {index} out of range for domain size {SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE}"
                     )))
             }
-            // `UniskipLagrangeWeight` belongs to the product uni-skip relation, not the
-            // remainder: `product_remainder` reweights via `product_weight` ->
-            // `LagrangeWeight` only (plus `TauKernel`). Reject rather than silently
-            // aliasing it onto the Lagrange-weight path, so a misrouted public surfaces.
-            SpartanProductVirtualizationPublic::UniskipLagrangeWeight(_) => {
+            // `UniskipLagrangeWeight` and `ClaimedPanic` belong to the product uni-skip
+            // relation, not the remainder: `product_remainder` reweights via
+            // `product_weight` -> `LagrangeWeight` only (plus `TauKernel`) and reads no
+            // panic bit. Reject rather than silently aliasing them, so a misrouted public
+            // surfaces.
+            SpartanProductVirtualizationPublic::UniskipLagrangeWeight(_)
+            | SpartanProductVirtualizationPublic::ClaimedPanic => {
                 Err(VerifierError::MissingStageClaimDerived { id: (*id).into() })
             }
             SpartanProductVirtualizationPublic::TauKernel => {
@@ -221,7 +223,7 @@ mod tests {
         ProductRemainderOutputClaims {
             left_instruction_input: fr(2),
             right_instruction_input: fr(3),
-            jump_flag: fr(5),
+            is_noop: fr(5),
             write_lookup_output_to_rd: fr(7),
             lookup_output: fr(11),
             branch_flag: fr(13),
@@ -286,14 +288,14 @@ mod tests {
         let left_lanes = [
             outputs.left_instruction_input,
             outputs.lookup_output,
-            outputs.jump_flag,
+            Fr::from_u64(2),
             field_inline.rs1_value,
             field_inline.rs1_value,
         ];
         let right_lanes = [
             outputs.right_instruction_input,
             outputs.branch_flag,
-            Fr::from_u64(1) - outputs.next_is_noop,
+            outputs.next_is_noop - outputs.is_noop,
             field_inline.rs2_value,
             field_inline.rd_value,
         ];

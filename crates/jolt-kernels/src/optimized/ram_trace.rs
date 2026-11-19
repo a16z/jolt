@@ -522,10 +522,10 @@ mod tests {
 
     /// Collected RAM access columns request exactly the bytes
     /// `ram_access_columns_bytes` reserves over the fixture's proof rows, whose
-    /// last row (the termination write) accesses RAM: stage 2's generation
-    /// alone and with stage 4's beside it, as while stage 2's awaits its
-    /// background drop. Every collection shares the parked address backing,
-    /// counted once, and brings two value columns of its own.
+    /// last row accesses RAM: stage 2's generation alone and with stage 4's
+    /// beside it, as while stage 2's awaits its background drop. Every
+    /// collection shares the parked address backing, counted once, and brings
+    /// two value columns of its own.
     #[test]
     fn access_column_generations_request_the_reserved_bytes() {
         let shape = FixtureShape {

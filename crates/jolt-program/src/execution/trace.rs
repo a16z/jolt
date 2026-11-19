@@ -248,8 +248,8 @@ impl RamAddressBounds {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ExecutionDimensions {
     pub trace_length: usize,
-    /// Whether the final unpadded row has the protocol jump flag.
-    pub ends_in_jump: bool,
+    /// Whether the final unpadded row is a halt.
+    pub ends_in_halt: bool,
     pub ram_bounds: RamAddressBounds,
 }
 
@@ -276,9 +276,9 @@ impl ExecutionDimensions {
         let ram_bounds = rows.iter().fold(RamAddressBounds::default(), observe);
         Self {
             trace_length: rows.len(),
-            ends_in_jump: rows
+            ends_in_halt: rows
                 .last()
-                .is_some_and(|row| row.circuit_flags().get(CircuitFlags::Jump)),
+                .is_some_and(|row| row.circuit_flags().get(CircuitFlags::Halt)),
             ram_bounds,
         }
     }
