@@ -392,7 +392,14 @@ mod tests {
         mut asm: InlineExpansionBuilder,
         operands: InlineOperands,
     ) -> Result<ExpandedInstructionSequence, ExpansionError> {
-        asm.emit_i(Kind::VirtualROTRIW, 5, operands.rs1, 0xffff_ffff_0000_0000);
+        let register = asm.allocate_for_inline()?;
+        asm.emit_i(
+            Kind::VirtualROTRIW,
+            *register,
+            operands.rs1,
+            0xffff_ffff_0000_0000,
+        );
+        asm.release(register);
         asm.finalize()
     }
 

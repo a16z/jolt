@@ -154,7 +154,12 @@ fn expand_source_instruction_with_provider<P: InlineExpansionProvider + ?Sized>(
         let result = inline_provider
             .expand_inline(instruction, profile)
             .and_then(|sequence| state.materialize_inline(sequence))
-            .and_then(|rows| final_rows_to_instructions(rows, profile));
+            .and_then(|rows| {
+                if let Some(register) = allocated_rd_zero_register {
+                    reject_read_of_zero_rd(&rows, register)?;
+                }
+                final_rows_to_instructions(rows, profile)
+            });
         *allocator = state.into_allocator();
         result
     } else {
@@ -170,6 +175,29 @@ fn expand_source_instruction_with_provider<P: InlineExpansionProvider + ?Sized>(
         allocator.release(register)?;
     }
     result
+}
+
+/// Reject an `rd = x0` inline whose rows read `rd` before writing it.
+///
+/// An inline receives its third operand in the `rd` field, and some inlines
+/// read it (for example as an output pointer). When the source instruction
+/// has `rd = x0`, expansion rewrites `rd` to a fresh instruction temporary so
+/// that rows writing `rd` do not write `x0`. Nothing initialises that
+/// temporary: it holds whatever an earlier expansion left in it, and a
+/// malicious prover can choose that value (for example the quotient advice of
+/// a REM by zero). A row that reads it before any row writes it would make the
+/// instruction's behaviour depend on that value, so such sequences are
+/// rejected. Operands listed in a row's `rs1` or `rs2` count as reads.
+fn reject_read_of_zero_rd(rows: &[JoltInstructionRow], register: u8) -> Result<(), ExpansionError> {
+    for row in rows {
+        if row.operands.rs1 == Some(register) || row.operands.rs2 == Some(register) {
+            return Err(ExpansionError::InlineReadsZeroRd { register });
+        }
+        if row.operands.rd == Some(register) {
+            return Ok(());
+        }
+    }
+    Ok(())
 }
 
 fn final_rows_to_instructions(
