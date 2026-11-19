@@ -1153,9 +1153,6 @@ where
             id: bytecode_reduction::cycle_phase_intermediate_opening().into(),
         })?;
     let weights = bytecode_reduction_weights(input, layout)?;
-    // The cycle scale recovered from the produced opening point equals the
-    // sumcheck-point form (`cycle_phase_permuted_*` agree — unit-tested in
-    // `claim_reductions::precommitted`), matching the clear relation's path.
     let weight = layout
         .cycle_phase_final_output_weight_at_opening_point(weights.as_inputs(), opening_point)
         .map_err(|error| public_error(JoltRelationId::BytecodeClaimReductionCyclePhase, error))?;

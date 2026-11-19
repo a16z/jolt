@@ -37,6 +37,13 @@ pub enum PointGeometryError {
     #[error("cycle round {round} is not active for this polynomial")]
     InactiveCycleRound { round: usize },
     #[error(
+        "unsupported precommitted geometry: polynomial dims ({poly_row_vars}x{poly_col_vars}) complete in the cycle phase with opening rounds that are not descending"
+    )]
+    CycleFinalRoundsNotDescending {
+        poly_row_vars: usize,
+        poly_col_vars: usize,
+    },
+    #[error(
         "polynomial dims ({poly_row_vars}x{poly_col_vars}) exceed reference dims ({reference_row_vars}x{reference_col_vars})"
     )]
     PolyDimsExceedReference {

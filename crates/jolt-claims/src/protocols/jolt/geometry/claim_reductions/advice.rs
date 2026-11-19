@@ -95,20 +95,6 @@ impl AdviceClaimReductionLayout {
         self.cycle_phase_row_rounds.clone()
     }
 
-    /// `FinalScale` value when the reduction completes in the cycle phase
-    /// (i.e. no active address-phase rounds remain).
-    pub fn cycle_phase_final_output_scale<F: JoltField>(
-        &self,
-        reference_opening_point: &[F],
-        challenges: &[F],
-    ) -> Result<F, PointGeometryError> {
-        let opening_point = self
-            .precommitted
-            .cycle_phase_permuted_opening_point(challenges)?;
-        let eq_eval = final_advice_eq_eval(reference_opening_point, &opening_point)?;
-        Ok(eq_eval * self.precommitted.cycle_phase_skip_scale::<F>())
-    }
-
     /// `FinalScale` value from the reduction's already-derived cycle-phase
     /// opening point, rather than re-deriving it from the sumcheck challenges.
     /// Lets the cycle-phase relation object's `resolve_public` recover the scale
@@ -118,10 +104,9 @@ impl AdviceClaimReductionLayout {
         reference_opening_point: &[F],
         opening_point: &[F],
     ) -> Result<F, PointGeometryError> {
-        let permuted = self
-            .precommitted
-            .cycle_phase_permuted_from_opening_point(opening_point)?;
-        let eq_eval = final_advice_eq_eval(reference_opening_point, &permuted)?;
+        self.precommitted
+            .require_cycle_final_opening_point(opening_point)?;
+        let eq_eval = final_advice_eq_eval(reference_opening_point, opening_point)?;
         Ok(eq_eval * self.precommitted.cycle_phase_skip_scale::<F>())
     }
 

@@ -79,36 +79,21 @@ impl ProgramImageClaimReductionLayout {
         self.padded_len_words
     }
 
-    /// `FinalScale` value when the reduction completes in the cycle phase
-    /// (i.e. no active address-phase rounds remain). `r_addr_rw` is the RAM
-    /// address component of the `RamVal` opening from RAM read-write checking.
-    pub fn cycle_phase_final_output_scale<F: JoltField>(
-        &self,
-        r_addr_rw: &[F],
-        challenges: &[F],
-    ) -> Result<F, PointGeometryError> {
-        let opening_point = self
-            .precommitted
-            .cycle_phase_permuted_opening_point(challenges)?;
-        let eq_eval =
-            eval_shifted_eq_poly_at_opening_point(r_addr_rw, self.start_index, &opening_point)?;
-        Ok(eq_eval * self.precommitted.cycle_phase_skip_scale::<F>())
-    }
-
     /// `FinalScale` value from the reduction's already-derived cycle-phase
     /// opening point, rather than re-deriving it from the sumcheck challenges.
     /// Lets the cycle-phase relation object's `resolve_public` recover the scale
     /// from the opening point it produced in `derive_opening_points`.
+    /// `r_addr_rw` is the RAM address component of the `RamVal` opening from
+    /// RAM read-write checking.
     pub fn cycle_phase_scale_at_opening_point<F: JoltField>(
         &self,
         r_addr_rw: &[F],
         opening_point: &[F],
     ) -> Result<F, PointGeometryError> {
-        let permuted = self
-            .precommitted
-            .cycle_phase_permuted_from_opening_point(opening_point)?;
+        self.precommitted
+            .require_cycle_final_opening_point(opening_point)?;
         let eq_eval =
-            eval_shifted_eq_poly_at_opening_point(r_addr_rw, self.start_index, &permuted)?;
+            eval_shifted_eq_poly_at_opening_point(r_addr_rw, self.start_index, opening_point)?;
         Ok(eq_eval * self.precommitted.cycle_phase_skip_scale::<F>())
     }
 
@@ -238,6 +223,7 @@ fn eval_shifted_eq_poly_at_opening_point<F: JoltField>(
 mod tests {
     #![expect(clippy::panic, reason = "tests fail loudly on unexpected errors")]
 
+    use super::super::bytecode::bytecode_total_vars;
     use super::*;
     use jolt_field::{Fr, Ring};
     use jolt_poly::EqPolynomial;
@@ -265,6 +251,35 @@ mod tests {
         assert_eq!(padded_program_image_len_words(8), 8);
         assert_eq!(precommitted_candidate(3), 2);
         assert_eq!(precommitted_candidate(1024), 10);
+    }
+
+    #[test]
+    fn rejects_cycle_final_image_under_a_wider_committed_bytecode() {
+        // log_T = 12 and K = 16 with a 2^22-row committed bytecode: the
+        // 1024-word image would bind its row variables in the first cycle
+        // rounds and its column variables in the last ones.
+        let (log_t, log_k_chunk) = (12, 4);
+        let bytecode_vars = bytecode_total_vars(1 << 22)
+            .unwrap_or_else(|error| panic!("bytecode length is valid: {error}"));
+        let scheduling_reference = PrecommittedClaimReduction::scheduling_reference(
+            log_t + log_k_chunk,
+            &[bytecode_vars, precommitted_candidate(1024)],
+            log_k_chunk,
+        );
+
+        assert_eq!(
+            ProgramImageClaimReductionLayout::balanced(
+                TracePolynomialOrder::CycleMajor,
+                log_t,
+                scheduling_reference,
+                1024,
+                0,
+            ),
+            Err(PointGeometryError::CycleFinalRoundsNotDescending {
+                poly_row_vars: 5,
+                poly_col_vars: 5,
+            })
+        );
     }
 
     #[test]

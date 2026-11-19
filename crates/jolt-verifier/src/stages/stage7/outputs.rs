@@ -197,7 +197,7 @@ mod tests {
 
         let schedule = PrecommittedSchedule::new(
             TracePolynomialOrder::CycleMajor,
-            4,
+            5,
             2,
             Some(64),
             Some(64),
