@@ -9,7 +9,10 @@ use tracer::emulator::Emulator;
 #[path = "guest_runtime/memory_copy.rs"]
 mod memory_copy;
 
-/// sp, gp, tp, and s0-s11, which the copy routines must preserve.
+#[path = "guest_runtime/memory_compare.rs"]
+mod memory_compare;
+
+/// sp, gp, tp, and s0-s11, which the copy and compare routines must preserve.
 const PRESERVED_REGISTERS: [u8; 15] = [2, 3, 4, 8, 9, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27];
 
 // Repeated and partial unmaps must not corrupt ZeroOS's kernel heap.

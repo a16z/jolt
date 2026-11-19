@@ -301,6 +301,14 @@ mod matrix {
                     )),
                     ..GuestCase::new("stdlib-guest")
                 };
+                memory_compare => GuestCase {
+                    func: Some("memory_compare"),
+                    std: true,
+                    stack_size: Some(1 << 20),
+                    inputs: encode(&([0u8; 32], [128u8; 32], 29u32)),
+                    expected_output: Some(encode(&(-1i32, 1i32))),
+                    ..GuestCase::new("stdlib-guest")
+                };
                 memory_copy => GuestCase {
                     func: Some("memory_copy"),
                     std: true,

@@ -3,10 +3,11 @@
 ## Guest × mode acceptance matrix
 
 `crates/jolt-prover/tests/e2e_matrix.rs` holds one guest table per instruction
-profile. The ordinary profile has fourteen cases: muldiv, fibonacci, memory-ops,
-heap-top, stdlib, memory-copy, sha2, sha3 through both its unaligned and aligned
-entry points, advice-consumer, rounded-advice, btreemap, exact-domain, and
-panic-halt. Heap-top stores the last byte below the linker's `__heap_end`.
+profile. The ordinary profile has fifteen cases: muldiv, fibonacci, memory-ops,
+heap-top, stdlib, memory-copy, memory-compare, sha2, sha3 through both its
+unaligned and aligned entry points, advice-consumer, rounded-advice, btreemap,
+exact-domain, and panic-halt. Heap-top stores the last byte below the linker's
+`__heap_end`.
 Rounded-advice, another memory-ops entry point, configures 12 bytes of
 untrusted advice and supplies 16, the rounded capacity the verifier admits.
 Enabling `field-inline` selects five: `field_ops`, `field_limbs`, `muldiv`,
