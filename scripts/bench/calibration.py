@@ -69,6 +69,13 @@ def require_evidence(value):
             require_evidence(item)
 
 
+def input_parameter(case):
+    # An operation count names a generated input; a block number names a checked-in one.
+    parameters = case['input']['parameters']
+    name = 'block' if 'block' in parameters else 'operations'
+    return name, parameters[name]
+
+
 def cell_key(result, case):
     base = next(build for build in result['builds'] if build['leg'] == 'base')
     host = host_identity(result['host'])
@@ -96,7 +103,7 @@ def cell_key(result, case):
     key['case'].update(scale_log2=case['scale_log2'], input=case['input'])
     require_evidence(case['input']['sha256'])
     build['guest_builder_rustflags'] = base['guest_builder_rustflags']
-    if guest['inputs'][str(case['input']['parameters']['operations'])]['sha256'] != case['input']['sha256']:
+    if guest['inputs'][str(input_parameter(case)[1])]['sha256'] != case['input']['sha256']:
         raise ValueError('input bytes differ')
     return key
 

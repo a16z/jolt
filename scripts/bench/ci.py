@@ -16,6 +16,7 @@ import tomllib
 import urllib.request
 from urllib.parse import quote
 
+import calibration
 import run as bench
 
 
@@ -158,6 +159,18 @@ def plan(args):
         harness = plan['harness']
         if git_file(harness, plan['config']['path']) != args.config.read_bytes():
             raise ValueError('suite configuration differs from the committed harness')
+        if tier == 'pr':
+            # Both legs descend from the merge ref's base, and neither harness
+            # can prepare a workload that base lacks. GitHub recomputes the ref
+            # on a push to the PR branch, not when main moves.
+            base = plan['runs'][0]['base']
+            planned, _ = bench.build_inputs(bench.parse_json(args.config.read_text()))
+            known, _ = bench.build_inputs(bench.parse_json(git_file(base, plan['config']['path']).decode()))
+            missing = sorted(planned.keys() - known.keys())
+            if missing:
+                raise ValueError(f'the PR merge ref is based on main commit {base[:10]}, which lacks the suite '
+                                 f'workload {", ".join(missing)}; push to the PR branch (for example, merge '
+                                 'main into it) so that GitHub recomputes the merge ref')
         harness_files = bench.harness_files(harness)
         for item in plan['runs']:
             for revision in (item['base'], item['head']):
@@ -309,6 +322,8 @@ def verified_bundles(args, plan, revisions):
                 raise ValueError('bundle does not contain the complete planned input set')
             files.append((guest['elf'], f'guests/{workload}/guest.elf'))
             files.extend((guest['inputs'][str(count)], f'guests/{workload}/input-{count}.bin') for count in counts)
+            files.extend((file, f'guests/{workload}/advice-{count}.bin')
+                         for count, file in guest.get('advice', {}).items())
         for file, expected_path in files:
             if file['path'] != expected_path:
                 raise ValueError('artifact file is not the expected binary or guest input')
@@ -317,7 +332,7 @@ def verified_bundles(args, plan, revisions):
             if case.get('unsupported_reason'):
                 continue
             if (case['pcs'] not in required_pcs or
-                    case['input']['parameters']['operations'] not in inputs.get(case['workload'], set())):
+                    calibration.input_parameter(case)[1] not in inputs.get(case['workload'], set())):
                 raise ValueError('measurement suite requires an input absent from the planned inventory')
         for file in {entry['path']: entry for entry in entries}.values():
             bench.checked_file(path, file)

@@ -3252,6 +3252,30 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "92ecc6618181def0457392ccd0ee51198e065e016d1d527a7ac1b6dc7c1f09d2"
 
 [[package]]
+name = "jeth-inlines-blake2f"
+version = "0.1.0"
+source = "git+https://github.com/a16z/jeth?rev=54d63c4bd876fb217c6670b47100e1dc5ad856f8#54d63c4bd876fb217c6670b47100e1dc5ad856f8"
+dependencies = [
+ "jolt-inlines-sdk",
+]
+
+[[package]]
+name = "jeth-inlines-bls12-381"
+version = "0.1.0"
+source = "git+https://github.com/a16z/jeth?rev=54d63c4bd876fb217c6670b47100e1dc5ad856f8#54d63c4bd876fb217c6670b47100e1dc5ad856f8"
+dependencies = [
+ "jolt-inlines-sdk",
+]
+
+[[package]]
+name = "jeth-inlines-bn254"
+version = "0.1.0"
+source = "git+https://github.com/a16z/jeth?rev=54d63c4bd876fb217c6670b47100e1dc5ad856f8#54d63c4bd876fb217c6670b47100e1dc5ad856f8"
+dependencies = [
+ "jolt-inlines-sdk",
+]
+
+[[package]]
 name = "jiff"
 version = "0.2.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3941,13 +3965,19 @@ dependencies = [
  "chrono",
  "clap",
  "common",
+ "jeth-inlines-blake2f",
+ "jeth-inlines-bls12-381",
+ "jeth-inlines-bn254",
  "jolt-akita",
  "jolt-claims",
  "jolt-crypto",
  "jolt-dory",
  "jolt-field",
  "jolt-host",
+ "jolt-inlines-bigint",
+ "jolt-inlines-blake2",
  "jolt-inlines-keccak256",
+ "jolt-inlines-p256",
  "jolt-inlines-secp256k1",
  "jolt-inlines-sha2",
  "jolt-kernels",
