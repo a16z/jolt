@@ -1085,7 +1085,10 @@ registered `(opcode, funct3, funct7)` keys are accepted and which provider is
 allowed to expand them. Current entries are:
 
 - `InlineExtension::Sha2`: `SHA256_INLINE`, `SHA256_INIT_INLINE`;
-- `InlineExtension::Keccak256`: `KECCAK256_INLINE`;
+- `InlineExtension::Keccak256`: `KECCAK256_INLINE` (funct3 `0x00`),
+  `KECCAK256_ABSORB_PERMUTE_INLINE` (`0x01`), `KECCAK256_DIGEST_INLINE` (`0x02`),
+  and `KECCAK256_ABSORB_DIGEST_INLINE` (`0x03`), all with opcode `0x0B` and
+  funct7 `0x01`;
 - `InlineExtension::Blake2`: `BLAKE2_INLINE`;
 - `InlineExtension::Blake3`: `BLAKE3_INLINE`, `BLAKE3_KEYED64_INLINE`;
 - `InlineExtension::BigInt256`: `BIGINT256_MUL_INLINE`;
