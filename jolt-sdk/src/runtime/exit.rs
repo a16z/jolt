@@ -8,11 +8,12 @@ static DECODING_UNTRUSTED_ADVICE: AtomicBool = AtomicBool::new(false);
 /// Marks the span in which the `#[jolt::provable]` entry point decodes its
 /// untrusted-advice parameters.
 ///
-/// Only the prover chooses those bytes, and no guest code runs before the
-/// decode, so a decode that fails must leave no proof. It can fail without
-/// returning: the decoder allocates what a declared length asks for, and an
-/// allocation the heap refuses aborts. While the span is open,
+/// Only the prover chooses those bytes, and the function body cannot check
+/// them before the decode, so a decode that fails must leave no proof. It can
+/// fail without returning: the decoder allocates what a declared length asks
+/// for, and an allocation the heap refuses aborts. While the span is open,
 /// `__platform_abort` therefore spoils the proof before it halts.
+#[doc(hidden)]
 pub fn decoding_untrusted_advice(active: bool) {
     DECODING_UNTRUSTED_ADVICE.store(active, Ordering::Relaxed);
 }

@@ -49,8 +49,6 @@ fn trace_with_tape(
     (trace, device, advice_tape.into_bytes())
 }
 
-/// A `Vec` length the guest heap cannot hold fails inside the tape decoder,
-/// before the guest can check it.
 #[test]
 fn unreservable_vec_length_on_the_advice_tape_spoils_the_proof() {
     let mut guest = Program::new("advice-demo-guest");
@@ -103,6 +101,14 @@ fn malformed_untrusted_advice_input_spoils_the_proof() {
         "undecodable untrusted advice must spoil the proof, not only panic"
     );
     assert!(device.panic);
+
+    // Outside the decode of untrusted advice a panic stays provable: the
+    // guest's own assertion after it, and the trusted-advice decode before it.
+    let mismatched = postcard::to_stdvec(&6u64).expect("serialize the untrusted advice");
+    let (_, trace, _, device) = guest.trace(&public_sum, &mismatched, &trusted);
+    assert!(device.panic && !spoiled(&trace));
+    let (_, trace, _, device) = guest.trace(&public_sum, &untrusted, &[0xff; 11]);
+    assert!(device.panic && !spoiled(&trace));
 }
 
 /// The decoder reserves the vector a length declares before it can reject
