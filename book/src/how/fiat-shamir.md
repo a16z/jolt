@@ -135,6 +135,36 @@ The transcript binds the values the verifier decoded from the proof
 structure, not the bytes it decoded them from. Rejecting non-canonical or
 trailing bytes in the proof structure is the proof decoder's job.
 
+### Canonical proof encoding
+
+Encoding-level non-malleability is a core verifier property: Jolt accepts
+exactly one serialized byte string for each verifier-object value. Each
+external decode boundary decodes the value, serializes it again with the same
+deterministic bincode configuration, and requires the new bytes to equal the
+input. The SDK and verifier API apply this check to every verifier object. The
+recursion guest and the Akita recursion guest apply the same check to every
+decoded record.
+
+This round-trip gate rejects overlong bincode varints, alternate encodings of
+group points, and trailing bytes. It also covers Akita commitment metadata and
+byte-string lengths when those values are embedded in a Jolt verifier object.
+Akita's native NARG stream keeps its own canonical parsing rules and final
+end-of-input check.
+
+This property does not claim value-level, or strong, non-malleability. In
+particular, it does not prove that a third party cannot produce a different
+valid proof for the same statement. That claim would require a
+simulation-extractability argument.
+
+A direct check of BlindFold's verifier path rules out the simplest proposed
+value-level rewrite. The verifier absorbs the committed instance, the random
+instance, and the cross-term commitments before it draws the folding
+challenge. Changing a Pedersen commitment or its opening therefore changes
+that challenge and the later folded openings and sumchecks. A third party
+cannot merely rerandomize a commitment and adjust its opening while leaving
+the rest of the proof unchanged. This code-path check is not a proof of
+strong non-malleability.
+
 ## Drawing challenges
 
 Each challenge draw is one squeeze. A field's challenge codec decodes the
@@ -200,6 +230,13 @@ The prover tries nonces in increasing order. It tests each one against a copy
 of the public sponge state, so a failed attempt leaves the transcript
 unchanged. The search runs only under the `prover-grinding` feature, which
 `jolt-prover` enables and verifier-only builds leave off.
+
+Choosing the least passing nonce is a prover convention, not a verifier
+minimality check. The verifier accepts any in-range nonce that passes. A
+different passing nonce changes the transcript and all later challenges, so
+using one requires the prover to recompute the rest of the proof. This is
+prover-side proof non-uniqueness, not a second byte encoding of the same
+decoded proof value.
 
 Protocols that carry no nonces check their challenge set when they start:
 they refuse a field whose challenges would need proof of work at any loss up

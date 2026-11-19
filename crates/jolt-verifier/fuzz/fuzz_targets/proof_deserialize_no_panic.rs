@@ -7,15 +7,14 @@
 
 use jolt_crypto::{Bn254G1, Pedersen};
 use jolt_dory::DoryScheme;
-use jolt_verifier::JoltProof;
+use jolt_verifier::{deserialize_verifier_object, JoltProof};
 use libfuzzer_sys::fuzz_target;
 
 type FuzzProof = JoltProof<DoryScheme, Pedersen<Bn254G1>>;
 
 fuzz_target!(|data: &[u8]| {
-    let config = bincode::config::standard();
     // The decoder must handle arbitrary bytes without panicking. A successful
     // decode is fine; libFuzzer's RSS limit guards against unbounded growth
     // from an attacker-chosen length prefix.
-    let _ = bincode::serde::decode_from_slice::<FuzzProof, _>(data, config);
+    let _ = deserialize_verifier_object::<FuzzProof>(data);
 });
