@@ -245,3 +245,10 @@ fn advice_demo(n: u8, a: Vec<usize>, b: Vec<usize>) {
     verify_triangle_from_area(n as u32);
     end_cycle_tracking("verify triangle from area");
 }
+
+/// Proves `a` is a subset of `b`. Its only advice is `subset_index`'s `Vec`,
+/// which `crates/jolt-prover/tests/advice_decode.rs` tampers with.
+#[jolt::provable]
+fn subset(a: Vec<usize>, b: Vec<usize>) {
+    verify_subset(&a, &b);
+}

@@ -808,17 +808,18 @@ impl<T: Pod, const N: usize> AdviceTapeIO for [T; N] {
 impl<T: Pod> AdviceTapeIO for Vec<T> {
     fn write_to_advice_tape(&self) {
         self.len().write_to_advice_tape();
-        self.capacity().write_to_advice_tape();
         let bytes = bytemuck::cast_slice(self.as_slice());
         let mut writer = AdviceWriter::get();
         AdviceWriter::write_bytes(&mut writer, bytes);
     }
     fn new_from_advice_tape() -> Self {
         let len = usize::new_from_advice_tape();
-        let capacity = usize::new_from_advice_tape();
-        // panic and spoil the proof if capacity < len
-        check_advice!(capacity >= len);
-        let mut buf = Vec::<T>::with_capacity(capacity);
+        let mut buf = Vec::<T>::new();
+        // The prover chooses `len`, and the guest cannot check it before this
+        // reservation. A panic or abort here would be a provable outcome, so a
+        // length the allocator refuses spoils the proof instead. A granted one
+        // bounds `len * size_of::<T>()` by `isize::MAX`.
+        buf.try_reserve_exact(len).unwrap_or_spoil_proof();
         let bytes = unsafe {
             core::slice::from_raw_parts_mut(
                 buf.as_mut_ptr() as *mut u8,

@@ -834,9 +834,15 @@ impl MacroBuilder {
                         };
                 }
             } else {
+                // Only the prover chooses these bytes, so a failed decode must
+                // leave no proof. Public inputs and trusted advice are fixed by
+                // the verifier's statement: their decode panic is a true
+                // outcome, which stays provable.
                 quote! {
                     let (#name, __jolt_untrusted_advice_slice) =
-                        jolt::postcard::take_from_bytes::<#ty>(__jolt_untrusted_advice_slice).unwrap();
+                        jolt::UnwrapOrSpoilProof::unwrap_or_spoil_proof(
+                            jolt::postcard::take_from_bytes::<#ty>(__jolt_untrusted_advice_slice),
+                        );
                 }
             }
         });
