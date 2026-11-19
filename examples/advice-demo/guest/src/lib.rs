@@ -1,4 +1,6 @@
-use jolt::{end_cycle_tracking, start_cycle_tracking, AdviceTapeIO, JoltPod};
+use jolt::{
+    end_cycle_tracking, start_cycle_tracking, AdviceTapeIO, JoltPod, TrustedAdvice, UntrustedAdvice,
+};
 
 /// Factors u8 n into two u8 factors (a, b)
 /// With a <= b such that a * b = n
@@ -244,4 +246,24 @@ fn advice_demo(n: u8, a: Vec<usize>, b: Vec<usize>) {
     start_cycle_tracking("verify triangle from area");
     verify_triangle_from_area(n as u32);
     end_cycle_tracking("verify triangle from area");
+}
+
+/// Proves `a` is a subset of `b`. Its only advice is `subset_index`'s `Vec`,
+/// which `crates/jolt-prover/tests/advice_decode.rs` tampers with.
+#[jolt::provable]
+fn subset(a: Vec<usize>, b: Vec<usize>) {
+    verify_subset(&a, &b);
+}
+
+/// Sums the first word of each present block. The entry point decodes both
+/// parameters before this body runs, reserving what their lengths declare,
+/// which `crates/jolt-prover/tests/advice_decode.rs` drives past the heap. The
+/// same tests check that `input_error` covers `pinned` and not `blocks`.
+#[jolt::provable(heap_size = 1048576, input_error = u64::MAX)]
+fn block_total(
+    blocks: UntrustedAdvice<Vec<Option<[u64; 32]>>>,
+    pinned: TrustedAdvice<Vec<Option<[u64; 32]>>>,
+) -> u64 {
+    let present = blocks.iter().chain(pinned.iter()).flatten();
+    present.map(|block| block[0]).sum()
 }

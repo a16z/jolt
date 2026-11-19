@@ -1,6 +1,23 @@
 //! Exit paths for Jolt guests. Every path ends at `ebreak`, Jolt's failure halt; only the
 //! `#[jolt::provable]` epilogue ends a run successfully (`jolt.success`).
 
+use core::sync::atomic::{AtomicBool, Ordering};
+
+static DECODING_UNTRUSTED_ADVICE: AtomicBool = AtomicBool::new(false);
+
+/// Marks the span in which the `#[jolt::provable]` entry point decodes its
+/// untrusted-advice parameters.
+///
+/// Only the prover chooses those bytes, and the function body cannot check
+/// them before the decode, so a decode that fails must leave no proof. It can
+/// fail without returning: the decoder allocates what a declared length asks
+/// for, and an allocation the heap refuses aborts. While the span is open,
+/// `__platform_abort` therefore spoils the proof before it halts.
+#[doc(hidden)]
+pub fn decoding_untrusted_advice(active: bool) {
+    DECODING_UNTRUSTED_ADVICE.store(active, Ordering::Relaxed);
+}
+
 cfg_if::cfg_if! {
     if #[cfg(any(target_os = "linux", target_os = "none"))] {
         extern "C" {
@@ -17,9 +34,13 @@ cfg_if::cfg_if! {
         /// Platform abort handler: ZeroOS's signal handler calls it for a fatal
         /// signal (e.g. SIGABRT from musl's `abort()`), and zeroos-runtime-nostd's
         /// panic handler calls it on a panic. Writes the panic byte and halts at
-        /// `ebreak`.
+        /// `ebreak`, after spoiling the proof when the failure interrupted the
+        /// decode of untrusted advice ([`decoding_untrusted_advice`]).
         #[no_mangle]
         pub extern "C" fn __platform_abort(_sig: i32) -> ! {
+            if DECODING_UNTRUSTED_ADVICE.load(Ordering::Relaxed) {
+                jolt_platform::emit_unsatisfiable_assertion();
+            }
             unsafe { jolt_panic() }
         }
     }

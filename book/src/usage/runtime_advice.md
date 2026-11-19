@@ -17,7 +17,7 @@ The prover handles both passes automatically. The guest code only needs to defin
 
 Runtime advice consists of **prover-chosen witness values**. A valid proof establishes that the proving-pass guest executed with some such values and satisfied the checks it reached. It does not establish that the advice-function body ran or produced those values. The first pass is a way for the standard prover to compute advice, not part of the computation being proved.
 
-`AdviceTapeIO` provides serialization, not authentication. Lengths, capacities, indices, and flags received through advice are as untrusted as the other contents. The tracer maintains a backing tape and read cursor and reports an error on exhaustion, but these are properties of the standard prover's execution. The proof does not authenticate a runtime tape length or establish that the guest consumed all supplied advice.
+`AdviceTapeIO` provides serialization, not authentication. Lengths, indices, and flags received through advice are as untrusted as the other contents. The tracer maintains a backing tape and read cursor and reports an error on exhaustion, but these are properties of the standard prover's execution. The proof does not authenticate a runtime tape length or establish that the guest consumed all supplied advice.
 
 Guest checks must establish the claimed result on every successful execution path. When advice controls how many checks run, validate that count against the computation's requirements. For example, if the guest needs one witness per public-input element, check that the counts match before iterating. Checking only the returned elements would let a prover supply an empty collection, skip all checks, and return successfully. Invalid advice can therefore cause an incorrect successful result as well as a panic if validation is incomplete.
 
@@ -83,6 +83,8 @@ The `AdviceTapeIO` trait controls how values are serialized to and from the advi
 | `[T; N]` where `T: Pod` | Fixed-size arrays |
 | `(A, B)`, ..., `(A, B, C, D, E, F, G)` | Tuples up to 7 elements |
 | `Vec<T>` where `T: Pod` | Requires `guest-std` feature |
+
+A `Vec<T>` is written to the tape as its length followed by its elements. The SDK reserves memory for that length before the guest sees the value. If the guest heap cannot hold the reservation, the SDK spoils the proof, the same outcome as a false `check_advice!`: the prover chooses the length, and a panic would be a provable outcome. A length that the heap can hold is returned unchanged, however large, so check it with `check_advice!` before allocating more memory or iterating.
 
 ### Custom structs
 

@@ -15,6 +15,8 @@
 mod boot;
 mod exit;
 
+pub use exit::decoding_untrusted_advice;
+
 #[cfg(all(
     not(target_os = "none"),
     any(target_arch = "riscv32", target_arch = "riscv64")
