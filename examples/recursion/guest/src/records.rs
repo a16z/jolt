@@ -86,7 +86,8 @@ impl<'a> Records<'a> {
         if count == 0 {
             return Err(RecordError);
         }
-        self.check_count(count, 2)?;
+        // A proof and its device, plus the proof's challenge advice under Akita.
+        self.check_count(count, if cfg!(feature = "akita") { 3 } else { 2 })?;
         Ok(count)
     }
 

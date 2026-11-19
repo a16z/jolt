@@ -32,6 +32,7 @@ fn verify_external(bytes: UntrustedAdvice<Vec<u8>>) -> Vec<u8> {
         inherited_setup_fields: INHERITED_FIELDS,
         output_setup_fields: advice.output_setup_fields,
         answers: advice.answers,
+        challenge_advice: advice.challenge_advice,
     };
     jolt::end_cycle_tracking("decode_external");
     jolt::start_cycle_tracking("install_prepared_setup");

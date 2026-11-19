@@ -3,9 +3,10 @@
 use akita_types::setup_claims::{SetupBatchStatement, SetupClaim, SetupQuery};
 use jolt_akita::deferred::{SetupClaimAccumulator, SetupClaimAdvice, SetupMode};
 use jolt_akita::{
-    AkitaError, AkitaField, AkitaScheme, AkitaVerificationContext, AkitaVerifierTranscript,
+    record_checked_hints, verify_with_checked_hints, AkitaError, AkitaField, AkitaScheme,
+    AkitaVerificationContext, AkitaVerifierTranscript,
 };
-use jolt_akita_recursion::{InnerProof, Preprocessing, Vc};
+use jolt_akita_recursion::{InnerProof, Preprocessing, Vc, CHALLENGE_ADVICE_LIMIT};
 use serde::{Deserialize, Serialize};
 use std::slice::Iter;
 
@@ -16,6 +17,10 @@ pub struct ExternalInput {
     pub inherited_setup_fields: usize,
     pub output_setup_fields: usize,
     pub answers: Vec<AkitaField>,
+    /// Checked challenge advice for the outer verification. The audit tool
+    /// records it on import; application JSON omits it.
+    #[serde(default, with = "serde_bytes")]
+    pub challenge_advice: Vec<u8>,
 }
 pub enum Event {
     PrepareStart,
@@ -37,7 +42,31 @@ impl ExternalInput {
         SetupBatchStatement::from_descriptor_bytes(&descriptor, &polynomial)
             .map_err(|e| e.to_string())
     }
+    /// Verify the outer proof with its challenge advice installed.
     pub fn replay(
+        &self,
+        mode: SetupMode,
+        advice: &mut (dyn SetupClaimAdvice<AkitaField> + Send),
+        observe: impl FnMut(Event) + Send,
+    ) -> Result<SetupBatchStatement<AkitaField>, String> {
+        verify_with_checked_hints(&self.challenge_advice, CHALLENGE_ADVICE_LIMIT, || {
+            self.verify(mode, advice, observe)
+        })
+        .map_err(|e| e.to_string())
+    }
+    /// Verify natively and record the challenge advice [`Self::replay`] installs.
+    pub fn record_challenge_advice(
+        &mut self,
+        mode: SetupMode,
+        advice: &mut (dyn SetupClaimAdvice<AkitaField> + Send),
+    ) -> Result<SetupBatchStatement<AkitaField>, String> {
+        let (statement, frame) = record_checked_hints(|| self.verify(mode, advice, |_| {}))
+            .map_err(|e| e.to_string())?;
+        let statement = statement?;
+        self.challenge_advice = frame;
+        Ok(statement)
+    }
+    fn verify(
         &self,
         mode: SetupMode,
         advice: &mut dyn SetupClaimAdvice<AkitaField>,
@@ -110,6 +139,8 @@ pub struct PairAdvice {
     pub inner: [InnerProof; 2],
     pub output_setup_fields: usize,
     pub answers: Vec<AkitaField>,
+    #[serde(with = "serde_bytes")]
+    pub challenge_advice: Vec<u8>,
 }
 /// A is deliberately absent: it is decoded from outer.io.outputs inside the guest.
 #[derive(Serialize, Deserialize)]
@@ -117,5 +148,7 @@ pub struct OuterAdvice {
     pub outer: InnerProof,
     pub output_setup_fields: usize,
     pub answers: Vec<AkitaField>,
+    #[serde(with = "serde_bytes")]
+    pub challenge_advice: Vec<u8>,
 }
 pub use jolt_akita_recursion::decode_exact;

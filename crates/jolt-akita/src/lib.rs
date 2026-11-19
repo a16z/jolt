@@ -33,6 +33,7 @@
 )]
 
 mod adapters;
+mod challenge_advice;
 pub mod configs;
 pub mod deferred;
 pub mod family_contract;
@@ -49,6 +50,7 @@ mod verifier_resources;
 mod verifier_setup;
 
 pub use akita_pcs::{AkitaError, TrustedBytes};
+pub use challenge_advice::{record_checked_hints, verify_with_checked_hints, CheckedHintsError};
 
 #[cfg(feature = "profiling")]
 #[doc(hidden)]

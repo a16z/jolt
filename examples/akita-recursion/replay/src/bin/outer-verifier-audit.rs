@@ -14,11 +14,12 @@ use std::{
 fn main() -> Result<()> {
     let args: Vec<_> = std::env::args_os().collect();
     if args.len() == 4 && args[1] == "--import-json" {
-        let input: ExternalInput = serde_json::from_slice(&fs::read(&args[2])?)?;
+        let mut input: ExternalInput = serde_json::from_slice(&fs::read(&args[2])?)?;
         let _resources =
             AkitaVerifierResources::prepare([Ok(input.preprocessing.pcs_setup.clone())])?;
+        let answers = input.answers.clone();
         let checked = input
-            .replay(SetupMode::Check, &mut Tape(input.answers.iter()), |_| {})
+            .record_challenge_advice(SetupMode::Check, &mut Tape(answers.iter()))
             .map_err(|e| anyhow!(e))?;
         ensure!(checked.claims().is_empty(), "unresolved imported claims");
         fs::write(
@@ -206,6 +207,7 @@ fn prepare(input: ExternalInput, dir: &Path) -> Result<()> {
         outer: input.outer,
         output_setup_fields: input.output_setup_fields,
         answers: input.answers.clone(),
+        challenge_advice: input.challenge_advice,
     };
     let advice = bincode::serde::encode_to_vec(&outer, bincode::config::standard())?;
     fs::write(dir.join("advice.bin"), postcard::to_stdvec(&advice)?)?;
@@ -312,6 +314,7 @@ fn prepare_pair(mut pair: ProofPair, dir: &Path) -> Result<()> {
         inner: pair.inner,
         output_setup_fields: pair.setup_field_len,
         answers: pair.answers,
+        challenge_advice: pair.challenge_advice,
     };
     fs::write(
         dir.join("advice.bin"),

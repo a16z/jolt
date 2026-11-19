@@ -5,8 +5,8 @@ use bounded::RecordLimits;
 use clap::{Parser, Subcommand, ValueEnum};
 #[cfg(feature = "akita")]
 use jolt_akita::{
-    AkitaChunkProfile, AkitaField, AkitaProverTranscript, AkitaScheme, AkitaVerifierTranscript,
-    TrustedBytes,
+    record_checked_hints, AkitaChunkProfile, AkitaField, AkitaProverTranscript, AkitaScheme,
+    AkitaVerifierTranscript, TrustedBytes,
 };
 use jolt_field::Ring;
 use jolt_inlines_blake2::Blake2b;
@@ -430,6 +430,17 @@ fn check_data_integrity(all_groups_data: &[u8]) -> StreamLayout {
         let _: JoltDevice = limits
             .read_record(all_groups_data, &mut offset)
             .expect("decode device");
+        // The guest installs this advice within the image's record byte limit.
+        #[cfg(feature = "akita")]
+        {
+            let advice = read_raw(all_groups_data, &mut offset).expect("decode challenge advice");
+            limits.bytes = limits.bytes.max(
+                advice
+                    .len()
+                    .checked_next_power_of_two()
+                    .expect("record byte limit overflow"),
+            );
+        }
         info!("Decoded proof and device {i}");
     }
 
@@ -602,15 +613,24 @@ fn collect_guest_proofs(
         .pcs_setup
         .attach_prepared_payloads(&bodies)
         .expect("attach prepared Akita payloads");
+    // Record the checked challenge advice the guest installs for each proof.
+    let mut challenge_advice = Vec::with_capacity(records.len());
     for (proof, public_io) in &records {
-        jolt_sdk::jolt_verifier::verify::<
-            AkitaField,
-            AkitaScheme,
-            AkitaVc,
-            AkitaVerifierTranscript<'_>,
-        >(&attached, public_io, proof, None)
-        .expect("verify proof against prepared guest setup");
-        info!("  Verification result: true");
+        let (verified, advice) = record_checked_hints(|| {
+            jolt_sdk::jolt_verifier::verify::<
+                AkitaField,
+                AkitaScheme,
+                AkitaVc,
+                AkitaVerifierTranscript<'_>,
+            >(&attached, public_io, proof, None)
+        })
+        .expect("record checked challenge advice");
+        verified.expect("verify proof against prepared guest setup");
+        info!(
+            "  Verification result: true; challenge advice: {} bytes",
+            advice.len()
+        );
+        challenge_advice.push(advice);
     }
     push_record(&mut all_groups_data, &verifier_preprocessing);
     push_record(&mut all_groups_data, &(payloads.len() as u32));
@@ -618,9 +638,10 @@ fn collect_guest_proofs(
         push_raw(&mut all_groups_data, payload);
     }
     push_record(&mut all_groups_data, &n);
-    for (proof, public_io) in records {
+    for ((proof, public_io), advice) in records.into_iter().zip(&challenge_advice) {
         push_record(&mut all_groups_data, &proof);
         push_record(&mut all_groups_data, &public_io);
+        push_raw(&mut all_groups_data, advice);
     }
     info!("Total data size: {} bytes", all_groups_data.len());
     all_groups_data
@@ -1005,6 +1026,9 @@ fn tamper_proof(
     for index in 0..count {
         let mut proof: GuestProof = read_record(&bytes, &mut offset).unwrap();
         let mut device: JoltDevice = read_record(&bytes, &mut offset).unwrap();
+        // A tampered proof keeps the advice recorded for the original.
+        #[cfg(feature = "akita")]
+        let advice = read_raw(&bytes, &mut offset).unwrap();
         if target == TamperTarget::Empty {
             continue;
         }
@@ -1049,6 +1073,8 @@ fn tamper_proof(
         }
         push_record(&mut tampered, &proof);
         push_record(&mut tampered, &device);
+        #[cfg(feature = "akita")]
+        push_raw(&mut tampered, advice);
     }
     assert_eq!(offset, bytes.len(), "trailing proof stream bytes");
     // A successful typed decode is distinct from the guest's verification result.

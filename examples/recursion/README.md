@@ -46,6 +46,13 @@ A consumer checking a particular computation must bind the runtime input and
 inspect the intended count and devices; checking the verdict alone establishes
 only that some nonempty batch verifies under the image's setup.
 
+In the Akita build, `generate` records each proof's checked challenge advice
+while it verifies the proof natively, and writes it as a raw record after the
+proof's device. The guest verifies with that advice installed and requires it
+to be fully consumed; see
+[checked challenge advice](../../specs/recursion-guest.md#checked-challenge-advice).
+Regenerate proofs to obtain the advice records.
+
 `trace` requires the guest's verdict to match `--expect` (default `accept`); a
 guest panic is neither verdict. `tamper-opening` requires the Akita build and
 flips one bit in the last byte of the first proof's argument string, which

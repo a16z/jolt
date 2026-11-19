@@ -18,7 +18,7 @@ use jolt::JoltDevice;
 #[cfg(not(feature = "akita"))]
 use jolt::{JoltVerifierPreprocessing, RV64IMACProof};
 #[cfg(feature = "akita")]
-use jolt_akita::{AkitaField, AkitaScheme, AkitaVerifierTranscript};
+use jolt_akita::{verify_with_checked_hints, AkitaField, AkitaScheme, AkitaVerifierTranscript};
 #[cfg(feature = "akita")]
 type AkitaVc = NoVectorCommitment<AkitaField>;
 #[cfg(feature = "akita")]
@@ -178,6 +178,11 @@ fn verify_records(bytes: &[u8]) -> Result<u32, RecordError> {
         let device: JoltDevice = input.record()?;
         end_cycle_tracking("deserialize device");
 
+        // Checked challenge advice the host recorded for this proof, bounded by
+        // the record byte limit baked into this image.
+        #[cfg(feature = "akita")]
+        let challenge_advice = input.raw()?;
+
         start_cycle_tracking("verification");
         #[cfg(not(feature = "akita"))]
         let is_valid = jolt::jolt_verifier::verify::<
@@ -188,12 +193,14 @@ fn verify_records(bytes: &[u8]) -> Result<u32, RecordError> {
         >(&verifier_preprocessing, &device, &proof, None)
         .is_ok();
         #[cfg(feature = "akita")]
-        let is_valid = jolt::jolt_verifier::verify::<
-            AkitaField,
-            AkitaScheme,
-            AkitaVc,
-            AkitaVerifierTranscript<'_>,
-        >(&verifier_preprocessing, &device, &proof, None)
+        let is_valid = verify_with_checked_hints(challenge_advice, RECORD_LIMITS.bytes, || {
+            jolt::jolt_verifier::verify::<
+                AkitaField,
+                AkitaScheme,
+                AkitaVc,
+                AkitaVerifierTranscript<'_>,
+            >(&verifier_preprocessing, &device, &proof, None)
+        })
         .is_ok();
         end_cycle_tracking("verification");
         all_valid = all_valid && is_valid;

@@ -47,6 +47,7 @@ common.workspace = true
 akita-types = { workspace = true, optional = true }
 akita-params = { workspace = true, optional = true }
 serde.workspace = true
+serde_bytes.workspace = true
 bincode.workspace = true
 postcard = { workspace = true, features = ["alloc", "use-std"] }
 jolt-host = { workspace = true, optional = true }

@@ -118,6 +118,14 @@ checkout before executing a verifier guest. Proofs and verifier preprocessing
 are version-specific; regenerate the pair after changing Jolt or Akita.
 There is no checked-in proof bundle.
 
+`generate` records the pair's checked challenge advice while it verifies both
+inner proofs natively, and `rebind` records it again for the rebound setup.
+Every replay, native or in a guest, installs that advice before verifying and
+requires verification to consume all of it, so the guests check pre-decoded
+fold challenges against the transcript instead of decoding them.
+`outer-verifier-audit --import-json` records the advice for an external input,
+and the prepared pair and outer advice files carry it to their guests.
+
 The archived accumulated-proof measurements and original fixture are available
 at [Jolt commit 88c38e0e](https://github.com/a16z/jolt/tree/88c38e0e4ae0d671e3fb8e08abf138da4c5e5520/examples/akita-recursion).
 They require that checkout and its Akita pin; they are not current-code

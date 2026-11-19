@@ -4,7 +4,8 @@ use akita_types::setup_claims::{SetupBatchStatement, SetupQuery};
 use common::jolt_device::JoltDevice;
 use jolt_akita::deferred::{SetupClaimAccumulator, SetupClaimAdvice, SetupMode};
 use jolt_akita::{
-    AkitaError, AkitaField, AkitaScheme, AkitaVerificationContext, AkitaVerifierTranscript,
+    record_checked_hints, verify_with_checked_hints, AkitaError, AkitaField, AkitaScheme,
+    AkitaVerificationContext, AkitaVerifierTranscript,
 };
 use jolt_crypto::NoVectorCommitment;
 use jolt_verifier::verifier::verify_with_context;
@@ -15,6 +16,9 @@ use std::slice::Iter;
 pub type Vc = NoVectorCommitment<AkitaField>;
 pub type Proof = JoltProof<AkitaScheme, Vc>;
 pub type Preprocessing = JoltVerifierPreprocessing<AkitaScheme, Vc>;
+
+/// Trusted bound on recorded challenge advice: the guests' input limit.
+pub const CHALLENGE_ADVICE_LIMIT: usize = 1 << 26;
 
 #[derive(Serialize, Deserialize)]
 pub struct InnerProof {
@@ -28,6 +32,9 @@ pub struct ProofPair {
     pub inner: [InnerProof; 2],
     pub setup_field_len: usize,
     pub answers: Vec<AkitaField>,
+    /// Checked challenge advice for both inner verifications, in order.
+    #[serde(with = "serde_bytes")]
+    pub challenge_advice: Vec<u8>,
 }
 
 pub enum ReplayEvent {
@@ -38,7 +45,33 @@ pub enum ReplayEvent {
 }
 
 impl ProofPair {
+    /// Verify both inner proofs with the pair's challenge advice installed.
     pub fn replay(
+        &self,
+        mode: SetupMode,
+        advice: &mut (dyn SetupClaimAdvice<AkitaField> + Send),
+        observe: impl FnMut(ReplayEvent) + Send,
+    ) -> Result<SetupBatchStatement<AkitaField>, String> {
+        verify_with_checked_hints(&self.challenge_advice, CHALLENGE_ADVICE_LIMIT, || {
+            self.verify(mode, advice, observe)
+        })
+        .map_err(|e| e.to_string())
+    }
+
+    /// Verify natively and record the challenge advice [`Self::replay`] installs.
+    pub fn record_challenge_advice(
+        &mut self,
+        mode: SetupMode,
+        advice: &mut (dyn SetupClaimAdvice<AkitaField> + Send),
+    ) -> Result<SetupBatchStatement<AkitaField>, String> {
+        let (statement, frame) = record_checked_hints(|| self.verify(mode, advice, |_| {}))
+            .map_err(|e| e.to_string())?;
+        let statement = statement?;
+        self.challenge_advice = frame;
+        Ok(statement)
+    }
+
+    fn verify(
         &self,
         mode: SetupMode,
         advice: &mut dyn SetupClaimAdvice<AkitaField>,

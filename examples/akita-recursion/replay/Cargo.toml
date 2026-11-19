@@ -28,6 +28,7 @@ recursion-host = [
 [dependencies]
 common = { workspace = true, optional = true }
 serde.workspace = true
+serde_bytes.workspace = true
 bincode.workspace = true
 postcard = { workspace = true, features = ["use-std"] }
 jolt-akita-recursion = { path = ".." }

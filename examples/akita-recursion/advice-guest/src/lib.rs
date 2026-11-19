@@ -34,6 +34,7 @@ fn verify_advice(bytes: UntrustedAdvice<Vec<u8>>) -> Vec<u8> {
         inner: advice.inner,
         setup_field_len: advice.output_setup_fields,
         answers: advice.answers,
+        challenge_advice: advice.challenge_advice,
     };
     jolt::end_cycle_tracking("decode_pair");
     jolt::start_cycle_tracking("verify_pair");

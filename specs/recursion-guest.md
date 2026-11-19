@@ -64,11 +64,19 @@ A consumer checking a particular computation must bind the runtime input and
 inspect the intended count and devices; checking the verdict alone establishes
 only that some nonempty batch verifies under the image's setup.
 
+Under Akita, each proof/device pair is followed by a raw record holding that
+proof's checked challenge advice. The guest verifies the proof with the advice
+installed and accepts the pair only if verification consumed all of it. Every
+advice entry is authenticated against the transcript, so advice cannot change
+which proofs verify; missing, extra or altered advice rejects the pair.
+
 ## Record limits
 
 The image builder runs the same bounded serde adapter over each supplied setup,
 count, proof, and device record and logs both its encoded length and its charged
-size. The byte cap is the next power of two of the largest record, with a 16 MiB
+size. Under Akita it also sizes the byte cap over each challenge-advice record;
+advice is installed as raw bytes, so it adds no charge, and the guest passes
+the byte cap to `install_checked_hints` as its trusted bound. The byte cap is the next power of two of the largest record, with a 16 MiB
 floor. The allocation-charge cap is the next power of two of twice the largest
 charge, also with a 16 MiB floor. Both caps are constants in the generated guest;
 untrusted runtime lengths cannot raise them. Detached setup bodies are borrowed
@@ -134,6 +142,16 @@ inversions run through field-inline instructions (`field_inline.rs`).
   sum's iterator runs between terms, so the accumulating kernels are marked
   lent until the readout and take their software path if the iterator calls
   them.
+
+### Checked challenge advice
+
+Decoding an Akita fold challenge turns transcript bits back into coefficient
+positions, a combinatorial search that is cheap natively and costly in the
+guest. The host records each proof's decoded challenges with
+`record_checked_hints` while it verifies natively, and the guest supplies them
+to `verify_with_checked_hints`. The Akita verifier then checks every supplied
+challenge against the transcript instead of decoding it. Proof, setup and
+transcript bytes are unchanged.
 
 ### Hash and NTT inlines
 

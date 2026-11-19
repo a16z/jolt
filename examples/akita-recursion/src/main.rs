@@ -344,16 +344,18 @@ fn generate(
         inner: proofs.try_into().map_err(|_| "expected two proofs")?,
         setup_field_len: domain_len,
         answers: Vec::new(),
+        challenge_advice: Vec::new(),
     };
     let mut advice = NativeAdvice {
         setup: &prepared.pcs_setup,
         polynomial: pair.preprocessing.pcs_setup.setup_polynomial(domain_len)?,
         answers: Vec::new(),
     };
-    let statement = pair.replay(SetupMode::Defer, &mut advice, |_| {})?;
+    let statement = pair.record_challenge_advice(SetupMode::Defer, &mut advice)?;
     println!(
-        "deferred native replay OK; setup_fields={domain_len} claims={}",
-        statement.claims().len()
+        "deferred native replay OK; setup_fields={domain_len} claims={} challenge_advice_bytes={}",
+        statement.claims().len(),
+        pair.challenge_advice.len()
     );
     pair.answers = advice.answers;
     let mut tape = AnswerTape(pair.answers.iter());
@@ -453,7 +455,13 @@ fn run() -> Result<()> {
                 return Err("rebind requires a larger setup prefix".into());
             }
             pair.setup_field_len = domain_len;
-            let _statement = replay(&pair)?;
+            // Re-record against the rebound setup prefix.
+            let answers = pair.answers.clone();
+            let mut tape = AnswerTape(answers.iter());
+            let _statement = pair.record_challenge_advice(SetupMode::Defer, &mut tape)?;
+            if tape.0.next().is_some() {
+                return Err("unused setup advice".into());
+            }
             save(&output, &pair)
         }
         Command::Trace {
