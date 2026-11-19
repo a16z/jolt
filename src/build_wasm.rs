@@ -189,7 +189,7 @@ pub fn verify_{func_name}(
 fn wasm_preprocess_source(func_names: &[String]) -> String {
     let mut code = String::from(
         r#"fn main() {
-    let target_dir = std::env::temp_dir().join("jolt-guest-targets");
+    let target_dir = jolt_sdk::host::default_target_dir();
     let out_dir = std::path::Path::new("target/wasm32-unknown-unknown/release");
     std::fs::create_dir_all(out_dir).expect("create wasm preprocessing directory");
 "#,

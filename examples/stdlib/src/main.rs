@@ -4,10 +4,10 @@ use tracing::info;
 pub fn main() {
     tracing_subscriber::fmt::init();
 
-    let target_dir = "/tmp/jolt-guest-targets";
+    let target_dir = jolt_sdk::host::default_target_dir();
 
     info!("=== Int to String ===");
-    let mut program = guest::compile_int_to_string(target_dir);
+    let mut program = guest::compile_int_to_string(&target_dir.to_string_lossy());
 
     let shared_preprocessing = guest::preprocess_shared_int_to_string(&mut program).unwrap();
     let prover_preprocessing = guest::preprocess_prover_int_to_string(shared_preprocessing.clone());
@@ -22,7 +22,7 @@ pub fn main() {
     verify(81, output, program_io.panic, proof).expect("int_to_string proof verification failed!");
 
     info!("=== String Concat ===");
-    let mut program = guest::compile_string_concat(target_dir);
+    let mut program = guest::compile_string_concat(&target_dir.to_string_lossy());
 
     let shared_preprocessing = guest::preprocess_shared_string_concat(&mut program).unwrap();
     let prover_preprocessing = guest::preprocess_prover_string_concat(shared_preprocessing.clone());
@@ -40,7 +40,7 @@ pub fn main() {
     verify(20, output, program_io.panic, proof).expect("string_concat proof verification failed!");
 
     info!("=== Parallel Sum of Squares (rayon) ===");
-    let mut program = guest::compile_parallel_sum_of_squares(target_dir);
+    let mut program = guest::compile_parallel_sum_of_squares(&target_dir.to_string_lossy());
 
     let shared_preprocessing =
         guest::preprocess_shared_parallel_sum_of_squares(&mut program).unwrap();

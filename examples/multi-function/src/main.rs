@@ -4,8 +4,8 @@ use tracing::info;
 pub fn main() {
     tracing_subscriber::fmt::init();
 
-    let target_dir = "/tmp/jolt-guest-targets";
-    let mut program = guest::compile_add(target_dir);
+    let target_dir = jolt_sdk::host::default_target_dir();
+    let mut program = guest::compile_add(&target_dir.to_string_lossy());
 
     let shared_preprocessing = guest::preprocess_shared_add(&mut program).unwrap();
     let prover_preprocessing = guest::preprocess_prover_add(shared_preprocessing.clone());
@@ -15,8 +15,8 @@ pub fn main() {
     let prove_add = guest::build_prover_add(program, prover_preprocessing);
     let verify_add = guest::build_verifier_add(verifier_preprocessing);
 
-    let target_dir = "/tmp/jolt-guest-targets";
-    let mut program = guest::compile_mul(target_dir);
+    let target_dir = jolt_sdk::host::default_target_dir();
+    let mut program = guest::compile_mul(&target_dir.to_string_lossy());
 
     let shared_preprocessing = guest::preprocess_shared_mul(&mut program).unwrap();
     let prover_preprocessing = guest::preprocess_prover_mul(shared_preprocessing.clone());

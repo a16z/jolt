@@ -4,13 +4,13 @@ use tracing::info;
 pub fn main() {
     tracing_subscriber::fmt::init();
 
-    let target_dir = "/tmp/jolt-guest-targets";
+    let target_dir = jolt_sdk::host::default_target_dir();
 
     let n = 221u8;
     let a = vec![1usize, 2, 3, 4, 5];
     let b = vec![0usize, 1, 2, 3, 4, 5, 6, 7, 8, 9];
 
-    let mut program = guest::compile_advice_demo(target_dir);
+    let mut program = guest::compile_advice_demo(&target_dir.to_string_lossy());
     let shared_preprocessing = guest::preprocess_shared_advice_demo(&mut program).unwrap();
     let prover_preprocessing = guest::preprocess_prover_advice_demo(shared_preprocessing.clone());
     let verifier_preprocessing =

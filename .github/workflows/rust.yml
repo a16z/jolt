@@ -480,6 +480,13 @@ jobs:
       # specifics: forced K=256, advice, committed-program, and live tampers.
       - name: Run jolt-prover tests with akita feature
         run: cargo nextest run --cargo-profile ci -p jolt-prover --features akita,prover-fixtures
+      # Guest builds land in target/jolt-guest-targets, and rust-cache saves
+      # the dependency artifacts of every profile directory under target/:
+      # about 300 MB per guest. Every job that saves a cache of target/ and
+      # builds guests ends with this step; ci-bench.yml and fuzz-crates.yml
+      # each have one such job.
+      - name: Drop guest builds before the cache save
+        run: rm -rf target/jolt-guest-targets
 
   # NOTE: the profiling smoke test (`cargo nextest run -p jolt-prover
   # --features profiling -E 'binary(profiling_smoke)'`) is deliberately not

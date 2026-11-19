@@ -31,8 +31,7 @@ pub fn setup(package: &str, func: &str, input: Vec<u8>) -> Option<(JoltProgram, 
 }
 
 fn guest_elf(package: &str, func: &str) -> Option<Vec<u8>> {
-    let target_dir = std::env::temp_dir()
-        .join("jolt-guest-targets")
+    let target_dir = jolt_host::default_target_dir()
         .join(format!("{package}-{func}"))
         .to_string_lossy()
         .into_owned();
