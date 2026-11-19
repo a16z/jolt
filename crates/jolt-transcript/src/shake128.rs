@@ -7,8 +7,8 @@ use spongefish::ProverState as SpongefishProverState;
 
 /// The SHAKE128 suite of draft-irtf-cfrg-fiat-shamir, over the `shake` crate.
 ///
-/// spongefish 0.8 defines the same suite but builds it only together with a
-/// non-FIPS XOF, so this crate supplies its own. It derives the session
+/// spongefish defines the same suite but builds it only together with a
+/// non-FIPS XOF (its `turboshake128` feature), so this crate supplies its own. It derives the session
 /// identifier ([`crate::session_id`]) and the prover's private coins
 /// ([`ProverState`]).
 pub type Shake128 = XOF<Shake128Hasher>;
