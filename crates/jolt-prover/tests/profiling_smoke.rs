@@ -42,6 +42,10 @@ fn profile_run_emits_conformant_artifacts() {
         result_json: None,
         #[cfg(feature = "akita")]
         akita_chunk_profile: AkitaChunkProfile::new(1, 0),
+        #[cfg(feature = "akita")]
+        akita_prover_pool: false,
+        #[cfg(feature = "akita")]
+        akita_prover_active_wait: false,
         memory_budget: None,
     })
     .unwrap();

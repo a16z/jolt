@@ -36,9 +36,9 @@ use tracing::info_span;
 
 use crate::adapters::{
     akita_error, invalid_batch, prove_failed, reverse_point, validate_one_hot_k, with_backend_pool,
-    AkitaBackendCommitment, AkitaBackendExtField, AkitaBackendFlavor, AkitaBackendHint,
-    AkitaBatchProof, AkitaCommitment, AkitaConfig, AkitaField, AkitaHintSource, AkitaProverHint,
-    AkitaProverSetup, AkitaVerifierSetup, AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256,
+    with_prover_backend, AkitaBackendCommitment, AkitaBackendExtField, AkitaBackendFlavor,
+    AkitaBackendHint, AkitaBatchProof, AkitaCommitment, AkitaConfig, AkitaField, AkitaHintSource,
+    AkitaProverHint, AkitaProverSetup, AkitaVerifierSetup, AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256,
 };
 use crate::one_hot_family::with_one_hot_family;
 use crate::scheme::validate_group_order;
@@ -210,7 +210,7 @@ fn prove_one_hot_opening<'a>(
     let (backend_prover_setup, backend) = setup.one_hot_backend()?;
     let _span = info_span!("AkitaNativeBatching::backend_batched_prove").entered();
     let scheme = setup.verifier.one_hot_scheme()?;
-    with_backend_pool(|| {
+    with_prover_backend(|| {
         let proof = with_one_hot_family!(scheme scheme, |scheme| scheme.batched_prove(
             backend_prover_setup,
             opening,
@@ -318,7 +318,7 @@ impl AkitaNativeBatching {
         // public matrix (shared by every Jolt setup through the deterministic
         // setup seed).
         let (backend_prover_setup, backend) = setup.one_hot_backend()?;
-        let mut handles = with_backend_pool(|| {
+        let mut handles = with_prover_backend(|| {
             let _span = info_span!("AkitaNativeBatching::import_auxiliary_handles").entered();
             handles
                 .iter()
@@ -343,7 +343,7 @@ impl AkitaNativeBatching {
         .map_err(akita_error)?;
         let selection = opening.selection();
         let _span = info_span!("AkitaNativeBatching::backend_batched_prove_embedded").entered();
-        with_backend_pool(|| {
+        with_prover_backend(|| {
             with_one_hot_family!(scheme scheme, |scheme| scheme.batched_prove_embedded(
                 backend_prover_setup,
                 opening,
@@ -674,7 +674,7 @@ impl BatchOpeningScheme for AkitaNativeBatching {
                 let selection = opening.selection();
                 let (backend_prover_setup, backend) = setup.dense_backend()?;
                 let _span = info_span!("AkitaNativeBatching::backend_batched_prove").entered();
-                let proof = with_backend_pool(|| {
+                let proof = with_prover_backend(|| {
                     let proof = scheme.batched_prove(
                         backend_prover_setup,
                         opening,
