@@ -10,14 +10,10 @@
 //!
 //! The prover scans candidate nonces in increasing order, on the calling
 //! thread, against an owned copy of the sponge state: the oracle of
-//! [`ProverTranscript::verifier_message_oracle`], shaped like spongefish's
-//! (arkworks-rs/spongefish#306). Spongefish 0.8.0 exposes that state only
-//! under its `yolocrypto` feature, so the search is behind this crate's
-//! `prover-grinding` feature. Cargo unifies features across a build, so a
-//! binary that links a grinding prover compiles its verifier with
-//! `yolocrypto` too; in 0.8.0 the feature changes visibility only, not bytes.
-//! The layout of the step follows arkworks-rs/spongefish#301 and its
-//! difficulty rule #307.
+//! [`ProverTranscript::verifier_message_oracle`], which is spongefish's
+//! (arkworks-rs/spongefish#306). The search is behind this crate's
+//! `prover-grinding` feature. The layout of the step follows
+//! arkworks-rs/spongefish#301 and its difficulty rule #307.
 //!
 //! A proof that carries its nonces outside the NARG string runs the same step
 //! with the nonce absorbed as a public message
