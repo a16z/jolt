@@ -79,31 +79,19 @@ impl ProgramImageClaimReductionLayout {
         self.padded_len_words
     }
 
-    /// `FinalScale` value when the reduction completes in the cycle phase
-    /// (i.e. no active address-phase rounds remain). `r_addr_rw` is the RAM
-    /// address component of the `RamVal` opening from RAM read-write checking.
-    pub fn cycle_phase_final_output_scale<F: JoltField>(
-        &self,
-        r_addr_rw: &[F],
-        challenges: &[F],
-    ) -> Result<F, PointGeometryError> {
-        let opening_point = self
-            .precommitted
-            .cycle_phase_permuted_opening_point(challenges)?;
-        let eq_eval =
-            eval_shifted_eq_poly_at_opening_point(r_addr_rw, self.start_index, &opening_point)?;
-        Ok(eq_eval * self.precommitted.cycle_phase_skip_scale::<F>())
-    }
-
     /// `FinalScale` value from the reduction's already-derived cycle-phase
     /// opening point, rather than re-deriving it from the sumcheck challenges.
     /// Lets the cycle-phase relation object's `resolve_public` recover the scale
     /// from the opening point it produced in `derive_opening_points`.
+    /// `r_addr_rw` is the RAM address component of the `RamVal` opening from
+    /// RAM read-write checking.
     pub fn cycle_phase_scale_at_opening_point<F: JoltField>(
         &self,
         r_addr_rw: &[F],
         opening_point: &[F],
     ) -> Result<F, PointGeometryError> {
+        self.precommitted
+            .require_cycle_final_opening_point(opening_point)?;
         let eq_eval =
             eval_shifted_eq_poly_at_opening_point(r_addr_rw, self.start_index, opening_point)?;
         Ok(eq_eval * self.precommitted.cycle_phase_skip_scale::<F>())

@@ -9,10 +9,12 @@
 //!
 //! Each relation OVERRIDES [`ConcreteSumcheck::expected_output`] to evaluate the
 //! scale at the produced opening point via the layout's
-//! `cycle_phase_*_at_opening_point` helpers, so the scale and the stage 8
-//! opening share one point. That point follows the commitment layout's
-//! variable order in every layout `PrecommittedClaimReduction::new` builds; it
-//! rejects the rest.
+//! `cycle_phase_*_at_opening_point` helpers. Soundness: when the reduction
+//! completes here, stage 8 opens the commitment at that same point, so the
+//! final check binds the claim to the committed polynomial. In every layout
+//! that finishes in the cycle phase the point follows the commitment layout's
+//! variable order; `PrecommittedClaimReduction::new` rejects a cycle-final
+//! layout where it would not.
 //! The output expression is bypassed (not the `derive_output_term` path) because the
 //! produced opening id is dynamic in `has_address_phase`; the override computes
 //! exactly the formula value, so the clear path and BlindFold stay in sync.

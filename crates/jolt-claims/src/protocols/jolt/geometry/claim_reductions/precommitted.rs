@@ -173,12 +173,12 @@ impl PrecommittedClaimReduction {
             &poly_opening_round_permutation_be,
             scheduling_reference.cycle_alignment_rounds,
         );
-        // Soundness: a reduction that completes in the cycle phase opens at
-        // `cycle_phase_opening_point`, its active challenges in descending
-        // round order, and the verifier weights the claim at that point. The
-        // prover's kernels bind variable `i` in round
+        // Completeness: a reduction that completes in the cycle phase opens
+        // at `cycle_phase_opening_point`, its active challenges in descending
+        // round order. The prover's kernels bind variable `i` in round
         // `poly_opening_round_permutation_be[i]`, so their claim is the
-        // polynomial's evaluation there only for a descending permutation.
+        // polynomial's evaluation there only for a descending permutation;
+        // otherwise an honest proof of general data would not verify.
         // Cycle-major precommitted dominance can project a row tail from the
         // cycle prefix ahead of a column tail from the dense cycle rounds.
         if address_phase_rounds.is_empty()
@@ -389,32 +389,25 @@ impl PrecommittedClaimReduction {
         Ok(point)
     }
 
-    /// Big-endian permutation-ordered point for a reduction that completes in
-    /// the cycle phase. Errors if the polynomial still has active
-    /// address-phase rounds.
-    pub fn cycle_phase_permuted_opening_point<F: JoltField>(
+    /// Errors unless `opening_point` has one coordinate per active cycle
+    /// round and the reduction completes in the cycle phase, as a final
+    /// opening point from [`Self::cycle_phase_opening_point`] does.
+    pub fn require_cycle_final_opening_point<F>(
         &self,
-        challenges: &[F],
-    ) -> Result<Vec<F>, PointGeometryError> {
-        if challenges.len() != self.cycle_phase_total_rounds {
+        opening_point: &[F],
+    ) -> Result<(), PointGeometryError> {
+        if opening_point.len() != self.cycle_phase_rounds.len() {
             return Err(PointGeometryError::ChallengeLengthMismatch {
-                expected: self.cycle_phase_total_rounds,
-                got: challenges.len(),
+                expected: self.cycle_phase_rounds.len(),
+                got: opening_point.len(),
             });
         }
-        let cycle_round_limit = self.cycle_alignment_rounds();
-        self.poly_opening_round_permutation_be
-            .iter()
-            .map(|&global_round| {
-                if global_round < cycle_round_limit {
-                    Ok(challenges[global_round])
-                } else {
-                    Err(PointGeometryError::CyclePhaseNotFinal {
-                        active_address_rounds: self.num_address_phase_rounds(),
-                    })
-                }
-            })
-            .collect()
+        if !self.address_phase_rounds.is_empty() {
+            return Err(PointGeometryError::CyclePhaseNotFinal {
+                active_address_rounds: self.num_address_phase_rounds(),
+            });
+        }
+        Ok(())
     }
 
     /// Big-endian final opening point in Dory opening-round order, assembled
@@ -616,9 +609,14 @@ mod tests {
                 let challenges: Vec<Fr> = (0..precommitted.cycle_phase_total_rounds())
                     .map(|round| Fr::from_u64(10 + round as u64))
                     .collect();
+                let layout_order_point: Vec<Fr> = precommitted
+                    .poly_opening_round_permutation_be()
+                    .iter()
+                    .map(|&round| challenges[round])
+                    .collect();
                 assert_eq!(
                     precommitted.cycle_phase_opening_point(&challenges),
-                    precommitted.cycle_phase_permuted_opening_point(&challenges),
+                    Ok(layout_order_point),
                     "{trace_order:?} log_t={log_t} {scheduling_reference:?} poly={poly_total_vars}"
                 );
                 accepted += 1;
