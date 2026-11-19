@@ -257,8 +257,9 @@ fn subset(a: Vec<usize>, b: Vec<usize>) {
 
 /// Sums the first word of each present block. The entry point decodes both
 /// parameters before this body runs, reserving what their lengths declare,
-/// which `crates/jolt-prover/tests/advice_decode.rs` drives past the heap.
-#[jolt::provable(heap_size = 1048576)]
+/// which `crates/jolt-prover/tests/advice_decode.rs` drives past the heap. The
+/// same tests check that `input_error` covers `pinned` and not `blocks`.
+#[jolt::provable(heap_size = 1048576, input_error = u64::MAX)]
 fn block_total(
     blocks: UntrustedAdvice<Vec<Option<[u64; 32]>>>,
     pinned: TrustedAdvice<Vec<Option<[u64; 32]>>>,

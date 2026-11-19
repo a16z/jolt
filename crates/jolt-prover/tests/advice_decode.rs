@@ -137,3 +137,25 @@ fn untrusted_advice_input_too_large_for_the_heap_spoils_the_proof() {
     );
     assert!(device.panic);
 }
+
+/// `input_error` is the author's output for malformed bytes that the verifier's
+/// statement fixes. Through untrusted advice the prover could force it for any
+/// public input.
+#[test]
+fn input_error_does_not_cover_undecodable_untrusted_advice() {
+    let mut guest = Program::new("advice-demo-guest");
+    guest.set_std(true);
+    guest.set_func("block_total");
+    guest.set_heap_size(1 << 20);
+    let none = postcard::to_stdvec(&Vec::<Option<[u64; 32]>>::new()).expect("serialize no blocks");
+
+    // No length varint is longer than ten bytes.
+    let (_, trace, _, device) = guest.trace(&[], &none, &[0xff; 11]);
+    assert!(!device.panic && !spoiled(&trace));
+    let (_, trace, _, device) = guest.trace(&[], &[0xff; 11], &none);
+    assert!(
+        spoiled(&trace),
+        "undecodable untrusted advice must spoil the proof, not return `input_error`"
+    );
+    assert!(device.panic);
+}
