@@ -27,8 +27,34 @@ bakes a BLAKE2b-512 digest of the complete setup section into the guest image.
 The guest authenticates the setup record and every detached key, catalog, and
 terminal-cache body before decoding or trusting them; a missing pin or mismatch
 returns `0`. Consumers must pin the intended guest image, including this digest
-(see [`specs/recursion-guest.md`](../../specs/recursion-guest.md)). The spec's row
-counts are for embedded mode.
+(see [`specs/recursion-guest.md`](../../specs/recursion-guest.md)). The spec's
+measurement history is for embedded mode; its setup-transport table compares
+embedded, input, and advice mode.
+
+### Advice mode
+
+Akita builds also accept `--advice` on `trace` and `check-input-framing`. The
+setup becomes trusted advice and the inner proofs untrusted advice. The public
+input carries only the statements: the proof count and one I/O device per
+proof. The guest entry point is `verify_advice`.
+
+```bash
+cargo run --release -p recursion --features akita,field-inline,ntt-inline -- \
+  trace --advice --example fibonacci --workdir /tmp/jolt-recursion
+```
+
+The image bakes no setup data, only its region capacities and record limits,
+so one image serves any setup that fits them. An outer proof of this execution
+binds the setup through the trusted-advice commitment its verifier takes as
+`trusted_advice_commitment`; the consumer pins that commitment, never one the
+prover supplies. The host prints the commitment and the inner statements. No
+outer proof of the Akita guest exists yet, so nothing checks the commitment in
+this flow.
+
+The trusted advice keeps embedded mode's savings. Its preprocessing record
+omits the bytecode rows, which follow the precomputed preprocessing digest in a
+fixed-width layout (`guest/src/compiled_rows.rs`), so the guest neither decodes
+the rows with bincode nor re-hashes the program.
 
 ### Acceptance and rejection
 
@@ -45,6 +71,15 @@ still one `u32` and does not commit separately to the count or inner devices.
 A consumer checking a particular computation must bind the runtime input and
 inspect the intended count and devices; checking the verdict alone establishes
 only that some nonempty batch verifies under the image's setup.
+
+In advice mode the setup is the one the pinned commitment binds, the input
+holds the count and devices, and the untrusted advice must hold exactly one
+proof record per device. The guest returns `1` only if each proof verifies
+against the device at its position. Untrusted advice is not public, so the
+verdict covers the statements in the input, not particular proof bytes. Advice
+alone does not hide those bytes: confidentiality needs a zero-knowledge outer
+proof, and the Akita build has no ZK mode (`akita` and `zk` are mutually
+exclusive).
 
 `trace` requires the guest's verdict to match `--expect` (default `accept`); a
 guest panic is neither verdict. `tamper-opening` requires the Akita build and
@@ -66,7 +101,9 @@ region. It also rejects a nonzero suffix immediately after the envelope or at
 the last capacity byte, and accepts explicit zero padding. Recursion opts into `#[jolt::provable(input_error = 0)]`; decoding errors
 and nonzero public-input padding skip the verifier body and serialize that
 return value. Other guests retain
-the default decoding behavior.
+the default decoding behavior. With `--advice` the same input checks apply to
+the statements, and the untrusted advice must also reject an overflowing or
+oversize length prefix, a missing proof record, and a trailing proof record.
 
 These commands test guest verification, not an Akita outer recursive proof.
 
@@ -75,7 +112,9 @@ Stage1 round coefficient changed, one Stage1 opening claim changed, one device
 output byte flipped, the panic bit flipped, or a zero-proof batch. Run each
 through `trace --embed --expect reject`. Generate with `--proofs 2` and trace
 normally to test batch acceptance; `tamper --target claim --proof-index 1`
-then changes only the second proof, and the batch must return `0`.
+then changes only the second proof, and the batch must return `0`. The
+opening fixture and these fixtures reject the same way under
+`trace --advice --expect reject`.
 The Dory lane also checks framing and rejects a changed claim. Input-mode
 traces authenticate the setup
 against the digest baked into the newly built guest.
