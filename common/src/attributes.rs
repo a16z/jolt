@@ -10,8 +10,9 @@ pub struct Attributes {
     pub wasm: bool,
     pub nightly: bool,
     pub guest_only: bool,
-    /// Opt-in guest return expression for a public input or trusted advice that
-    /// fails to decode, or for nonzero public-input padding. Untrusted advice
+    /// Opt-in guest return expression for a public input or trusted advice
+    /// whose bytes are not an encoding of its type, or for nonzero public-input
+    /// padding. A value too large for the heap still panics. Untrusted advice
     /// that fails to decode spoils the proof instead: only the prover chooses it.
     pub input_error: Option<Expr>,
     /// Optional cargo profile name to use for guest builds (e.g. "guest", "release").
