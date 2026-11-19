@@ -1,3 +1,5 @@
+use akita_algebra::ntt::lane_dif::LaneDif;
+use akita_algebra::ntt::NttKernelPlan;
 use akita_algebra::{CrtNttParamSet, CyclotomicCrtNtt, DigitMontLut, MontCoeff};
 
 /// Coefficients per committed row window of a `K = 16` one-hot ring.
@@ -22,13 +24,18 @@ pub(super) const ROWS: usize = 32;
 /// slot [`Self::slot`]`(i)`. Pointwise products are order-agnostic: callers
 /// permute their other operand with [`Self::to_lane_order`] and restore
 /// library order with [`Self::to_library_order`] before an inverse NTT.
-/// Outputs are canonical, within the `(-p, p)` contract of those products.
+/// [`Self::transform`] writes canonical outputs, within the `(-p, p)` contract
+/// of those products; [`Self::transform_lanes`] writes `[-p, p)`, the input
+/// range of `tile_dot`.
 pub(super) struct OneHotNtt {
     p: u32,
     /// `[v][r]` lanes of `scale * beta_class^r * gamma_class^v`.
     row_terms: Vec<[u32; ROWS]>,
     /// `omega^j` and its Shoup quotient for the DIF twiddles `j < WINDOW / 2`.
     twiddles: [(u32, u32); WINDOW / 2],
+    /// The same DFT over blocks of lanes, for [`Self::transform_lanes`].
+    dif: LaneDif,
+    plan: NttKernelPlan,
     /// Library slot of lane `ROWS * i + class`, where DIF row `i` holds the
     /// bit-reversed DFT index.
     slots: Vec<u16>,
@@ -120,6 +127,8 @@ impl OneHotNtt {
             p,
             row_terms,
             twiddles,
+            dif: LaneDif::new(params.primes[0], omega)?,
+            plan: params.kernel_plan(),
             slots,
         })
     }
@@ -158,6 +167,28 @@ impl OneHotNtt {
         {
             self.final_butterfly(&pair[0], &pair[1], out);
         }
+    }
+
+    /// [`Self::transform`] into the `WINDOW * ROWS` words of `out`, in
+    /// `[-p, p)`, with the DFT on [`LaneDif`].
+    pub(super) fn transform_lanes(&self, shifts: &[usize], out: &mut [i32]) {
+        debug_assert_eq!(out.len(), WINDOW * ROWS);
+        // Every lane stays in [0, 2p): an addition reaches at most 3p < 2^32.
+        let mut lanes = [0u32; WINDOW * ROWS];
+        let (blocks, _) = lanes.as_chunks_mut::<ROWS>();
+        // A value's first row is copied rather than added to zeros.
+        let mut written = 0u32;
+        for &shift in shifts {
+            let value = shift % WINDOW;
+            let terms = &self.row_terms[value * ROWS + shift / WINDOW];
+            if written & (1 << value) == 0 {
+                written |= 1 << value;
+                blocks[value] = *terms;
+            } else {
+                self.add_terms(&mut blocks[value], terms);
+            }
+        }
+        self.dif.transform(&mut lanes, out, self.plan);
     }
 
     // The lane helpers stay out of line and index fixed-length arrays:

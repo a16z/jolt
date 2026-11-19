@@ -15,20 +15,20 @@ use super::traversal::{row_is_committed, visit_segment_ring_row_range};
 use super::MAX_WIDE_ACCUMULATIONS;
 use crate::AkitaField;
 
-const DIGIT_LIMBS: usize = 8;
-const DIGIT_BITS: usize = 16;
+pub(super) const DIGIT_LIMBS: usize = 8;
+pub(super) const DIGIT_BITS: usize = 16;
 pub(super) const MAX_NTT_POSITIONS: usize = 252;
 const DOT_BATCH: usize = 6;
-const COLUMN_TILE: usize = 4;
-const COMMIT_RING_DIMENSION: usize = 512;
-const COMMIT_ONE_HOT_K: usize = 16;
-const MAX_ACCUMULATED_POSITIONS: usize =
+pub(super) const COLUMN_TILE: usize = 4;
+pub(super) const COMMIT_RING_DIMENSION: usize = 512;
+pub(super) const COMMIT_ONE_HOT_K: usize = 16;
+pub(super) const MAX_ACCUMULATED_POSITIONS: usize =
     (MAX_WIDE_ACCUMULATIONS / (COMMIT_RING_DIMENSION / COMMIT_ONE_HOT_K) / MAX_NTT_POSITIONS)
         * MAX_NTT_POSITIONS;
 const NTT_MIN_SHIFTS_PER_RING: usize = 10;
 const _: () = assert!(MAX_NTT_POSITIONS.is_multiple_of(DOT_BATCH));
 const _: () = assert!(MAX_ACCUMULATED_POSITIONS >= MAX_NTT_POSITIONS);
-type NttRing<const D: usize> = CyclotomicCrtNtt<i32, 1, D>;
+pub(super) type NttRing<const D: usize> = CyclotomicCrtNtt<i32, 1, D>;
 
 pub(super) struct PreparedNttCommit<'a, const D: usize> {
     params: CrtNttParamSet<i32, 1, D>,
