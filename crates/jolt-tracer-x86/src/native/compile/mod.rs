@@ -50,6 +50,8 @@ pub struct CompiledProgram {
     /// same order), so it is collected once.
     advice_jobs: Vec<AdviceJob>,
     pc_map: BytecodePCMapper,
+    /// Plane offset one past the code region the generated stores guard.
+    code_end: u64,
 }
 
 impl CompiledProgram {
@@ -94,16 +96,19 @@ impl CompiledProgram {
         // kind and inline key, which the per-group advice computations need.
         let sources = Self::source_rows(program)?;
 
+        let code_region = bytecode_code_region(rows, RAM_START_ADDRESS)
+            .map_err(|_| TraceError::Backend("invalid source code region"))?;
+
         // Four bodies: {execute, record} x {eager, pausable}. Compilation is
         // ~10ms per body, so keeping the eager paths free of the chunk-boundary
         // check is worth the duplication.
-        let (fast, advice_jobs) =
-            CompiledBody::compile(rows, &sources, emitters, EmitMode::Fast, false)?;
-        let (record, _) = CompiledBody::compile(rows, &sources, emitters, EmitMode::Record, false)?;
-        let (fast_pausable, _) =
-            CompiledBody::compile(rows, &sources, emitters, EmitMode::Fast, true)?;
-        let (record_pausable, _) =
-            CompiledBody::compile(rows, &sources, emitters, EmitMode::Record, true)?;
+        let compile = |mode, pausable| {
+            CompiledBody::compile(rows, &sources, emitters, &code_region, mode, pausable)
+        };
+        let (fast, advice_jobs) = compile(EmitMode::Fast, false)?;
+        let (record, _) = compile(EmitMode::Record, false)?;
+        let (fast_pausable, _) = compile(EmitMode::Fast, true)?;
+        let (record_pausable, _) = compile(EmitMode::Record, true)?;
 
         Ok(Self {
             fast,
@@ -112,11 +117,16 @@ impl CompiledProgram {
             record_pausable,
             advice_jobs,
             pc_map,
+            code_end: 8 * code_region.end as u64,
         })
     }
 
     pub(super) fn pc_map(&self) -> &BytecodePCMapper {
         &self.pc_map
+    }
+
+    pub(super) fn code_end(&self) -> u64 {
+        self.code_end
     }
 
     pub fn advice_jobs_ptr(&self) -> *const AdviceJob {
@@ -259,6 +269,7 @@ impl CompiledBody {
         rows: &[JoltInstructionRow],
         sources: &SourceMap,
         emitters: &EmitterSet,
+        code_region: &Range<usize>,
         mode: EmitMode,
         pausable: bool,
     ) -> Result<(Self, Vec<AdviceJob>), TraceError> {
@@ -274,8 +285,6 @@ impl CompiledBody {
             ));
         }
 
-        let code_region = bytecode_code_region(rows, RAM_START_ADDRESS)
-            .map_err(|_| TraceError::Backend("invalid source code region"))?;
         let mut emitter = Emitter {
             mode,
             pausable,
@@ -290,7 +299,7 @@ impl CompiledBody {
             group_offsets: Vec::new(),
             text_base,
             text_span,
-            code_region,
+            code_region: code_region.clone(),
         };
 
         let entry = emitter.emit_prologue();

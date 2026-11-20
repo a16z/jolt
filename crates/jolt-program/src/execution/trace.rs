@@ -186,12 +186,16 @@ impl TraceInputs {
     }
 }
 
+/// A run's final guest memory outside the I/O segments, which travel in the
+/// `JoltDevice`.
 #[derive(Default, Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(
     feature = "serialization",
     derive(serde::Serialize, serde::Deserialize)
 )]
 pub struct MemoryImage {
+    /// Every nonzero byte of RAM and the I/O gap, keyed by absolute guest
+    /// address in ascending order.
     pub bytes: Vec<(u64, u8)>,
 }
 

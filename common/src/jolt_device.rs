@@ -59,6 +59,13 @@ pub enum MemoryLayoutError {
         len: u64,
         max: u64,
     },
+    /// The `region` segment `[start, end)` breaks the I/O segment layout that
+    /// [`MemoryLayout::validate_io_segments`] admits.
+    IoSegmentMisplaced {
+        region: &'static str,
+        start: u64,
+        end: u64,
+    },
 }
 
 impl Display for MemoryLayoutError {
@@ -105,6 +112,10 @@ impl Display for MemoryLayoutError {
             Self::IoTooLong { region, len, max } => write!(
                 f,
                 "{region} too long: got {len} bytes, max is {max} bytes (the configured size rounded up to a multiple of eight)"
+            ),
+            Self::IoSegmentMisplaced { region, start, end } => write!(
+                f,
+                "{region} segment [{start:#x}, {end:#x}) is misplaced: the I/O segments must follow one another from the lowest address without gaps or overlap, each doubleword aligned and spanning its configured size, each advice segment must start at a multiple of its size from the lowest address, and io_end must equal output_end at or below RAM_START_ADDRESS"
             ),
         }
     }
@@ -235,6 +246,9 @@ impl JoltDevice {
         })
     }
 
+    /// The byte at `address` in the I/O segments, or 0 below them. The
+    /// segments cover `[lowest_address, io_end)`; the tracers serve the I/O
+    /// gap and RAM themselves, so an address at or above `io_end` panics.
     pub fn load(&self, address: u64) -> u8 {
         if self.is_input(address) {
             let internal_address = self.convert_read_address(address);
@@ -255,7 +269,11 @@ impl JoltDevice {
             let internal_address = self.convert_write_address(address);
             self.outputs.get(internal_address).copied().unwrap_or(0)
         } else {
-            assert!(address <= RAM_START_ADDRESS - 8);
+            assert!(
+                address < self.memory_layout.io_end,
+                "JoltDevice::load requires an address below io_end ({:#X}), got {address:#X}",
+                self.memory_layout.io_end,
+            );
             0
         }
     }
@@ -302,6 +320,11 @@ impl JoltDevice {
 
     pub fn is_output(&self, address: u64) -> bool {
         address >= self.memory_layout.output_start && address < self.memory_layout.output_end
+    }
+
+    /// Whether `address` is in the I/O gap `[io_end, RAM_START_ADDRESS)`.
+    pub fn is_io_gap(&self, address: u64) -> bool {
+        address >= self.memory_layout.io_end && address < RAM_START_ADDRESS
     }
 
     fn convert_read_address(&self, address: u64) -> usize {
@@ -367,6 +390,18 @@ impl Default for MemoryConfig {
     }
 }
 
+/// The guest memory map, in ascending addresses:
+/// - `[lowest, io_end)`: the I/O segments (advice, inputs, outputs), served by
+///   [`JoltDevice`], where `lowest` is [`Self::get_lowest_address`].
+/// - `[io_end, RAM_START_ADDRESS)`: the I/O gap, zero-initialized read/write
+///   memory. LR/SC accept only addresses at or above `RAM_START_ADDRESS`.
+/// - `[RAM_START_ADDRESS, heap_end)`: program image, stack canary, stack, heap.
+/// - `[heap_end, lowest + 8 * max_ram_k)`: heap padding, zero-initialized
+///   read/write memory ([`Self::max_ram_k`], [`Self::ram_size`]).
+///
+/// The tracers reject loads and stores below `lowest` and every access at or
+/// past the end of the domain. Stores to code, canary, input and advice words
+/// must keep their values.
 #[derive(Default, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(
     feature = "std",
@@ -391,10 +426,11 @@ pub struct MemoryLayout {
     pub stack_end: u64,
     pub heap_size: u64,
     pub heap_end: u64,
-    /// Exclusive end of the I/O region. `try_new` sets it to `output_end` and
-    /// pads the region so that the doubleword at `io_end` is an unmapped guard
-    /// word (`io_end <= RAM_START_ADDRESS - 8`); verifier-key admission does
-    /// not recheck this.
+    /// Exclusive end of the I/O segments and start of the I/O gap. `try_new`
+    /// sets it to `output_end` and pads the region so that the gap holds at
+    /// least the doubleword at `io_end` (`io_end <= RAM_START_ADDRESS - 8`);
+    /// admission rechecks only `io_end == output_end <= RAM_START_ADDRESS`
+    /// ([`Self::validate_io_segments`]).
     pub io_end: u64,
 }
 
@@ -472,20 +508,10 @@ impl MemoryLayout {
         let stack_size = align_up(config.stack_size, "stack")?;
         let heap_size = align_up(config.heap_size, "heap")?;
 
-        // Critical for ValEvaluation and ValFinal sumchecks in RAM
-        if max_trusted_advice_size != 0 && !max_trusted_advice_size.is_power_of_two() {
-            return Err(MemoryLayoutError::InvalidTrustedAdviceSize {
-                size: max_trusted_advice_size,
-            });
-        }
-        if max_untrusted_advice_size != 0 && !max_untrusted_advice_size.is_power_of_two() {
-            return Err(MemoryLayoutError::InvalidUntrustedAdviceSize {
-                size: max_untrusted_advice_size,
-            });
-        }
+        Self::validate_advice_sizes(max_trusted_advice_size, max_untrusted_advice_size)?;
 
-        // One unmapped guard word after the outputs keeps `io_end` below
-        // `RAM_START_ADDRESS` for every layout.
+        // Reserving a doubleword past the outputs keeps the I/O gap nonempty
+        // for every layout: `io_end <= RAM_START_ADDRESS - 8`.
         let io_region_bytes = max_input_size
             .checked_add(max_trusted_advice_size)
             .and_then(|s| s.checked_add(max_untrusted_advice_size))
@@ -567,9 +593,9 @@ impl MemoryLayout {
             .ok_or(MemoryLayoutError::SizeOverflow { region: "stack" })?;
 
         // heap grows *up* (increasing addresses) from the top of the stack.
-        // `heap_end` is rounded up to a doubleword (as the linker rounds
-        // `__heap_end`) so that the tracer's `heap_end` bound and the verifier's
-        // unmapped-word mask, which starts at `heap_end`, cut at the same word.
+        // `heap_end` is rounded up to a doubleword, as the linker rounds
+        // `__heap_end`: `max_ram_k` counts whole doublewords up to it, so the
+        // heap's last doubleword stays inside the RAM domain.
         let heap_end = stack_start
             .checked_add(heap_size)
             .ok_or(MemoryLayoutError::SizeOverflow { region: "heap" })
@@ -616,10 +642,14 @@ impl MemoryLayout {
         Ok(())
     }
 
-    /// Computes and admits the maximum padded RAM domain for this layout.
-    /// Both construction and verifier-key admission use this sizing law.
+    /// Computes and admits the maximum padded RAM domain for this layout,
+    /// and admits its heap end and I/O segments ([`Self::validate_io_segments`]).
+    /// Construction, verifier-key admission, each proof's input validation
+    /// and the tracers' memory bound ([`Self::ram_size`]) all use this sizing
+    /// law.
     pub fn max_ram_k(&self) -> Result<usize, MemoryLayoutError> {
         self.validate_heap_end()?;
+        self.validate_io_segments()?;
         let lowest_address = self.get_lowest_address();
         let total_bytes = self.heap_end.checked_sub(lowest_address).ok_or(
             MemoryLayoutError::HeapBelowLowest {
@@ -640,6 +670,101 @@ impl MemoryLayout {
             });
         }
         Ok(max_ram_k)
+    }
+
+    /// Ensures the I/O segments follow one another from the lowest address
+    /// without gaps or overlap, each doubleword aligned and exactly its
+    /// configured size: the two advice segments, each of zero or power-of-two
+    /// size and starting at a multiple of its size from the lowest address,
+    /// then inputs, then outputs, ending at `io_end = output_end <=
+    /// RAM_START_ADDRESS`. The public I/O packing and the RAM output check
+    /// address these segments in whole words, the RAM value sumchecks open
+    /// each advice segment as one block of its size, and the verifier bounds
+    /// each segment's contents by its configured size. Admission repeats this
+    /// check for layouts decoded from verifier keys.
+    pub fn validate_io_segments(&self) -> Result<(), MemoryLayoutError> {
+        Self::validate_advice_sizes(self.max_trusted_advice_size, self.max_untrusted_advice_size)?;
+        let mut advice = [
+            (
+                "Trusted advice",
+                self.trusted_advice_start,
+                self.trusted_advice_end,
+                self.max_trusted_advice_size,
+            ),
+            (
+                "Untrusted advice",
+                self.untrusted_advice_start,
+                self.untrusted_advice_end,
+                self.max_untrusted_advice_size,
+            ),
+        ];
+        advice.sort_unstable_by_key(|&(_, start, end, _)| (start, end));
+        let lowest = self.get_lowest_address();
+        let mut previous_end = lowest;
+        for (region, start, end, size) in advice.into_iter().chain([
+            (
+                "Input",
+                self.input_start,
+                self.input_end,
+                self.max_input_size,
+            ),
+            (
+                "Output",
+                self.output_start,
+                self.output_end,
+                self.max_output_size,
+            ),
+        ]) {
+            if start != previous_end
+                || !start.is_multiple_of(8)
+                || !size.is_multiple_of(8)
+                || end.checked_sub(start) != Some(size)
+            {
+                return Err(MemoryLayoutError::IoSegmentMisplaced { region, start, end });
+            }
+            previous_end = end;
+        }
+        if self.io_end != previous_end || self.io_end > RAM_START_ADDRESS {
+            return Err(MemoryLayoutError::IoSegmentMisplaced {
+                region: "I/O gap",
+                start: self.io_end,
+                end: RAM_START_ADDRESS,
+            });
+        }
+        for (region, start, end, size) in advice {
+            if size != 0 && !(start - lowest).is_multiple_of(size) {
+                return Err(MemoryLayoutError::IoSegmentMisplaced { region, start, end });
+            }
+        }
+        Ok(())
+    }
+
+    /// Advice capacities are zero or powers of two: the RAM value sumchecks
+    /// open each advice segment as one block of its size.
+    fn validate_advice_sizes(trusted: u64, untrusted: u64) -> Result<(), MemoryLayoutError> {
+        if trusted != 0 && !trusted.is_power_of_two() {
+            return Err(MemoryLayoutError::InvalidTrustedAdviceSize { size: trusted });
+        }
+        if untrusted != 0 && !untrusted.is_power_of_two() {
+            return Err(MemoryLayoutError::InvalidUntrustedAdviceSize { size: untrusted });
+        }
+        Ok(())
+    }
+
+    /// Bytes from `RAM_START_ADDRESS` to the end of the admitted RAM domain,
+    /// `lowest + 8 * max_ram_k`: the program image, canary, stack, heap and
+    /// heap padding. The tracers back and admit exactly these RAM bytes.
+    pub fn ram_size(&self) -> Result<u64, MemoryLayoutError> {
+        let max_ram_k = self.max_ram_k()?;
+        let lowest_address = self.get_lowest_address();
+        let end = u128::from(lowest_address) + 8 * max_ram_k as u128;
+        // `max_ram_k` bounds `end` by 2^64, so the difference always fits.
+        u64::try_from(end.saturating_sub(u128::from(RAM_START_ADDRESS))).map_err(|_| {
+            MemoryLayoutError::RamAddressSpaceOverflow {
+                lowest_address,
+                max_ram_k,
+            }
+        })
     }
 
     pub fn get_lowest_address(&self) -> u64 {
@@ -665,11 +790,6 @@ impl MemoryLayout {
     pub fn remapped_word_address(&self, address: u64) -> Result<u64, MemoryLayoutError> {
         self.remap_word_address(address)?
             .ok_or(MemoryLayoutError::ZeroAddress)
-    }
-
-    /// Returns the total emulator memory (program + canary + stack + heap).
-    pub fn get_total_memory_size(&self) -> u64 {
-        self.heap_end - RAM_START_ADDRESS
     }
 }
 
@@ -896,11 +1016,11 @@ mod tests {
         assert_eq!(layout.get_lowest_address(), region_start);
     }
 
-    /// The padded I/O region always reserves the doubleword at `io_end`, so an
-    /// unmapped guard word follows the outputs, including when the I/O words
-    /// fill one doubleword short of a power of two.
+    /// The padded I/O region always reserves the doubleword at `io_end`, so
+    /// the I/O gap after the outputs is never empty, including when the I/O
+    /// words fill one doubleword short of a power of two.
     #[test]
-    fn layouts_keep_an_unmapped_guard_word() {
+    fn layouts_keep_an_io_gap_word() {
         let config = |advice: u64, input: u64, output: u64| MemoryConfig {
             program_size: Some(1024),
             max_trusted_advice_size: advice,
@@ -918,8 +1038,8 @@ mod tests {
                 RAM_START_ADDRESS - 64,
                 RAM_START_ADDRESS - 32,
             ),
-            // Three I/O words, with and without outputs: the guard word is
-            // the region's last word.
+            // Three I/O words, with and without outputs: the gap is the
+            // region's last word.
             (
                 config(0, 16, 8),
                 RAM_START_ADDRESS - 32,
@@ -981,10 +1101,10 @@ mod tests {
         assert_eq!(layout.stack_end, RAM_START_ADDRESS + 1000);
         let stack_start = layout.stack_end + STACK_CANARY_SIZE + 104;
         assert_eq!(layout.heap_end, stack_start + 16);
-        assert_eq!(
-            layout.get_total_memory_size(),
-            layout.heap_end - RAM_START_ADDRESS
-        );
+        // 1312 bytes from the lowest address (RAM_START_ADDRESS - 64) to
+        // `heap_end` pad to 256 words, so the domain ends at
+        // RAM_START_ADDRESS - 64 + 2048.
+        assert_eq!(layout.ram_size(), Ok(1984));
     }
 
     #[test]
@@ -1009,6 +1129,76 @@ mod tests {
             Err(MemoryLayoutError::HeapEndUnaligned {
                 heap_end: layout.heap_end - 1
             })
+        );
+    }
+
+    #[test]
+    fn admission_rejects_misplaced_io_segments() {
+        let layout = MemoryLayout::new(&MemoryConfig {
+            program_size: Some(1024),
+            max_trusted_advice_size: 16,
+            max_untrusted_advice_size: 8,
+            ..Default::default()
+        });
+        let misplaced =
+            |region, start, end| Err(MemoryLayoutError::IoSegmentMisplaced { region, start, end });
+        let lowest = layout.get_lowest_address();
+        let (start, end) = (layout.output_start, layout.output_end);
+
+        let mut decoded = layout.clone();
+        decoded.output_end += 4;
+        assert_eq!(decoded.max_ram_k(), misplaced("Output", start, end + 4));
+        decoded.max_output_size += 4;
+        decoded.io_end += 4;
+        assert_eq!(decoded.max_ram_k(), misplaced("Output", start, end + 4));
+
+        let mut decoded = layout.clone();
+        for bound in [
+            &mut decoded.trusted_advice_start,
+            &mut decoded.trusted_advice_end,
+            &mut decoded.untrusted_advice_start,
+            &mut decoded.untrusted_advice_end,
+            &mut decoded.input_start,
+            &mut decoded.input_end,
+            &mut decoded.output_start,
+            &mut decoded.output_end,
+            &mut decoded.io_end,
+        ] {
+            *bound += 4;
+        }
+        assert_eq!(
+            decoded.max_ram_k(),
+            misplaced("Trusted advice", lowest + 4, lowest + 20)
+        );
+
+        let mut decoded = layout.clone();
+        decoded.max_input_size += 8;
+        decoded.input_end += 8;
+        assert_eq!(decoded.max_ram_k(), misplaced("Output", start, end));
+
+        let mut decoded = layout.clone();
+        decoded.io_end += 8;
+        assert_eq!(
+            decoded.max_ram_k(),
+            misplaced("I/O gap", end + 8, RAM_START_ADDRESS)
+        );
+
+        let mut decoded = layout.clone();
+        decoded.max_untrusted_advice_size = 24;
+        assert_eq!(
+            decoded.max_ram_k(),
+            Err(MemoryLayoutError::InvalidUntrustedAdviceSize { size: 24 })
+        );
+
+        // The smaller advice segment first leaves the larger one off its block.
+        let mut decoded = layout.clone();
+        decoded.untrusted_advice_start = lowest;
+        decoded.untrusted_advice_end = lowest + 8;
+        decoded.trusted_advice_start = lowest + 8;
+        decoded.trusted_advice_end = lowest + 24;
+        assert_eq!(
+            decoded.max_ram_k(),
+            misplaced("Trusted advice", lowest + 8, lowest + 24)
         );
     }
 

@@ -144,7 +144,7 @@ where
             read_write_dimensions,
             log_k,
             tau_low.clone(),
-            checked.ram_word_masks.clone(),
+            checked.write_protected_word_intervals.clone(),
         ),
         product_remainder: ProductRemainder::new(
             product_dimensions,
@@ -415,7 +415,7 @@ mod field_inline_zk {
                 read_write_dimensions,
                 log_k,
                 tau_low.clone(),
-                checked.ram_word_masks.clone(),
+                checked.write_protected_word_intervals.clone(),
             ),
             product_remainder: ProductRemainder::new(
                 product_dimensions,

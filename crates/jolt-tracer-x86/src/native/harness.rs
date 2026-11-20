@@ -3,9 +3,10 @@
 //! differential tests and the iai microbenchmarks.
 
 use common::constants::{RAM_START_ADDRESS, REGISTER_COUNT};
-use common::jolt_device::{JoltDevice, MemoryConfig};
+use common::jolt_device::{JoltDevice, MemoryConfig, MemoryLayout};
 use jolt_program::execution::{JoltProgram, TraceError};
 use jolt_riscv::{JoltInstructionKind, JoltInstructionRow, NormalizedOperands};
+use tracer::emulator::io_gap::IoGapMemory;
 
 /// The row-emission seam, re-exported so emitter A/B experiments (benches,
 /// integration tests, the Alternative 11 stencil spike) can build their own
@@ -23,11 +24,11 @@ pub const TEST_ADDR: u64 = RAM_START_ADDRESS + 0x1000;
 /// RAM scratch region seeded identically on both sides for memory-op rows.
 pub const SCRATCH_START: u64 = RAM_START_ADDRESS + 0x2000;
 pub const SCRATCH_DWORDS: usize = 512;
-pub const MEM_CAPACITY: u64 = 1 << 20;
+const HEAP_SIZE: u64 = 1 << 20;
 
 pub fn memory_config() -> MemoryConfig {
     MemoryConfig {
-        heap_size: MEM_CAPACITY,
+        heap_size: HEAP_SIZE,
         program_size: Some(1024),
         ..Default::default()
     }
@@ -116,7 +117,7 @@ impl Prepared {
     ) -> Result<Self, TraceError> {
         Ok(Self {
             compiled: CompiledProgram::compile(program)?,
-            plane: MemoryPlane::new(MEM_CAPACITY as usize)?,
+            plane: MemoryPlane::for_layout(&MemoryLayout::new(&memory_config()))?,
             entry: program.entry_address,
             pre_regs,
         })
@@ -126,6 +127,7 @@ impl Prepared {
     pub fn run_once(&mut self) -> Result<u64, TraceError> {
         let mut host = HostContext {
             device: JoltDevice::new(&memory_config()),
+            io_gap: IoGapMemory::default(),
             advice_tape: Vec::new(),
             advice_cursor: 0,
             helper_error: None,
@@ -138,6 +140,8 @@ impl Prepared {
             fault_addr: 0,
             mem_base: self.plane.base() as u64,
             mem_size: self.plane.size() as u64,
+            // Earlier runs may have left values anywhere in the reused plane.
+            high_water: self.plane.size() as u64,
             host: &raw mut host,
             advice_slots: [0; crate::native::state::ADVICE_SLOTS],
             advice_jobs: self.compiled.advice_jobs_ptr(),
@@ -181,20 +185,16 @@ pub fn run_program(
 ) -> Result<Outcome, TraceError> {
     let compiled = CompiledProgram::compile(program)?;
 
-    let plane = MemoryPlane::new(MEM_CAPACITY as usize)?;
+    let mut plane = MemoryPlane::for_layout(&MemoryLayout::new(&memory_config()))?;
     let base = plane.base();
-    for (i, &dword) in scratch.iter().enumerate() {
-        let offset = (SCRATCH_START - RAM_START_ADDRESS) as usize + i * 8;
-        // SAFETY: scratch region is far inside MEM_CAPACITY.
-        unsafe {
-            base.add(offset)
-                .cast::<u8>()
-                .copy_from(dword.to_le_bytes().as_ptr(), 8);
-        }
-    }
+    let scratch_image: Vec<(u64, u8)> = (SCRATCH_START..)
+        .zip(scratch.iter().flat_map(|dword| dword.to_le_bytes()))
+        .collect();
+    plane.init_from_image(&scratch_image)?;
 
     let mut host = HostContext {
         device: JoltDevice::new(&memory_config()),
+        io_gap: IoGapMemory::default(),
         advice_tape: advice.to_vec(),
         advice_cursor: 0,
         helper_error: None,
@@ -207,6 +207,11 @@ pub fn run_program(
         fault_addr: 0,
         mem_base: plane.base() as u64,
         mem_size: plane.size() as u64,
+        high_water: GuestState::initial_high_water(
+            &host.device.memory_layout,
+            compiled.code_end(),
+            &plane,
+        ),
         host: &raw mut host,
         advice_slots: [0; crate::native::state::ADVICE_SLOTS],
         advice_jobs: compiled.advice_jobs_ptr(),
@@ -223,7 +228,7 @@ pub fn run_program(
     for (i, slot) in scratch_out.iter_mut().enumerate() {
         let offset = (SCRATCH_START - RAM_START_ADDRESS) as usize + i * 8;
         let mut bytes = [0u8; 8];
-        // SAFETY: scratch region is far inside MEM_CAPACITY.
+        // SAFETY: the scratch region lies inside the plane.
         unsafe {
             base.add(offset).cast::<u8>().copy_to(bytes.as_mut_ptr(), 8);
         }

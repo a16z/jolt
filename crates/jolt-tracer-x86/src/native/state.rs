@@ -4,11 +4,12 @@
 //! hardcoded field offsets, so the layout is `repr(C)` and offsets are
 //! asserted at compile time.
 
-use common::constants::{RAM_START_ADDRESS, REGISTER_COUNT};
+use common::constants::{RAM_START_ADDRESS, REGISTER_COUNT, STACK_CANARY_SIZE};
 use common::jolt_device::{JoltDevice, MemoryLayout};
 use jolt_program::execution::TraceError;
 use jolt_program::expand::{expand_instruction_with_provider, ExpansionAllocator};
 use jolt_riscv::{JoltInstructionRow, RV64IMAC_JOLT_ALL_INLINES};
+use tracer::emulator::io_gap::IoGapMemory;
 use tracer::instruction::{uncompress_instruction, Instruction};
 use tracer::{HaltKind, TracerInlineExpansionProvider};
 
@@ -23,7 +24,8 @@ pub enum ExitReason {
     /// repeats (`JoltInstructionRow::self_jump_repeats`). Machine-level runs
     /// (`run_machine`) accept it; Jolt runs reject it.
     Stalled = 1,
-    /// Guest RAM access outside the memory plane.
+    /// Guest RAM access at or past the end of the RAM domain, where the
+    /// memory plane ends.
     FaultOutOfBounds = 2,
     /// Indirect jump to an address that is not a compiled group start.
     FaultBadJumpTarget = 3,
@@ -79,6 +81,11 @@ pub struct GuestState {
     pub mem_base: u64,
     /// Size in bytes of the RAM plane.
     pub mem_size: u64,
+    /// Plane offset below which generated loads and stores access the plane
+    /// directly; the slow helpers serve and raise it. It is doubleword
+    /// aligned and at most `mem_size`, and every plane byte at or past it is
+    /// zero, so snapshots and the final image read only the prefix below it.
+    pub high_water: u64,
     pub host: *mut HostContext,
     /// Runtime advice values for the group being executed, filled by the
     /// group's advice helper and read by its `VirtualAdvice` rows in order.
@@ -99,9 +106,34 @@ pub struct GuestState {
     pub canary_offset: u64,
 }
 
+/// Granularity of a raise of [`GuestState::high_water`]: a guest reaching
+/// fresh RAM takes one slow-path call per granule.
+const HIGH_WATER_GRANULE: u64 = 1 << 16;
+
 impl GuestState {
     pub fn canary_offset(layout: &MemoryLayout) -> u64 {
         layout.stack_end - RAM_START_ADDRESS
+    }
+
+    /// The high-water mark a run starts from: past the canary, the code
+    /// region ending at plane offset `code_end`, and every byte `plane` was
+    /// initialized with. Generated stores guard the canary and the code
+    /// region on the fast path only, so neither may lie at or past the mark.
+    pub fn initial_high_water(layout: &MemoryLayout, code_end: u64, plane: &MemoryPlane) -> u64 {
+        let canary_end = Self::canary_offset(layout) + STACK_CANARY_SIZE;
+        canary_end
+            .max(code_end)
+            .max(plane.image_end())
+            .next_multiple_of(8)
+            .min(plane.size() as u64)
+    }
+
+    /// Raises `high_water` past plane offset `end`, in whole granules, up to
+    /// the end of the plane.
+    pub(crate) fn raise_high_water(&mut self, end: u64) {
+        if end > self.high_water {
+            self.high_water = end.next_multiple_of(HIGH_WATER_GRANULE).min(self.mem_size);
+        }
     }
 
     /// Classifies the exit. A halt also sets the device's public panic bit,
@@ -246,7 +278,8 @@ pub const OFF_EXIT: i32 = OFF_TRACE_LEN + 8;
 pub const OFF_FAULT_ADDR: i32 = OFF_EXIT + 8;
 pub const OFF_MEM_BASE: i32 = OFF_FAULT_ADDR + 8;
 pub const OFF_MEM_SIZE: i32 = OFF_MEM_BASE + 8;
-pub const OFF_HOST: i32 = OFF_MEM_SIZE + 8;
+pub const OFF_HIGH_WATER: i32 = OFF_MEM_SIZE + 8;
+pub const OFF_HOST: i32 = OFF_HIGH_WATER + 8;
 pub const OFF_ADVICE_SLOTS: i32 = OFF_HOST + 8;
 pub const OFF_ADVICE_JOBS: i32 = OFF_ADVICE_SLOTS + (ADVICE_SLOTS as i32) * 8;
 pub const OFF_ROW_LIMIT: i32 = OFF_ADVICE_JOBS + 8;
@@ -262,6 +295,7 @@ const _: () = {
     assert!(core::mem::offset_of!(GuestState, fault_addr) == OFF_FAULT_ADDR as usize);
     assert!(core::mem::offset_of!(GuestState, mem_base) == OFF_MEM_BASE as usize);
     assert!(core::mem::offset_of!(GuestState, mem_size) == OFF_MEM_SIZE as usize);
+    assert!(core::mem::offset_of!(GuestState, high_water) == OFF_HIGH_WATER as usize);
     assert!(core::mem::offset_of!(GuestState, host) == OFF_HOST as usize);
     assert!(core::mem::offset_of!(GuestState, advice_slots) == OFF_ADVICE_SLOTS as usize);
     assert!(core::mem::offset_of!(GuestState, advice_jobs) == OFF_ADVICE_JOBS as usize);
@@ -285,6 +319,9 @@ pub const fn reg_offset(register: u8) -> i32 {
 /// code directly (only through `extern "C"` helpers), so layout is free.
 pub struct HostContext {
     pub device: JoltDevice,
+    /// The I/O gap `[io_end, RAM_START_ADDRESS)` between the device's I/O
+    /// segments and RAM.
+    pub io_gap: IoGapMemory,
     /// Runtime advice tape bytes (append-only; reads go through the cursor).
     pub advice_tape: Vec<u8>,
     /// Read cursor into `advice_tape` (advice-load kinds).

@@ -2,9 +2,9 @@
 //! domain with a zero input claim.
 //!
 //! The summand is `eq(r_address, k) · mask(k) · (val_final(k) − val_io(k))`
-//! with `mask` the `[io_start, io_end)` indicator and `val_io` the committed
-//! public-IO words (zero outside the segments) — each derived leaf one
-//! multilinear table, built pointwise from the public IO memory and pinned
+//! with `mask` the `[input_start, output_end)` indicator and `val_io` the
+//! committed public-IO words (zero outside the segments) — each derived leaf
+//! one multilinear table, built pointwise from the public IO memory and pinned
 //! by the `derive_output_term` cross-check at the bound point.
 //!
 //! Address tables repeat across the configured unused cycle variables;

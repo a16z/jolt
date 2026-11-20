@@ -37,6 +37,7 @@ pub use jolt_riscv::InlineExtension;
 pub use trace_row::cycle_to_trace_row;
 
 use crate::emulator::{
+    io_gap::IoGapMemory,
     memory::{Memory, MemoryData},
     Emulator,
 };
@@ -66,7 +67,7 @@ fn env_rows(name: &str, default: usize) -> usize {
 ///   observing the pristine pre-execution state (the streaming-commitment
 ///   prover re-executes the program through it)
 /// * `Vec<Cycle>` — the complete execution trace
-/// * `Memory` — final guest memory state
+/// * `Memory` — final guest RAM state (without the I/O gap)
 /// * `JoltDevice` — final I/O device state
 /// * `AdviceTape` — the populated advice tape
 ///
@@ -132,7 +133,7 @@ pub fn trace(
         }
     };
 
-    let (advice_tape_result, final_memory_state, jolt_device) =
+    let (advice_tape_result, final_memory_state, _, jolt_device) =
         finish_emulator(emulator).expect("a guest run must end at a halt instruction");
     (
         lazy_trace_iter,
@@ -147,10 +148,10 @@ pub fn trace(
 /// [`execute`], and the chunked fast pass). A Jolt run must end at a halt
 /// instruction; a run that stopped anywhere else returns
 /// [`TraceError::EndedWithoutHalt`]. Reports a panic halt (log + backtrace),
-/// then extracts the advice tape, final memory, and device.
+/// then extracts the advice tape, final RAM, I/O gap, and device.
 pub(crate) fn finish_emulator(
     mut emulator: Emulator,
-) -> Result<(AdviceTape, Memory, JoltDevice), TraceError> {
+) -> Result<(AdviceTape, Memory, IoGapMemory, JoltDevice), TraceError> {
     let cpu = emulator.get_cpu();
     let Some(halt) = cpu.halted() else {
         return Err(TraceError::EndedWithoutHalt { pc: cpu.read_pc() });
@@ -161,8 +162,10 @@ pub(crate) fn finish_emulator(
 
     let advice_tape = emulator.take_advice_tape();
     let jolt_device = emulator.take_jolt_device();
-    let final_memory = emulator.get_mut_cpu().mmu.memory.memory.take_memory();
-    Ok((advice_tape, final_memory, jolt_device))
+    let mmu = &mut emulator.get_mut_cpu().mmu;
+    let final_memory = mmu.memory.memory.take_memory();
+    let io_gap = std::mem::take(&mut mmu.io_gap);
+    Ok((advice_tape, final_memory, io_gap, jolt_device))
 }
 
 /// Logs a run that ended at Jolt's failure halt, with the guest backtrace.
@@ -219,7 +222,7 @@ pub fn execute(
     }
 
     let executed = emulator.get_cpu().trace_len;
-    let (advice_tape_result, _final_memory, jolt_device) =
+    let (advice_tape_result, _, _, jolt_device) =
         finish_emulator(emulator).expect("a guest run must end at a halt instruction");
     (executed, jolt_device, advice_tape_result)
 }
@@ -1206,7 +1209,8 @@ mod tests {
         for chunk_ticks in [1usize, 29, 97, total_ticks + 5] {
             let mut pass1 = PassOne::new(setup_emulator(&elf, &INPUTS, &[], &[], &memory_config));
             let mut pool = SnapshotPool::new();
-            let mut chunks: Vec<(ChunkCheckpoint, Vec<u64>, usize)> = Vec::new();
+            let mut chunks: Vec<(ChunkCheckpoint, usize)> = Vec::new();
+            let mut images: Vec<Vec<u64>> = Vec::new();
             loop {
                 let checkpoint = pass1.checkpoint();
                 let image = pool.capture(&pass1.emulator().get_cpu().mmu.memory.memory);
@@ -1215,7 +1219,8 @@ mod tests {
                     ticks += 1;
                 }
                 if ticks > 0 {
-                    chunks.push((checkpoint, image, ticks));
+                    chunks.push((checkpoint, ticks));
+                    images.push(image);
                 } else {
                     pool.put(image);
                 }
@@ -1224,18 +1229,20 @@ mod tests {
                 }
             }
             assert_eq!(
-                chunks.iter().map(|(_, _, t)| t).sum::<usize>(),
+                chunks.iter().map(|(_, t)| t).sum::<usize>(),
                 total_ticks,
                 "chunk tick counts must cover the program"
             );
 
             let mut worker = ChunkWorker::new(pass1.emulator());
             let mut replayed: Vec<Cycle> = Vec::new();
-            for (idx, (checkpoint, image, ticks)) in chunks.iter().enumerate() {
-                let previous = worker.install_chunk(checkpoint, image.clone());
+            // Images move into the worker, as in `run_two_pass`: a clone
+            // copies, and so commits, the whole RAM backing once per chunk.
+            for (idx, ((checkpoint, ticks), image)) in chunks.iter().zip(images).enumerate() {
+                let previous = worker.install_chunk(checkpoint, image);
                 pool.put(previous);
                 worker.run_ticks(*ticks, &mut replayed);
-                if let Some((next, _, _)) = chunks.get(idx + 1) {
+                if let Some((next, _)) = chunks.get(idx + 1) {
                     if let Some(diff) = next.diff_vs_cpu(worker.cpu()) {
                         panic!("boundary mismatch after chunk {idx} (size {chunk_ticks}): {diff}");
                     }

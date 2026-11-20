@@ -560,9 +560,15 @@ fn ram_val_final_virtual_view_materializes_final_memory_and_public_io() -> Resul
         max_untrusted_advice_size: 8,
         max_output_size: 8,
         stack_size: 0,
-        heap_size: 0,
+        heap_size: 8,
         program_size: Some(64),
     });
+    // The 264 bytes from the lowest address, RAM_START_ADDRESS - 64, to
+    // `heap_end` pad to a 64-word domain.
+    assert_eq!(
+        (memory_layout.io_end, memory_layout.heap_end),
+        (RAM_START_ADDRESS - 32, RAM_START_ADDRESS + 200)
+    );
     let preprocessing = preprocessing_with_memory_layout(memory_layout.clone());
     let device = JoltDevice {
         memory_layout,
@@ -573,25 +579,32 @@ fn ram_val_final_virtual_view_materializes_final_memory_and_public_io() -> Resul
         ..Default::default()
     };
     let final_memory = MemoryImage {
-        bytes: vec![(64, 0x66), (65, 0x77)],
+        bytes: vec![
+            (RAM_START_ADDRESS - 31, 0x88),
+            (RAM_START_ADDRESS + 64, 0x66),
+            (RAM_START_ADDRESS + 65, 0x77),
+            (RAM_START_ADDRESS + 200, 0x99),
+        ],
     };
     let inputs = JoltVmWitnessInputs::new(
         &program,
         &preprocessing,
         trace_output_with_device_and_final_memory(device, final_memory),
     );
-    let witness = TraceBackend::new(JoltVmWitnessConfig::new(2, 32, config().one_hot), inputs);
+    let witness = TraceBackend::new(JoltVmWitnessConfig::new(2, 64, config().one_hot), inputs);
 
     let val_final = materialized_virtual_view(&witness, JoltVirtualPolynomial::RamValFinal)?;
-    assert_eq!(val_final.len(), 32);
+    assert_eq!(val_final.len(), 64);
     assert_eq!(val_final[0], Fr::from_u64(0x11));
     assert_eq!(val_final[1], Fr::from_u64(0x22));
     assert_eq!(val_final[2], Fr::from_u64(0x33));
     assert_eq!(val_final[3], Fr::from_u64(0x5544));
-    // Word 4 is the guard word at `io_end`; words 5 to 7 pad the I/O region.
-    assert_eq!(val_final[4], Fr::from_u64(0));
+    // Words 4 to 7 are the I/O gap, from `io_end`.
+    assert_eq!(val_final[4], Fr::from_u64(0x8800));
     assert_eq!(val_final[5], Fr::from_u64(0));
     assert_eq!(val_final[16], Fr::from_u64(0x7766));
+    // Word 33 is the first heap-padding word, at `heap_end`.
+    assert_eq!(val_final[33], Fr::from_u64(0x99));
     Ok(())
 }
 

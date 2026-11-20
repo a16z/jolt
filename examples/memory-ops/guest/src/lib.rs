@@ -8,7 +8,7 @@ use jolt::UntrustedAdvice;
 ///
 /// Public because a guest build compiles only the entry point named by
 /// `JOLT_FUNC_NAME` among the `guest_only` ones: a private helper is dead code
-/// in the builds of `heap_top`, `rounded_advice`, `exact_rows` and
+/// in the builds of `ram_padding`, `rounded_advice`, `exact_rows` and
 /// `panic_halt`, which do not use it.
 #[cfg(feature = "guest")]
 #[repr(align(8))]
@@ -118,28 +118,48 @@ fn misaligned_access(kind: u8) -> u64 {
     value ^ scratch.words()[1]
 }
 
-/// Stores into the heap's last doubleword and then its last byte, both ending
-/// at the linker's `__heap_end`, and reloads the doubleword. The memory layout
-/// rounds `heap_end` up to a doubleword so that it matches `__heap_end` even
-/// when the program size is not a multiple of eight.
+/// Loads, stores and reloads the doubleword at each of the host's three
+/// addresses: the first word of the I/O gap (`io_end`), the first word past
+/// the heap (`heap_end`, which must equal the linker's `__heap_end`) and the
+/// last word of the admitted RAM domain. Each word reads zero first; a
+/// doubleword store and then a store into its top byte persist, and the
+/// values stay in place at the halt.
 #[jolt::provable(guest_only, heap_size = 65536, max_trace_length = 65536)]
-fn heap_top() -> u64 {
+fn ram_padding(addresses: [u64; 3]) -> [[u64; 3]; 3] {
     extern "C" {
         /// Global pointer, stack top, heap start and heap end, written by the
         /// linker script (`src/linker.ld.template`).
         static __jolt_memory_layout: [usize; 4];
     }
 
-    // SAFETY: the linker reserves `[__heap_start, __heap_end)` for this guest,
-    // and the allocator has not handed out the heap's last doubleword in a
-    // guest that allocates nothing.
-    unsafe {
-        let heap_end = __jolt_memory_layout[3];
-        let last_word = (heap_end - 8) as *mut u64;
-        core::ptr::write_volatile(last_word, 0x0123_4567_89ab_cdef);
-        core::ptr::write_volatile((heap_end - 1) as *mut u8, 0xa5);
-        core::ptr::read_volatile(last_word)
+    // SAFETY: the linker script initializes the layout cell.
+    let heap_end = unsafe { __jolt_memory_layout[3] } as u64;
+    assert_eq!(
+        addresses[1], heap_end,
+        "the host must use the guest's heap end"
+    );
+    assert!(
+        addresses.iter().all(|address| address.is_multiple_of(8)) && addresses[2] >= heap_end,
+        "the host must pass doublewords, the last one past the heap"
+    );
+    let mut loads = [[0; 3]; 3];
+    for (i, (&address, loads)) in addresses.iter().zip(&mut loads).enumerate() {
+        let word = address as *mut u64;
+        // SAFETY: each address is a doubleword (asserted above) outside every
+        // Rust object: the e2e harness (`ram_padding` in
+        // crates/jolt-prover/tests/e2e_matrix.rs) passes the first I/O-gap
+        // word below RAM, `heap_end` (checked against the linker above) and
+        // the last word of the admitted domain. The tracer faults on an
+        // address outside that domain.
+        unsafe {
+            loads[0] = core::ptr::read_volatile(word);
+            core::ptr::write_volatile(word, 0x0123_4567_89ab_cdef ^ i as u64);
+            loads[1] = core::ptr::read_volatile(word);
+            core::ptr::write_volatile(word.cast::<u8>().wrapping_add(7), 0xa5);
+            loads[2] = core::ptr::read_volatile(word);
+        }
     }
+    loads
 }
 
 /// Configured for 12 bytes of untrusted advice, which the layout rounds up to
