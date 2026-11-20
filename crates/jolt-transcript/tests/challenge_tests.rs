@@ -28,6 +28,16 @@ const SESSION: [u8; 32] = protocol_tag(b"jolt/challenge-codecs/v1");
 const INSTANCE: [u8; 32] = [0x42; 32];
 
 fn round_trip<F: ChallengeCodec + PartialEq + Debug>() {
+    let mut stock = verifier_transcript::<Keccak>(&SESSION, &INSTANCE, &[]);
+    let expected = stock.verifier_message_as(F::challenge_bytes(1).unwrap(), |tape| {
+        F::decode_challenges(tape, 1).unwrap().pop().unwrap()
+    });
+    let mut prover = prover_transcript::<Keccak>(&SESSION, &INSTANCE);
+    assert_eq!(
+        FieldTranscript::<F>::challenge(&mut prover).unwrap(),
+        expected
+    );
+
     for len in [1, 17, 28] {
         let mut prover = prover_transcript::<Keccak>(&SESSION, &INSTANCE);
         prover.send(&BytesMsg(b"before".to_vec()));

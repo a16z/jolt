@@ -1,6 +1,7 @@
 //! Verifier-only operations on `spongefish::VerifierState`.
 
 use crate::pow::{nonce_word, SpongePow, CHECK_BYTES};
+use crate::transcript::sealed::Sealed;
 use crate::{verifier_transcript, Transcript, TAG_BYTES};
 use spongefish::{
     DuplexSpongeInit, DuplexSpongeInterface, Encoding, FromNarg, Transcript as _,
@@ -115,8 +116,7 @@ where
             },
             |&nonce| nonce_word(nonce),
         )?;
-        let passes =
-            VerifierState::verifier_message_as(self, CHECK_BYTES, |check| pow.accepts(check));
+        let passes = pow.accepts(&self.squeeze_array::<CHECK_BYTES>());
         self.check(|| passes)
     }
 
