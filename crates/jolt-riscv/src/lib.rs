@@ -409,6 +409,9 @@ macro_rules! for_each_jolt_instruction_kind {
     };
 }
 
+/// Address width of the native field register file.
+pub const FIELD_REGISTER_LOG_K: u8 = 4;
+
 #[cfg(feature = "field-inline")]
 pub use field_inline::{
     field_inline_jolt_op, field_inline_load_accumulate_from_memory_funct7,
@@ -416,7 +419,6 @@ pub use field_inline::{
     field_inline_operand_shape_for_op, field_inline_source_op, is_field_inline_jolt,
     is_field_inline_source, FieldInlineOp, FieldInlineOperandShape, FieldRegister,
     FIELD_INLINE_LOAD_ACCUMULATE_FROM_MEMORY_STRIDE, FIELD_INLINE_OPCODE, FIELD_REGISTER_COUNT,
-    FIELD_REGISTER_LOG_K,
 };
 pub use flags::{
     CircuitFlagSet, CircuitFlags, Flags, InstructionFlagSet, InstructionFlags,

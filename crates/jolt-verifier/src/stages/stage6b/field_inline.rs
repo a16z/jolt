@@ -1,4 +1,5 @@
 use jolt_claims::protocols::field_inline::{FieldInlineRelationId, FIELD_REGISTERS_LOG_K};
+#[cfg(not(feature = "akita"))]
 use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_claims::OutputClaims as _;
 use jolt_field::JoltField;
@@ -12,9 +13,8 @@ use crate::stages::stage5::Stage5OutputPoints;
 use crate::stages::stage6a::outputs::Stage6aCarriedChallenges;
 use crate::VerifierError;
 
-/// The field-inline extension anchors the field access selectors through the
-/// public bytecode, which committed-program mode cannot supply. Shared with the
-/// BlindFold build, which hits the same wall.
+/// Dory and BlindFold derive field selectors from the decoded bytecode table.
+#[cfg(not(feature = "akita"))]
 pub(crate) fn committed_program_rejection() -> VerifierError {
     VerifierError::StageClaimPublicInputFailed {
         stage: JoltRelationId::BytecodeReadRaf,
@@ -26,6 +26,7 @@ pub(crate) fn committed_program_rejection() -> VerifierError {
 
 /// Reject committed-program mode before any member construction (see
 /// [`committed_program_rejection`]).
+#[cfg(not(feature = "akita"))]
 pub(crate) fn require_full_program(committed_program: bool) -> Result<(), VerifierError> {
     if committed_program {
         return Err(committed_program_rejection());

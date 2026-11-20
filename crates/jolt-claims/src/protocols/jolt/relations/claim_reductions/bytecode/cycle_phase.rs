@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use super::BytecodeReductionAddressPhaseOutputClaims;
 use crate::protocols::jolt::geometry::claim_reductions::bytecode::{
     bytecode_val_stage_opening, cycle_phase_intermediate_opening, final_output_expr,
-    NUM_BYTECODE_VAL_STAGES,
+    COMMITTED_BYTECODE_VALUES,
 };
 use crate::protocols::jolt::geometry::claim_reductions::precommitted::TWO_PHASE_DEGREE_BOUND;
 use crate::protocols::jolt::{
@@ -135,7 +135,7 @@ impl SymbolicSumcheck for CyclePhase {
     fn input_expression<F: Ring>(&self) -> JoltExpr<F> {
         let eta = challenge(BytecodeClaimReductionChallenge::Eta);
         let mut input = JoltExpr::zero();
-        for stage in 0..NUM_BYTECODE_VAL_STAGES {
+        for stage in 0..COMMITTED_BYTECODE_VALUES {
             input = input + eta.clone().pow(stage) * opening(bytecode_val_stage_opening(stage));
         }
         input

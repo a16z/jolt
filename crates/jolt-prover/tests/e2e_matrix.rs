@@ -474,6 +474,97 @@ mod matrix {
         );
     }
 
+    #[cfg(all(feature = "akita", feature = "field-inline"))]
+    mod akita_committed {
+        use super::Field;
+        use crate::support::field_inline::akita::ProveOutput;
+        use crate::support::{field_inline, GuestCase};
+        use jolt_akita::AkitaChunkProfile;
+        use jolt_field::Ring;
+        use jolt_prover::JoltBackend;
+        use jolt_verifier::proof::JoltProofClaims;
+        use serde::{de::DeserializeOwned, Serialize};
+
+        fn transport<T: Serialize + DeserializeOwned>(value: &T) -> T {
+            let bytes = bincode::serde::encode_to_vec(value, bincode::config::standard())
+                .expect("encode artifact");
+            let (result, consumed) =
+                bincode::serde::decode_from_slice(&bytes, bincode::config::standard())
+                    .expect("decode artifact");
+            assert_eq!(consumed, bytes.len());
+            result
+        }
+
+        fn verify_guest(case: GuestCase, profile: AkitaChunkProfile) -> ProveOutput {
+            let (mut output, ()) = field_inline::akita::prove(
+                &case,
+                Some(profile),
+                JoltBackend::optimized(),
+                |_, _, _| (),
+            );
+            output.verifier_preprocessing = transport(&output.verifier_preprocessing);
+            assert!(output.verifier_preprocessing.program.committed().is_some());
+            output.proof = transport(&output.proof);
+            output
+                .verify(&output.proof)
+                .expect("verify transported committed field-inline proof");
+            output
+        }
+
+        #[test]
+        fn field_ops() {
+            let output = verify_guest(field_inline::field_ops(), AkitaChunkProfile::new(1, 0));
+            let cases: [fn(&mut Vec<Field>); 6] = [
+                |values| values[5] += Field::from_u64(1),
+                |values| values[6] += Field::from_u64(1),
+                |values| values[7] += Field::from_u64(1),
+                |values| values.swap(6, 7),
+                |values| values.truncate(7),
+                |values| values.push(Field::from_u64(0)),
+            ];
+            for change in cases {
+                let mut proof = output.proof.clone();
+                let JoltProofClaims::Clear(claims) = &mut proof.claims else {
+                    unreachable!("Akita proofs carry clear claims");
+                };
+                let values = &mut claims.stage6a.bytecode_read_raf.val_stages;
+                assert_eq!(values.len(), 8);
+                change(values);
+                assert!(output.verify(&proof).is_err());
+            }
+        }
+
+        #[test]
+        fn field_limbs() {
+            let _ = verify_guest(super::field_limbs(), AkitaChunkProfile::new(1, 0));
+        }
+
+        #[test]
+        fn muldiv() {
+            let output = verify_guest(field_inline::muldiv(), AkitaChunkProfile::new(1, 0));
+            let JoltProofClaims::Clear(claims) = &output.proof.claims else {
+                unreachable!("Akita proofs carry clear claims");
+            };
+            assert_eq!(
+                &claims.stage6a.bytecode_read_raf.val_stages[6..],
+                &[Field::from_u64(0); 2]
+            );
+        }
+
+        #[test]
+        fn field_ops_with_advice() {
+            for (untrusted, trusted) in [(true, false), (false, true), (true, true)] {
+                let mut guest = field_inline::field_ops();
+                if untrusted {
+                    guest.untrusted_advice = vec![7];
+                }
+                if trusted {
+                    guest.trusted_advice = vec![11];
+                }
+                let _ = verify_guest(guest, AkitaChunkProfile::new(8, 2));
+            }
+        }
+    }
     #[cfg(all(not(feature = "akita"), not(feature = "field-inline")))]
     mod mode {
         use super::StreamingFamilies;
@@ -747,17 +838,15 @@ mod matrix {
         ) -> usize {
             let (output, ()) = akita::prove(
                 case,
+                None,
                 JoltBackend::optimized().with_streaming(families),
                 |_, _, _| (),
             );
-            akita::verify_full(
-                &output.verifier_preprocessing,
-                &output.public_io,
-                &output.proof,
-            )
-            .expect("field-inline Akita proof must verify");
+            output
+                .verify(&output.proof)
+                .expect("field-inline Akita proof must verify");
             if families != StreamingFamilies::default() {
-                let (eager, ()) = akita::prove(case, JoltBackend::optimized(), |_, _, _| ());
+                let (eager, ()) = akita::prove(case, None, JoltBackend::optimized(), |_, _, _| ());
                 assert_eq!(
                     postcard::to_stdvec(&output.proof).expect("encode streaming proof"),
                     postcard::to_stdvec(&eager.proof).expect("encode eager proof"),

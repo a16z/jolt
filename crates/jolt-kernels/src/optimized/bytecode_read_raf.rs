@@ -42,6 +42,8 @@
 
 mod streaming;
 
+#[cfg(feature = "field-inline")]
+use jolt_claims::protocols::field_inline::geometry::bytecode::FieldBytecodeLeg;
 use std::collections::HashMap;
 use std::ops::Range;
 use std::sync::Arc;
@@ -485,7 +487,7 @@ impl<F: JoltField> AddressKernel<F> {
         // the extended per-stage gamma powers, each leg over its own cycle binding (see
         // the reference kernel's `FieldInlineAddressLegs`).
         #[cfg(feature = "field-inline")]
-        let (field_inline_values, field_read_write_cycle, field_val_evaluation_cycle) = {
+        let active_legs = {
             use jolt_claims::protocols::field_inline::geometry::bytecode as field_inline_bytecode;
             use jolt_claims::protocols::field_inline::FIELD_REGISTERS_LOG_K;
 
@@ -517,31 +519,26 @@ impl<F: JoltField> AddressKernel<F> {
             );
             let column =
                 |s: usize| Polynomial::new(field_rows.iter().map(|row| row[s]).collect::<Vec<F>>());
-            (
-                [column(3), column(4)],
-                read_write_cycle.to_vec(),
-                val_evaluation_cycle.to_vec(),
-            )
+            FieldBytecodeLeg::ORDER
+                .into_iter()
+                .filter_map(|leg| {
+                    let values = column(leg.stage());
+                    values
+                        .evals()
+                        .iter()
+                        .any(|value| !value.is_zero())
+                        .then(|| {
+                            let point = leg.select(read_write_cycle, val_evaluation_cycle).to_vec();
+                            (leg.stage(), values, point)
+                        })
+                })
+                .collect::<Vec<_>>()
         };
-
-        #[cfg(feature = "field-inline")]
-        let active_legs = field_inline_values
-            .into_iter()
-            .zip([field_read_write_cycle, field_val_evaluation_cycle])
-            .zip([gamma_powers[3], gamma_powers[4]])
-            .filter_map(|((values, point), weight)| {
-                values
-                    .evals()
-                    .iter()
-                    .any(|value| !value.is_zero())
-                    .then_some((values, point, weight))
-            })
-            .collect::<Vec<_>>();
         #[cfg(feature = "field-inline")]
         let composed_points: Vec<Vec<F>> = stage_cycle_points
             .iter()
             .cloned()
-            .chain(active_legs.iter().map(|(_, point, _)| point.clone()))
+            .chain(active_legs.iter().map(|(_, _, point)| point.clone()))
             .collect();
         #[cfg(feature = "field-inline")]
         let walk_points: &[Vec<F>] = &composed_points;
@@ -562,8 +559,10 @@ impl<F: JoltField> AddressKernel<F> {
             legs: pushforwards
                 .drain(base_stages..base_stages + active_legs.len())
                 .zip(active_legs)
-                .map(|(pushforward, (values, _, weight))| FieldInlineAddressLeg {
-                    weight,
+                .map(|(pushforward, (stage, values, _))| FieldInlineAddressLeg {
+                    #[cfg(feature = "akita")]
+                    stage,
+                    weight: gamma_powers[stage],
                     pushforward: Polynomial::new(pushforward),
                     values,
                 })
@@ -639,6 +638,8 @@ struct FieldInlineAddressLegs<F: JoltField> {
     allocative(bound = "F: JoltField")
 )]
 struct FieldInlineAddressLeg<F: JoltField> {
+    #[cfg(feature = "akita")]
+    stage: usize,
     weight: F,
     pushforward: Polynomial<F>,
     values: Polynomial<F>,
@@ -824,7 +825,16 @@ impl<F: JoltField> SumcheckKernel<F> for AddressKernel<F> {
             intermediate += self.field_inline.bound_term();
         }
         let val_stages = if self.committed_program {
-            self.values.iter().map(|table| table.evals()[0]).collect()
+            let values = self.values.iter().map(|table| table.evals()[0]);
+            #[cfg(all(feature = "akita", feature = "field-inline"))]
+            let values = values.chain(FieldBytecodeLeg::ORDER.map(|wire| {
+                self.field_inline
+                    .legs
+                    .iter()
+                    .find(|leg| leg.stage == wire.stage())
+                    .map_or(F::zero(), |leg| leg.values.evals()[0])
+            }));
+            values.collect()
         } else {
             Vec::new()
         };
@@ -1107,25 +1117,14 @@ impl<F: JoltField> CycleKernel<F> {
             .cloned()
             .zip(stage_weights)
             .collect();
-        // The field-inline stage-4/5 legs ride their own cycle sub-points at γ³/γ⁴. A
-        // trace without field-inline activity folds both weights to zero (its
-        // field-register operands are all absent), so these terms are skipped
-        // exactly.
         #[cfg(feature = "field-inline")]
-        for (point, weight) in [
-            (
-                field_read_write_cycle.as_slice(),
-                gamma_powers[3] * field_folds[3],
-            ),
-            (
-                field_val_evaluation_cycle.as_slice(),
-                gamma_powers[4] * field_folds[4],
-            ),
-        ] {
-            if weight.is_zero() {
-                continue;
+        for leg in FieldBytecodeLeg::ORDER {
+            let stage = leg.stage();
+            let weight = gamma_powers[stage] * field_folds[stage];
+            if !weight.is_zero() {
+                let point = leg.select(&field_read_write_cycle, &field_val_evaluation_cycle);
+                terms.push((point.clone(), weight));
             }
-            terms.push((point.to_vec(), weight));
         }
         let mut combined = EqPrefix::new(
             dimensions.log_t(),

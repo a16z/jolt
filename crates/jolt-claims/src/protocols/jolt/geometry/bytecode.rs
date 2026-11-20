@@ -12,7 +12,7 @@ use super::super::{
     BytecodeReadRafChallenge, BytecodeReadRafPublic, JoltCommittedPolynomial, JoltExpr,
     JoltOpeningId, JoltRelationId, JoltVirtualPolynomial,
 };
-use super::claim_reductions::bytecode::NUM_BYTECODE_VAL_STAGES;
+use super::claim_reductions::bytecode::{CommittedBytecodeProfile, NUM_BYTECODE_VAL_STAGES};
 use super::dimensions::PointGeometryError;
 use super::error::require_len;
 use super::instruction::{imm, instruction_raf_flag, lookup_table_flag, unexpanded_pc};
@@ -199,11 +199,8 @@ where
 /// `FusedInc·Store = RamInc` and `FusedInc·(1−Store) = RdInc`).
 pub const LATTICE_FUSED_INC_STAGES: usize = 4;
 
-/// The read-raf relation's val-stage count (one cycle point / cycle-eq public
-/// per stage): the five base flag stages, plus (akita) the four fused-inc
-/// consumer stages. Distinct from [`NUM_BYTECODE_VAL_STAGES`], the staged
-/// `BytecodeValClaim` *wire* count — the fused stages resolve through the
-/// store wire and its complement, adding no wires.
+/// Ordinary cycle bindings: five base stages and, for Akita, four fused-increment
+/// consumers. Committed Akita with field registers appends two more cycle bindings.
 #[cfg(not(feature = "akita"))]
 pub const READ_RAF_CYCLE_STAGES: usize = BYTECODE_STAGE_GAMMA_COUNTS.len();
 #[cfg(feature = "akita")]
@@ -248,11 +245,9 @@ where
         * bytecode_ra_product(dimensions)
 }
 
-/// Lattice committed-mode cycle output: the base five stages fold their staged
-/// `BytecodeValClaim` openings; the four fused stages reuse the staged *store*
-/// val (index [`BYTECODE_STAGE_GAMMA_COUNTS`]`.len()`) — directly for the two
-/// RAM legs, complemented (`1 − store`) for the two register legs — so the
-/// staged-val wire set is unchanged from the store-claim design.
+/// The fused RAM and register stages share the store wire and its complement.
+/// The field-register profile appends the read-write and value wires, each
+/// multiplied by the cycle equality for its own opening.
 pub(crate) fn read_raf_cycle_output_committed_lattice<F>(
     dimensions: BytecodeReadRafDimensions,
 ) -> JoltExpr<F>
@@ -285,6 +280,24 @@ where
         + store_pair * ra_product.clone() * fused.clone() * store.clone()
         + notstore_pair.clone() * ra_product.clone() * fused.clone()
         - notstore_pair * ra_product.clone() * fused * store;
+
+    for (index, &stage) in CommittedBytecodeProfile::ACTIVE
+        .extra_cycle_stages
+        .iter()
+        .enumerate()
+    {
+        output = output
+            + gamma_power_expr(stage)
+                * derived(BytecodeReadRafPublic::StageCycleEq(
+                    READ_RAF_CYCLE_STAGES + index,
+                ))
+                * ra_product.clone()
+                * opening(
+                    super::claim_reductions::bytecode::bytecode_val_stage_opening(
+                        CommittedBytecodeProfile::wire(index),
+                    ),
+                );
+    }
 
     let raf_coeff = gamma_power_expr(num_val_stages)
         * derived(BytecodeReadRafPublic::SpartanOuterRaf)
@@ -331,20 +344,18 @@ impl<F: JoltField> BytecodeReadRafPublicValues<F> {
     }
 }
 
-/// Committed-program read-RAF publics: the bytecode table is not available,
-/// so only the table-independent factors are computed. The per-stage Val
-/// factors are openings; their cycle-eq coefficients are public. One cycle eq
-/// per relation stage — five in base mode, nine in lattice mode (the four
-/// fused-inc consumer stages follow the base five).
+/// Table-independent read-RAF factors. The stage equalities follow the ordinary
+/// bindings and then any additional bindings selected by protocol composition.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct BytecodeReadRafCommittedPublicValues<F: JoltField> {
+pub struct BytecodeReadRafCommittedPublicValues<F: JoltField, const EXTRA: usize> {
     pub stage_cycle_eqs: [F; READ_RAF_CYCLE_STAGES],
+    extra_cycle_eqs: [F; EXTRA],
     pub spartan_outer_raf: F,
     pub spartan_shift_raf: F,
     pub entry: F,
 }
 
-impl<F: JoltField> BytecodeReadRafCommittedPublicValues<F> {
+impl<F: JoltField, const EXTRA: usize> BytecodeReadRafCommittedPublicValues<F, EXTRA> {
     /// Returns `None` for full-mode publics (`StageValue`) and out-of-range
     /// stage indices so a wrong-mode formula fails loudly at the source
     /// instead of evaluating with a silently zeroed term.
@@ -353,7 +364,12 @@ impl<F: JoltField> BytecodeReadRafCommittedPublicValues<F> {
             BytecodeReadRafPublic::StageValue(_) | BytecodeReadRafPublic::ChallengePow { .. } => {
                 None
             }
-            BytecodeReadRafPublic::StageCycleEq(index) => self.stage_cycle_eqs.get(index).copied(),
+            BytecodeReadRafPublic::StageCycleEq(index) => self
+                .stage_cycle_eqs
+                .iter()
+                .chain(&self.extra_cycle_eqs)
+                .nth(index)
+                .copied(),
             BytecodeReadRafPublic::SpartanOuterRaf => Some(self.spartan_outer_raf),
             BytecodeReadRafPublic::SpartanShiftRaf => Some(self.spartan_shift_raf),
             BytecodeReadRafPublic::Entry => Some(self.entry),
@@ -361,24 +377,36 @@ impl<F: JoltField> BytecodeReadRafCommittedPublicValues<F> {
     }
 }
 
-pub struct BytecodeReadRafCommittedEvaluationInputs<'a, F> {
+pub struct BytecodeReadRafCommittedEvaluationInputs<'a, F, const EXTRA: usize> {
     pub r_address: &'a [F],
     pub r_cycle: &'a [F],
     /// One cycle point per relation stage (five base, nine lattice — the four
     /// fused-inc consumer points follow the base five).
     pub stage_cycle_points: [&'a [F]; READ_RAF_CYCLE_STAGES],
+    pub extra_cycle_points: [&'a [F]; EXTRA],
     pub entry_bytecode_index: usize,
 }
 
-pub fn read_raf_committed_public_values<F>(
-    inputs: BytecodeReadRafCommittedEvaluationInputs<'_, F>,
-) -> BytecodeReadRafCommittedPublicValues<F>
+pub fn read_raf_committed_public_values<F, const EXTRA: usize>(
+    inputs: BytecodeReadRafCommittedEvaluationInputs<'_, F, EXTRA>,
+) -> Result<BytecodeReadRafCommittedPublicValues<F, EXTRA>, PointGeometryError>
 where
     F: JoltField,
 {
-    let stage_cycle_eqs = inputs
+    for point in inputs
         .stage_cycle_points
-        .map(|stage_cycle_point| EqPolynomial::<F>::mle(stage_cycle_point, inputs.r_cycle));
+        .iter()
+        .chain(&inputs.extra_cycle_points)
+    {
+        if point.len() != inputs.r_cycle.len() {
+            return Err(PointGeometryError::OpeningPointLengthMismatch {
+                expected: inputs.r_cycle.len(),
+                got: point.len(),
+            });
+        }
+    }
+    let cycle_eq = |point: &[F]| EqPolynomial::<F>::mle(point, inputs.r_cycle);
+    let stage_cycle_eqs = inputs.stage_cycle_points.map(cycle_eq);
     let (spartan_outer_raf, spartan_shift_raf, entry) = read_raf_raf_entry_publics(
         inputs.r_address,
         inputs.r_cycle,
@@ -387,12 +415,13 @@ where
         inputs.entry_bytecode_index,
     );
 
-    BytecodeReadRafCommittedPublicValues {
+    Ok(BytecodeReadRafCommittedPublicValues {
+        extra_cycle_eqs: inputs.extra_cycle_points.map(cycle_eq),
         stage_cycle_eqs,
         spartan_outer_raf,
         spartan_shift_raf,
         entry,
-    }
+    })
 }
 
 /// Table-independent read-RAF publics shared by the full and committed

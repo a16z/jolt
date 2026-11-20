@@ -25,7 +25,9 @@ mod support;
     reason = "integration tests should fail loudly"
 )]
 mod clear {
-    use jolt_akita::{AkitaCommitment, AkitaField, AkitaProverSetup, AkitaScheme};
+    use jolt_akita::{
+        AkitaChunkProfile, AkitaCommitment, AkitaField, AkitaProverSetup, AkitaScheme,
+    };
     use jolt_claims::protocols::field_inline::lattice::FieldIncLayout;
     use jolt_claims::protocols::field_inline::{
         FieldInlineCommittedPolynomial, FieldInlinePolynomialId,
@@ -96,7 +98,7 @@ mod clear {
         case.untrusted_advice = vec![1, 2, 3, 4, 5, 6, 7, 8];
         let mut proofs = Vec::new();
         for (label, backend) in backends() {
-            let (output, inc) = akita::prove(&case, backend(), collect_inc);
+            let (output, inc) = akita::prove(&case, None, backend(), collect_inc);
             assert!(
                 output.proof.untrusted_advice_commitment.is_some(),
                 "the mixed batch must include bounded advice ({label})",
@@ -112,12 +114,7 @@ mod clear {
                 }),
                 "the guest must exercise increments outside the bounded dense envelope ({label})",
             );
-            akita::verify_full(
-                &output.verifier_preprocessing,
-                &output.public_io,
-                &output.proof,
-            )
-            .unwrap_or_else(|error| {
+            output.verify(&output.proof).unwrap_or_else(|error| {
                 panic!("Akita field-inline proof must verify ({label}): {error}")
             });
             proofs.push(output.proof);
@@ -128,13 +125,34 @@ mod clear {
         );
     }
 
+    #[test]
+    fn committed_field_ops_backends_have_identical_proofs() {
+        let case = field_ops();
+        let proofs = backends().map(|(label, backend)| {
+            let (output, ()) = akita::prove(
+                &case,
+                Some(AkitaChunkProfile::new(1, 0)),
+                backend(),
+                |_, _, _| (),
+            );
+            output
+                .verify(&output.proof)
+                .unwrap_or_else(|error| panic!("committed field-ops proof ({label}): {error}"));
+            output.proof
+        });
+        assert!(
+            proofs[0] == proofs[1],
+            "committed field-ops proof differs between backends"
+        );
+    }
+
     /// Dense schedules depend on shape, so an inactive field register file
     /// still carries a commitment and opens its all-zero increment polynomial.
     #[test]
     fn akita_field_inline_muldiv_backends_have_identical_zero_inc_proofs() {
         let mut proofs = Vec::new();
         for (label, backend) in backends() {
-            let (output, inc) = akita::prove(&muldiv(), backend(), collect_inc);
+            let (output, inc) = akita::prove(&muldiv(), None, backend(), collect_inc);
             assert!(inc
                 .rd_inc
                 .iter()
@@ -151,12 +169,7 @@ mod clear {
                 AkitaField::from_u64(0),
                 "an all-zero polynomial opens to zero ({label})",
             );
-            akita::verify_full(
-                &output.verifier_preprocessing,
-                &output.public_io,
-                &output.proof,
-            )
-            .unwrap_or_else(|error| {
+            output.verify(&output.proof).unwrap_or_else(|error| {
                 panic!("field-inactive Akita proof must verify ({label}): {error}")
             });
             proofs.push(output.proof);
@@ -169,13 +182,10 @@ mod clear {
 
     #[test]
     fn akita_field_inline_tampered_proofs_are_rejected() {
-        let (output, inc) = akita::prove(&field_ops(), JoltBackend::optimized(), collect_inc);
-        akita::verify_full(
-            &output.verifier_preprocessing,
-            &output.public_io,
-            &output.proof,
-        )
-        .expect("base proof must verify before tampering");
+        let (output, inc) = akita::prove(&field_ops(), None, JoltBackend::optimized(), collect_inc);
+        output
+            .verify(&output.proof)
+            .expect("base proof must verify before tampering");
         let one = AkitaField::from_u64(1);
 
         // Bind the layout identity independently of the committed values.
@@ -237,8 +247,7 @@ mod clear {
             let mut tampered = output.proof.clone();
             tamper(&mut tampered);
             assert!(
-                akita::verify_full(&output.verifier_preprocessing, &output.public_io, &tampered)
-                    .is_err(),
+                output.verify(&tampered).is_err(),
                 "tampered Akita field-inline proof must be rejected: {name}",
             );
         }
@@ -253,7 +262,7 @@ mod clear {
         use jolt_openings::{GroupBatchOpening, GroupOpeningClaim, TaggedGroupOpeningClaim};
         use jolt_transcript::{verifier_transcript, Keccak};
 
-        let (output, ()) = akita::prove(&field_ops(), JoltBackend::optimized(), |_, _, _| ());
+        let (output, ()) = akita::prove(&field_ops(), None, JoltBackend::optimized(), |_, _, _| ());
         let commitment = output
             .proof
             .field_inc_commitment

@@ -1,6 +1,6 @@
 #[cfg(feature = "serialization")]
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use common::constants::{ALIGNMENT_FACTOR_BYTECODE, RAM_START_ADDRESS};
+use common::constants::{ALIGNMENT_FACTOR_BYTECODE, RAM_START_ADDRESS, REGISTER_COUNT};
 use jolt_riscv::{
     CircuitFlags, Flags, JoltInstruction, JoltInstructionKind, JoltInstructionProfile,
     JoltInstructionRow,
@@ -34,15 +34,8 @@ impl BytecodePreprocessing {
         entry_address: u64,
         profile: JoltInstructionProfile,
     ) -> Result<Self, PreprocessingError> {
-        for instruction in &bytecode {
-            if !profile.supports_jolt(instruction.instruction_kind) {
-                return Err(PreprocessingError::IllegalTargetInstruction(
-                    instruction.instruction_kind,
-                ));
-            }
-            check_store_rd_disjoint(instruction)?;
-            #[cfg(feature = "field-inline")]
-            validate_field_inline_instruction(instruction)?;
+        for row in &bytecode {
+            validate_row(row, profile)?;
         }
         bytecode.insert(0, noop_instruction());
         let pc_map = BytecodePCMapper::try_new(&bytecode)?;
@@ -56,6 +49,22 @@ impl BytecodePreprocessing {
             pc_map,
             entry_address,
         })
+    }
+
+    pub fn validate_committed_rows(
+        &self,
+        profile: JoltInstructionProfile,
+    ) -> Result<(), PreprocessingError> {
+        for instruction in &self.bytecode {
+            validate_row(instruction, profile)?;
+            let integer = instruction.integer_operands();
+            for register in [integer.rd, integer.rs1, integer.rs2].into_iter().flatten() {
+                if register >= REGISTER_COUNT {
+                    return Err(PreprocessingError::InvalidRegister { register });
+                }
+            }
+        }
+        Ok(())
     }
 
     pub fn entry_bytecode_index(&self) -> Option<usize> {
@@ -263,6 +272,21 @@ impl BytecodePCMapper {
             Ok(Self::try_get_index(max_address)? + 1)
         }
     }
+}
+
+fn validate_row(
+    instruction: &JoltInstructionRow,
+    profile: JoltInstructionProfile,
+) -> Result<(), PreprocessingError> {
+    if !profile.supports_jolt(instruction.instruction_kind) {
+        return Err(PreprocessingError::IllegalTargetInstruction(
+            instruction.instruction_kind,
+        ));
+    }
+    check_store_rd_disjoint(instruction)?;
+    #[cfg(feature = "field-inline")]
+    validate_field_inline_instruction(instruction)?;
+    Ok(())
 }
 
 /// The store/rd-write disjointness check on the public bytecode: a

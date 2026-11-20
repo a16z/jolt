@@ -146,21 +146,17 @@ where
         None
     };
 
-    // Canonical batch order: advice, then field increments or direct committed-program
-    // objects (mutually exclusive), then FusedInc and OneHotTrace.
-    let mut precommitted_hints: Vec<&PCS::OpeningHint> = untrusted_advice
+    let advice_hints: Vec<_> = untrusted_advice
         .as_ref()
         .map(|object| &object.hint)
         .into_iter()
         .chain(trusted_advice.map(|object| &object.hint))
         .collect();
-    if let Some(program) = preprocessing
-        .committed_program
-        .as_ref()
-        .map(|data| &data.direct_program)
-    {
-        precommitted_hints.extend(program.objects().map(|object| &object.hint));
-    }
+    let program_hints = preprocessing.committed_program.as_ref().map(|data| {
+        data.direct_program
+            .ordered_objects()
+            .map(|object| &object.hint)
+    });
     let WitnessCommitment {
         fused_inc,
         commitment,
@@ -171,7 +167,8 @@ where
         backend.commit_witness(WitnessCommitRequest::new(
             &preprocessing.pcs_setup,
             one_hot_trace_shape,
-            &precommitted_hints,
+            &advice_hints,
+            program_hints,
         )?)
     })?;
 

@@ -1,7 +1,6 @@
 //! Akita's final opening combines auxiliary groups and the trace in canonical
 //! order `[UntrustedAdvice?, TrustedAdvice?,
-//! FieldInc (field-inline) OR ProgramBytecode, ProgramImageInit (committed),
-//! FusedInc, OneHotTrace]`. Field-inline and committed-program suffixes are exclusive.
+//! FieldInc?, (ProgramBytecode, ProgramImageInit)?, FusedInc, OneHotTrace]`.
 
 use jolt_kernels::akita::commitment::FusedIncObject;
 use jolt_verifier::stages::stage8::akita::fused_inc_claim;
@@ -128,9 +127,6 @@ where
         .map(|object| reduce_precommitted(&object.plan, &leaves, transcript))
         .transpose()?;
 
-    // Canonical public batch order: advice, (field-inline) the field increment polynomial,
-    // or the direct committed-program objects, then FusedInc and OneHotTrace. The suffixes
-    // are exclusive: field-inline rejects committed-program preprocessing.
     let mut auxiliary_groups = Vec::with_capacity(
         3 + usize::from(cfg!(feature = "field-inline"))
             + program.map_or(0, |objects| objects.objects().count()),

@@ -2,8 +2,8 @@
 //! specialized parity and soundness suite.
 
 use common::jolt_device::JoltDevice;
-use jolt_akita::AkitaProverSetup;
 use jolt_akita::{AkitaChunkProfile, AkitaField, AkitaScheduleArtifacts, AkitaScheme};
+use jolt_akita::{AkitaCommitment, AkitaProverSetup};
 use jolt_prover::akita::preprocessing::AkitaVc;
 use jolt_prover::JoltBackend;
 use jolt_prover::{akita, ProverConfig};
@@ -21,6 +21,7 @@ pub struct ProveOutput {
     pub verifier_preprocessing: JoltVerifierPreprocessing<AkitaScheme, AkitaVc>,
     pub public_io: JoltDevice,
     pub proof: Proof,
+    trusted: Option<AkitaCommitment>,
 }
 
 /// Prepare and prove a guest case with the modular Akita prover. The grouped
@@ -28,6 +29,7 @@ pub struct ProveOutput {
 /// The callback inspects the attached witness before proving.
 pub fn prove<D>(
     case: &GuestCase,
+    committed_profile: Option<AkitaChunkProfile>,
     backend: JoltBackend<AkitaField, AkitaScheme>,
     inspect: impl FnOnce(
         &ProverConfig,
@@ -42,7 +44,7 @@ pub fn prove<D>(
     } = crate::support::prepare(case);
     let memory_layout = trace_output.device.memory_layout.clone();
     let public_io = trace_output.device.clone();
-    let config = ProverConfig::derive_from_dimensions::<AkitaField>(
+    let mut config = ProverConfig::derive_from_dimensions::<AkitaField>(
         trace_output.dimensions,
         &memory_layout,
         program_preprocessing.ram.min_bytecode_address,
@@ -53,22 +55,34 @@ pub fn prove<D>(
 
     let log_t = config.trace_length.ilog2() as usize;
     let untrusted_advice = !case.untrusted_advice.is_empty();
-    let prover_preprocessing = akita::preprocessing::preprocess_full_with_advice(
+    let trusted_advice = !case.trusted_advice.is_empty();
+    let preprocess = if let Some(profile) = committed_profile {
+        config.akita_chunk_profile = profile;
+        akita::preprocessing::preprocess_committed_with_advice
+    } else {
+        akita::preprocessing::preprocess_full_with_advice
+    };
+    let prover_preprocessing = preprocess(
         &AkitaScheduleArtifacts::shared_from_default_directory(AkitaChunkProfile::new(8, 2)),
         program_preprocessing,
         &config,
         untrusted_advice,
-        false,
+        trusted_advice,
     )
     .expect("field-inline Akita preprocessing");
 
+    let trusted = trusted_advice.then(|| {
+        akita::preprocessing::commit_trusted_advice(&prover_preprocessing, &case.trusted_advice)
+            .expect("trusted advice")
+    });
     let witness_output = trace_output;
     let program_preprocessing = prover_preprocessing
         .program_arc()
         .expect("full program preprocessing");
     let witness = TraceBackend::new(
         JoltVmWitnessConfig::new(log_t, config.ram_K, config.one_hot_config)
-            .include_untrusted_advice(untrusted_advice),
+            .include_untrusted_advice(untrusted_advice)
+            .include_trusted_advice(trusted_advice),
         JoltVmWitnessInputs::new(&program, &program_preprocessing, witness_output),
     )
     .with_field_inline()
@@ -83,7 +97,7 @@ pub fn prove<D>(
         backend.with_witness(&witness),
         &prover_preprocessing,
         &config,
-        None,
+        trusted.as_ref(),
         &public_io,
     )
     .expect("Akita field-inline prove");
@@ -92,20 +106,19 @@ pub fn prove<D>(
             verifier_preprocessing: prover_preprocessing.verifier,
             public_io,
             proof,
+            trusted: trusted.map(|object| object.commitment),
         },
         diagnostics,
     )
 }
 
-pub fn verify_full(
-    preprocessing: &JoltVerifierPreprocessing<AkitaScheme, AkitaVc>,
-    public_io: &JoltDevice,
-    proof: &Proof,
-) -> Result<(), VerifierError> {
-    jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, VerifierState<'_, Keccak>>(
-        preprocessing,
-        public_io,
-        proof,
-        None,
-    )
+impl ProveOutput {
+    pub fn verify(&self, proof: &Proof) -> Result<(), VerifierError> {
+        jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, VerifierState<'_, Keccak>>(
+            &self.verifier_preprocessing,
+            &self.public_io,
+            proof,
+            self.trusted.as_ref(),
+        )
+    }
 }

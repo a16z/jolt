@@ -220,20 +220,25 @@ fn plan_row<Cfg: CommitmentConfig>(
         return Ok(None);
     }
     let main_row = base.resolve_key(&ScheduleLookupKey::single(key.final_group))?;
-    let full_width_producers = producers
+    let mut full_width_positions = producers
         .iter()
-        .filter(|producer| {
-            !producer
+        .enumerate()
+        .filter_map(|(index, producer)| {
+            (!producer
                 .source_contract()
                 .decomposition()
-                .has_bounded_committed_source()
-        })
-        .count();
-    if full_width_producers > 1 || (full_width_producers == 1 && producers.len() > 4) {
-        return Err(AkitaError::UnsupportedSchedule(
-            "full-width batches support one field increment and at most three bounded groups"
-                .to_owned(),
-        ));
+                .has_bounded_committed_source())
+            .then_some(index)
+        });
+    if let Some(field_index) = full_width_positions.next() {
+        // With advice and a committed program the suffix is field, bytecode, image, fused.
+        let committed_field_suffix = field_index <= 2 && producers.len() - field_index == 4;
+        if full_width_positions.next().is_some() || (producers.len() > 4 && !committed_field_suffix)
+        {
+            return Err(AkitaError::UnsupportedSchedule(
+                "unsupported group order or count for a full-width field increment".to_owned(),
+            ));
+        }
     }
     let schedule = find_adapted_schedule(
         main_row,

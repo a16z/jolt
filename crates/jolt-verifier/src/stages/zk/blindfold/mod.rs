@@ -822,7 +822,7 @@ where
             return Err(crate::stages::stage6b::field_inline::committed_program_rejection());
             #[cfg(not(feature = "field-inline"))]
             {
-                let v = bytecode::read_raf_committed_public_values::<PCS::Field>(
+                let v = bytecode::read_raf_committed_public_values(
                     BytecodeReadRafCommittedEvaluationInputs {
                         r_address: &bytecode_r_address,
                         r_cycle: &bytecode_r_cycle,
@@ -833,9 +833,14 @@ where
                             stage4_cycle,
                             stage5_cycle,
                         ],
+                        extra_cycle_points: [],
                         entry_bytecode_index,
                     },
-                );
+                )
+                .map_err(|e| VerifierError::StageClaimPublicInputFailed {
+                    stage: JoltRelationId::BytecodeReadRaf,
+                    reason: e.to_string(),
+                })?;
                 for (index, stage_cycle_eq) in v.stage_cycle_eqs.iter().enumerate() {
                     values.public(
                         JoltDerivedId::from(BytecodeReadRafPublic::StageCycleEq(index)),

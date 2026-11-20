@@ -8,6 +8,8 @@ pub enum PreprocessingError {
     RamDomain(#[from] RamDomainError),
     #[error("bytecode instruction is not legal in the selected target profile: {0:?}")]
     IllegalTargetInstruction(jolt_riscv::JoltInstructionKind),
+    #[error("integer register {register} is outside the register file")]
+    InvalidRegister { register: u8 },
     #[error("bytecode instruction address is invalid for bytecode indexing: {0:#x}")]
     InvalidBytecodeAddress(usize),
     #[error(

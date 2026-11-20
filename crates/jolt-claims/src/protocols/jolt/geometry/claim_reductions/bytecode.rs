@@ -27,7 +27,7 @@ use super::precommitted::{
     PrecommittedReductionLayout, PrecommittedSchedulingReference,
 };
 
-/// Number of staged `BytecodeValClaim(i)` claims batched into the reduction:
+/// Number of ordinary bytecode values, including the Akita store selector:
 /// the five base flag stages, plus (akita) the `OpFlags(Store)` stage the
 /// `IncVirtualization` phase consumes as its destination selector.
 #[cfg(not(feature = "akita"))]
@@ -35,15 +35,28 @@ pub const NUM_BYTECODE_VAL_STAGES: usize = 5;
 #[cfg(feature = "akita")]
 pub const NUM_BYTECODE_VAL_STAGES: usize = 6;
 
+/// Composition selects the extra lanes, cycle bindings and Akita group layout together.
+pub(crate) struct CommittedBytecodeProfile {
+    pub(crate) extra_lanes: usize,
+    pub(crate) extra_cycle_stages: &'static [usize],
+    pub(crate) packing_domain: &'static [u8],
+    pub(crate) preceding_groups: u64,
+}
+
+impl CommittedBytecodeProfile {
+    pub(crate) const fn wire(extension_index: usize) -> usize {
+        NUM_BYTECODE_VAL_STAGES + extension_index
+    }
+}
+
+/// Number of raw address-phase values authenticated by the committed bytecode reduction.
+pub const COMMITTED_BYTECODE_VALUES: usize =
+    CommittedBytecodeProfile::wire(CommittedBytecodeProfile::ACTIVE.extra_cycle_stages.len());
+
 const REGISTER_COUNT: usize = 1 << REGISTER_ADDRESS_BITS;
 
 pub const fn total_lanes() -> usize {
-    3 * REGISTER_COUNT
-        + 2
-        + NUM_CIRCUIT_FLAGS
-        + NUM_INSTRUCTION_FLAGS
-        + LookupTableKind::<XLEN>::COUNT
-        + 1
+    BYTECODE_LANE_LAYOUT.raf_flag_idx + 1 + CommittedBytecodeProfile::ACTIVE.extra_lanes
 }
 
 pub const COMMITTED_BYTECODE_LANE_CAPACITY: usize = total_lanes().next_power_of_two();
@@ -305,7 +318,7 @@ pub struct BytecodeLaneWeightInputs<'a, F> {
     pub register_val_evaluation_point: &'a [F],
 }
 
-/// Fold the five staged bytecode read-RAF combinations into one weight per
+/// Fold the staged bytecode read-RAF combinations into one weight per
 /// committed lane, so `sum_lane weights[lane] * lane_value(row, lane)` equals
 /// `sum_stage eta^stage * stage_value(row)` for every bytecode row.
 pub fn lane_weights<F: JoltField>(
@@ -325,7 +338,6 @@ pub fn lane_weights<F: JoltField>(
     }
 
     let layout = BYTECODE_LANE_LAYOUT;
-    debug_assert_eq!(layout.raf_flag_idx + 1, total_lanes());
 
     let register_read_write_eq = EqPolynomial::<F>::evals(
         &inputs.register_read_write_point[..REGISTER_ADDRESS_BITS],
@@ -394,11 +406,7 @@ pub fn lane_weights<F: JoltField>(
             weights[layout.lookup_start + i] += coeff * g[2 + i];
         }
     }
-    // The lattice store stage: one raw circuit-flag lane at η^5, no gamma fold
-    // (mirrors the read-raf sixth staged val, which consumes the
-    // `IncVirtualization` store selector claim directly). Anchored on the fixed
-    // base count so it lands at η^5 while `eta_powers` is sized by the active
-    // (cfg'd) `NUM_BYTECODE_VAL_STAGES` (= 6 here).
+    // Both fused-increment destinations use the raw store flag at η⁵ without a gamma fold.
     #[cfg(feature = "akita")]
     {
         weights[layout.circuit_start + (CircuitFlags::Store as usize)] +=
@@ -575,7 +583,10 @@ mod tests {
             layout.raf_flag_idx,
             layout.lookup_start + LookupTableKind::<XLEN>::COUNT
         );
-        assert_eq!(layout.raf_flag_idx + 1, total_lanes());
+        assert_eq!(
+            layout.raf_flag_idx + 1 + CommittedBytecodeProfile::ACTIVE.extra_lanes,
+            total_lanes()
+        );
 
         assert!(COMMITTED_BYTECODE_LANE_CAPACITY.is_power_of_two());
         assert!(COMMITTED_BYTECODE_LANE_CAPACITY >= total_lanes());

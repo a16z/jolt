@@ -42,9 +42,10 @@ where
             request.shape().log_t,
             witness,
         )?;
-        let mut group_hints = request.precommitted_hints().to_vec();
+        let mut group_hints = request.advice_hints().to_vec();
         #[cfg(feature = "field-inline")]
         group_hints.push(&field_inc.hint);
+        group_hints.extend(request.program_hints().into_iter().flatten());
         group_hints.push(&fused_inc.hint);
         let precommitted_hints = group_hints.as_slice();
         let committed = PCS::commit_trace_one_hot(

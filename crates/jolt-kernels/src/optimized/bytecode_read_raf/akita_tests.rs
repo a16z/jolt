@@ -4,6 +4,7 @@ use jolt_claims::protocols::jolt::geometry::booleanity::BooleanityDimensions;
 use jolt_claims::protocols::jolt::geometry::bytecode::{
     BytecodeReadRafDimensions, LATTICE_FUSED_INC_STAGES,
 };
+use jolt_claims::protocols::jolt::geometry::claim_reductions::bytecode::COMMITTED_BYTECODE_VALUES;
 use jolt_claims::protocols::jolt::relations::bytecode::BytecodeReadRafAddressPhaseChallenges;
 use jolt_field::{Fr, Ring};
 #[cfg(feature = "field-inline")]
@@ -122,7 +123,7 @@ fn address_parity_on(
     assert_eq!(
         optimized.val_stages.len(),
         if committed_program {
-            NUM_BYTECODE_VAL_STAGES
+            COMMITTED_BYTECODE_VALUES
         } else {
             0
         }
