@@ -15,6 +15,8 @@
 //! A protocol's session/version must bind the field, message lengths, and codec
 //! rules; changing any of these changes the Fiat-Shamir decoding map.
 
+#[cfg(feature = "binary")]
+use jolt_field::CanonicalBytes;
 #[cfg(any(feature = "solinas", feature = "bn254", feature = "binary"))]
 use jolt_field::CanonicalEncoding;
 #[cfg(feature = "solinas")]
@@ -123,6 +125,11 @@ pub trait ChallengeCodec: Sized + Sealed {
     /// Returns `None` on a wrong/unsupported length or rejection-pool exhaustion.
     /// Allocates only the returned vector, with capacity `len`.
     fn decode_challenges(bytes: &[u8], len: usize) -> Option<Vec<Self>>;
+
+    /// Decodes the same tape as a one-element challenge message.
+    fn decode_challenge(bytes: &[u8]) -> Option<Self> {
+        Self::decode_challenges(bytes, 1)?.pop()
+    }
 }
 
 /// A sponge whose squeezed bytes are uniform, up to the sponge's own
@@ -308,6 +315,10 @@ macro_rules! reduction_codec {
                 len.checked_mul(BN254_ELEMENT_BYTES)
             }
 
+            fn decode_challenge(bytes: &[u8]) -> Option<Self> {
+                (bytes.len() == BN254_ELEMENT_BYTES).then(|| Self::from_bytes_le_reduced(bytes))
+            }
+
             fn decode_challenges(bytes: &[u8], len: usize) -> Option<Vec<Self>> {
                 if bytes.len() != Self::challenge_bytes(len)? {
                     return None;
@@ -338,15 +349,23 @@ macro_rules! binary_codec {
                 ChallengeSetSize::from_limbs(<Self as CanonicalEncoding>::CHALLENGE_SET_LIMBS);
 
             fn challenge_bytes(len: usize) -> Option<usize> {
-                len.checked_mul(<Self as jolt_field::CanonicalBytes>::NUM_BYTES)?
+                len.checked_mul(<Self as CanonicalBytes>::NUM_BYTES)?
                     .checked_next_multiple_of(WORD_BYTES)
+            }
+
+            fn decode_challenge(bytes: &[u8]) -> Option<Self> {
+                if bytes.len() != Self::challenge_bytes(1)? {
+                    return None;
+                }
+                let width = <Self as CanonicalBytes>::NUM_BYTES;
+                Self::from_bytes_le_checked(bytes.get(..width)?)
             }
 
             fn decode_challenges(bytes: &[u8], len: usize) -> Option<Vec<Self>> {
                 if bytes.len() != Self::challenge_bytes(len)? {
                     return None;
                 }
-                let width = <Self as jolt_field::CanonicalBytes>::NUM_BYTES;
+                let width = <Self as CanonicalBytes>::NUM_BYTES;
                 let decoded = bytes.get(..len.checked_mul(width)?)?;
                 let mut result = Vec::with_capacity(len);
                 for chunk in decoded.chunks_exact(width) {

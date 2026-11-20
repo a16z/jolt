@@ -5,6 +5,8 @@ use crate::codec::NargMessage;
 pub use crate::coins::{OwnedCoins, ProverCoins};
 #[cfg(feature = "prover-grinding")]
 use crate::pow::{nonce_word, Leb128, SpongePow, CHECK_BYTES};
+#[cfg(feature = "prover-grinding")]
+use crate::transcript::sealed::Sealed;
 #[cfg(feature = "prover-entropy")]
 use crate::{prover_transcript, ProverState as JoltProverState};
 use crate::{Transcript, TAG_BYTES};
@@ -205,7 +207,7 @@ where
             |&nonce| nonce_word(nonce),
             |&nonce, narg| narg.extend_from_slice(Leb128::new(nonce).as_bytes()),
         );
-        if ProverState::verifier_message_as(self, CHECK_BYTES, |check| pow.accepts(check)) {
+        if pow.accepts(&self.squeeze_array::<CHECK_BYTES>()) {
             Ok(())
         } else {
             Err(VerificationError)
