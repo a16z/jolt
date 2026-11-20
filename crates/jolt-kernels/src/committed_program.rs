@@ -150,6 +150,7 @@ pub fn program_image_words_padded(bytecode_words: &[u64]) -> Vec<u64> {
 mod tests {
     use super::*;
     use common::constants::REGISTER_COUNT;
+    use jolt_akita::AkitaField as F;
     use jolt_claims::protocols::field_inline::geometry::bytecode::{
         read_raf_folded_stage_values, selector_gammas, FieldInlineBytecodeReadRafStageValueInputs,
     };
@@ -160,7 +161,7 @@ mod tests {
         },
         dimensions::REGISTER_ADDRESS_BITS,
     };
-    use jolt_field::{One, Prime128OffsetA7F7 as F, Ring, Zero};
+    use jolt_field::{One, Ring, Zero};
     use jolt_poly::EqPolynomial;
     use jolt_riscv::{JoltInstructionKind as Kind, NormalizedOperands, FIELD_REGISTER_COUNT};
 
