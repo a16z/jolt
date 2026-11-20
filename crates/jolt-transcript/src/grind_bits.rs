@@ -102,6 +102,14 @@ impl ChallengeSetSize {
         }
     }
 
+    const fn bit_width(self) -> u32 {
+        if self.hi == 0 {
+            self.lo.bit_width()
+        } else {
+            128 + self.hi.bit_width()
+        }
+    }
+
     /// `self^exponent`, saturating.
     pub(crate) const fn pow(self, mut exponent: u32) -> Self {
         let mut base = self;
@@ -158,9 +166,14 @@ const fn widening_mul(a: u128, b: u128) -> (u128, u128) {
 fn target(loss: u64, security_bits: u32, bits: u32) -> ChallengeSetSize {
     let loss = u128::from(loss);
     match security_bits.checked_sub(bits) {
-        Some(shift) => {
-            ChallengeSetSize::from_u128(loss).saturating_mul(ChallengeSetSize::power_of_two(shift))
-        }
+        Some(shift @ 0..=127) => ChallengeSetSize {
+            hi: loss.checked_shr(128 - shift).unwrap_or(0),
+            lo: loss << shift,
+        },
+        Some(shift) => ChallengeSetSize {
+            hi: loss << (shift - 128),
+            lo: 0,
+        },
         None => ChallengeSetSize::from_u128(loss.div_ceil(1 << (bits - security_bits))),
     }
 }
@@ -188,9 +201,19 @@ pub fn grind_bits_for_loss(
     if security_bits > MAX_SECURITY_BITS {
         return Err(GrindBitsError::SecurityBitsTooLarge);
     }
-    (0..=MAX_POW_BITS)
-        .find(|&bits| challenge_set >= target(loss_factor, security_bits, bits))
-        .ok_or(GrindBitsError::Unattainable)
+    let available = challenge_set.bit_width();
+    let bits = (loss_factor.bit_width() + security_bits).saturating_sub(available);
+    if available == 0 || bits > MAX_POW_BITS {
+        return Err(GrindBitsError::Unattainable);
+    }
+    // Matching widths gives the first possible difficulty. Doubling the
+    // challenge set once suffices if its value falls short at that width.
+    let bits = bits + u32::from(challenge_set < target(loss_factor, security_bits, bits));
+    if bits > MAX_POW_BITS {
+        Err(GrindBitsError::Unattainable)
+    } else {
+        Ok(bits)
+    }
 }
 
 /// Checks that a challenge drawn from `challenge_set` reaches
@@ -339,6 +362,34 @@ mod tests {
                         oracle(loss, &exact, security_bits),
                         "size={exact}, loss={loss}, security_bits={security_bits}"
                     );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn grind_bits_match_the_oracle_at_shift_boundaries() {
+        for security_bits in [0, 1, 63, 64, 127, 128, 129, MAX_SECURITY_BITS] {
+            for loss in [1, 3, u64::MAX] {
+                let target = BigUint::from(loss) << security_bits;
+                for bits in [0, 1, MAX_POW_BITS, MAX_POW_BITS + 1] {
+                    let threshold = (&target + ((BigUint::from(1u8) << bits) - 1u8)) >> bits;
+                    for cardinality in [&threshold - 1u8, threshold.clone(), &threshold + 1u8] {
+                        let mut limbs = [0; 4];
+                        for (limb, digit) in limbs.iter_mut().zip(cardinality.iter_u64_digits()) {
+                            *limb = digit;
+                        }
+                        assert_eq!(
+                            grind_bits_for_loss(
+                                loss,
+                                ChallengeSetSize::from_limbs(limbs),
+                                security_bits
+                            ),
+                            oracle(loss, &cardinality, security_bits)
+                                .ok_or(GrindBitsError::Unattainable),
+                            "size={cardinality}, loss={loss}, security_bits={security_bits}",
+                        );
+                    }
                 }
             }
         }
