@@ -43,9 +43,15 @@ pub(crate) struct CommittedBytecodeProfile {
     pub(crate) preceding_groups: u64,
 }
 
+impl CommittedBytecodeProfile {
+    pub(crate) const fn wire(extension_index: usize) -> usize {
+        NUM_BYTECODE_VAL_STAGES + extension_index
+    }
+}
+
 /// Number of raw address-phase values authenticated by the committed bytecode reduction.
 pub const COMMITTED_BYTECODE_VALUES: usize =
-    NUM_BYTECODE_VAL_STAGES + CommittedBytecodeProfile::ACTIVE.extra_cycle_stages.len();
+    CommittedBytecodeProfile::wire(CommittedBytecodeProfile::ACTIVE.extra_cycle_stages.len());
 
 const REGISTER_COUNT: usize = 1 << REGISTER_ADDRESS_BITS;
 
@@ -400,8 +406,7 @@ pub fn lane_weights<F: JoltField>(
             weights[layout.lookup_start + i] += coeff * g[2 + i];
         }
     }
-    // The lattice store stage: one raw circuit-flag lane at η^5, no gamma fold
-    // used by both fused increment destinations.
+    // Both fused-increment destinations use the raw store flag at η⁵ without a gamma fold.
     #[cfg(feature = "akita")]
     {
         weights[layout.circuit_start + (CircuitFlags::Store as usize)] +=

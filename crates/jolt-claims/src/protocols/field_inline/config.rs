@@ -1,8 +1,9 @@
+use jolt_riscv::FIELD_REGISTER_LOG_K;
 use serde::{Deserialize, Serialize};
 
 use super::geometry::dimensions::FieldRegistersReadWriteDimensions;
 
-pub const FIELD_REGISTERS_LOG_K: usize = 4;
+pub const FIELD_REGISTERS_LOG_K: usize = FIELD_REGISTER_LOG_K as usize;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum FieldInlineRepresentation {

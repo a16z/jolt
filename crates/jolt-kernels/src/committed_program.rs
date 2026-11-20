@@ -285,10 +285,8 @@ mod tests {
         let rw = [2, 3, 5, 7].map(F::from_u64);
         let val = [11, 13, 17, 19].map(F::from_u64);
         let address_eq = EqPolynomial::<F>::evals(&[F::from_u64(23)], None);
-        let g4 = (1..=6).map(F::from_u64).collect::<Vec<_>>();
-        let g5 = (0..=BYTECODE_STAGE_GAMMA_COUNTS[4])
-            .map(|i| F::from_u64(37 + i as u64))
-            .collect::<Vec<_>>();
+        let g4 = std::array::from_fn(|i| F::from_u64(1 + i as u64));
+        let g5 = std::array::from_fn(|i| F::from_u64(37 + i as u64));
         let field = read_raf_folded_stage_values(
             FieldInlineBytecodeReadRafStageValueInputs {
                 bytecode: &rows,

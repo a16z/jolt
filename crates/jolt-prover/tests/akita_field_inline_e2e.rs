@@ -25,7 +25,9 @@ mod support;
     reason = "integration tests should fail loudly"
 )]
 mod clear {
-    use jolt_akita::{AkitaCommitment, AkitaField, AkitaProverSetup, AkitaScheme};
+    use jolt_akita::{
+        AkitaChunkProfile, AkitaCommitment, AkitaField, AkitaProverSetup, AkitaScheme,
+    };
     use jolt_claims::protocols::field_inline::lattice::FieldIncLayout;
     use jolt_claims::protocols::field_inline::{
         FieldInlineCommittedPolynomial, FieldInlinePolynomialId,
@@ -120,6 +122,27 @@ mod clear {
         assert!(
             proofs[0] == proofs[1],
             "reference and optimized Akita field-inline proofs must be identical wire objects",
+        );
+    }
+
+    #[test]
+    fn committed_field_ops_backends_have_identical_proofs() {
+        let case = field_ops();
+        let proofs = backends().map(|(label, backend)| {
+            let (output, ()) = akita::prove(
+                &case,
+                Some(AkitaChunkProfile::new(1, 0)),
+                backend(),
+                |_, _, _| (),
+            );
+            output
+                .verify(&output.proof)
+                .unwrap_or_else(|error| panic!("committed field-ops proof ({label}): {error}"));
+            output.proof
+        });
+        assert!(
+            proofs[0] == proofs[1],
+            "committed field-ops proof differs between backends"
         );
     }
 

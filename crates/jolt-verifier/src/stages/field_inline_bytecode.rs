@@ -1,10 +1,9 @@
 use jolt_claims::protocols::field_inline::geometry::bytecode::{
-    FIELD_INLINE_BYTECODE_STAGE4_GAMMA_COUNT, FIELD_INLINE_BYTECODE_STAGE5_EXTRA_GAMMAS,
+    FIELD_INLINE_BYTECODE_STAGE4_GAMMA_COUNT, FIELD_INLINE_BYTECODE_STAGE5_GAMMA_COUNT,
 };
 use jolt_claims::protocols::field_inline::FieldInlineRelationId;
 use jolt_claims::protocols::jolt::relations::bytecode::BytecodeReadRafAddressPhaseChallenges;
 use jolt_field::Field;
-use jolt_lookup_tables::{LookupTableKind, XLEN as RISCV_XLEN};
 
 use crate::VerifierError;
 
@@ -13,8 +12,8 @@ use crate::VerifierError;
 /// new Fiat-Shamir draws) to the field-inline counts; field op flags use the ordinary stage-1 fold.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FieldInlineBytecodeStageGammas<F> {
-    pub stage4: Vec<F>,
-    pub stage5: Vec<F>,
+    pub stage4: [F; FIELD_INLINE_BYTECODE_STAGE4_GAMMA_COUNT],
+    pub stage5: [F; FIELD_INLINE_BYTECODE_STAGE5_GAMMA_COUNT],
 }
 
 /// Expand the carried stage-4/5 scalars into the field-inline-extended power vectors (`[1,
@@ -23,28 +22,18 @@ pub fn field_inline_stage_gamma_powers<F: Field>(
     challenges: &BytecodeReadRafAddressPhaseChallenges<F>,
 ) -> FieldInlineBytecodeStageGammas<F> {
     FieldInlineBytecodeStageGammas {
-        stage4: gamma_powers(
-            challenges.stage4_gamma,
-            FIELD_INLINE_BYTECODE_STAGE4_GAMMA_COUNT,
-        ),
-        stage5: gamma_powers(challenges.stage5_gamma, field_inline_stage5_gamma_count()),
+        stage4: gamma_powers(challenges.stage4_gamma),
+        stage5: gamma_powers(challenges.stage5_gamma),
     }
 }
 
-/// The field-inline-extended stage-5 gamma count: the ordinary count plus the appended
-/// `FieldRdWa@FieldRegistersValEvaluation` power.
-pub const fn field_inline_stage5_gamma_count() -> usize {
-    2 + LookupTableKind::<RISCV_XLEN>::COUNT + FIELD_INLINE_BYTECODE_STAGE5_EXTRA_GAMMAS
-}
-
-fn gamma_powers<F: Field>(gamma: F, len: usize) -> Vec<F> {
-    let mut powers = Vec::with_capacity(len);
+fn gamma_powers<F: Field, const N: usize>(gamma: F) -> [F; N] {
     let mut power = F::one();
-    for _ in 0..len {
-        powers.push(power);
+    std::array::from_fn(|_| {
+        let current = power;
         power *= gamma;
-    }
-    powers
+        current
+    })
 }
 
 /// Field-register points and batching powers for bytecode read-RAF. Full mode

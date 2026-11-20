@@ -1,6 +1,6 @@
 #[cfg(feature = "serialization")]
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use common::constants::{ALIGNMENT_FACTOR_BYTECODE, RAM_START_ADDRESS};
+use common::constants::{ALIGNMENT_FACTOR_BYTECODE, RAM_START_ADDRESS, REGISTER_COUNT};
 use jolt_riscv::{
     CircuitFlags, Flags, JoltInstruction, JoltInstructionKind, JoltInstructionProfile,
     JoltInstructionRow,
@@ -9,8 +9,6 @@ use jolt_riscv::{
 #[cfg(feature = "field-inline")]
 use crate::field_inline::validate_field_inline_instruction;
 use crate::preprocess::PreprocessingError;
-#[cfg(feature = "field-inline")]
-use common::constants::REGISTER_COUNT;
 
 #[derive(Default, Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(
@@ -53,8 +51,7 @@ impl BytecodePreprocessing {
         })
     }
 
-    #[cfg(feature = "field-inline")]
-    pub fn validate_committed_field_rows(
+    pub fn validate_committed_rows(
         &self,
         profile: JoltInstructionProfile,
     ) -> Result<(), PreprocessingError> {

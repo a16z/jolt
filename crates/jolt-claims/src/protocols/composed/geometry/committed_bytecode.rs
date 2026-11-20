@@ -1,11 +1,12 @@
 //! Profile selection for the committed bytecode row, its read-RAF wires and its PCS groups.
 
+#[cfg(all(feature = "akita", feature = "field-inline"))]
+use crate::protocols::field_inline::{geometry::bytecode::FieldBytecodeLeg, FIELD_REGISTERS_LOG_K};
 use crate::protocols::jolt::geometry::claim_reductions::bytecode::CommittedBytecodeProfile;
 #[cfg(all(feature = "akita", feature = "field-inline"))]
 use crate::protocols::jolt::{
     geometry::claim_reductions::bytecode::{
         lane_weights, BytecodeLaneLayout, BytecodeLaneWeightInputs, BYTECODE_LANE_LAYOUT,
-        NUM_BYTECODE_VAL_STAGES,
     },
     PointGeometryError,
 };
@@ -14,7 +15,7 @@ use jolt_field::JoltField;
 #[cfg(all(feature = "akita", feature = "field-inline"))]
 use jolt_poly::EqPolynomial;
 #[cfg(all(feature = "akita", feature = "field-inline"))]
-use jolt_riscv::{FIELD_REGISTER_COUNT, FIELD_REGISTER_LOG_K};
+use jolt_riscv::FIELD_REGISTER_COUNT;
 
 impl CommittedBytecodeProfile {
     #[cfg(not(all(feature = "akita", feature = "field-inline")))]
@@ -28,7 +29,10 @@ impl CommittedBytecodeProfile {
     #[cfg(all(feature = "akita", feature = "field-inline"))]
     pub(crate) const ACTIVE: Self = Self {
         extra_lanes: 3 * FIELD_REGISTER_COUNT as usize,
-        extra_cycle_stages: &[3, 4],
+        extra_cycle_stages: &[
+            FieldBytecodeLeg::ORDER[0].stage(),
+            FieldBytecodeLeg::ORDER[1].stage(),
+        ],
         packing_domain: b"program-bytecode-field-selectors-v1",
         preceding_groups: 1, // FieldInc precedes the direct program objects.
     };
@@ -56,12 +60,8 @@ impl<F: JoltField> FieldRegisterLaneInputs<'_, F> {
         self,
         base: BytecodeLaneWeightInputs<'_, F>,
     ) -> Result<Vec<F>, PointGeometryError> {
-        let rw_power = (0..NUM_BYTECODE_VAL_STAGES).fold(F::one(), |power, _| power * base.eta);
-        let value_power = rw_power * base.eta;
-        let mut weights = lane_weights(base)?;
-        let ([rd_gamma, rs1_gamma, rs2_gamma], val_gamma) = self.selector_gammas;
         for point in [self.read_write_address, self.value_address] {
-            let expected = FIELD_REGISTER_LOG_K as usize;
+            let expected = FIELD_REGISTERS_LOG_K;
             if point.len() != expected {
                 return Err(PointGeometryError::OpeningPointLengthMismatch {
                     expected,
@@ -69,16 +69,28 @@ impl<F: JoltField> FieldRegisterLaneInputs<'_, F> {
                 });
             }
         }
+        let eta = base.eta;
+        let mut weights = lane_weights(base)?;
+        let ([rd_gamma, rs1_gamma, rs2_gamma], val_gamma) = self.selector_gammas;
         let [rd, rs1, rs2] = BYTECODE_LANE_LAYOUT.field_starts();
-        let val_eq = EqPolynomial::<F>::evals(self.value_address, None);
-        for (k, rw_eq) in EqPolynomial::<F>::evals(self.read_write_address, None)
-            .into_iter()
-            .enumerate()
-        {
-            let rw_weight = rw_power * rw_eq;
-            weights[rd + k] = rw_weight * rd_gamma + value_power * val_gamma * val_eq[k];
-            weights[rs1 + k] = rw_weight * rs1_gamma;
-            weights[rs2 + k] = rw_weight * rs2_gamma;
+        for (index, leg) in FieldBytecodeLeg::ORDER.into_iter().enumerate() {
+            let power =
+                (0..CommittedBytecodeProfile::wire(index)).fold(F::one(), |power, _| power * eta);
+            let point = leg.select(self.read_write_address, self.value_address);
+            for (k, eq) in EqPolynomial::<F>::evals(point, None)
+                .into_iter()
+                .enumerate()
+            {
+                let weight = power * eq;
+                match leg {
+                    FieldBytecodeLeg::ReadWrite => {
+                        weights[rd + k] += weight * rd_gamma;
+                        weights[rs1 + k] += weight * rs1_gamma;
+                        weights[rs2 + k] += weight * rs2_gamma;
+                    }
+                    FieldBytecodeLeg::Value => weights[rd + k] += weight * val_gamma,
+                }
+            }
         }
         Ok(weights)
     }

@@ -29,7 +29,7 @@ F4(a) = Σ_k eq(u4,k) · (g4³ D(a,k) + g4⁴ S1(a,k) + g4⁵ S2(a,k))
 F5(a) = Σ_k eq(u5,k) · g5^(2 + lookup_table_count) · D(a,k)
 ```
 
-Wire 6 carries F4 and wire 7 carries F5. A program with zero field activity supplies zero on both wires. At cycle point `t`, stage 6b adds the following to the committed read-RAF output, using the existing outer challenge `G` and product of bytecode address-chunk openings `RA`.
+Wire 6 carries F4 and wire 7 carries F5. Both wires are zero when the static bytecode has no field-register operands. The address fold includes rows the execution did not visit. At cycle point `t`, stage 6b adds the following to the committed read-RAF output, using the existing outer challenge `G` and product of bytecode address-chunk openings `RA`.
 
 ```text
 RA · (G³ · eq(t,t4) · F4(a) + G⁴ · eq(t,t5) · F5(a))
@@ -39,19 +39,19 @@ The bytecode claim reduction draws its existing challenge η after the stage-6a 
 
 ## Akita packing and identity
 
-For N padded bytecode rows the grid has 1,024 lanes and logical arity 10 + log₂ N. Akita uses CycleMajor and zero-prefix embedding, with a physical arity floor of 14 and a cap of 34. The structural ceiling is 2²⁴ rows for this profile and 2²⁵ for ordinary committed Akita. Memory and catalog coverage may impose lower limits.
+For N padded bytecode rows the field profile uses 1,024 lanes per row and logical arity 10 + log₂ N. Ordinary committed Akita uses 512 lanes. The extra variable doubles the coefficient count and adds one active bytecode reduction round, including for ordinary-only guests. Akita uses CycleMajor and zero-prefix embedding, with a physical arity floor of 14 and a cap of 34. The structural ceiling is 2²⁴ rows for this profile and 2²⁵ for ordinary committed Akita. Memory and catalog coverage may impose lower limits.
 
-Setup, stage-0 hint assembly and stage-8 opening use the same group order.
+Setup, stage-0 hint assembly and stage-8 opening use the same group order. The Akita adapter checks strictly ascending auxiliary sort keys and passes the groups to the batch prover and verifier by position. The main group follows the auxiliaries.
 
-| Present group | Auxiliary sort order in the combined profile | Existing transcript role code | Source |
-|---|---:|---:|---|
-| Untrusted advice, if present | 0 | 1 | Bounded advice object |
-| Trusted advice, if present | 1 | 2 | Bounded advice object |
-| `FieldInc` | 2 | 3 | Full-width field-register delta, reduced in stage 6b |
-| `ProgramBytecode` | 3 | 4 | Bounded direct object from trusted preprocessing |
-| `ProgramImageInit` | 4 | 5 | Bounded direct object from trusted preprocessing |
-| `FusedInc` | 5 | 6 | Bounded execution delta, consumed by read-RAF |
-| `OneHotTrace` | Main group, last | 0 | Canonical one-hot trace columns |
+| Present group | Auxiliary sort order in the combined profile | Source |
+|---|---:|---|
+| Untrusted advice, if present | 0 | Bounded advice object |
+| Trusted advice, if present | 1 | Bounded advice object |
+| `FieldInc` | 2 | Full-width field-register delta, reduced in stage 6b |
+| `ProgramBytecode` | 3 | Bounded direct object from trusted preprocessing |
+| `ProgramImageInit` | 4 | Bounded direct object from trusted preprocessing |
+| `FusedInc` | 5 | Bounded execution delta, consumed by read-RAF |
+| `OneHotTrace` | Main group, last | Canonical one-hot trace columns |
 
 The adapter resolves the final trace shape in the trusted catalog. Its combined schedule admits one full-width field increment, three bounded program/image/fused producers, and up to two leading bounded advice producers. The verifier validates the selected row and binds the opening points, commitments and roles.
 
@@ -61,7 +61,7 @@ Full program artifacts use tag 0. Ordinary committed artifacts use tag 1. Akita 
 
 The committed guest matrix exercises field arithmetic, limb bridges and ordinary RV execution, including advice and independent transport of the verifier setup and proof. [Acceptance matrix](../crates/jolt-prover/tests/e2e_matrix.rs)
 
-The following measurements were taken on the earlier implementation based on `c97e93004`, using the optimized CPU backend, K=16, CycleMajor, single-chunk (1, 0) and no advice. The first experiment used the same 4,096-cycle arithmetic execution and varied static NoOp padding. RSS is the process high-water mark through preprocessing. Verification starts after artifact decoding.
+The November 19, 2026 measurements used a development build based on `c97e93004`, using the optimized CPU backend, K=16, CycleMajor, single-chunk (1, 0) and no advice. The first experiment used the same 4,096-cycle arithmetic execution and varied static NoOp padding. RSS is the process high-water mark through preprocessing. Verification starts after artifact decoding.
 
 | Program view | Static rows | Preprocess, ms | Peak RSS through preprocess, MiB | Stage 6a / 6b, ms | Stage 8, ms | Verify, ms | Proof, bytes | Verifier artifact, bytes |
 |---|---:|---:|---:|---|---:|---:|---:|---:|

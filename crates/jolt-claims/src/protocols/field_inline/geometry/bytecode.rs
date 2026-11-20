@@ -5,20 +5,55 @@ use jolt_riscv::JoltInstructionRow;
 
 use crate::formula_error::PointGeometryError;
 
+/// Field-register contributions in the order appended to committed bytecode.
+#[derive(Clone, Copy)]
+pub enum FieldBytecodeLeg {
+    ReadWrite,
+    Value,
+}
+
+impl FieldBytecodeLeg {
+    pub const ORDER: [Self; 2] = [Self::ReadWrite, Self::Value];
+
+    pub const fn stage(self) -> usize {
+        match self {
+            Self::ReadWrite => 3,
+            Self::Value => 4,
+        }
+    }
+
+    pub fn stage_values<F: JoltField>(wires: [F; Self::ORDER.len()]) -> [F; 5] {
+        let mut stages = [F::zero(); 5];
+        for (leg, value) in Self::ORDER.into_iter().zip(wires) {
+            stages[leg.stage()] = value;
+        }
+        stages
+    }
+
+    pub fn select<T>(self, read_write: T, value: T) -> T {
+        match self {
+            Self::ReadWrite => read_write,
+            Self::Value => value,
+        }
+    }
+}
+
 const RW_SELECTOR_POWERS: [usize; 3] = [3, 4, 5];
 const VAL_SELECTOR_POWER: usize = 2 + LookupTableKind::<XLEN>::COUNT;
 pub const FIELD_INLINE_BYTECODE_STAGE4_GAMMA_COUNT: usize = RW_SELECTOR_POWERS[2] + 1;
+pub const FIELD_INLINE_BYTECODE_STAGE5_GAMMA_COUNT: usize = VAL_SELECTOR_POWER + 1;
 
 /// Weights of the field Rd/Rs1/Rs2 read-write selectors and the field Rd value selector.
 /// Callers supply the extended power sequences for stages 4 and 5.
-pub fn selector_gammas<F: Copy>(stage4: &[F], stage5: &[F]) -> ([F; 3], F) {
+pub fn selector_gammas<F: Copy>(
+    stage4: &[F; FIELD_INLINE_BYTECODE_STAGE4_GAMMA_COUNT],
+    stage5: &[F; FIELD_INLINE_BYTECODE_STAGE5_GAMMA_COUNT],
+) -> ([F; 3], F) {
     (
         RW_SELECTOR_POWERS.map(|power| stage4[power]),
         stage5[VAL_SELECTOR_POWER],
     )
 }
-
-pub const FIELD_INLINE_BYTECODE_STAGE5_EXTRA_GAMMAS: usize = 1;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FieldInlineBytecodeReadRafPublicValues<F: JoltField> {
@@ -33,8 +68,8 @@ pub struct FieldInlineBytecodeReadRafEvaluationInputs<'a, F> {
     pub field_register_read_write_cycle_point: &'a [F],
     pub field_register_val_evaluation_point: &'a [F],
     pub field_register_val_evaluation_cycle_point: &'a [F],
-    pub stage4_gammas: &'a [F],
-    pub stage5_gammas: &'a [F],
+    pub stage4_gammas: &'a [F; FIELD_INLINE_BYTECODE_STAGE4_GAMMA_COUNT],
+    pub stage5_gammas: &'a [F; FIELD_INLINE_BYTECODE_STAGE5_GAMMA_COUNT],
 }
 
 pub fn read_raf_public_values<F>(
@@ -43,15 +78,6 @@ pub fn read_raf_public_values<F>(
 where
     F: JoltField,
 {
-    require_len(
-        inputs.stage4_gammas,
-        FIELD_INLINE_BYTECODE_STAGE4_GAMMA_COUNT,
-    )?;
-    require_len(
-        inputs.stage5_gammas,
-        2 + LookupTableKind::<XLEN>::COUNT + FIELD_INLINE_BYTECODE_STAGE5_EXTRA_GAMMAS,
-    )?;
-
     let expected_domain = 1usize << inputs.r_address.len();
     if inputs.bytecode.len() != expected_domain {
         return Err(PointGeometryError::EvaluationDomainLengthMismatch {
@@ -86,8 +112,8 @@ pub struct FieldInlineBytecodeReadRafStageValueInputs<'a, F> {
     pub bytecode: &'a [JoltInstructionRow],
     pub field_register_read_write_point: &'a [F],
     pub field_register_val_evaluation_point: &'a [F],
-    pub stage4_gammas: &'a [F],
-    pub stage5_gammas: &'a [F],
+    pub stage4_gammas: &'a [F; FIELD_INLINE_BYTECODE_STAGE4_GAMMA_COUNT],
+    pub stage5_gammas: &'a [F; FIELD_INLINE_BYTECODE_STAGE5_GAMMA_COUNT],
 }
 
 pub fn read_raf_stage_values<F>(
@@ -118,8 +144,8 @@ pub fn read_raf_row_values<F>(
     row: &JoltInstructionRow,
     field_read_write_eq: &[F],
     field_val_evaluation_eq: &[F],
-    stage4_gammas: &[F],
-    stage5_gammas: &[F],
+    stage4_gammas: &[F; FIELD_INLINE_BYTECODE_STAGE4_GAMMA_COUNT],
+    stage5_gammas: &[F; FIELD_INLINE_BYTECODE_STAGE5_GAMMA_COUNT],
 ) -> [F; 5]
 where
     F: JoltField,
@@ -139,13 +165,13 @@ where
 fn assemble_stage_values<F: JoltField>(
     read_write: [F; 3],
     val_evaluation: F,
-    stage4_gammas: &[F],
-    stage5_gammas: &[F],
+    stage4_gammas: &[F; FIELD_INLINE_BYTECODE_STAGE4_GAMMA_COUNT],
+    stage5_gammas: &[F; FIELD_INLINE_BYTECODE_STAGE5_GAMMA_COUNT],
 ) -> [F; 5] {
     let ([rd, rs1, rs2], val) = selector_gammas(stage4_gammas, stage5_gammas);
     let stage4 = read_write[0] * rd + read_write[1] * rs1 + read_write[2] * rs2;
     let stage5 = val_evaluation * val;
-    [F::zero(), F::zero(), F::zero(), stage4, stage5]
+    FieldBytecodeLeg::stage_values(FieldBytecodeLeg::ORDER.map(|leg| leg.select(stage4, stage5)))
 }
 
 /// `Σ_r address_eq[r] · read_raf_row_values(r)`, folded column-first: each
@@ -190,14 +216,4 @@ fn register_eq<F: JoltField>(register: Option<u8>, eq: &[F]) -> F {
         .and_then(|register| eq.get(usize::from(register)))
         .copied()
         .unwrap_or_else(F::zero)
-}
-
-fn require_len<F>(values: &[F], expected: usize) -> Result<(), PointGeometryError> {
-    if values.len() < expected {
-        return Err(PointGeometryError::ChallengeLengthMismatch {
-            expected,
-            got: values.len(),
-        });
-    }
-    Ok(())
 }

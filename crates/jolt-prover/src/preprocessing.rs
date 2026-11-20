@@ -2,7 +2,6 @@ use jolt_claims::protocols::jolt::TracePolynomialOrder;
 use jolt_crypto::VectorCommitment;
 use jolt_openings::CommitmentScheme;
 use jolt_program::preprocess::JoltProgramPreprocessing;
-#[cfg(all(feature = "akita", feature = "field-inline"))]
 use jolt_verifier::config::JOLT_VERIFIER_INSTRUCTION_PROFILE;
 use jolt_verifier::JoltVerifierPreprocessing;
 use serde::{Deserialize, Serialize};
@@ -23,23 +22,20 @@ pub(crate) fn validate_committed_mode(
             reason: "declared bytecode size differs from padded rows".to_owned(),
         });
     }
-    #[cfg(all(feature = "akita", feature = "field-inline"))]
-    {
-        let bytecode = &program.bytecode;
-        let entry_row = bytecode
-            .entry_bytecode_index()
-            .and_then(|index| bytecode.bytecode.get(index));
-        if entry_row.is_none_or(|row| row.address as u64 != bytecode.entry_address) {
-            return Err(PreprocessingError::InvalidCommittedProgram {
-                reason: "entry index does not select the declared entry address".to_owned(),
-            });
-        }
-        bytecode
-            .validate_committed_field_rows(JOLT_VERIFIER_INSTRUCTION_PROFILE)
-            .map_err(|error| PreprocessingError::InvalidCommittedProgram {
-                reason: error.to_string(),
-            })?;
+    let bytecode = &program.bytecode;
+    let entry_row = bytecode
+        .entry_bytecode_index()
+        .and_then(|index| bytecode.bytecode.get(index));
+    if entry_row.is_none_or(|row| row.address as u64 != bytecode.entry_address) {
+        return Err(PreprocessingError::InvalidCommittedProgram {
+            reason: "entry index does not select the declared entry address".to_owned(),
+        });
     }
+    bytecode
+        .validate_committed_rows(JOLT_VERIFIER_INSTRUCTION_PROFILE)
+        .map_err(|error| PreprocessingError::InvalidCommittedProgram {
+            reason: error.to_string(),
+        })?;
     Ok(())
 }
 
@@ -106,6 +102,15 @@ mod tests {
             RV64IMAC_JOLT,
         )
         .unwrap();
+        let row = &mut program.bytecode.bytecode[1];
+        row.instruction_kind = Kind::FIELD_MUL;
+        row.operands = NormalizedOperands {
+            rd: Some(3),
+            rs1: Some(1),
+            rs2: Some(2),
+            imm: 0,
+        };
+        super::validate_committed_mode(&program).unwrap();
         for (kind, rd, rs1, rs2, imm) in [
             (Kind::FIELD_MUL, Some(16), Some(1), Some(2), 0),
             (Kind::FIELD_MUL, Some(3), None, Some(2), 0),
@@ -132,6 +137,34 @@ mod tests {
                 "{kind:?}"
             );
         }
+    }
+
+    #[cfg(not(feature = "field-inline"))]
+    #[test]
+    fn ordinary_committed_preprocessing_checks_prebuilt_registers() {
+        use jolt_riscv::{JoltInstructionKind as Kind, NormalizedOperands};
+
+        let mut program = JoltProgramPreprocessing::new(
+            Vec::new(),
+            Vec::new(),
+            MemoryLayout::default(),
+            0,
+            1 << 12,
+            RV64IMAC_JOLT,
+        )
+        .unwrap();
+        let row = &mut program.bytecode.bytecode[1];
+        row.instruction_kind = Kind::ADD;
+        row.operands = NormalizedOperands {
+            rd: Some(3),
+            rs1: Some(1),
+            rs2: Some(2),
+            imm: 0,
+        };
+        super::validate_committed_mode(&program).unwrap();
+        program.bytecode.bytecode[1].operands.rd = Some(128);
+        assert!(matches!(super::validate_committed_mode(&program),
+            Err(PreprocessingError::InvalidCommittedProgram {reason}) if reason == "integer register 128 is outside the register file"));
     }
 
     #[test]
