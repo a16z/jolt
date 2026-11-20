@@ -442,4 +442,18 @@ mod tests {
         assert!(verifier.prover_message::<BytesMsg>().is_err());
         assert!(verifier.check_eof().is_err());
     }
+
+    #[test]
+    fn scalar_exhaustion_fails_on_both_sides_and_poisons_the_verifier() {
+        let mut prover = prover_transcript::<Saturated>(&SESSION, &INSTANCE);
+        assert!(FieldTranscript::<Prime64Offset59>::challenge(&mut prover).is_err());
+
+        let mut prover = prover_transcript::<Saturated>(&SESSION, &INSTANCE);
+        prover.send(&BytesMsg(b"after".to_vec()));
+        let mut verifier =
+            verifier_transcript::<Saturated>(&SESSION, &INSTANCE, prover.narg_string());
+        assert!(FieldTranscript::<Prime64Offset59>::challenge(&mut verifier).is_err());
+        assert!(verifier.prover_message::<BytesMsg>().is_err());
+        assert!(verifier.check_eof().is_err());
+    }
 }

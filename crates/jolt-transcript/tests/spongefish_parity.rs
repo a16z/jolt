@@ -172,6 +172,41 @@ where
     verifier.check_eof().unwrap();
 }
 
+#[cfg(all(
+    feature = "bn254",
+    any(feature = "transcript-keccak", feature = "transcript-blake2b")
+))]
+fn scalar_crosses_squeeze_boundary<H, F, const OFFSET: usize>()
+where
+    H: UniformBytes + DuplexSpongeInit<U = u8>,
+    F: ChallengeCodec + Eq + Debug,
+{
+    let mut prover = prover_transcript::<H>(&SESSION, STATEMENT);
+    let mut verifier = verifier_transcript::<H>(&SESSION, STATEMENT, &[]);
+    let mut stock = verifier_transcript::<H>(&SESSION, STATEMENT, &[]);
+
+    let prefix = stock.verifier_message_as(OFFSET, |tape| <[u8; OFFSET]>::try_from(tape).unwrap());
+    assert_eq!(prover.verifier_message::<[u8; OFFSET]>(), prefix);
+    assert_eq!(verifier.verifier_message::<[u8; OFFSET]>(), prefix);
+
+    let expected = stock.verifier_message_as(56, |tape| {
+        F::decode_challenges(tape, 1).unwrap().pop().unwrap()
+    });
+    assert_eq!(
+        FieldTranscript::<F>::challenge(&mut prover).unwrap(),
+        expected
+    );
+    assert_eq!(
+        FieldTranscript::<F>::challenge(&mut verifier).unwrap(),
+        expected
+    );
+
+    let tail = stock.verifier_message_as(64, |tape| <[u8; 64]>::try_from(tape).unwrap());
+    assert_eq!(prover.verifier_message::<[u8; 64]>(), tail);
+    assert_eq!(verifier.verifier_message::<[u8; 64]>(), tail);
+    verifier.check_eof().unwrap();
+}
+
 #[cfg(feature = "transcript-keccak")]
 #[test]
 fn keccak_matches_stock_spongefish() {
@@ -179,7 +214,10 @@ fn keccak_matches_stock_spongefish() {
 
     batch_parity::<Keccak>();
     #[cfg(feature = "bn254")]
-    field_parity::<Keccak, Fr>(&[0, 1, 2, 3]);
+    {
+        field_parity::<Keccak, Fr>(&[0, 1, 2, 3]);
+        scalar_crosses_squeeze_boundary::<Keccak, Fr, 120>();
+    }
     #[cfg(feature = "binary")]
     {
         field_parity::<Keccak, F8>(&[0, 1, 8, 9, 17, 56, 128, 136, 137]);
@@ -195,7 +233,10 @@ fn blake2b_matches_stock_spongefish() {
 
     batch_parity::<Blake2b512>();
     #[cfg(feature = "bn254")]
-    field_parity::<Blake2b512, Fq>(&[0, 1, 2, 3]);
+    {
+        field_parity::<Blake2b512, Fq>(&[0, 1, 2, 3]);
+        scalar_crosses_squeeze_boundary::<Blake2b512, Fq, 48>();
+    }
     #[cfg(feature = "binary")]
     field_parity::<Blake2b512, F8>(&[0, 1, 56, 64, 65]);
 }
