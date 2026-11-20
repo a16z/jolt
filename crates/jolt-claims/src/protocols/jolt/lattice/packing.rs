@@ -485,7 +485,7 @@ mod tests {
             plan.bytecode.packing().ids(),
             [JoltCommittedPolynomial::ProgramBytecode]
         );
-        let field = usize::from(CommittedBytecodeProfile::ACTIVE.extra_lanes > 0);
+        let field = usize::from(CommittedBytecodeProfile::ACTIVE.extra_lanes != 0);
         assert_eq!(plan.bytecode.packing().logical_num_vars(), 16 + field);
         let role = plan.bytecode.group_role();
         assert_eq!(role.order(), 2 + field as u64);
