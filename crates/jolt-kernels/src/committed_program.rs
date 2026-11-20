@@ -38,13 +38,27 @@ fn for_each_active_lane_value<F: JoltField>(
     let instruction_flags = decoded.instruction_flags();
     let layout = BYTECODE_LANE_LAYOUT;
 
-    if let Some(register) = instruction.operands.rs1 {
+    let operands = instruction.integer_operands();
+    #[cfg(all(feature = "akita", feature = "field-inline"))]
+    {
+        let field = instruction.field_operands();
+        for (start, register) in layout
+            .field_starts()
+            .into_iter()
+            .zip([field.rd, field.rs1, field.rs2])
+        {
+            if let Some(register) = register {
+                visit(start + usize::from(register), F::one());
+            }
+        }
+    }
+    if let Some(register) = operands.rs1 {
         visit(layout.rs1_start + register as usize, F::one());
     }
-    if let Some(register) = instruction.operands.rs2 {
+    if let Some(register) = operands.rs2 {
         visit(layout.rs2_start + register as usize, F::one());
     }
-    if let Some(register) = instruction.operands.rd {
+    if let Some(register) = operands.rd {
         visit(layout.rd_start + register as usize, F::one());
     }
     let unexpanded_pc = F::from_u64(instruction.address as u64);
@@ -126,4 +140,195 @@ pub fn program_image_words_padded(bytecode_words: &[u64]) -> Vec<u64> {
     let mut words = bytecode_words.to_vec();
     words.resize(padded_len, 0);
     words
+}
+
+#[cfg(all(test, feature = "akita", feature = "field-inline"))]
+#[expect(
+    clippy::expect_used,
+    reason = "valid field selector fixtures must encode"
+)]
+mod tests {
+    use super::*;
+    use common::constants::REGISTER_COUNT;
+    use jolt_claims::protocols::field_inline::geometry::bytecode::{
+        read_raf_folded_stage_values, selector_gammas, FieldInlineBytecodeReadRafStageValueInputs,
+    };
+    use jolt_claims::protocols::jolt::geometry::{
+        bytecode::BYTECODE_STAGE_GAMMA_COUNTS,
+        claim_reductions::bytecode::{
+            lane_weights, BytecodeLaneWeightInputs, FieldRegisterLaneInputs,
+        },
+        dimensions::REGISTER_ADDRESS_BITS,
+    };
+    use jolt_field::{One, Prime128OffsetA7F7 as F, Ring, Zero};
+    use jolt_poly::EqPolynomial;
+    use jolt_riscv::{JoltInstructionKind as Kind, NormalizedOperands, FIELD_REGISTER_COUNT};
+
+    #[test]
+    fn committed_selector_blocks_match_instruction_roles() {
+        let (f0, f1, f15, x31) = (Some(0), Some(1), Some(15), Some(31));
+        let absent = [None; 3];
+        // Entries use the encoded Rd, Rs1, Rs2 slots, followed by each register file's selectors.
+        let rows = [
+            (Kind::FIELD_ADD, [f0, f0, f15], absent, [f0, f0, f15]),
+            (Kind::FIELD_SUB, [f15, f0, f1], absent, [f15, f0, f1]),
+            (Kind::FIELD_MUL, [f15, f15, f1], absent, [f15, f15, f1]),
+            (Kind::FIELD_INV, [f0, f15, None], absent, [f0, f15, None]),
+            (
+                Kind::FIELD_ASSERT_EQ,
+                [None, f1, f0],
+                absent,
+                [None, f1, f0],
+            ),
+            (
+                Kind::FIELD_ASSERT_ZERO,
+                [None, f15, None],
+                absent,
+                [None, f15, None],
+            ),
+            (
+                Kind::FIELD_LOAD_IMM,
+                [f15, None, None],
+                absent,
+                [f15, None, None],
+            ),
+            (
+                Kind::FIELD_LOAD_ACCUMULATE_FROM_REGISTER,
+                [f0, x31, None],
+                [None, x31, None],
+                [f0, f0, None],
+            ),
+            (
+                Kind::FIELD_LOAD_ACCUMULATE_FROM_MEMORY,
+                [x31, f1, f15],
+                [x31, f1, None],
+                [f15, f15, None],
+            ),
+            (
+                Kind::FIELD_ADVICE_LIMB,
+                [x31, f1, f15],
+                [x31, None, None],
+                [f15, f1, None],
+            ),
+            (Kind::ADD, [x31, f1, f0], [x31, f1, f0], absent),
+            (Kind::NoOp, absent, absent, absent),
+        ];
+        let order = TracePolynomialOrder::CycleMajor;
+        let layout = BYTECODE_LANE_LAYOUT;
+        for (kind, [rd, rs1, rs2], integer, field) in rows {
+            let row = JoltInstructionRow {
+                instruction_kind: kind,
+                operands: NormalizedOperands {
+                    rd,
+                    rs1,
+                    rs2,
+                    imm: 0,
+                },
+                ..JoltInstructionRow::default()
+            };
+            let grid = build_committed_bytecode_coeffs::<F>(&[row], order).expect("one-row grid");
+            for (starts, registers, width) in [
+                (
+                    [layout.rd_start, layout.rs1_start, layout.rs2_start],
+                    integer,
+                    usize::from(REGISTER_COUNT),
+                ),
+                (
+                    layout.field_starts(),
+                    field,
+                    usize::from(FIELD_REGISTER_COUNT),
+                ),
+            ] {
+                for (start, register) in starts.into_iter().zip(registers) {
+                    for k in 0..width {
+                        let index = order.address_cycle_to_index(
+                            start + k,
+                            0,
+                            COMMITTED_BYTECODE_LANE_CAPACITY,
+                            1,
+                        );
+                        assert_eq!(
+                            grid[index],
+                            F::from_u64(u64::from(register.map(usize::from) == Some(k))),
+                            "{kind:?} lane {}",
+                            start + k
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn committed_field_lane_weights_match_full_row_fold() {
+        let rows = [
+            JoltInstructionRow {
+                instruction_kind: Kind::FIELD_LOAD_ACCUMULATE_FROM_MEMORY,
+                operands: NormalizedOperands {
+                    rd: Some(23),
+                    rs1: Some(5),
+                    rs2: Some(15),
+                    imm: 8,
+                },
+                ..JoltInstructionRow::default()
+            },
+            JoltInstructionRow {
+                instruction_kind: Kind::FIELD_ASSERT_EQ,
+                operands: NormalizedOperands {
+                    rd: None,
+                    rs1: Some(0),
+                    rs2: Some(15),
+                    imm: 0,
+                },
+                ..JoltInstructionRow::default()
+            },
+        ];
+        let rw = [2, 3, 5, 7].map(F::from_u64);
+        let val = [11, 13, 17, 19].map(F::from_u64);
+        let address_eq = EqPolynomial::<F>::evals(&[F::from_u64(23)], None);
+        let g4 = (1..=6).map(F::from_u64).collect::<Vec<_>>();
+        let g5 = (0..=BYTECODE_STAGE_GAMMA_COUNTS[4])
+            .map(|i| F::from_u64(37 + i as u64))
+            .collect::<Vec<_>>();
+        let field = read_raf_folded_stage_values(
+            FieldInlineBytecodeReadRafStageValueInputs {
+                bytecode: &rows,
+                field_register_read_write_point: &rw,
+                field_register_val_evaluation_point: &val,
+                stage4_gammas: &g4,
+                stage5_gammas: &g5,
+            },
+            &address_eq,
+        );
+        let ordinary = BYTECODE_STAGE_GAMMA_COUNTS.map(|n| vec![F::zero(); n]);
+        let order = TracePolynomialOrder::CycleMajor;
+        let grid = build_committed_bytecode_coeffs::<F>(&rows, order).expect("valid field rows");
+        for eta in [F::from_u64(1), F::from_u64(29)] {
+            let weights = lane_weights(BytecodeLaneWeightInputs {
+                eta,
+                stage1_gammas: &ordinary[0],
+                stage2_gammas: &ordinary[1],
+                stage3_gammas: &ordinary[2],
+                stage4_gammas: &ordinary[3],
+                stage5_gammas: &ordinary[4],
+                register_read_write_point: &[F::zero(); REGISTER_ADDRESS_BITS],
+                register_val_evaluation_point: &[F::zero(); REGISTER_ADDRESS_BITS],
+                field: FieldRegisterLaneInputs {
+                    read_write_address: &rw,
+                    value_address: &val,
+                    selector_gammas: selector_gammas(&g4, &g5),
+                },
+            })
+            .expect("valid stage points");
+            let mut actual = F::zero();
+            for (row, eq) in address_eq.iter().enumerate() {
+                for (lane, weight) in weights.iter().enumerate() {
+                    let index = order.address_cycle_to_index(lane, row, weights.len(), rows.len());
+                    actual += grid[index] * *weight * *eq;
+                }
+            }
+            let eta6 = (0..6).fold(F::one(), |power, _| power * eta);
+            assert_eq!(actual, eta6 * (field[3] + eta * field[4]));
+        }
+    }
 }

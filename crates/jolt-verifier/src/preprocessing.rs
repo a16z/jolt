@@ -44,11 +44,58 @@ pub struct CommittedProgramPreprocessing<PCS: CommitmentScheme> {
     clippy::large_enum_variant,
     reason = "constructed once per preprocessing; boxing Committed buys nothing"
 )]
+#[cfg_attr(
+    all(feature = "akita", feature = "field-inline"),
+    serde(
+        try_from = "AkitaFieldProgramWire<PCS>",
+        into = "AkitaFieldProgramWire<PCS>"
+    )
+)]
 pub enum ProgramPreprocessing<PCS: CommitmentScheme> {
     /// `Arc` so witness backends take an owning handle without deep-cloning
     /// the program-sized tables (serde `rc`: serializes as the contents).
     Full(Arc<JoltProgramPreprocessing>),
     Committed(CommittedProgramPreprocessing<PCS>),
+}
+
+// Wire tags 0 and 1 already identify full and ordinary committed programs.
+// Tag 2 identifies the wider grid even when both encodings have the same physical arity.
+#[cfg(all(feature = "akita", feature = "field-inline"))]
+#[derive(Serialize, Deserialize)]
+enum FieldProgramWire<F, C> {
+    Full(F),
+    #[serde(rename = "Committed")]
+    OrdinaryCommitted,
+    FieldCommitted(C),
+}
+
+#[cfg(all(feature = "akita", feature = "field-inline"))]
+type AkitaFieldProgramWire<PCS> =
+    FieldProgramWire<Arc<JoltProgramPreprocessing>, CommittedProgramPreprocessing<PCS>>;
+
+#[cfg(all(feature = "akita", feature = "field-inline"))]
+impl<PCS: CommitmentScheme> From<ProgramPreprocessing<PCS>> for AkitaFieldProgramWire<PCS> {
+    fn from(program: ProgramPreprocessing<PCS>) -> Self {
+        match program {
+            ProgramPreprocessing::Full(full) => Self::Full(full),
+            ProgramPreprocessing::Committed(program) => Self::FieldCommitted(program),
+        }
+    }
+}
+
+#[cfg(all(feature = "akita", feature = "field-inline"))]
+impl<PCS: CommitmentScheme> TryFrom<AkitaFieldProgramWire<PCS>> for ProgramPreprocessing<PCS> {
+    type Error = &'static str;
+
+    fn try_from(wire: AkitaFieldProgramWire<PCS>) -> Result<Self, Self::Error> {
+        match wire {
+            FieldProgramWire::Full(full) => Ok(Self::Full(full)),
+            FieldProgramWire::FieldCommitted(program) => Ok(Self::Committed(program)),
+            FieldProgramWire::OrdinaryCommitted => {
+                Err("ordinary committed bytecode encoding lacks field selectors")
+            }
+        }
+    }
 }
 
 impl<PCS: CommitmentScheme> ProgramPreprocessing<PCS> {
@@ -192,12 +239,17 @@ impl<PCS: CommitmentScheme> ProgramPreprocessing<PCS> {
                     reason: error.to_string(),
                 }
             })?;
-        Ok(
-            DigestHasher::new_with_prefix(PROGRAM_PREPROCESSING_DIGEST_DOMAIN)
-                .chain_update(encoded)
-                .finalize()
-                .into(),
-        )
+        let domain = PROGRAM_PREPROCESSING_DIGEST_DOMAIN;
+        #[cfg(all(feature = "akita", feature = "field-inline"))]
+        let domain = if self.committed().is_some() {
+            b"jolt/program-preprocessing/akita-whole-bytecode/field-inline/committed/v2".as_slice()
+        } else {
+            domain
+        };
+        Ok(DigestHasher::new_with_prefix(domain)
+            .chain_update(encoded)
+            .finalize()
+            .into())
     }
 }
 
@@ -374,8 +426,8 @@ mod tests {
     ];
     #[cfg(all(feature = "akita", feature = "field-inline"))]
     const COMMITTED_PROGRAM_DIGEST: [u8; 32] = [
-        214, 239, 15, 54, 77, 44, 236, 199, 201, 107, 208, 51, 231, 40, 118, 209, 34, 141, 67, 171,
-        60, 203, 110, 128, 253, 201, 3, 216, 94, 144, 198, 3,
+        225, 102, 26, 58, 53, 60, 106, 157, 247, 133, 245, 97, 175, 255, 190, 197, 105, 10, 180,
+        43, 10, 234, 105, 160, 150, 60, 131, 44, 144, 60, 92, 220,
     ];
 
     /// An empty program over a real (non-zero) memory layout, so every layout
@@ -475,6 +527,21 @@ mod tests {
             .digest()
             .unwrap();
         assert_eq!(digest, FULL_PROGRAM_DIGEST);
+    }
+
+    #[cfg(all(feature = "akita", feature = "field-inline"))]
+    #[test]
+    fn ordinary_committed_wire_tag_is_rejected() {
+        let config = bincode::config::standard();
+        let program = ProgramPreprocessing::<Pcs>::Committed(committed());
+        let mut bytes = bincode::serde::encode_to_vec(program, config).unwrap();
+        let tag = bytes.first_mut().unwrap();
+        assert_eq!(*tag, 2);
+        *tag = 1;
+        assert!(
+            bincode::serde::decode_from_slice::<ProgramPreprocessing<Pcs>, _>(&bytes, config)
+                .is_err()
+        );
     }
 
     #[test]

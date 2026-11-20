@@ -101,7 +101,11 @@ pub fn committed_program_packing_plan(
     Ok(PrecommittedPackingPlan {
         bytecode: PrefixPackedObjectPlan::new_with_trace_order(
             direct_program_role(JoltCommittedPolynomial::ProgramBytecode, 2)?,
-            b"program-bytecode-whole-v1",
+            if cfg!(all(feature = "akita", feature = "field-inline")) {
+                b"program-bytecode-field-selectors-v1"
+            } else {
+                b"program-bytecode-whole-v1"
+            },
             vec![(JoltCommittedPolynomial::ProgramBytecode, bytecode_vars)],
             trace_order,
         )?,
@@ -294,11 +298,9 @@ impl PrefixPackedObjectPlan {
 
 fn direct_program_role(
     id: JoltCommittedPolynomial,
-    order: usize,
+    order: u64,
 ) -> Result<CommitmentGroupRole, OpeningsError> {
-    let order = u64::try_from(order).map_err(|_| {
-        OpeningsError::InvalidSetup("direct program role order exceeds u64".to_owned())
-    })?;
+    let order = order + u64::from(cfg!(all(feature = "akita", feature = "field-inline")));
     match id {
         JoltCommittedPolynomial::ProgramBytecode => Ok(CommitmentGroupRole::new(
             order,
@@ -485,16 +487,17 @@ mod tests {
             plan.bytecode.packing().ids(),
             [JoltCommittedPolynomial::ProgramBytecode]
         );
-        assert_eq!(plan.bytecode.packing().logical_num_vars(), 16);
+        let field = usize::from(cfg!(all(feature = "akita", feature = "field-inline")));
+        assert_eq!(plan.bytecode.packing().logical_num_vars(), 16 + field);
         let role = plan.bytecode.group_role();
-        assert_eq!(role.order(), 2);
+        assert_eq!(role.order(), 2 + field as u64);
         assert_eq!(role.transcript_label(), b"program_bytecode");
         assert_eq!(role.transcript_index(), None);
         assert_eq!(
             plan.program_image.packing().ids(),
             [JoltCommittedPolynomial::ProgramImageInit]
         );
-        assert_eq!(plan.program_image.group_role().order(), 3);
+        assert_eq!(plan.program_image.group_role().order(), 3 + field as u64);
         assert_eq!(
             plan.program_image
                 .logical_num_vars(JoltCommittedPolynomial::ProgramImageInit),
@@ -523,6 +526,24 @@ mod tests {
         );
     }
 
+    #[cfg(all(feature = "akita", feature = "field-inline"))]
+    #[test]
+    fn bytecode_layout_digest_distinguishes_field_selectors_at_equal_arity() {
+        let order = TracePolynomialOrder::CycleMajor;
+        let field = committed_program_packing_plan(4, 2, order)
+            .unwrap()
+            .bytecode;
+        let ordinary = PrefixPackedObjectPlan::new_with_trace_order(
+            field.group_role(),
+            b"program-bytecode-whole-v1",
+            vec![(JoltCommittedPolynomial::ProgramBytecode, 12)],
+            order,
+        )
+        .unwrap();
+        assert_eq!(field.packing(), ordinary.packing());
+        assert_ne!(field.layout_digest(), ordinary.layout_digest());
+    }
+
     #[test]
     fn direct_program_plan_rejects_arity_above_34() {
         assert!(
@@ -531,8 +552,13 @@ mod tests {
         assert!(
             committed_program_packing_plan(2, 1 << 35, TracePolynomialOrder::CycleMajor).is_err()
         );
+        let max_rows = 1 << (DIRECT_PROGRAM_MAX_PHYSICAL_VARS - bytecode_total_vars(1).unwrap());
+        assert!(
+            committed_program_packing_plan(max_rows * 2, 2, TracePolynomialOrder::CycleMajor)
+                .is_err()
+        );
         let boundary =
-            committed_program_packing_plan(1 << 25, 2, TracePolynomialOrder::CycleMajor).unwrap();
+            committed_program_packing_plan(max_rows, 2, TracePolynomialOrder::CycleMajor).unwrap();
         assert_eq!(boundary.bytecode.packing().packed_num_vars(), 34);
     }
 }

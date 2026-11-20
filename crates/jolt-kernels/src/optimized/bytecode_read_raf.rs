@@ -529,19 +529,20 @@ impl<F: JoltField> AddressKernel<F> {
             .into_iter()
             .zip([field_read_write_cycle, field_val_evaluation_cycle])
             .zip([gamma_powers[3], gamma_powers[4]])
-            .filter_map(|((values, point), weight)| {
+            .enumerate()
+            .filter_map(|(index, ((values, point), weight))| {
                 values
                     .evals()
                     .iter()
                     .any(|value| !value.is_zero())
-                    .then_some((values, point, weight))
+                    .then_some((index, values, point, weight))
             })
             .collect::<Vec<_>>();
         #[cfg(feature = "field-inline")]
         let composed_points: Vec<Vec<F>> = stage_cycle_points
             .iter()
             .cloned()
-            .chain(active_legs.iter().map(|(_, point, _)| point.clone()))
+            .chain(active_legs.iter().map(|(_, _, point, _)| point.clone()))
             .collect();
         #[cfg(feature = "field-inline")]
         let walk_points: &[Vec<F>] = &composed_points;
@@ -562,11 +563,15 @@ impl<F: JoltField> AddressKernel<F> {
             legs: pushforwards
                 .drain(base_stages..base_stages + active_legs.len())
                 .zip(active_legs)
-                .map(|(pushforward, (values, _, weight))| FieldInlineAddressLeg {
-                    weight,
-                    pushforward: Polynomial::new(pushforward),
-                    values,
-                })
+                .map(
+                    |(pushforward, (_index, values, _, weight))| FieldInlineAddressLeg {
+                        #[cfg(feature = "akita")]
+                        index: _index,
+                        weight,
+                        pushforward: Polynomial::new(pushforward),
+                        values,
+                    },
+                )
                 .collect(),
         };
         let pushforwards = pushforwards
@@ -639,6 +644,8 @@ struct FieldInlineAddressLegs<F: JoltField> {
     allocative(bound = "F: JoltField")
 )]
 struct FieldInlineAddressLeg<F: JoltField> {
+    #[cfg(feature = "akita")]
+    index: usize,
     weight: F,
     pushforward: Polynomial<F>,
     values: Polynomial<F>,
@@ -824,7 +831,16 @@ impl<F: JoltField> SumcheckKernel<F> for AddressKernel<F> {
             intermediate += self.field_inline.bound_term();
         }
         let val_stages = if self.committed_program {
-            self.values.iter().map(|table| table.evals()[0]).collect()
+            let values = self.values.iter().map(|table| table.evals()[0]);
+            #[cfg(all(feature = "akita", feature = "field-inline"))]
+            let values = {
+                let mut field = [F::zero(); 2];
+                for leg in &self.field_inline.legs {
+                    field[leg.index] = leg.values.evals()[0];
+                }
+                values.chain(field)
+            };
+            values.collect()
         } else {
             Vec::new()
         };

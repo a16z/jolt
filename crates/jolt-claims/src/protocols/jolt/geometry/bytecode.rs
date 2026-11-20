@@ -13,6 +13,8 @@ use super::super::{
     JoltOpeningId, JoltRelationId, JoltVirtualPolynomial,
 };
 use super::claim_reductions::bytecode::NUM_BYTECODE_VAL_STAGES;
+#[cfg(all(feature = "akita", feature = "field-inline"))]
+use super::claim_reductions::bytecode::{FIELD_RW_WIRE, FIELD_VAL_WIRE};
 use super::dimensions::PointGeometryError;
 use super::error::require_len;
 use super::instruction::{imm, instruction_raf_flag, lookup_table_flag, unexpanded_pc};
@@ -285,6 +287,20 @@ where
         + store_pair * ra_product.clone() * fused.clone() * store.clone()
         + notstore_pair.clone() * ra_product.clone() * fused.clone()
         - notstore_pair * ra_product.clone() * fused * store;
+
+    #[cfg(all(feature = "akita", feature = "field-inline"))]
+    for (index, (stage, wire)) in [(3, FIELD_RW_WIRE), (4, FIELD_VAL_WIRE)]
+        .into_iter()
+        .enumerate()
+    {
+        output = output
+            + gamma_power_expr(stage)
+                * derived(BytecodeReadRafPublic::StageCycleEq(
+                    READ_RAF_CYCLE_STAGES + index,
+                ))
+                * ra_product.clone()
+                * opening(super::claim_reductions::bytecode::bytecode_val_stage_opening(wire));
+    }
 
     let raf_coeff = gamma_power_expr(num_val_stages)
         * derived(BytecodeReadRafPublic::SpartanOuterRaf)

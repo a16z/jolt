@@ -5,7 +5,19 @@ use jolt_riscv::JoltInstructionRow;
 
 use crate::formula_error::PointGeometryError;
 
-pub const FIELD_INLINE_BYTECODE_STAGE4_GAMMA_COUNT: usize = 6;
+const RW_SELECTOR_POWERS: [usize; 3] = [3, 4, 5];
+const VAL_SELECTOR_POWER: usize = 2 + LookupTableKind::<XLEN>::COUNT;
+pub const FIELD_INLINE_BYTECODE_STAGE4_GAMMA_COUNT: usize = RW_SELECTOR_POWERS[2] + 1;
+
+/// Weights of the field Rd/Rs1/Rs2 read-write selectors and the field Rd value selector.
+/// Callers supply the extended power sequences for stages 4 and 5.
+pub fn selector_gammas<F: Copy>(stage4: &[F], stage5: &[F]) -> ([F; 3], F) {
+    (
+        RW_SELECTOR_POWERS.map(|power| stage4[power]),
+        stage5[VAL_SELECTOR_POWER],
+    )
+}
+
 pub const FIELD_INLINE_BYTECODE_STAGE5_EXTRA_GAMMAS: usize = 1;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -130,10 +142,9 @@ fn assemble_stage_values<F: JoltField>(
     stage4_gammas: &[F],
     stage5_gammas: &[F],
 ) -> [F; 5] {
-    let stage4 = read_write[0] * stage4_gammas[3]
-        + read_write[1] * stage4_gammas[4]
-        + read_write[2] * stage4_gammas[5];
-    let stage5 = val_evaluation * stage5_gammas[2 + LookupTableKind::<XLEN>::COUNT];
+    let ([rd, rs1, rs2], val) = selector_gammas(stage4_gammas, stage5_gammas);
+    let stage4 = read_write[0] * rd + read_write[1] * rs1 + read_write[2] * rs2;
+    let stage5 = val_evaluation * val;
     [F::zero(), F::zero(), F::zero(), stage4, stage5]
 }
 

@@ -8,6 +8,8 @@
 use jolt_field::{JoltField, Ring};
 use jolt_lookup_tables::{LookupTableKind, XLEN};
 use jolt_poly::EqPolynomial;
+#[cfg(all(feature = "akita", feature = "field-inline"))]
+use jolt_riscv::FIELD_REGISTER_COUNT;
 use jolt_riscv::{CircuitFlags, InstructionFlags, NUM_CIRCUIT_FLAGS, NUM_INSTRUCTION_FLAGS};
 use jolt_utils::log2_power_of_two;
 
@@ -27,7 +29,7 @@ use super::precommitted::{
     PrecommittedReductionLayout, PrecommittedSchedulingReference,
 };
 
-/// Number of staged `BytecodeValClaim(i)` claims batched into the reduction:
+/// Number of ordinary bytecode values, including the Akita store selector:
 /// the five base flag stages, plus (akita) the `OpFlags(Store)` stage the
 /// `IncVirtualization` phase consumes as its destination selector.
 #[cfg(not(feature = "akita"))]
@@ -35,15 +37,26 @@ pub const NUM_BYTECODE_VAL_STAGES: usize = 5;
 #[cfg(feature = "akita")]
 pub const NUM_BYTECODE_VAL_STAGES: usize = 6;
 
+#[cfg(all(feature = "akita", feature = "field-inline"))]
+pub const FIELD_RW_WIRE: usize = NUM_BYTECODE_VAL_STAGES;
+#[cfg(all(feature = "akita", feature = "field-inline"))]
+pub const FIELD_VAL_WIRE: usize = FIELD_RW_WIRE + 1;
+
+/// Number of raw address-phase values authenticated by the committed bytecode reduction.
+#[cfg(all(feature = "akita", feature = "field-inline"))]
+pub const COMMITTED_BYTECODE_VALUES: usize = FIELD_VAL_WIRE + 1;
+#[cfg(not(all(feature = "akita", feature = "field-inline")))]
+pub const COMMITTED_BYTECODE_VALUES: usize = NUM_BYTECODE_VAL_STAGES;
+
 const REGISTER_COUNT: usize = 1 << REGISTER_ADDRESS_BITS;
 
+#[cfg(all(feature = "akita", feature = "field-inline"))]
+const FIELD_LANES: usize = 3 * FIELD_REGISTER_COUNT as usize;
+#[cfg(not(all(feature = "akita", feature = "field-inline")))]
+const FIELD_LANES: usize = 0;
+
 pub const fn total_lanes() -> usize {
-    3 * REGISTER_COUNT
-        + 2
-        + NUM_CIRCUIT_FLAGS
-        + NUM_INSTRUCTION_FLAGS
-        + LookupTableKind::<XLEN>::COUNT
-        + 1
+    BYTECODE_LANE_LAYOUT.raf_flag_idx + 1 + FIELD_LANES
 }
 
 pub const COMMITTED_BYTECODE_LANE_CAPACITY: usize = total_lanes().next_power_of_two();
@@ -77,6 +90,13 @@ pub struct BytecodeLaneLayout {
 }
 
 impl BytecodeLaneLayout {
+    #[cfg(all(feature = "akita", feature = "field-inline"))]
+    pub const fn field_starts(self) -> [usize; 3] {
+        let rd = self.raf_flag_idx + 1;
+        let rs1 = rd + FIELD_REGISTER_COUNT as usize;
+        [rd, rs1, rs1 + FIELD_REGISTER_COUNT as usize]
+    }
+
     pub const fn new() -> Self {
         let rs1_start = 0usize;
         let rs2_start = rs1_start + REGISTER_COUNT;
@@ -288,6 +308,13 @@ pub struct BytecodeOutputWeightInputs<'a, F> {
     pub lane_weights: &'a [F],
 }
 
+#[cfg(all(feature = "akita", feature = "field-inline"))]
+pub struct FieldRegisterLaneInputs<'a, F> {
+    pub read_write_address: &'a [F],
+    pub value_address: &'a [F],
+    pub selector_gammas: ([F; 3], F),
+}
+
 /// Inputs to [`lane_weights`]; the gamma vectors are the same per-stage gamma
 /// powers consumed by `bytecode::read_raf_public_values`. The register points
 /// are the full `RdWa` opening points from registers read-write checking and
@@ -295,6 +322,8 @@ pub struct BytecodeOutputWeightInputs<'a, F> {
 /// address components are read (unlike `BytecodeReadRafEvaluationInputs`,
 /// whose same-named fields take the address components alone).
 pub struct BytecodeLaneWeightInputs<'a, F> {
+    #[cfg(all(feature = "akita", feature = "field-inline"))]
+    pub field: FieldRegisterLaneInputs<'a, F>,
     pub eta: F,
     pub stage1_gammas: &'a [F],
     pub stage2_gammas: &'a [F],
@@ -305,7 +334,7 @@ pub struct BytecodeLaneWeightInputs<'a, F> {
     pub register_val_evaluation_point: &'a [F],
 }
 
-/// Fold the five staged bytecode read-RAF combinations into one weight per
+/// Fold the staged bytecode read-RAF combinations into one weight per
 /// committed lane, so `sum_lane weights[lane] * lane_value(row, lane)` equals
 /// `sum_stage eta^stage * stage_value(row)` for every bytecode row.
 pub fn lane_weights<F: JoltField>(
@@ -319,13 +348,12 @@ pub fn lane_weights<F: JoltField>(
     require_opening_point_len(inputs.register_read_write_point, REGISTER_ADDRESS_BITS)?;
     require_opening_point_len(inputs.register_val_evaluation_point, REGISTER_ADDRESS_BITS)?;
 
-    let mut eta_powers = [F::one(); NUM_BYTECODE_VAL_STAGES];
-    for stage in 1..NUM_BYTECODE_VAL_STAGES {
+    let mut eta_powers = [F::one(); COMMITTED_BYTECODE_VALUES];
+    for stage in 1..COMMITTED_BYTECODE_VALUES {
         eta_powers[stage] = eta_powers[stage - 1] * inputs.eta;
     }
 
     let layout = BYTECODE_LANE_LAYOUT;
-    debug_assert_eq!(layout.raf_flag_idx + 1, total_lanes());
 
     let register_read_write_eq = EqPolynomial::<F>::evals(
         &inputs.register_read_write_point[..REGISTER_ADDRESS_BITS],
@@ -395,14 +423,38 @@ pub fn lane_weights<F: JoltField>(
         }
     }
     // The lattice store stage: one raw circuit-flag lane at η^5, no gamma fold
-    // (mirrors the read-raf sixth staged val, which consumes the
-    // `IncVirtualization` store selector claim directly). Anchored on the fixed
-    // base count so it lands at η^5 while `eta_powers` is sized by the active
-    // (cfg'd) `NUM_BYTECODE_VAL_STAGES` (= 6 here).
+    // used by both fused increment destinations.
     #[cfg(feature = "akita")]
     {
         weights[layout.circuit_start + (CircuitFlags::Store as usize)] +=
             eta_powers[BYTECODE_STAGE_GAMMA_COUNTS.len()];
+    }
+
+    #[cfg(all(feature = "akita", feature = "field-inline"))]
+    {
+        let field = inputs.field;
+        let ([rd_gamma, rs1_gamma, rs2_gamma], val_gamma) = field.selector_gammas;
+        for point in [field.read_write_address, field.value_address] {
+            let expected = FIELD_REGISTER_COUNT.ilog2() as usize;
+            if point.len() != expected {
+                return Err(PointGeometryError::OpeningPointLengthMismatch {
+                    expected,
+                    got: point.len(),
+                });
+            }
+        }
+        let [rd, rs1, rs2] = layout.field_starts();
+        let val_eq = EqPolynomial::<F>::evals(field.value_address, None);
+        for (k, rw_eq) in EqPolynomial::<F>::evals(field.read_write_address, None)
+            .into_iter()
+            .enumerate()
+        {
+            let rw_weight = eta_powers[FIELD_RW_WIRE] * rw_eq;
+            weights[rd + k] =
+                rw_weight * rd_gamma + eta_powers[FIELD_VAL_WIRE] * val_gamma * val_eq[k];
+            weights[rs1 + k] = rw_weight * rs1_gamma;
+            weights[rs2 + k] = rw_weight * rs2_gamma;
+        }
     }
 
     Ok(weights)
@@ -575,7 +627,7 @@ mod tests {
             layout.raf_flag_idx,
             layout.lookup_start + LookupTableKind::<XLEN>::COUNT
         );
-        assert_eq!(layout.raf_flag_idx + 1, total_lanes());
+        assert_eq!(layout.raf_flag_idx + 1 + FIELD_LANES, total_lanes());
 
         assert!(COMMITTED_BYTECODE_LANE_CAPACITY.is_power_of_two());
         assert!(COMMITTED_BYTECODE_LANE_CAPACITY >= total_lanes());
@@ -627,6 +679,12 @@ mod tests {
             .sum::<Fr>();
 
         let weights = lane_weights::<Fr>(BytecodeLaneWeightInputs {
+            #[cfg(all(feature = "akita", feature = "field-inline"))]
+            field: FieldRegisterLaneInputs {
+                read_write_address: &[fr(1); 4],
+                value_address: &[fr(2); 4],
+                selector_gammas: ([fr(1); 3], fr(2)),
+            },
             eta,
             stage1_gammas: &stage1_gammas,
             stage2_gammas: &stage2_gammas,
@@ -660,6 +718,12 @@ mod tests {
         let register_point: Vec<Fr> = (1..=REGISTER_ADDRESS_BITS as u64).map(fr).collect();
 
         let result = lane_weights::<Fr>(BytecodeLaneWeightInputs {
+            #[cfg(all(feature = "akita", feature = "field-inline"))]
+            field: FieldRegisterLaneInputs {
+                read_write_address: &[fr(1); 4],
+                value_address: &[fr(2); 4],
+                selector_gammas: ([fr(1); 3], fr(2)),
+            },
             eta: fr(31),
             stage1_gammas: &stage1_gammas,
             stage2_gammas: &[fr(1); 4],

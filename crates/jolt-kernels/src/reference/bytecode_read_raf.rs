@@ -550,7 +550,15 @@ impl<F: JoltField> SumcheckKernel<F> for BytecodeReadRafAddressKernel<F> {
         // Committed mode stages the RAW bound `Val_s` values (the distinct
         // tables — the fused stages dedup through the store column).
         let val_stages = if self.committed_program {
-            self.values.iter().map(|table| table.evals()[0]).collect()
+            let values = self.values.iter().map(|table| table.evals()[0]);
+            #[cfg(all(feature = "akita", feature = "field-inline"))]
+            let values = values.chain(
+                self.field_inline
+                    .values
+                    .iter()
+                    .map(|table| table.evals()[0]),
+            );
+            values.collect()
         } else {
             Vec::new()
         };

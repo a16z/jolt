@@ -47,11 +47,9 @@ fn gamma_powers<F: Field>(gamma: F, len: usize) -> Vec<F> {
     powers
 }
 
-/// Field-register opening points and batching powers for full-program bytecode
-/// read-RAF. The clear relation folds the bytecode rows at construction and
-/// caches their address evaluations; `expected_output` applies the cycle
-/// equality factors. BlindFold derives the same public values when lowering
-/// the output constraint.
+/// Field-register points and batching powers for bytecode read-RAF. Full mode
+/// evaluates the decoded rows. Committed Akita obtains the corresponding address
+/// evaluations from the two staged openings. Each uses its own cycle equality.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FieldInlineBytecodeFold<F> {
     /// The `FIELD_REGISTERS_LOG_K`-variable address prefix of the stage-4 field-inline

@@ -22,6 +22,11 @@ use jolt_claims::protocols::jolt::{
     },
     JoltRelationId,
 };
+#[cfg(all(feature = "akita", feature = "field-inline"))]
+use jolt_claims::protocols::{
+    field_inline::geometry::bytecode::selector_gammas,
+    jolt::geometry::claim_reductions::bytecode::FieldRegisterLaneInputs,
+};
 use jolt_claims::NoChallenges;
 use jolt_crypto::VectorCommitment;
 use jolt_field::JoltField;
@@ -276,7 +281,7 @@ impl<F: JoltField> Stage6bSumchecks<F> {
 
         // (The verifier's own `build` already rejected at the metadata
         // requirement; this guards the shared parts-level entry too.)
-        #[cfg(feature = "field-inline")]
+        #[cfg(all(feature = "field-inline", not(feature = "akita")))]
         super::field_inline::require_full_program(committed_program)?;
 
         let booleanity_dimensions =
@@ -384,6 +389,15 @@ impl<F: JoltField> Stage6bSumchecks<F> {
                 layout,
                 BytecodeLaneWeightInputs {
                     eta,
+                    #[cfg(all(feature = "akita", feature = "field-inline"))]
+                    field: FieldRegisterLaneInputs {
+                        read_write_address: &field_inline_legs.fold.read_write_address,
+                        value_address: &field_inline_legs.fold.val_evaluation_address,
+                        selector_gammas: selector_gammas(
+                            &field_inline_legs.fold.gammas.stage4,
+                            &field_inline_legs.fold.gammas.stage5,
+                        ),
+                    },
                     stage1_gammas: &stage_gamma_powers[0],
                     stage2_gammas: &stage_gamma_powers[1],
                     stage3_gammas: &stage_gamma_powers[2],
@@ -412,6 +426,8 @@ impl<F: JoltField> Stage6bSumchecks<F> {
                 stage_cycle_points,
                 entry_bytecode_index,
                 committed_chunk_bits,
+                #[cfg(all(feature = "akita", feature = "field-inline"))]
+                field_inline: field_inline_legs.fold,
                 val_stages: address_val_stages,
             })
         } else {

@@ -21,20 +21,23 @@ pub struct FieldIncObject<PCS: CommitmentScheme> {
 }
 
 /// Canonical trace geometry checked against the setup before backend dispatch.
-/// Hints are in protocol order: untrusted advice, trusted advice, then
-/// direct-program objects.
+/// Advice hints follow untrusted/trusted order. Program hints are the bytecode/image
+/// pair. The backend inserts its field increment between the two sets and appends
+/// its fused increment before committing the trace.
 pub struct WitnessCommitRequest<'a, PCS: CommitmentScheme> {
     setup: &'a PCS::ProverSetup,
     shape: OneHotTraceShape,
     plan: OneHotTraceLayoutPlan,
-    precommitted_hints: &'a [&'a PCS::OpeningHint],
+    advice_hints: &'a [&'a PCS::OpeningHint],
+    program_hints: Option<[&'a PCS::OpeningHint; 2]>,
 }
 
 impl<'a, PCS: CommitmentScheme> WitnessCommitRequest<'a, PCS> {
     pub fn new(
         setup: &'a PCS::ProverSetup,
         shape: OneHotTraceShape,
-        precommitted_hints: &'a [&'a PCS::OpeningHint],
+        advice_hints: &'a [&'a PCS::OpeningHint],
+        program_hints: Option<[&'a PCS::OpeningHint; 2]>,
     ) -> Result<Self, OpeningsError>
     where
         PCS::ProverSetup: GroupSetupMetadata,
@@ -45,9 +48,11 @@ impl<'a, PCS: CommitmentScheme> WitnessCommitRequest<'a, PCS> {
                 "the Akita setup's layout digest is not the canonical OneHotTrace digest".into(),
             ));
         }
-        let required_batch_polys = precommitted_hints
+        let required_batch_polys = advice_hints
             .len()
-            .checked_add(plan.ids().len() + 1)
+            .checked_add(
+                plan.ids().len() + 1 + program_hints.as_ref().map_or(0, |objects| objects.len()),
+            )
             .and_then(|count| count.checked_add(usize::from(cfg!(feature = "field-inline"))))
             .ok_or_else(|| {
                 OpeningsError::InvalidBatch("Akita batch polynomial count overflow".into())
@@ -65,7 +70,8 @@ impl<'a, PCS: CommitmentScheme> WitnessCommitRequest<'a, PCS> {
             setup,
             shape,
             plan,
-            precommitted_hints,
+            advice_hints,
+            program_hints,
         })
     }
 
@@ -81,8 +87,12 @@ impl<'a, PCS: CommitmentScheme> WitnessCommitRequest<'a, PCS> {
         &self.plan
     }
 
-    pub fn precommitted_hints(&self) -> &'a [&'a PCS::OpeningHint] {
-        self.precommitted_hints
+    pub fn program_hints(&self) -> Option<[&'a PCS::OpeningHint; 2]> {
+        self.program_hints
+    }
+
+    pub fn advice_hints(&self) -> &'a [&'a PCS::OpeningHint] {
+        self.advice_hints
     }
 }
 

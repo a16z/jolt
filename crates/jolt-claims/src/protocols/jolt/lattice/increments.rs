@@ -51,7 +51,11 @@ impl FusedIncLayout {
 /// Orders the bounded fused increment after advice and direct program objects.
 #[cfg(feature = "akita")]
 pub const fn fused_inc_group_role() -> CommitmentGroupRole {
-    CommitmentGroupRole::new(4, b"fused_inc", "fused-inc")
+    CommitmentGroupRole::new(
+        if cfg!(feature = "field-inline") { 5 } else { 4 },
+        b"fused_inc",
+        "fused-inc",
+    )
 }
 
 #[cfg(test)]

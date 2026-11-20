@@ -91,7 +91,8 @@ impl CommitWitness<AkitaField, AkitaScheme> for SessionCommit {
             .state::<ExecutionState>()
             .expect("full prove must receive the caller's execution state");
         assert_eq!(execution.trace_length, 1usize << request.shape().log_t);
-        assert!(request.precommitted_hints().is_empty());
+        assert!(request.advice_hints().is_empty());
+        assert!(request.program_hints().is_none());
         assert_eq!(
             request.plan().num_vars(),
             request.shape().log_t + request.shape().log_k_chunk,

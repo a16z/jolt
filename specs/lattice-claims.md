@@ -24,8 +24,7 @@
 > joint opening also carries an always-present dense commitment to the full
 > `FieldRdInc` values, created from the execution witness in stage 0 and
 > ordered after `TrustedAdvice`. Stage 8 opens the stage-6b reduced claim
-> directly. The verifier rejects committed-program mode with field-inline
-> enabled, so direct-program roles never share a batch with it. See
+> directly. In committed mode the bytecode and image follow the field increment in the same batch. See
 > [field-inline-portability.md](field-inline-portability.md).
 
 ## Purpose
@@ -157,8 +156,8 @@ Committed-program preprocessing creates:
 - one singleton `ProgramImageInit` object.
 
 The bytecode uses the shared canonical
-`build_committed_bytecode_coeffs` grid. Its lane capacity is 512, so
-with `R = log2(bytecode_len)` its logical arity is `9 + R`. The image
+`build_committed_bytecode_coeffs` grid. With `R = log2(bytecode_len)`, logical arity is `9 + R` for ordinary Akita
+and `10 + R` for field-inline Akita (512 and 1,024 lanes respectively). The image
 logical arity is `log2(padded_image_words)`. Both use physical arity
 `max(14, logical_arity)` and reject arity above 34.
 
@@ -256,7 +255,7 @@ For `A` advice kinds with nonzero capacity and `M` native trace columns,
 committed-program setup covers `4 + A` commitment groups and `3 + A + M`
 polynomials: one whole bytecode, one image, one fused increment, `A` singleton advice objects,
 and one `M`-polynomial trace group. The bounds `A <= 2` and `M <= 64`
-allow at most 6 groups and 69 polynomials.
+allow at most 6 groups and 69 polynomials on ordinary builds. Field-inline adds one mandatory full-width group and one polynomial to each count.
 One setup plans only its final arity and column count, so at most four rows
 cover the reachable advice-presence cases. The 128-row bound applies to one
 provisioning request, not to the process cache.
