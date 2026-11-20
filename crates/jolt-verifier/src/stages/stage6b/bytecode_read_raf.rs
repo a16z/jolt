@@ -780,10 +780,6 @@ impl<F: JoltField> ConcreteSumcheck<F> for BytecodeReadRafCommitted<F> {
         derive_cycle_opening_points(&self.r_address, self.committed_chunk_bits, r_cycle)
     }
 
-    #[expect(
-        clippy::wildcard_enum_match_arm,
-        reason = "fail-closed: ids not owned by this relation resolve to a missing-claim error"
-    )]
     fn expected_output(
         &self,
         _input_points: &BytecodeReadRafInputClaims<Vec<F>>,
