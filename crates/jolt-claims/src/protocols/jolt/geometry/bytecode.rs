@@ -12,9 +12,7 @@ use super::super::{
     BytecodeReadRafChallenge, BytecodeReadRafPublic, JoltCommittedPolynomial, JoltExpr,
     JoltOpeningId, JoltRelationId, JoltVirtualPolynomial,
 };
-use super::claim_reductions::bytecode::NUM_BYTECODE_VAL_STAGES;
-#[cfg(all(feature = "akita", feature = "field-inline"))]
-use super::claim_reductions::bytecode::{FIELD_RW_WIRE, FIELD_VAL_WIRE};
+use super::claim_reductions::bytecode::{CommittedBytecodeProfile, NUM_BYTECODE_VAL_STAGES};
 use super::dimensions::PointGeometryError;
 use super::error::require_len;
 use super::instruction::{imm, instruction_raf_flag, lookup_table_flag, unexpanded_pc};
@@ -288,9 +286,9 @@ where
         + notstore_pair.clone() * ra_product.clone() * fused.clone()
         - notstore_pair * ra_product.clone() * fused * store;
 
-    #[cfg(all(feature = "akita", feature = "field-inline"))]
-    for (index, (stage, wire)) in [(3, FIELD_RW_WIRE), (4, FIELD_VAL_WIRE)]
-        .into_iter()
+    for (index, &stage) in CommittedBytecodeProfile::ACTIVE
+        .extra_cycle_stages
+        .iter()
         .enumerate()
     {
         output = output
@@ -299,7 +297,11 @@ where
                     READ_RAF_CYCLE_STAGES + index,
                 ))
                 * ra_product.clone()
-                * opening(super::claim_reductions::bytecode::bytecode_val_stage_opening(wire));
+                * opening(
+                    super::claim_reductions::bytecode::bytecode_val_stage_opening(
+                        NUM_BYTECODE_VAL_STAGES + index,
+                    ),
+                );
     }
 
     let raf_coeff = gamma_power_expr(num_val_stages)

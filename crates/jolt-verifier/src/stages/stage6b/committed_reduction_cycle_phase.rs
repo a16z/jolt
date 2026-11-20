@@ -16,10 +16,12 @@
 //! produced opening id is dynamic in `has_address_phase`; the override computes
 //! exactly the formula value, so the clear path and BlindFold stay in sync.
 
+#[cfg(all(feature = "akita", feature = "field-inline"))]
+use jolt_claims::protocols::composed::geometry::committed_bytecode::FieldRegisterLaneInputs;
 use jolt_claims::protocols::jolt::geometry::claim_reductions::advice::ram_val_check_advice_opening;
-use jolt_claims::protocols::jolt::geometry::claim_reductions::bytecode::{
-    lane_weights, BytecodeLaneWeightInputs,
-};
+#[cfg(not(all(feature = "akita", feature = "field-inline")))]
+use jolt_claims::protocols::jolt::geometry::claim_reductions::bytecode::lane_weights;
+use jolt_claims::protocols::jolt::geometry::claim_reductions::bytecode::BytecodeLaneWeightInputs;
 use jolt_claims::protocols::jolt::relations;
 pub use jolt_claims::protocols::jolt::relations::claim_reductions::advice::{
     TrustedAdviceCyclePhaseInputClaims, TrustedAdviceCyclePhaseOutputClaims,
@@ -415,11 +417,17 @@ impl<F: JoltField> BytecodeReductionCyclePhase<F> {
 pub fn bytecode_reduction_weights<F: JoltField>(
     layout: &BytecodeClaimReductionLayout,
     lane_inputs: BytecodeLaneWeightInputs<'_, F>,
+    #[cfg(all(feature = "akita", feature = "field-inline"))] field: FieldRegisterLaneInputs<'_, F>,
     bytecode_r_address: &[F],
 ) -> Result<BytecodeReductionWeights<F>, VerifierError> {
     let address_point = layout
         .address_point(bytecode_r_address)
         .map_err(bytecode_public_failed)?;
+    #[cfg(all(feature = "akita", feature = "field-inline"))]
+    let lane_weights = field
+        .lane_weights(lane_inputs)
+        .map_err(bytecode_public_failed)?;
+    #[cfg(not(all(feature = "akita", feature = "field-inline")))]
     let lane_weights = lane_weights(lane_inputs).map_err(bytecode_public_failed)?;
     Ok(BytecodeReductionWeights {
         r_bc: address_point,

@@ -151,15 +151,13 @@ mod tests {
     use super::*;
     use common::constants::REGISTER_COUNT;
     use jolt_akita::AkitaField as F;
+    use jolt_claims::protocols::composed::geometry::committed_bytecode::FieldRegisterLaneInputs;
     use jolt_claims::protocols::field_inline::geometry::bytecode::{
         read_raf_folded_stage_values, selector_gammas, FieldInlineBytecodeReadRafStageValueInputs,
     };
     use jolt_claims::protocols::jolt::geometry::{
         bytecode::BYTECODE_STAGE_GAMMA_COUNTS,
-        claim_reductions::bytecode::{
-            lane_weights, BytecodeLaneWeightInputs, FieldRegisterLaneInputs,
-        },
-        dimensions::REGISTER_ADDRESS_BITS,
+        claim_reductions::bytecode::BytecodeLaneWeightInputs, dimensions::REGISTER_ADDRESS_BITS,
     };
     use jolt_field::{One, Ring, Zero};
     use jolt_poly::EqPolynomial;
@@ -305,7 +303,12 @@ mod tests {
         let order = TracePolynomialOrder::CycleMajor;
         let grid = build_committed_bytecode_coeffs::<F>(&rows, order).expect("valid field rows");
         for eta in [F::from_u64(1), F::from_u64(29)] {
-            let weights = lane_weights(BytecodeLaneWeightInputs {
+            let weights = FieldRegisterLaneInputs {
+                read_write_address: &rw,
+                value_address: &val,
+                selector_gammas: selector_gammas(&g4, &g5),
+            }
+            .lane_weights(BytecodeLaneWeightInputs {
                 eta,
                 stage1_gammas: &ordinary[0],
                 stage2_gammas: &ordinary[1],
@@ -314,11 +317,6 @@ mod tests {
                 stage5_gammas: &ordinary[4],
                 register_read_write_point: &[F::zero(); REGISTER_ADDRESS_BITS],
                 register_val_evaluation_point: &[F::zero(); REGISTER_ADDRESS_BITS],
-                field: FieldRegisterLaneInputs {
-                    read_write_address: &rw,
-                    value_address: &val,
-                    selector_gammas: selector_gammas(&g4, &g5),
-                },
             })
             .expect("valid stage points");
             let mut actual = F::zero();

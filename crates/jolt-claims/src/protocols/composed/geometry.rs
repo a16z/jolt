@@ -1,4 +1,6 @@
-//! Product-lane geometry shared by the composed Spartan relations and kernels.
+//! Geometry shared by the composed relations and kernels.
+
+pub mod committed_bytecode;
 
 #[cfg(feature = "field-inline")]
 use crate::protocols::field_inline::geometry::product::selected_product_lanes;

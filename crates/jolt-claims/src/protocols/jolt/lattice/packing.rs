@@ -14,7 +14,9 @@ use jolt_poly::eq_index_msb;
 use jolt_transcript::DigestHasher;
 use sha3::Digest;
 
-use super::super::geometry::claim_reductions::bytecode::bytecode_total_vars;
+use super::super::geometry::claim_reductions::bytecode::{
+    bytecode_total_vars, CommittedBytecodeProfile,
+};
 use super::super::geometry::ra::JoltRaPolynomialLayout;
 use super::super::{JoltAdviceKind, JoltCommittedPolynomial, TracePolynomialOrder};
 use super::geometry::LatticeGeometryError;
@@ -101,11 +103,7 @@ pub fn committed_program_packing_plan(
     Ok(PrecommittedPackingPlan {
         bytecode: PrefixPackedObjectPlan::new_with_trace_order(
             direct_program_role(JoltCommittedPolynomial::ProgramBytecode, 2)?,
-            if cfg!(all(feature = "akita", feature = "field-inline")) {
-                b"program-bytecode-field-selectors-v1"
-            } else {
-                b"program-bytecode-whole-v1"
-            },
+            CommittedBytecodeProfile::ACTIVE.packing_domain,
             vec![(JoltCommittedPolynomial::ProgramBytecode, bytecode_vars)],
             trace_order,
         )?,
@@ -300,7 +298,7 @@ fn direct_program_role(
     id: JoltCommittedPolynomial,
     order: u64,
 ) -> Result<CommitmentGroupRole, OpeningsError> {
-    let order = order + u64::from(cfg!(all(feature = "akita", feature = "field-inline")));
+    let order = order + CommittedBytecodeProfile::ACTIVE.preceding_groups;
     match id {
         JoltCommittedPolynomial::ProgramBytecode => Ok(CommitmentGroupRole::new(
             order,
@@ -487,7 +485,7 @@ mod tests {
             plan.bytecode.packing().ids(),
             [JoltCommittedPolynomial::ProgramBytecode]
         );
-        let field = usize::from(cfg!(all(feature = "akita", feature = "field-inline")));
+        let field = usize::from(CommittedBytecodeProfile::ACTIVE.extra_lanes > 0);
         assert_eq!(plan.bytecode.packing().logical_num_vars(), 16 + field);
         let role = plan.bytecode.group_role();
         assert_eq!(role.order(), 2 + field as u64);
@@ -526,22 +524,28 @@ mod tests {
         );
     }
 
-    #[cfg(all(feature = "akita", feature = "field-inline"))]
     #[test]
     fn bytecode_layout_digest_distinguishes_field_selectors_at_equal_arity() {
         let order = TracePolynomialOrder::CycleMajor;
-        let field = committed_program_packing_plan(4, 2, order)
+        let active = committed_program_packing_plan(4, 2, order)
             .unwrap()
             .bytecode;
-        let ordinary = PrefixPackedObjectPlan::new_with_trace_order(
-            field.group_role(),
-            b"program-bytecode-whole-v1",
-            vec![(JoltCommittedPolynomial::ProgramBytecode, 12)],
+        let arity = active.packing().logical_num_vars();
+        let other_domain: &[u8] = if arity == 12 {
+            b"program-bytecode-whole-v1"
+        } else {
+            assert_eq!(arity, 11);
+            b"program-bytecode-field-selectors-v1"
+        };
+        let other = PrefixPackedObjectPlan::new_with_trace_order(
+            active.group_role(),
+            other_domain,
+            vec![(JoltCommittedPolynomial::ProgramBytecode, arity)],
             order,
         )
         .unwrap();
-        assert_eq!(field.packing(), ordinary.packing());
-        assert_ne!(field.layout_digest(), ordinary.layout_digest());
+        assert_eq!(active.packing(), other.packing());
+        assert_ne!(active.layout_digest(), other.layout_digest());
     }
 
     #[test]

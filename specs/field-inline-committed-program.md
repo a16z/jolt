@@ -35,7 +35,7 @@ Wire 6 carries F4 and wire 7 carries F5. A program with zero field activity supp
 RA · (G³ · eq(t,t4) · F4(a) + G⁴ · eq(t,t5) · F5(a))
 ```
 
-The bytecode claim reduction draws its existing challenge η after the stage-6a values are fixed. It adds η⁶ F4(a) + η⁷ F5(a) to its input and incorporates the corresponding selector coefficients into the public lane weights. The dot product of each row and those weights equals the η-weighted sum of that row's eight staged values. The final opening of `ProgramBytecode` authenticates this sum. The cycle equalities enter only the read-RAF term. [Lane weights](../crates/jolt-claims/src/protocols/jolt/geometry/claim_reductions/bytecode.rs)
+The bytecode claim reduction draws its existing challenge η after the stage-6a values are fixed. It adds η⁶ F4(a) + η⁷ F5(a) to its input and incorporates the corresponding selector coefficients into the public lane weights. The dot product of each row and those weights equals the η-weighted sum of that row's eight staged values. The final opening of `ProgramBytecode` authenticates this sum. The cycle equalities enter only the read-RAF term. [Field-register lane weights](../crates/jolt-claims/src/protocols/composed/geometry/committed_bytecode.rs)
 
 ## Akita packing and identity
 

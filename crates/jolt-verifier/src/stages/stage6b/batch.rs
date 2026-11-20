@@ -24,8 +24,8 @@ use jolt_claims::protocols::jolt::{
 };
 #[cfg(all(feature = "akita", feature = "field-inline"))]
 use jolt_claims::protocols::{
+    composed::geometry::committed_bytecode::FieldRegisterLaneInputs,
     field_inline::geometry::bytecode::selector_gammas,
-    jolt::geometry::claim_reductions::bytecode::FieldRegisterLaneInputs,
 };
 use jolt_claims::NoChallenges;
 use jolt_crypto::VectorCommitment;
@@ -389,15 +389,6 @@ impl<F: JoltField> Stage6bSumchecks<F> {
                 layout,
                 BytecodeLaneWeightInputs {
                     eta,
-                    #[cfg(all(feature = "akita", feature = "field-inline"))]
-                    field: FieldRegisterLaneInputs {
-                        read_write_address: &field_inline_legs.fold.read_write_address,
-                        value_address: &field_inline_legs.fold.val_evaluation_address,
-                        selector_gammas: selector_gammas(
-                            &field_inline_legs.fold.gammas.stage4,
-                            &field_inline_legs.fold.gammas.stage5,
-                        ),
-                    },
                     stage1_gammas: &stage_gamma_powers[0],
                     stage2_gammas: &stage_gamma_powers[1],
                     stage3_gammas: &stage_gamma_powers[2],
@@ -405,6 +396,15 @@ impl<F: JoltField> Stage6bSumchecks<F> {
                     stage5_gammas: &stage_gamma_powers[4],
                     register_read_write_point: register_read_write_address,
                     register_val_evaluation_point: register_val_evaluation_address,
+                },
+                #[cfg(all(feature = "akita", feature = "field-inline"))]
+                FieldRegisterLaneInputs {
+                    read_write_address: &field_inline_legs.fold.read_write_address,
+                    value_address: &field_inline_legs.fold.val_evaluation_address,
+                    selector_gammas: selector_gammas(
+                        &field_inline_legs.fold.gammas.stage4,
+                        &field_inline_legs.fold.gammas.stage5,
+                    ),
                 },
                 &bytecode_r_address,
             )?),
