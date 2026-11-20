@@ -36,6 +36,38 @@ fn fail(state: &mut GuestState, host: &mut HostContext, message: String) -> u64 
     0
 }
 
+impl GuestState {
+    /// The doubleword at plane `offset`, or `None` if it is unaligned or past
+    /// the plane.
+    fn ram_doubleword(&self, offset: u64) -> Option<u64> {
+        if !offset.is_multiple_of(8) || offset >= self.mem_size {
+            return None;
+        }
+        let mut bytes = [0u8; 8];
+        // SAFETY: MemoryPlane::new enforces an 8-aligned mem_size, so an
+        // aligned start below it leaves a whole doubleword mapped.
+        unsafe {
+            (self.mem_base as *const u8)
+                .add(offset as usize)
+                .copy_to(bytes.as_mut_ptr(), 8);
+        }
+        Some(u64::from_le_bytes(bytes))
+    }
+
+    /// Stores `value` at plane `offset`, returning the doubleword it
+    /// replaces, or `None` if the offset is unaligned or past the plane.
+    fn replace_ram_doubleword(&mut self, offset: u64, value: u64) -> Option<u64> {
+        let old = self.ram_doubleword(offset)?;
+        // SAFETY: `ram_doubleword` found the whole doubleword mapped.
+        unsafe {
+            (self.mem_base as *mut u8)
+                .add(offset as usize)
+                .copy_from(value.to_le_bytes().as_ptr(), 8);
+        }
+        Some(old)
+    }
+}
+
 /// The doubleword at an aligned `address` in the device's I/O segments.
 fn segment_doubleword(device: &JoltDevice, address: u64) -> u64 {
     (0..8).fold(0, |value, i| {
@@ -168,8 +200,9 @@ pub extern "sysv64" fn host_io(state: *mut GuestState) -> u64 {
     0
 }
 
-/// `Ld`/`VirtualLoad*` slow path: device-region, I/O-gap, unaligned, or
-/// out-of-bounds addresses. Returns the loaded doubleword in rax on success.
+/// `Ld`/`VirtualLoad*` slow path: device-region, I/O-gap and unaligned
+/// addresses, and RAM at or past the high-water mark, which it raises.
+/// Returns the loaded doubleword in rax on success.
 pub extern "sysv64" fn slow_load_doubleword(state: *mut GuestState, address: u64) -> u64 {
     let (state, host) = host_context(state);
     if !address.is_multiple_of(8) {
@@ -182,10 +215,14 @@ pub extern "sysv64" fn slow_load_doubleword(state: *mut GuestState, address: u64
         );
     }
     if address >= RAM_START_ADDRESS {
-        // In range would have taken the fast path; this is out of bounds.
-        state.fault_addr = address;
-        state.exit = ExitReason::FaultOutOfBounds as u64;
-        return 0;
+        let offset = address - RAM_START_ADDRESS;
+        let Some(value) = state.ram_doubleword(offset) else {
+            state.fault_addr = address;
+            state.exit = ExitReason::FaultOutOfBounds as u64;
+            return 0;
+        };
+        state.raise_high_water(offset + 8);
+        return value;
     }
     match host.load_below_ram(address) {
         Ok(value) => value,
@@ -204,8 +241,8 @@ pub extern "sysv64" fn protected_store_doubleword(
     let offset = address - RAM_START_ADDRESS;
     let mut bytes = [0u8; 8];
     // SAFETY: the generated store admission checked an aligned start below
-    // mem_size, and MemoryPlane::new enforces an 8-aligned mem_size, so the
-    // whole doubleword is mapped.
+    // the high-water mark, which is doubleword aligned and at most mem_size,
+    // so the whole doubleword is mapped.
     unsafe {
         (state.mem_base as *const u8)
             .add(offset as usize)
@@ -235,7 +272,8 @@ pub extern "sysv64" fn protected_store_doubleword(
 
 /// Record the pre-value of a slow-path store into the current row's
 /// observation slot. The fast RAM path captures this inline; the slow path's
-/// bytes live in `JoltDevice` or the I/O gap, so the helper does it.
+/// bytes live in `JoltDevice`, the I/O gap, or RAM past the high-water mark,
+/// so the helper does it.
 fn record_store_pre(state: &mut GuestState, pre: u64) {
     if state.obs_cursor.is_null() || state.obs_cursor >= state.obs_end {
         return;
@@ -245,8 +283,9 @@ fn record_store_pre(state: &mut GuestState, pre: u64) {
     unsafe { (*state.obs_cursor).ram_pre = pre };
 }
 
-/// `Sd`/`VirtualStore*` slow path: device-region, I/O-gap, unaligned, or
-/// out-of-bounds addresses. `JoltDevice::store` writes only outputs.
+/// `Sd`/`VirtualStore*` slow path: device-region, I/O-gap and unaligned
+/// addresses, and RAM at or past the high-water mark, which it raises.
+/// `JoltDevice::store` writes only outputs.
 pub extern "sysv64" fn slow_store_doubleword(
     state: *mut GuestState,
     address: u64,
@@ -261,8 +300,16 @@ pub extern "sysv64" fn slow_store_doubleword(
         );
     }
     if address >= RAM_START_ADDRESS {
-        state.fault_addr = address;
-        state.exit = ExitReason::FaultOutOfBounds as u64;
+        // Every word generated stores guard lies below the high-water mark
+        // (`GuestState::initial_high_water`), so this store changes none.
+        let offset = address - RAM_START_ADDRESS;
+        let Some(pre) = state.replace_ram_doubleword(offset, value) else {
+            state.fault_addr = address;
+            state.exit = ExitReason::FaultOutOfBounds as u64;
+            return 0;
+        };
+        state.raise_high_water(offset + 8);
+        record_store_pre(state, pre);
         return 0;
     }
     if host.device.is_io_gap(address) {
@@ -343,19 +390,7 @@ impl tracer::InlineAdviceContext for GuestAdviceContext<'_> {
             return None;
         }
         if address >= RAM_START_ADDRESS {
-            let offset = address - RAM_START_ADDRESS;
-            if offset >= self.state.mem_size {
-                return None;
-            }
-            let mut bytes = [0u8; 8];
-            // SAFETY: MemoryPlane::new enforces an 8-aligned mem_size, so an
-            // aligned start below it leaves a whole doubleword mapped.
-            unsafe {
-                (self.state.mem_base as *const u8)
-                    .add(offset as usize)
-                    .copy_to(bytes.as_mut_ptr(), 8);
-            }
-            return Some(u64::from_le_bytes(bytes));
+            return self.state.ram_doubleword(address - RAM_START_ADDRESS);
         }
         match self.host.load_below_ram(address) {
             Ok(value) => Some(value),

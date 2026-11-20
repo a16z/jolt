@@ -31,7 +31,7 @@ use state::{ExitReason, GuestState, HostContext, MachineExit, Observation};
 pub struct X86TracerBackend {
     cache: Option<CachedProgram>,
     /// Minimum row distance between checkpoint snapshots in [`Self::execute`]
-    /// (each carries a full memory image; `skip_rows` covers the gap to the
+    /// (each carries a memory image; `skip_rows` covers the gap to the
     /// chunk mark). Production default is [`MIN_SPACING_ROWS`]; tests lower it
     /// to force the pause/resume machinery on small guests.
     min_checkpoint_spacing_rows: usize,
@@ -180,6 +180,11 @@ impl X86TracerBackend {
             fault_addr: 0,
             mem_base: plane.base() as u64,
             mem_size: plane.size() as u64,
+            high_water: GuestState::initial_high_water(
+                &host.device.memory_layout,
+                compiled.code_end(),
+                &plane,
+            ),
             host: &raw mut host,
             advice_slots: [0; crate::native::state::ADVICE_SLOTS],
             advice_jobs: compiled.advice_jobs_ptr(),
@@ -200,7 +205,10 @@ impl X86TracerBackend {
             observations,
             compiled,
             device: host.device,
-            final_memory: final_memory_image(&host.io_gap, plane.materialized_nonzero_bytes()),
+            final_memory: final_memory_image(
+                &host.io_gap,
+                plane.materialized_nonzero_bytes(guest.high_water),
+            ),
             advice_tape: host.advice_tape,
         })
     }
@@ -245,6 +253,11 @@ impl X86TracerBackend {
             fault_addr: 0,
             mem_base: plane.base() as u64,
             mem_size: plane.size() as u64,
+            high_water: GuestState::initial_high_water(
+                &host.device.memory_layout,
+                compiled.code_end(),
+                &plane,
+            ),
             host: &raw mut host,
             advice_slots: [0; crate::native::state::ADVICE_SLOTS],
             advice_jobs: compiled.advice_jobs_ptr(),
@@ -260,7 +273,10 @@ impl X86TracerBackend {
         Ok(RunOutput {
             trace_len: guest.trace_len as usize,
             device: host.device,
-            final_memory: final_memory_image(&host.io_gap, plane.materialized_nonzero_bytes()),
+            final_memory: final_memory_image(
+                &host.io_gap,
+                plane.materialized_nonzero_bytes(guest.high_water),
+            ),
             advice_tape: host.advice_tape,
             exit,
         })
@@ -427,10 +443,10 @@ pub struct X86Checkpoint {
     /// The program's expanded bytecode, shared with every checkpoint: row
     /// reassembly needs the static half of each row.
     bytecode: Arc<Vec<JoltInstructionRow>>,
-    /// The resume state, shared by every chunk that resumes from it. Boundary
-    /// images are plane-sized (tens of MB), so sharing is not an optimization
-    /// but a requirement: one image per chunk would exhaust memory at small
-    /// chunk sizes.
+    /// The resume state, shared by every chunk that resumes from it. A
+    /// boundary image spans the RAM the guest has reached (tens of MB for a
+    /// large heap), so sharing is not an optimization but a requirement: one
+    /// image per chunk would exhaust memory at small chunk sizes.
     boundary: Arc<Boundary>,
     /// Rows to discard after resuming (the boundary may precede the mark).
     skip_rows: usize,
@@ -469,6 +485,7 @@ impl X86Checkpoint {
 struct Boundary {
     registers: [u64; common::constants::REGISTER_COUNT as usize],
     pc: u64,
+    /// The plane below the guest's high-water mark; the rest is zero.
     memory: Vec<u8>,
     memory_config: common::jolt_device::MemoryConfig,
     device_inputs: Vec<u8>,
@@ -490,7 +507,7 @@ impl Boundary {
         Arc::new(Self {
             registers: guest.x,
             pc: guest.pc,
-            memory: plane.to_vec(),
+            memory: plane.snapshot(guest.high_water),
             memory_config,
             device_inputs: host.device.inputs.clone(),
             device_trusted_advice: host.device.trusted_advice.clone(),
@@ -571,6 +588,11 @@ impl ChunkedExecutionBackend for X86TracerBackend {
             fault_addr: 0,
             mem_base: plane.base() as u64,
             mem_size: plane.size() as u64,
+            high_water: GuestState::initial_high_water(
+                &host.device.memory_layout,
+                compiled.code_end(),
+                &plane,
+            ),
             host: &raw mut host,
             advice_slots: [0; crate::native::state::ADVICE_SLOTS],
             advice_jobs: compiled.advice_jobs_ptr(),
@@ -589,7 +611,7 @@ impl ChunkedExecutionBackend for X86TracerBackend {
         ));
 
         // Run in increments, capturing a boundary at each pause. Checkpoints
-        // carry a full image, so they are spaced at least this far apart
+        // carry a memory image, so they are spaced at least this far apart
         // regardless of how small chunk_size is; `skip_rows` covers the gap.
         let spacing = chunk_size.max(self.min_checkpoint_spacing_rows);
         loop {
@@ -632,7 +654,7 @@ impl ChunkedExecutionBackend for X86TracerBackend {
             device: host.device,
             final_memory: Some(final_memory_image(
                 &host.io_gap,
-                plane.materialized_nonzero_bytes(),
+                plane.materialized_nonzero_bytes(guest.high_water),
             )),
             advice_tape: Some(host.advice_tape),
         })
@@ -644,8 +666,8 @@ impl ChunkedExecutionBackend for X86TracerBackend {
         let boundary = &checkpoint.boundary;
         let device = boundary.restore_device();
 
-        let mut plane = MemoryPlane::new(boundary.memory.len())?;
-        plane.restore(&boundary.memory);
+        let mut plane = MemoryPlane::for_layout(&device.memory_layout)?;
+        let high_water = plane.restore(&boundary.memory);
 
         let mut host = HostContext {
             device,
@@ -671,6 +693,7 @@ impl ChunkedExecutionBackend for X86TracerBackend {
             fault_addr: 0,
             mem_base: plane.base() as u64,
             mem_size: plane.size() as u64,
+            high_water,
             host: &raw mut host,
             advice_slots: [0; crate::native::state::ADVICE_SLOTS],
             advice_jobs: checkpoint.compiled.advice_jobs_ptr(),

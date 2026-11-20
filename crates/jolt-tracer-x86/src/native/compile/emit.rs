@@ -27,7 +27,7 @@ use super::super::helpers;
 use super::super::state::{
     advice_slot_offset, reg_offset, ExitReason, OBSERVATION_SIZE, OBS_RAM_ADDRESS, OBS_RAM_POST,
     OBS_RAM_PRE, OBS_RD_POST, OBS_RD_PRE, OBS_ROW_INDEX, OBS_RS1, OBS_RS2, OFF_CANARY_OFFSET,
-    OFF_EXIT, OFF_FAULT_ADDR, OFF_MEM_BASE, OFF_MEM_SIZE, OFF_OBS_CURSOR, OFF_OBS_END, OFF_PC,
+    OFF_EXIT, OFF_FAULT_ADDR, OFF_HIGH_WATER, OFF_MEM_BASE, OFF_OBS_CURSOR, OFF_OBS_END, OFF_PC,
     OFF_ROW_LIMIT, OFF_TRACE_LEN,
 };
 use super::emitter::{EmitOutcome, RowEmitter};
@@ -390,9 +390,9 @@ impl FloorAlignment {
 }
 
 impl DynasmEmitter {
-    /// `Ld`: fast path hits the RAM plane; device, I/O-gap, unaligned and
-    /// out-of-bounds addresses funnel to the slow helper. Clobbers rax/rcx/rdx
-    /// (+ helper scratch on the cold path).
+    /// `Ld`: fast path hits the RAM plane below its high-water mark; device,
+    /// I/O-gap, unaligned and higher RAM addresses funnel to the slow helper.
+    /// Clobbers rax/rcx/rdx (+ helper scratch on the cold path).
     fn emit_load_doubleword(e: &mut Emitter, row: &JoltInstructionRow) {
         // EA = (x[rs1] as u64).wrapping_add(imm as i32 as u64) — exact cast chain.
         let offset = row.operands.imm as i32;
@@ -421,7 +421,7 @@ impl DynasmEmitter {
             ; mov rcx, rax
             ; mov rdx, QWORD RAM_START as i64
             ; sub rcx, rdx
-            ; mov rdx, QWORD [r12 + OFF_MEM_SIZE]
+            ; mov rdx, QWORD [r12 + OFF_HIGH_WATER]
             ; cmp rcx, rdx
             ; jae >slow
             ; test al, 7
@@ -477,7 +477,7 @@ impl DynasmEmitter {
             ; mov rcx, rax
             ; mov rsi, QWORD RAM_START as i64
             ; sub rcx, rsi
-            ; mov rsi, QWORD [r12 + OFF_MEM_SIZE]
+            ; mov rsi, QWORD [r12 + OFF_HIGH_WATER]
             ; cmp rcx, rsi
             ; jae >slow
             ; test al, 7

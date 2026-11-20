@@ -140,6 +140,8 @@ impl Prepared {
             fault_addr: 0,
             mem_base: self.plane.base() as u64,
             mem_size: self.plane.size() as u64,
+            // Earlier runs may have left values anywhere in the reused plane.
+            high_water: self.plane.size() as u64,
             host: &raw mut host,
             advice_slots: [0; crate::native::state::ADVICE_SLOTS],
             advice_jobs: self.compiled.advice_jobs_ptr(),
@@ -183,17 +185,12 @@ pub fn run_program(
 ) -> Result<Outcome, TraceError> {
     let compiled = CompiledProgram::compile(program)?;
 
-    let plane = MemoryPlane::for_layout(&MemoryLayout::new(&memory_config()))?;
+    let mut plane = MemoryPlane::for_layout(&MemoryLayout::new(&memory_config()))?;
     let base = plane.base();
-    for (i, &dword) in scratch.iter().enumerate() {
-        let offset = (SCRATCH_START - RAM_START_ADDRESS) as usize + i * 8;
-        // SAFETY: the scratch region lies inside the plane.
-        unsafe {
-            base.add(offset)
-                .cast::<u8>()
-                .copy_from(dword.to_le_bytes().as_ptr(), 8);
-        }
-    }
+    let scratch_image: Vec<(u64, u8)> = (SCRATCH_START..)
+        .zip(scratch.iter().flat_map(|dword| dword.to_le_bytes()))
+        .collect();
+    plane.init_from_image(&scratch_image)?;
 
     let mut host = HostContext {
         device: JoltDevice::new(&memory_config()),
@@ -210,6 +207,11 @@ pub fn run_program(
         fault_addr: 0,
         mem_base: plane.base() as u64,
         mem_size: plane.size() as u64,
+        high_water: GuestState::initial_high_water(
+            &host.device.memory_layout,
+            compiled.code_end(),
+            &plane,
+        ),
         host: &raw mut host,
         advice_slots: [0; crate::native::state::ADVICE_SLOTS],
         advice_jobs: compiled.advice_jobs_ptr(),

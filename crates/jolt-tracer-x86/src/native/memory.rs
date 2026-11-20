@@ -1,8 +1,10 @@
 //! Guest RAM plane: one anonymous mmap covering `[RAM_START_ADDRESS,
 //! RAM_START_ADDRESS + size)`. `MemoryPlane::new` enforces doubleword-aligned
-//! sizes, so generated code can admit an aligned start below `size` and access
-//! the whole doubleword at `mem_base + (guest_addr - RAM_START_ADDRESS)`.
-//! Untouched pages cost no physical memory (`MAP_NORESERVE`).
+//! sizes, and `GuestState::high_water` stays doubleword aligned and at most
+//! `size`, so generated code can admit an aligned start below the high-water
+//! mark and access the whole doubleword at `mem_base + (guest_addr -
+//! RAM_START_ADDRESS)`. Untouched pages cost no physical memory
+//! (`MAP_NORESERVE`), and copies read only the prefix below the mark.
 //!
 //! Addresses below `RAM_START_ADDRESS` (the `JoltDevice` I/O segments and the
 //! I/O gap) never reach this plane; generated code routes them to
@@ -15,6 +17,8 @@ use jolt_program::execution::TraceError;
 pub struct MemoryPlane {
     base: *mut u8,
     size: usize,
+    /// One past the highest offset `init_from_image` wrote.
+    image_end: u64,
 }
 
 // SAFETY: MemoryPlane exclusively owns its mapping; sending it between
@@ -48,6 +52,7 @@ impl MemoryPlane {
         Ok(Self {
             base: base.cast::<u8>(),
             size,
+            image_end: 0,
         })
     }
 
@@ -67,6 +72,7 @@ impl MemoryPlane {
                 ))?;
             // SAFETY: offset < size, so the write is within the mapping.
             unsafe { self.base.add(offset as usize).write(byte) };
+            self.image_end = self.image_end.max(offset + 1);
         }
         Ok(())
     }
@@ -79,6 +85,17 @@ impl MemoryPlane {
         self.size
     }
 
+    pub fn image_end(&self) -> u64 {
+        self.image_end
+    }
+
+    /// The plane below `high_water`, which holds every nonzero byte.
+    fn touched(&self, high_water: u64) -> &[u8] {
+        let len = usize::try_from(high_water).map_or(self.size, |len| len.min(self.size));
+        // SAFETY: new maps size bytes, all readable, and len <= size.
+        unsafe { core::slice::from_raw_parts(self.base, len) }
+    }
+
     /// The little-endian word at guest `address`, or `None` where the plane
     /// does not hold all four bytes.
     pub fn word_at(&self, address: u64) -> Option<u32> {
@@ -89,26 +106,27 @@ impl MemoryPlane {
         Some(u32::from_le_bytes(bytes.try_into().ok()?))
     }
 
-    /// Copy the whole plane out, for a chunk checkpoint.
-    pub fn to_vec(&self) -> Vec<u8> {
-        // SAFETY: new maps size bytes, all readable.
-        unsafe { core::slice::from_raw_parts(self.base, self.size) }.to_vec()
+    /// Copy out the plane below `high_water`, for a chunk checkpoint.
+    pub fn snapshot(&self, high_water: u64) -> Vec<u8> {
+        self.touched(high_water).to_vec()
     }
 
-    pub fn restore(&mut self, image: &[u8]) {
-        let len = image.len().min(self.size);
-        // SAFETY: len <= self.size, and image is a distinct allocation.
-        unsafe { self.base.copy_from_nonoverlapping(image.as_ptr(), len) };
+    /// Copy a snapshot into a fresh plane, returning the high-water mark that
+    /// covers it.
+    pub fn restore(&mut self, snapshot: &[u8]) -> u64 {
+        let len = snapshot.len().min(self.size);
+        // SAFETY: len <= self.size, and snapshot is a distinct allocation.
+        unsafe { self.base.copy_from_nonoverlapping(snapshot.as_ptr(), len) };
+        // The size is a multiple of eight, so the mark stays within it.
+        (len as u64).next_multiple_of(8)
     }
 
-    /// Copy out all nonzero bytes as `(offset, byte)` pairs in ascending
-    /// order, keyed by offset from `RAM_START_ADDRESS`, as
-    /// `final_memory_image` takes them.
-    pub fn materialized_nonzero_bytes(&self) -> Vec<(u64, u8)> {
+    /// Copy out all nonzero bytes, all below `high_water`, as `(offset,
+    /// byte)` pairs in ascending order, keyed by offset from
+    /// `RAM_START_ADDRESS`, as `final_memory_image` takes them.
+    pub fn materialized_nonzero_bytes(&self, high_water: u64) -> Vec<(u64, u8)> {
         let mut bytes = Vec::new();
-        // SAFETY: new maps size bytes, all readable.
-        let slice = unsafe { core::slice::from_raw_parts(self.base, self.size) };
-        for (offset, &byte) in slice.iter().enumerate() {
+        for (offset, &byte) in self.touched(high_water).iter().enumerate() {
             if byte != 0 {
                 bytes.push((offset as u64, byte));
             }
