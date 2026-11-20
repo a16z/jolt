@@ -75,6 +75,52 @@ fn batch_parity<H: DuplexSpongeInit<U = u8>>() {
     verifier.check_eof().unwrap();
 }
 
+#[cfg(feature = "transcript-keccak")]
+#[test]
+fn spilled_batch_releases_each_encoding_before_the_next() {
+    use jolt_transcript::Keccak;
+    use std::cell::{RefCell, RefMut};
+
+    struct ScratchValue<'a> {
+        byte: u8,
+        scratch: &'a RefCell<[u8; 47]>,
+    }
+
+    struct ScratchEncoding<'a>(RefMut<'a, [u8; 47]>);
+
+    impl AsRef<[u8]> for ScratchEncoding<'_> {
+        fn as_ref(&self) -> &[u8] {
+            &*self.0
+        }
+    }
+
+    impl Encoding for ScratchValue<'_> {
+        fn encode(&self) -> impl AsRef<[u8]> {
+            let mut scratch = self.scratch.borrow_mut();
+            scratch.fill(self.byte);
+            ScratchEncoding(scratch)
+        }
+    }
+
+    let scratch = RefCell::new([0; 47]);
+    let values = [1, 2, 3].map(|byte| ScratchValue {
+        byte,
+        scratch: &scratch,
+    });
+    let mut verifier = verifier_transcript::<Keccak>(&SESSION, STATEMENT, &[]);
+    verifier.append_values(&values);
+
+    let mut stock = verifier_transcript::<Keccak>(&SESSION, STATEMENT, &[]);
+    let mut expected = [[1; 47], [2; 47], [3; 47]].concat();
+    expected.extend_from_slice(&[0; 3]);
+    stock.public_message(&Chunk(&expected));
+    assert_eq!(
+        verifier.verifier_message::<[u8; 64]>(),
+        stock.verifier_message::<[u8; 64]>()
+    );
+    verifier.check_eof().unwrap();
+}
+
 #[cfg(all(
     any(feature = "bn254", feature = "binary"),
     any(feature = "transcript-keccak", feature = "transcript-blake2b")

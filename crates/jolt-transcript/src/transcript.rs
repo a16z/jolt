@@ -110,8 +110,8 @@ pub trait Transcript: Sealed {
         let mut len = 0;
         let mut values = values.iter();
         while let Some(value) = values.next() {
-            let encoded = value.encode();
-            let encoded = encoded.as_ref();
+            let encoding = value.encode();
+            let encoded = encoding.as_ref();
             let end = len + encoded.len();
             if let Some(dst) = inline.0.get_mut(len..end) {
                 dst.copy_from_slice(encoded);
@@ -120,6 +120,8 @@ pub trait Transcript: Sealed {
                 let mut bytes = Vec::with_capacity(end + word_padding(end));
                 bytes.extend_from_slice(inline.0.split_at(len).0);
                 bytes.extend_from_slice(encoded);
+                // The next encoding may borrow the same storage.
+                drop(encoding);
                 for value in values {
                     bytes.extend_from_slice(value.encode().as_ref());
                 }
@@ -255,8 +257,7 @@ pub trait FieldTranscript<F>: Transcript {
     }
 }
 
-/// One codec message of `len` challenges: the single implementation behind
-/// every [`FieldTranscript`].
+/// Draws a vector of `len` challenges using one codec message.
 fn draw_challenges<T, F>(transcript: &mut T, len: usize) -> Result<Vec<F>, VerificationError>
 where
     T: Sealed + ?Sized,
