@@ -204,6 +204,11 @@ pub const PRODUCT_HALT_LANE_LEFT_FACTOR: u8 = 2;
 /// claimed kind. The lane does not read `Jump`: that a halt is a jump is a
 /// fact about the halt kinds, pinned by jolt-riscv's
 /// `halt_flags_mark_exactly_the_halt_kinds`.
+///
+/// Do not reuse this lane over a binary field. In characteristic 2 with
+/// `Π = 0` both the left side and the `Halt` coefficient vanish and the lane
+/// reduces to `0 = HaltPanic`, so a real row with no halt flags followed by
+/// padding satisfies it.
 pub(crate) const PRODUCT_HALT_LANE_OUTPUT: [HaltLaneTerm; 2] = [
     HaltLaneTerm {
         flag: CircuitFlags::Halt,
