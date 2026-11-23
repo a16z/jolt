@@ -8,7 +8,9 @@
 //! table. Both tables also prove `exact_domain`, a run that fills its padded
 //! domain with no padding row, `panic_halt`, a guest panic proved with
 //! `panic = true`, and `ram_padding`, loads and stores in the I/O gap and the
-//! heap padding. Akita builds also prove `fibonacci_ring_512` and assert the
+//! heap padding. The general table also proves `exit_zero` and `exit_one`:
+//! every exit code halts at `ebreak`, so both prove with `panic = true`.
+//! Akita builds also prove `fibonacci_ring_512` and assert the
 //! ring dimension of its trace commitment. Specialized suites retain tampering,
 //! reference-backend parity, committed programs, and other mode-specific checks.
 
@@ -257,6 +259,19 @@ mod matrix {
         }
     }
 
+    /// The memory-ops guest's `exit_halt` entry: `jolt::runtime::exit(code)`
+    /// ends the run at `ebreak` for every code, so even `exit(0)` proves with
+    /// `panic = true` and no output.
+    fn exit_halt(code: i32) -> GuestCase {
+        GuestCase {
+            func: Some("exit_halt"),
+            inputs: postcard::to_stdvec(&code).expect("serialize the exit code"),
+            expected_output: Some(Vec::new()),
+            panics: true,
+            ..GuestCase::new("memory-ops-guest")
+        }
+    }
+
     /// The fibonacci guest's `fib(n)`, with the wrapping `u128` additions of
     /// its release build.
     #[cfg(feature = "akita")]
@@ -294,6 +309,8 @@ mod matrix {
                 };
                 exact_domain => super::exact_domain();
                 panic_halt => super::panic_halt();
+                exit_zero => super::exit_halt(0);
+                exit_one => super::exit_halt(1);
                 fibonacci => GuestCase {
                     inputs: encode(&100u32),
                     expected_output: Some(encode(&354_224_848_179_261_915_075u128)),

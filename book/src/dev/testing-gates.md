@@ -3,16 +3,16 @@
 ## Guest × mode acceptance matrix
 
 `crates/jolt-prover/tests/e2e_matrix.rs` holds one guest table per instruction
-profile. The ordinary profile has fourteen cases: muldiv, fibonacci, memory-ops,
+profile. The ordinary profile has sixteen cases: muldiv, fibonacci, memory-ops,
 ram-padding, stdlib, memory-copy, sha2, sha3 through both its unaligned and
 aligned entry points, advice-consumer, rounded-advice, btreemap, exact-domain,
-and panic-halt. Rounded-advice, another memory-ops entry point, configures 12
-bytes of untrusted advice and supplies 16, the rounded capacity the verifier
-admits. Enabling `field-inline` selects six: `field_ops`, `field_limbs`,
-`muldiv`, `exact_domain`, `panic_halt`, and `ram_padding`, covering active field
-operations, the SDK's checked limb conversions, an ordinary guest proved under
-the field-inline protocol with no field activity, and the three cases both
-profiles share.
+panic-halt, exit-zero and exit-one. Rounded-advice, another memory-ops entry
+point, configures 12 bytes of untrusted advice and supplies 16, the rounded
+capacity the verifier admits. Enabling `field-inline` selects six: `field_ops`,
+`field_limbs`, `muldiv`, `exact_domain`, `panic_halt`, and `ram_padding`,
+covering active field operations, the SDK's checked limb conversions, an
+ordinary guest proved under the field-inline protocol with no field activity,
+and the three cases both profiles share.
 
 `exact_domain` runs a memory-ops guest entry whose execution fills 2^12 rows
 exactly and bakes that domain in as the maximum, so the proof has no padding
@@ -21,7 +21,9 @@ ends at `ebreak`, with `panic = true`. `ram_padding`, another memory-ops entry,
 loads the first I/O-gap word, the first heap-padding word and the last word of
 the [admitted RAM domain](../how/architecture/ram.md#address-remapping), expects
 zero, stores and reloads each (including a byte store), and leaves the values
-in place at the halt.
+in place at the halt. `exit_zero` and `exit_one`
+call `jolt::runtime::exit(0)` and `exit(1)`: every exit code ends at `ebreak`,
+so both also prove with `panic = true`.
 
 The shared runner checks each guest's output against a natively computed
 value, its panic status, the halt that ends its run (`jolt.success`, or
