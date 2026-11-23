@@ -19,6 +19,9 @@ pub struct MemoryPlane {
     size: usize,
     /// One past the highest offset `init_from_image` wrote.
     image_end: u64,
+    /// One past the highest offset `init_from_image` accepts: `stack_end` for
+    /// a plane built from a layout, the interpreter's `setup_bytecode` bound.
+    image_limit: u64,
 }
 
 // SAFETY: MemoryPlane exclusively owns its mapping; sending it between
@@ -53,12 +56,20 @@ impl MemoryPlane {
             base: base.cast::<u8>(),
             size,
             image_end: 0,
+            image_limit: size as u64,
         })
     }
 
     /// Map the plane for `layout`: its RAM up to the end of the RAM domain.
+    /// Program image bytes must lie in `[RAM_START_ADDRESS, stack_end)`, the
+    /// same bound the interpreter's `setup_bytecode` enforces.
     pub fn for_layout(layout: &MemoryLayout) -> Result<Self, TraceError> {
-        Self::new(layout.ram_size()? as usize)
+        let mut plane = Self::new(layout.ram_size()? as usize)?;
+        plane.image_limit = layout
+            .stack_end
+            .saturating_sub(RAM_START_ADDRESS)
+            .min(plane.size as u64);
+        Ok(plane)
     }
 
     /// Write the program image (`(guest_address, byte)` pairs) into the plane.
@@ -66,9 +77,9 @@ impl MemoryPlane {
         for &(address, byte) in memory_init {
             let offset = address
                 .checked_sub(RAM_START_ADDRESS)
-                .filter(|&o| o < self.size as u64)
+                .filter(|&o| o < self.image_limit)
                 .ok_or(TraceError::Backend(
-                    "program image byte outside the guest memory plane",
+                    "program image byte outside [RAM_START_ADDRESS, stack_end)",
                 ))?;
             // SAFETY: offset < size, so the write is within the mapping.
             unsafe { self.base.add(offset as usize).write(byte) };
@@ -149,5 +160,16 @@ mod tests {
     #[test]
     fn rejects_unaligned_size() {
         assert!(MemoryPlane::new(9).is_err());
+    }
+
+    /// The image bound matches the interpreter's: the last byte below
+    /// `stack_end` loads, the first canary byte does not.
+    #[test]
+    fn image_ends_below_stack_end() {
+        use common::jolt_device::{MemoryConfig, MemoryLayout};
+        let layout = MemoryLayout::new(&MemoryConfig::default());
+        let mut plane = MemoryPlane::for_layout(&layout).expect("plane");
+        assert!(plane.init_from_image(&[(layout.stack_end - 1, 1)]).is_ok());
+        assert!(plane.init_from_image(&[(layout.stack_end, 1)]).is_err());
     }
 }

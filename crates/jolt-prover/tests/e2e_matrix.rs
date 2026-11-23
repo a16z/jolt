@@ -8,10 +8,11 @@
 //! table. Both tables also prove `exact_domain`, a run that fills its padded
 //! domain with no padding row, `panic_halt`, a guest panic proved with
 //! `panic = true`, and `ram_padding`, loads and stores in the I/O gap and the
-//! heap padding. The general table also proves `exit_zero` and `exit_one`:
-//! every exit code halts at `ebreak`, so both prove with `panic = true`.
-//! Akita builds also prove `fibonacci_ring_512` and assert the
-//! ring dimension of its trace commitment. Specialized suites retain tampering,
+//! heap padding. The general table also proves `exit_zero` and `exit_one`
+//! (every exit code halts at `ebreak`, so both prove with `panic = true`) and
+//! `protected_rewrite`, same-value stores to write-protected words. Akita
+//! builds also prove `fibonacci_ring_512` and assert the ring dimension of its
+//! trace commitment. Specialized suites retain tampering,
 //! reference-backend parity, committed programs, and other mode-specific checks.
 
 #[cfg(feature = "prover-fixtures")]
@@ -272,6 +273,29 @@ mod matrix {
         }
     }
 
+    /// The memory-ops guest's `protected_rewrite` entry: it stores the value
+    /// already held by the first input word, the first stack-canary word and
+    /// a code word back to each, which write protection admits because no
+    /// protected word changes.
+    fn protected_rewrite() -> GuestCase {
+        let probe = GuestCase {
+            func: Some("protected_rewrite"),
+            ..GuestCase::new("memory-ops-guest")
+        };
+        let (_, _, program_size, _) = crate::support::program(&probe).decode();
+        let layout = MemoryLayout::try_new(&MemoryConfig {
+            program_size: Some(program_size),
+            ..MemoryConfig::default()
+        })
+        .expect("the guest's memory layout");
+        GuestCase {
+            inputs: postcard::to_stdvec(&[layout.input_start, layout.stack_end])
+                .expect("serialize the addresses"),
+            expected_output: Some(encode(&3u8)),
+            ..probe
+        }
+    }
+
     /// The fibonacci guest's `fib(n)`, with the wrapping `u128` additions of
     /// its release build.
     #[cfg(feature = "akita")]
@@ -311,6 +335,7 @@ mod matrix {
                 panic_halt => super::panic_halt();
                 exit_zero => super::exit_halt(0);
                 exit_one => super::exit_halt(1);
+                protected_rewrite => super::protected_rewrite();
                 fibonacci => GuestCase {
                     inputs: encode(&100u32),
                     expected_output: Some(encode(&354_224_848_179_261_915_075u128)),

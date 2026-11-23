@@ -804,7 +804,7 @@ impl Mmu {
 
         if let Some(jolt_device) = self.jolt_device.as_ref() {
             assert!(
-                effective_address <= jolt_device.memory_layout.stack_end,
+                effective_address < jolt_device.memory_layout.stack_end,
                 "setup_bytecode: Effective address must be < stack_end, got {effective_address:X}."
             );
         }
@@ -1829,6 +1829,17 @@ mod test_mmu {
     fn setup_bytecode_rejects_device_addresses() {
         let mut mmu = setup_mmu();
         mmu.setup_bytecode(DRAM_BASE - 1, 0x77);
+    }
+
+    /// The image ends below `stack_end`, the x86 loader's bound: the first
+    /// canary byte is not image memory.
+    #[test]
+    #[should_panic(expected = "must be < stack_end")]
+    fn setup_bytecode_rejects_the_first_canary_byte() {
+        let mut mmu = setup_mmu();
+        let stack_end = mmu.jolt_device.as_ref().unwrap().memory_layout.stack_end;
+        mmu.setup_bytecode(stack_end - 1, 0x77);
+        mmu.setup_bytecode(stack_end, 0x77);
     }
 
     /// The I/O gap `[io_end, RAM_START_ADDRESS)` and the heap padding

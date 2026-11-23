@@ -25,7 +25,11 @@ const SPLIT_CHUNK: usize = 1 << 16;
 #[cfg(feature = "parallel")]
 const PAR_CHUNK: usize = 1 << 14;
 
-/// `addresses` sentinel for cycles with no (remappable) RAM access.
+/// `addresses` sentinel for cycles with no (remappable) RAM access. The RAM
+/// geometry admits `log_K = 32`, but `encode_address` refuses a remapped
+/// address equal to the sentinel, so the optimized kernels cannot prove an
+/// access to the last word of a `2^32`-word domain; they fail instead of
+/// treating it as no access.
 pub(crate) const NO_ACCESS: u32 = u32::MAX;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, WitnessBundle)]

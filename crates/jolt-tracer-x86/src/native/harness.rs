@@ -185,7 +185,10 @@ pub fn run_program(
 ) -> Result<Outcome, TraceError> {
     let compiled = CompiledProgram::compile(program)?;
 
-    let mut plane = MemoryPlane::for_layout(&MemoryLayout::new(&memory_config()))?;
+    // The scratch region lies above `stack_end`, outside the program image
+    // that `for_layout` admits, so the plane takes the full RAM span.
+    let layout = MemoryLayout::new(&memory_config());
+    let mut plane = MemoryPlane::new(layout.ram_size()? as usize)?;
     let base = plane.base();
     let scratch_image: Vec<(u64, u8)> = (SCRATCH_START..)
         .zip(scratch.iter().flat_map(|dword| dword.to_le_bytes()))

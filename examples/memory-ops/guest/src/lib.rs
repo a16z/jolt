@@ -8,8 +8,8 @@ use jolt::UntrustedAdvice;
 ///
 /// Public because a guest build compiles only the entry point named by
 /// `JOLT_FUNC_NAME` among the `guest_only` ones: a private helper is dead code
-/// in the builds of `ram_padding`, `rounded_advice`, `exact_rows`, `panic_halt`
-/// and `exit_halt`, which do not use it.
+/// in the builds of `ram_padding`, `rounded_advice`, `exact_rows`, `panic_halt`,
+/// `exit_halt` and `protected_rewrite`, which do not use it.
 #[cfg(feature = "guest")]
 #[repr(align(8))]
 pub struct Scratch([u8; 24]);
@@ -223,4 +223,30 @@ fn panic_halt(trigger: bool) -> u8 {
 #[jolt::provable(guest_only, heap_size = 65536, max_trace_length = 65536)]
 fn exit_halt(code: i32) -> u8 {
     jolt::runtime::exit(code)
+}
+
+/// Loads one doubleword from each of three write-protected regions and stores
+/// the same value back: the first input word and the first stack-canary word,
+/// whose addresses the host passes, and the code doubleword holding this
+/// function's `auipc`. Write protection forbids changing a protected word, not
+/// storing to it, so the run proves. Returns the number of words rewritten.
+#[jolt::provable(guest_only, heap_size = 65536, max_trace_length = 65536)]
+fn protected_rewrite(addresses: [u64; 2]) -> u8 {
+    let pc: u64;
+    // SAFETY: `auipc` with a zero offset only reads the program counter.
+    unsafe { core::arch::asm!("auipc {pc}, 0", pc = out(reg) pc, options(nomem, nostack)) };
+    let mut rewritten = 0;
+    for address in [addresses[0], addresses[1], pc & !7] {
+        let word = address as *mut u64;
+        // SAFETY: each address is a doubleword the e2e harness
+        // (`protected_rewrite` in crates/jolt-prover/tests/e2e_matrix.rs)
+        // takes from the guest's memory layout, or the aligned code word of
+        // this function. The store writes back the value just loaded.
+        unsafe {
+            let value = core::ptr::read_volatile(word);
+            core::ptr::write_volatile(word, value);
+        }
+        rewritten += 1;
+    }
+    rewritten
 }
