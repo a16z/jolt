@@ -2,6 +2,44 @@
   "format_version": 1,
   "runs": [
     {
+      "key": "github-fe1cc674aa40a6036ff7310ee2344644bb45093a-45160289305-1",
+      "source": {
+        "type": "github",
+        "repository": "a16z/jolt",
+        "commit": "fe1cc674aa40a6036ff7310ee2344644bb45093a",
+        "run_head_sha": "fe1cc674aa40a6036ff7310ee2344644bb45093a",
+        "run_id": 45160289305,
+        "run_attempt": 1,
+        "event": "schedule",
+        "workflow": "End-to-end benchmark ingest",
+        "workflow_file": ".github/workflows/e2e-bench-ingest.yml",
+        "url": "https://github.com/a16z/jolt/actions/runs/45160289305/attempts/1",
+        "conclusion": "success",
+        "artifact": {
+          "id": 14810661968,
+          "name": "jolt-e2e-45160289305-1",
+          "digest": "sha256:a985348fd89e466544200581184b8eb4df8cbbb3018b6190c6a3d6f064bff344"
+        },
+        "plan_run_id": 45128822608,
+        "plan_run_attempt": 1,
+        "plan_artifact_id": 14796339599,
+        "plan_sha256": "ebb37b92f3674ec618ac5e4c18e8613514291fcd47fceefbd4a6ebccecabe25a",
+        "commit_index": 0
+      },
+      "started_at": "2026-11-23T07:07:27+00:00",
+      "tier": "nightly",
+      "kind": "history",
+      "status": "complete",
+      "publication_status": "ready",
+      "reason": null,
+      "benchmark_schema": 1,
+      "sha256": "5948f4a55e172f3d093f502e9ccef025eb8b74e3061bee8dac36b8944bc63b58",
+      "push_index": null,
+      "push_index_sha256": null,
+      "publisher_revision": "fe1cc674aa40a6036ff7310ee2344644bb45093a",
+      "raw": "runs/github-fe1cc674aa40a6036ff7310ee2344644bb45093a-45160289305-1.json"
+    },
+    {
       "key": "github-fe1cc674aa40a6036ff7310ee2344644bb45093a-45014500272-1",
       "source": {
         "type": "github",
