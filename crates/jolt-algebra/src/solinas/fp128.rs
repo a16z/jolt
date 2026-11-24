@@ -1137,6 +1137,12 @@ impl<const P: u128> Field for Fp128<P> {
 
     #[inline(always)]
     fn mul_add(self, rhs: Self, addend: Self) -> Self {
+        #[cfg(all(feature = "field-inline-guest", target_arch = "riscv64"))]
+        if Self::FIELD_INLINE {
+            return Self::from_inline_limbs(crate::field_inline::mul_add(
+                &self.0, &rhs.0, &addend.0,
+            ));
+        }
         Self(Self::mul_add_raw(self.0, rhs.0, addend.0))
     }
 
@@ -1210,7 +1216,7 @@ impl<const P: u128> CanonicalEncoding for Fp128<P> {
     }
 }
 
-crate::impl_serde_bytes!(impl[const P: u128] Fp128<P>, 16);
+mod word_decode;
 
 impl<const P: u128> WithAccumulator for Fp128<P> {
     type SumAccumulator = Fp128SumAccumulator<P>;
@@ -1254,13 +1260,12 @@ impl<const P: u128> Fp128<P> {
 #[cfg(any(test, all(feature = "field-inline-guest", target_arch = "riscv64")))]
 impl<const P: u128> Fp128<P> {
     #[inline(always)]
-    #[expect(
-        clippy::expect_used,
-        reason = "invalid limb advice must abort the guest"
-    )]
     fn from_inline_limbs(limbs: [u64; 2]) -> Self {
-        // Advice limbs determine only a residue until the integer is range checked.
-        Self::from_u128_checked(join(limbs)).expect("noncanonical field-inline result")
+        use jolt_platform::UnwrapOrSpoilProof;
+        // The advice rows fix the result only modulo p: the limbs of p also
+        // encode zero. A panic would give a dishonest prover a valid proof of
+        // a panicking guest, so noncanonical limbs spoil the proof instead.
+        Self::from_u128_checked(join(limbs)).unwrap_or_spoil_proof()
     }
 }
 
@@ -1438,8 +1443,8 @@ mod tests {
 
 /// Multiplication and inversion: native Solinas arithmetic, or the
 /// field-inline path on a RISC-V guest that routes this field (see
-/// [`Self::FIELD_INLINE`]). Addition stays in software, where a two-limb add
-/// costs about what a field-inline round trip does.
+/// [`Self::FIELD_INLINE`]); `Field::mul_add` takes the same route. A lone
+/// addition stays in software, where it costs about what a round trip does.
 impl<const P: u128> Fp128<P> {
     #[inline(always)]
     fn inline_mul(a: Self, b: Self) -> Self {
@@ -1482,9 +1487,15 @@ mod wide_tests {
     }
 
     #[test]
-    #[should_panic(expected = "noncanonical field-inline result")]
-    fn inline_readout_rejects_modulus_as_zero() {
+    #[should_panic(expected = "proof spoiled")]
+    fn inline_readout_spoils_modulus_as_zero() {
         let _ = Fp128::<P>::from_inline_limbs(split(P));
+    }
+
+    #[test]
+    #[should_panic(expected = "proof spoiled")]
+    fn inline_readout_spoils_largest_integer() {
+        let _ = Fp128::<P>::from_inline_limbs([u64::MAX; 2]);
     }
 
     #[test]

@@ -6,7 +6,8 @@
 //! FIELD_ADVICE_LIMB limbs with the quotients the row constraint then forces.
 //! Nonzero residuals stop honest tracing at the FIELD_ASSERT_ZERO that the
 //! residual-quotient row also enforces; noncanonical limbs reach the guest's
-//! `< p` check, which spoils the proof.
+//! `< p` check, which spoils the proof. The scalar field wrappers read their
+//! results through the same rows and must spoil the proof the same way.
 
 #![cfg(all(
     feature = "prover-fixtures",
@@ -56,7 +57,27 @@ fn trace(value: [u64; 6], readout_width: u8) -> Run {
     program.enable_field_inline();
     let inputs = postcard::to_stdvec(&(Some(value), Some(readout_width)))
         .expect("serialize conversion request");
-    let (_, trace, _, device) = program.trace(&inputs, &[], &[]);
+    run(&mut program, &inputs)
+}
+
+/// Builds the guest with the scalar type of the proof field and traces
+/// `scalar_product_is_zero(a, b)`, one multiplication through the scalar
+/// type's `*`.
+fn trace_scalar_product(a: u64, b: u64) -> Run {
+    let mut program = Program::new("field-limbs-guest");
+    program.set_std(true);
+    program.set_func("scalar_product_is_zero");
+    program.enable_field_inline();
+    program.add_guest_feature(match FIELD_INLINE_MODULUS {
+        FieldInlineModulus::Bn254 => "scalar-bn254",
+        FieldInlineModulus::Fp128 => "scalar-fp128",
+    });
+    let inputs = postcard::to_stdvec(&(a, b)).expect("serialize the factors");
+    run(&mut program, &inputs)
+}
+
+fn run(program: &mut Program, inputs: &[u8]) -> Run {
+    let (_, trace, _, device) = program.trace(inputs, &[], &[]);
     // Honest VirtualAssertEQ rows panic the tracer on unequal operands, so an
     // unequal row is spoil_proof's.
     let spoiled = trace.iter().any(|cycle| {
@@ -160,6 +181,29 @@ fn noncanonical_advice_spoils_the_proof() {
             assert!(run.device.panic);
         }
     }
+}
+
+/// The scalar wrappers' readout faces the same advice: the limbs of p reading
+/// out a zero product satisfy every field-inline row. A guest panic would be a
+/// valid proof of the panicking outcome, so the wrapper must spoil the proof.
+#[test]
+fn noncanonical_advice_through_scalar_mul_spoils_the_proof() {
+    let honest = trace_scalar_product(0, 5);
+    assert!(!honest.device.panic);
+    assert!(!honest.spoiled);
+    let (is_zero, _): (bool, _) =
+        postcard::take_from_bytes(&honest.device.outputs).expect("decode the product check");
+    assert!(is_zero);
+
+    let modulus = modulus_plus(0);
+    let injection = inject_advice_limbs(&modulus[..MODULUS_LIMBS]);
+    let run = trace_scalar_product(0, 5);
+    assert_eq!(injection.consumed_addresses().len(), MODULUS_LIMBS);
+    assert!(
+        run.spoiled,
+        "the limbs of p read out as a product must spoil the proof, not only panic"
+    );
+    assert!(run.device.panic);
 }
 
 #[test]

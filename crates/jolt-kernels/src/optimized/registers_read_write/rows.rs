@@ -16,6 +16,7 @@ use jolt_witness::{
 use rayon::prelude::*;
 
 use super::sparse::{SeedEntry, MAX_ENTRIES_PER_CYCLE};
+use crate::optimized::streaming::prefix_end;
 use crate::optimized::support::{BundleAccess, BundleStore};
 use crate::KernelError;
 
@@ -136,9 +137,7 @@ impl StreamedRows {
     /// Where the `group`-cycle groups that hold a prefix row end, of `cycles`
     /// cycles in whole groups.
     pub(super) fn prefix_end(&self, group: usize, cycles: usize) -> usize {
-        self.prefix_len
-            .checked_next_multiple_of(group)
-            .map_or(cycles, |end| end.min(cycles))
+        prefix_end(self.prefix_len, group, cycles)
     }
 }
 

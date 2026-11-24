@@ -230,7 +230,8 @@ pub const PREAMBLE_TARGETS: &[TamperTarget] = &[
         VerifierPhase::Stage2,
         MutationStrategy::FlipBool,
         TamperCoverage::Active,
-        "panic materializes as public memory for the RAM output check; real fixture bool flip",
+        "the panic claim enters the stage-2 product uni-skip input as `ClaimedPanic`; real \
+         fixture bool flip",
     ),
     checked_both(
         "public_io.memory_layout",
@@ -519,7 +520,7 @@ pub const STAGE2_TARGETS: &[TamperTarget] = &[
     ),
     checked_standard(
         "stage2.claims.batch_outputs.product_remainder.checked",
-        "claims.stage2.batch_outputs.product_remainder.{left_instruction_input,right_instruction_input,jump_flag,lookup_output,branch_flag,next_is_noop}",
+        "claims.stage2.batch_outputs.product_remainder.{left_instruction_input,right_instruction_input,is_noop,lookup_output,branch_flag,next_is_noop}",
         VerifierPhase::Stage2,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
@@ -887,14 +888,6 @@ pub const STAGE6_TARGETS: &[TamperTarget] = &[
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
         "prover-fixture test offsets every Booleanity RAM RA output claim",
-    ),
-    checked_standard(
-        "stage6.claims.ram_hamming_booleanity.ram_hamming_weight",
-        "claims.stage6b.ram_hamming_booleanity.ram_hamming_weight",
-        VerifierPhase::Stage6,
-        MutationStrategy::OffsetScalar,
-        TamperCoverage::Active,
-        "prover-fixture test offsets the RAM hamming Booleanity output claim",
     ),
     checked_standard(
         "stage6.claims.ram_ra_virtualization.ram_ra",
@@ -1297,7 +1290,6 @@ fn relation_phase(id: JoltRelationId) -> VerifierPhase {
         | JoltRelationId::RegistersValEvaluation => VerifierPhase::Stage5,
         JoltRelationId::BytecodeReadRaf
         | JoltRelationId::Booleanity
-        | JoltRelationId::RamHammingBooleanity
         | JoltRelationId::InstructionRaVirtualization
         | JoltRelationId::RamRaVirtualization
         | JoltRelationId::IncClaimReduction
@@ -1308,6 +1300,7 @@ fn relation_phase(id: JoltRelationId) -> VerifierPhase {
         | JoltRelationId::BytecodeClaimReduction
         | JoltRelationId::HammingWeightClaimReduction
         | JoltRelationId::ProgramImageClaimReduction => VerifierPhase::Stage7,
+        JoltRelationId::Reserved12(retired) => match retired {},
     }
 }
 
@@ -1326,7 +1319,6 @@ fn relation_phase_from_stage_string(stage: &str) -> Option<VerifierPhase> {
         JoltRelationId::RamOutputCheck,
         JoltRelationId::RamValCheck,
         JoltRelationId::RamRaClaimReduction,
-        JoltRelationId::RamHammingBooleanity,
         JoltRelationId::RamRaVirtualization,
         JoltRelationId::RegistersClaimReduction,
         JoltRelationId::RegistersReadWriteChecking,
@@ -1393,6 +1385,7 @@ pub fn observed_rejection_phase(error: &VerifierError) -> Option<VerifierPhase> 
         | VerifierError::InvalidCommittedProgram { .. }
         | VerifierError::MissingPreprocessingPayload { .. }
         | VerifierError::UnsupportedInstruction { .. }
+        | VerifierError::EntryNotInstruction { .. }
         | VerifierError::InvalidFieldInlineBytecode { .. }
         | VerifierError::PreprocessingDigestFailed { .. } => Some(VerifierPhase::Preamble),
         // The difficulty depends only on the challenge set, so the first site
@@ -1535,7 +1528,6 @@ fn expand_manifest_path(target: TamperTarget) -> Vec<&'static str> {
             "claims.stage1.outer.outer_remainder.next_is_virtual",
             "claims.stage1.outer.outer_remainder.next_is_first_in_sequence",
             "claims.stage1.outer.outer_remainder.lookup_output",
-            "claims.stage1.outer.outer_remainder.should_jump",
             "claims.stage1.outer.outer_remainder.add_operands",
             "claims.stage1.outer.outer_remainder.subtract_operands",
             "claims.stage1.outer.outer_remainder.multiply_operands",
@@ -1550,6 +1542,8 @@ fn expand_manifest_path(target: TamperTarget) -> Vec<&'static str> {
             "claims.stage1.outer.outer_remainder.is_compressed",
             "claims.stage1.outer.outer_remainder.is_first_in_sequence",
             "claims.stage1.outer.outer_remainder.is_last_in_sequence",
+            "claims.stage1.outer.outer_remainder.halt",
+            "claims.stage1.outer.outer_remainder.halt_panic",
             #[cfg(feature = "field-inline")]
             "claims.stage1.outer.outer_remainder.field_add",
             #[cfg(feature = "field-inline")]
@@ -1576,10 +1570,10 @@ fn expand_manifest_path(target: TamperTarget) -> Vec<&'static str> {
             "claims.stage2.batch_outputs.ram_read_write.ra",
             "claims.stage2.batch_outputs.ram_read_write.inc",
         ],
-        "claims.stage2.batch_outputs.product_remainder.{left_instruction_input,right_instruction_input,jump_flag,lookup_output,branch_flag,next_is_noop}" => vec![
+        "claims.stage2.batch_outputs.product_remainder.{left_instruction_input,right_instruction_input,is_noop,lookup_output,branch_flag,next_is_noop}" => vec![
             "claims.stage2.batch_outputs.product_remainder.left_instruction_input",
             "claims.stage2.batch_outputs.product_remainder.right_instruction_input",
-            "claims.stage2.batch_outputs.product_remainder.jump_flag",
+            "claims.stage2.batch_outputs.product_remainder.is_noop",
             "claims.stage2.batch_outputs.product_remainder.lookup_output",
             "claims.stage2.batch_outputs.product_remainder.branch_flag",
             "claims.stage2.batch_outputs.product_remainder.next_is_noop",
@@ -1696,7 +1690,7 @@ pub fn clear_claims<F: JoltField>(fill_optionals: bool) -> ClearProofClaims<F> {
                 product_remainder: stage2::outputs::ProductRemainderOutputClaims {
                     left_instruction_input: zero,
                     right_instruction_input: zero,
-                    jump_flag: zero,
+                    is_noop: zero,
                     write_lookup_output_to_rd: zero,
                     lookup_output: zero,
                     branch_flag: zero,
@@ -1813,9 +1807,6 @@ pub fn clear_claims<F: JoltField>(fill_optionals: bool) -> ClearProofClaims<F> {
                 instruction_ra: vec![zero],
                 bytecode_ra: vec![zero],
                 ram_ra: vec![zero],
-            },
-            ram_hamming_booleanity: stage6b::outputs::RamHammingBooleanityOutputClaims {
-                ram_hamming_weight: zero,
             },
             ram_ra_virtualization: stage6b::outputs::RamRaVirtualizationOutputClaims {
                 ram_ra: vec![zero],

@@ -11,7 +11,7 @@
 use crate::emulator::cpu::{ChunkCpuState, Cpu, HostIo};
 use crate::emulator::decode_cache::DecodeCache;
 use crate::emulator::memory::Memory;
-use crate::emulator::mmu::ChunkMmuState;
+use crate::emulator::mmu::{ChunkMmuState, CodeGuard};
 use crate::emulator::terminal::DummyTerminal;
 use crate::emulator::Emulator;
 use crate::instruction::Cycle;
@@ -27,7 +27,6 @@ pub struct ChunkCheckpoint {
     /// JoltDevice outputs at the boundary: the guest can read outputs back,
     /// so they are live per-chunk state (inputs/advice regions are static).
     outputs: Vec<u8>,
-    panic: bool,
 }
 
 impl ChunkCheckpoint {
@@ -47,7 +46,6 @@ impl ChunkCheckpoint {
             cpu: cpu.capture_chunk_state(),
             mmu: cpu.mmu.capture_chunk_state(),
             outputs: device.outputs.clone(),
-            panic: device.panic,
         }
     }
 
@@ -65,12 +63,6 @@ impl ChunkCheckpoint {
                         "jolt_device.outputs: {} bytes vs {} bytes (or contents differ)",
                         self.outputs.len(),
                         device.outputs.len()
-                    ));
-                }
-                if self.panic != device.panic {
-                    return Some(format!(
-                        "jolt_device.panic: {} vs {}",
-                        self.panic, device.panic
                     ));
                 }
             }
@@ -142,26 +134,29 @@ pub struct ChunkWorker {
 impl ChunkWorker {
     /// Build a worker from the pass-1 emulator's static parts (JoltDevice
     /// inputs/advice/layout, program text range). Independent of pass-1
-    /// progress; outputs and panic are patched per chunk.
+    /// progress; outputs are patched per chunk.
     pub fn new(emulator: &Emulator) -> Self {
         let src = emulator.get_cpu();
         Self::from_seed(
             src.mmu.jolt_device.clone(),
             src.mmu.decode_cache.snapshot_with_empty_entries(),
+            src.mmu.code_guard.clone(),
         )
     }
 
     /// Like [`ChunkWorker::new`], but from pre-cloned static parts — the
     /// pipeline takes the seed before pass-1 starts mutating the emulator
     /// and each worker thread builds its own CPU from it.
-    pub fn from_seed(
+    pub(crate) fn from_seed(
         jolt_device: Option<common::jolt_device::JoltDevice>,
         decode_template: DecodeCache,
+        code_guard: Option<CodeGuard>,
     ) -> Self {
         let mut cpu = Cpu::new(Box::new(DummyTerminal {}));
         cpu.set_host_io(HostIo::Replay);
         cpu.mmu.jolt_device = jolt_device;
         cpu.mmu.decode_cache = decode_template.clone();
+        cpu.mmu.code_guard = code_guard;
         ChunkWorker {
             cpu,
             decode_template,
@@ -170,7 +165,7 @@ impl ChunkWorker {
 
     /// Install a chunk: seed CPU+MMU state, adopt `image` as the working
     /// memory (returns the previous buffer for the pool), patch device
-    /// outputs/panic, and reset the decode cache.
+    /// outputs, and reset the decode cache.
     #[expect(clippy::expect_used)]
     pub fn install_chunk(&mut self, checkpoint: &ChunkCheckpoint, image: Vec<u64>) -> Vec<u64> {
         self.cpu.install_chunk_state(&checkpoint.cpu);
@@ -183,7 +178,6 @@ impl ChunkWorker {
             .as_mut()
             .expect("worker device installed at construction");
         device.outputs.clone_from(&checkpoint.outputs);
-        device.panic = checkpoint.panic;
         self.cpu.mmu.decode_cache = self.decode_template.clone();
         previous
     }
@@ -466,6 +460,7 @@ pub(crate) fn run_two_pass_chunks(
     let (out_tx, out_rx) = mpsc::channel::<(usize, Vec<Cycle>)>();
     let worker_panicked = std::sync::atomic::AtomicBool::new(false);
 
+    let seed_code = emulator.get_cpu().mmu.code_guard.clone();
     let mut pass1 = PassOne::new(emulator);
 
     let windowed_rows = std::thread::scope(|scope| {
@@ -482,10 +477,11 @@ pub(crate) fn run_two_pass_chunks(
             let out_tx = out_tx.clone();
             let seed_device = seed_device.clone();
             let seed_decode = seed_decode.clone();
+            let seed_code = seed_code.clone();
             scope.spawn(move || {
                 let _panic_guard = PanicGuard(worker_panicked);
                 demote_worker_thread();
-                let mut worker = ChunkWorker::from_seed(seed_device, seed_decode);
+                let mut worker = ChunkWorker::from_seed(seed_device, seed_decode, seed_code);
                 let mut scratch: Vec<Cycle> = Vec::new();
                 loop {
                     // Hold the lock only for the dequeue; idle workers block

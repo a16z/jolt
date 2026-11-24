@@ -690,6 +690,8 @@ impl Cpu {
     }
 
     fn decode_and_cache(&mut self) -> Result<Instruction, Trap> {
+        // Only this path fills the decode cache, so a cache hit was checked here.
+        self.mmu.assert_instruction_fetch(self.pc);
         let original_word = self.fetch()?;
         let instruction_address = self.pc;
         let is_compressed = (original_word & 0x3) != 0x3;
@@ -1388,7 +1390,7 @@ impl Cpu {
     /// register file (including virtual registers), the CSR array, clock, wfi,
     /// privilege mode, the LR/SC reservation triple, the advice tape (data and
     /// read position), `executed_instrs`, `trace_len` (row-uniform across
-    /// trace and execute modes), JoltDevice outputs/panic, and the halt state.
+    /// trace and execute modes), JoltDevice outputs, and the halt state.
     /// Excludes host-side bookkeeping (markers, call stack) and the dead `f`
     /// registers. Memory is not compared — callers hash it separately.
     pub fn arch_state_diff(&self, other: &Cpu) -> Option<String> {
@@ -1477,9 +1479,6 @@ impl Cpu {
                         a.outputs.len(),
                         b.outputs.len()
                     ));
-                }
-                if a.panic != b.panic {
-                    return Some(format!("jolt_device.panic: {} vs {}", a.panic, b.panic));
                 }
             }
             (None, None) => {}
@@ -1854,7 +1853,7 @@ mod test_cpu {
             .memory_layout
             .clone();
         // Past the heap, an emulator peripheral, and the gap above the I/O region.
-        for ptr in [layout.heap_end, 0x1020, layout.io_end + 1] {
+        for ptr in [layout.heap_end, 0x1020, layout.io_end] {
             let ptr32 = u32::try_from(ptr).unwrap();
             cpu.handle_jolt_print(ptr32, 4, JOLT_PRINT_LINE);
             cpu.handle_jolt_cycle_marker(ptr32, 4, JOLT_CYCLE_MARKER_START);
@@ -2060,7 +2059,7 @@ mod test_cpu {
         let layout = JoltDevice::new(&config).memory_layout;
         let scratch = DRAM_BASE + 32;
         for (address, tape) in [
-            (layout.get_lowest_address() - 1, Some(0)),
+            (layout.get_lowest_address() - 1, None),
             (layout.heap_end, None),
             (layout.get_lowest_address(), Some(0)),
             (scratch, Some(0xab)),

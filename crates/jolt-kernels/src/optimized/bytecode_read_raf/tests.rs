@@ -21,22 +21,35 @@ use jolt_witness::{JoltVmWitnessInputs, JoltWitnessOracle, ProgramSource, TraceB
 
 use super::super::instruction_read_raf::{SharedInstructionRows, SharedInstructionRowsWeak};
 use super::*;
-use crate::optimized::booleanity::testing::{alu_row, load_row, mixed_rows, with_trace_backend};
+use crate::optimized::booleanity::testing::{
+    alu_row, load_row, mixed_rows, with_halting_backend, with_trace_backend, Halt,
+};
 #[cfg(feature = "field-inline")]
 use crate::optimized::field_registers_testing::structured_field_register_fixture;
 use crate::optimized::parity::{
     probe_input_claim, probe_one_hot_family, run_lockstep, synthetic_point,
 };
 use crate::optimized::registers_read_write::test_support::structured_fixture;
-use crate::optimized::streaming::StreamingFamilies;
+use crate::optimized::streaming::{DenseCap, StreamingFamilies};
 use crate::{JoltBackend, ReferenceBackend};
 
 fn fr(value: u64) -> Fr {
     Fr::from_u64(value)
 }
 
+/// The kernels [`run_pair_on`] checks against the reference kernels.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Slots {
+    Default,
+    /// The streaming slots, under the production cap.
+    Streaming,
+    /// The streaming address slot, and the streaming cycle kernel under the
+    /// cap its dense tables first fit after this many binds.
+    StreamingFilledAt(usize),
+}
+
 fn run_pair(committed_program: bool) {
-    with_sample_backend(|backend| run_pair_on(backend, committed_program, false));
+    with_sample_backend(|backend| run_pair_on(backend, committed_program, Slots::Default));
 }
 
 /// Parity with field-inline enabled over a program containing field instructions:
@@ -201,13 +214,25 @@ impl CycleCase {
     }
 }
 
+impl CycleCase {
+    /// The cap the streaming cycle kernel's dense tables, its RA factors and
+    /// its coefficient table, first fit together after `depth` binds.
+    fn cap_at(&self, depth: usize) -> DenseCap {
+        let tables = self.relation.dimensions().num_committed_ra_polys() + 1;
+        DenseCap {
+            bytes: tables * size_of::<Fr>(),
+            per_rows: 1 << depth,
+        }
+    }
+}
+
 fn session_holds_rows(session: &ProofSession) -> bool {
     session.state::<SharedInstructionRows>().is_some()
         || session.state::<SharedInstructionRowsWeak>().is_some()
 }
 
-/// `streaming` runs both phases on the streaming kernels.
-fn run_pair_on(backend: &TraceBackend, committed_program: bool, streaming: bool) {
+fn run_pair_on(backend: &TraceBackend, committed_program: bool, slots: Slots) {
+    let streaming = slots != Slots::Default;
     {
         let case = AddressCase::new(backend, committed_program);
         let mut session = ProofSession::default();
@@ -265,14 +290,22 @@ fn run_pair_on(backend: &TraceBackend, committed_program: bool, streaming: bool)
                 cycle_case.inputs(),
             )
             .unwrap();
-        let cycle: &dyn PrepareKernel<Fr, BytecodeReadRafCycle<Fr>> = if streaming {
-            &StreamingBytecodeReadRafCycle
-        } else {
-            &OptimizedBytecodeReadRafCycle
-        };
-        let mut optimized = cycle
-            .prepare(&mut session, backend, cycle_case.inputs())
-            .unwrap();
+        let mut optimized = match slots {
+            Slots::Default => {
+                OptimizedBytecodeReadRafCycle.prepare(&mut session, backend, cycle_case.inputs())
+            }
+            Slots::Streaming => {
+                StreamingBytecodeReadRafCycle.prepare(&mut session, backend, cycle_case.inputs())
+            }
+            Slots::StreamingFilledAt(depth) => {
+                CycleKernel::streaming(backend, &cycle_case.inputs(), cycle_case.cap_at(depth)).map(
+                    |kernel| -> Box<dyn SumcheckKernel<Fr, Relation = BytecodeReadRafCycle<Fr>>> {
+                        Box::new(kernel)
+                    },
+                )
+            }
+        }
+        .unwrap();
         assert_eq!(
             session_holds_rows(&session),
             !streaming,
@@ -311,23 +344,24 @@ fn bytecode_phases_match_reference_in_committed_program_mode() {
 #[cfg(feature = "field-inline")]
 #[test]
 fn bytecode_phases_match_reference_with_field_inline_instructions() {
-    run_pair_with_field_inline_program(|backend| run_pair_on(backend, false, false));
+    run_pair_with_field_inline_program(|backend| run_pair_on(backend, false, Slots::Default));
 }
 
 /// The sample trace, 363 of 512 cycles, 1,500 of 2,048 and 6,000 of 8,192
 /// leave a padding suffix, which the address walk meets inside a block; 16
 /// of 16 and 2,048 of 2,048 leave none; an empty trace is all suffix, and
-/// the cycle phase still holds cycle 0, for its entry term. The cycle
-/// phase's RA factors turn dense at the first bind on the sample trace, on
-/// 16 cycles and on the empty trace, at the third on 512 cycles and at the
-/// fourth on the longer traces: without doubling their branch tables for
-/// that bind up to 2,048 cycles, and after doubling them on 8,192, as on
-/// every long trace.
+/// the cycle phase still visits cycle 0's pair row, for its entry term. The
+/// cycle phase fills its dense tables at the bind the production cap
+/// selects, the last on a shorter domain, and on 2,048 cycles also under
+/// caps that select the fourth bind, one between and the last two, which
+/// leave two entries and one per table.
 #[test]
 fn streaming_phases_match_reference_over_resident_rows() {
-    with_sample_backend(|backend| run_pair_on(backend, true, true));
+    with_sample_backend(|backend| run_pair_on(backend, true, Slots::Streaming));
     for (cycles, log_t) in [(363, 9), (16, 4)] {
-        structured_fixture(cycles).with_plane(log_t, |backend| run_pair_on(backend, false, true));
+        structured_fixture(cycles).with_plane(log_t, |backend| {
+            run_pair_on(backend, false, Slots::Streaming);
+        });
     }
     for (log_t, rows) in [
         (11, mixed_rows(1500)),
@@ -336,15 +370,40 @@ fn streaming_phases_match_reference_over_resident_rows() {
         (2, Vec::new()),
     ] {
         with_trace_backend(log_t, 4, rows, |backend, _| {
-            run_pair_on(backend, false, true);
+            run_pair_on(backend, false, Slots::Streaming);
+            if log_t == 11 {
+                for depth in [4, 7, log_t - 1, log_t] {
+                    run_pair_on(backend, false, Slots::StreamingFilledAt(depth));
+                }
+            }
         });
+    }
+}
+
+/// Runs that end at `jolt.success` and at `EBREAK`: 37 of 64 cycles and 1,500
+/// of 2,048 leave padding after the halt, and 16 of 16 end at the halt on the
+/// domain's last cycle, the row the streaming address walk weighs as its
+/// constant suffix. The default and streaming kernels of both phases match
+/// the reference in both program modes.
+#[test]
+fn bytecode_phases_match_reference_on_runs_that_end_at_a_halt() {
+    for halt in [Halt::Success, Halt::Panic] {
+        for (log_t, len) in [(6, 37), (4, 16), (11, 1500)] {
+            with_halting_backend(log_t, 4, len, halt, |backend, _| {
+                for committed_program in [false, true] {
+                    for slots in [Slots::Default, Slots::Streaming] {
+                        run_pair_on(backend, committed_program, slots);
+                    }
+                }
+            });
+        }
     }
 }
 
 #[cfg(feature = "field-inline")]
 #[test]
 fn streaming_phases_match_reference_with_field_inline_instructions() {
-    run_pair_with_field_inline_program(|backend| run_pair_on(backend, false, true));
+    run_pair_with_field_inline_program(|backend| run_pair_on(backend, false, Slots::Streaming));
 }
 
 /// A one-cycle domain has no round: the streaming cycle phase holds its RA
@@ -377,11 +436,13 @@ fn streaming_cycle_phase_serves_a_one_cycle_domain() {
     });
 }
 
-/// Over a padded trace the streaming cycle kernel holds its coefficient
-/// table for the cycles before the padding only, and its dense RA rows for
-/// the bound indices that hold one.
+/// The streaming cycle kernel holds one coefficient, cycle 0's, and no
+/// table by cycle until the first bind at which its RA factors and its
+/// coefficient table fit its cap together: a cap one byte short of them
+/// after six binds fills at the seventh. Over a padded trace that bind fills
+/// the tables for the bound indices that hold a cycle before the padding.
 #[test]
-fn streaming_cycle_phase_tables_stop_at_the_padding() {
+fn streaming_cycle_phase_holds_no_table_until_its_tables_fit_the_cap() {
     with_trace_backend(11, 4, mixed_rows(1500), |backend, _| {
         let address = AddressCase::new(backend, false);
         let case = CycleCase::new(
@@ -389,15 +450,25 @@ fn streaming_cycle_phase_tables_stop_at_the_padding() {
             &address,
             synthetic_point(address.dimensions.log_k(), 101),
         );
-        let mut kernel = CycleKernel::streaming(backend, &case.inputs()).unwrap();
-        assert_eq!(kernel.combined.prefix_len(), 1500);
-        for round in 0..4 {
-            kernel.bind(fr(31 + round)).unwrap();
+        let fits = case.cap_at(6);
+        let short = DenseCap {
+            bytes: fits.bytes - 1,
+            ..fits
+        };
+        for (cap, depth) in [(fits, 6), (short, 7)] {
+            let mut kernel = CycleKernel::streaming(backend, &case.inputs(), cap).unwrap();
+            for round in 0..depth {
+                assert!(kernel.rows.lazy().is_none());
+                assert_eq!(kernel.combined.prefix_len(), 1);
+                kernel.bind(fr(31 + round as u64)).unwrap();
+            }
+            let filled = 1500usize.div_ceil(1 << depth);
+            assert_eq!(
+                kernel.rows.lazy().map(|rows| rows.ra.prefix_len()),
+                Some(filled)
+            );
+            assert_eq!(kernel.combined.prefix_len(), filled);
         }
-        assert_eq!(
-            kernel.ra.lazy().map(LazyFoldedRa::prefix_len),
-            Some(1500usize.div_ceil(16))
-        );
     });
 }
 

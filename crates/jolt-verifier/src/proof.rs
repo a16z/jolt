@@ -1,3 +1,4 @@
+use core::fmt::{Formatter, Result as FmtResult};
 pub use jolt_claims::protocols::jolt::TracePolynomialOrder;
 use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltReadWriteConfig};
 use jolt_crypto::{Commitment, VectorCommitment};
@@ -5,7 +6,10 @@ use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
 use jolt_sumcheck::SumcheckProof;
 use jolt_zk::BlindFoldProof;
-use serde::{Deserialize, Serialize};
+use serde::{
+    de::{value::SeqAccessDeserializer, Deserializer, Error as DeError, SeqAccess, Visitor},
+    Deserialize, Serialize,
+};
 
 use crate::{
     config::JoltProtocolConfig,
@@ -70,10 +74,64 @@ pub struct JoltProof<
     pub one_hot_config: JoltOneHotConfig,
     pub trace_polynomial_order: TracePolynomialOrder,
     /// The spongefish NARG string: the prover messages the verifier reads
-    /// from its transcript. Every message of the current protocol is a field
-    /// of this struct absorbed as a public message, so the prover leaves it
-    /// empty; the verifier still requires it to be read to its end.
+    /// from its transcript. Messages that are fields of this struct are
+    /// absorbed as public messages and are not repeated here; in Akita proofs
+    /// the string carries the opening argument. The verifier requires it to be
+    /// read to its end.
+    #[serde(deserialize_with = "deserialize_argument")]
     pub narg: Vec<u8>,
+}
+
+/// The name under which [`JoltProof::narg`] asks a deserializer for its bytes.
+///
+/// The field is written as a plain sequence of bytes and read as a newtype
+/// struct of this name around that sequence. bincode, postcard and serde_json
+/// decode such a newtype as its content, and a deserializer that hands a
+/// newtype struct on as a sequence is accepted too, so they all read the
+/// argument one element at a time, exactly as they read a bare `Vec<u8>`.
+///
+/// A deserializer adapter may recognise the name and pass the argument to the
+/// visitor as one byte string instead, provided the decoder under it borrows
+/// from its input and so checks an announced length against the bytes that
+/// remain before it hands them out. The recursion example's size-limiting
+/// adapter does so, because a verifier running as a guest pays for every
+/// element of the sequence. The name is public because that adapter lives
+/// outside this crate; it is not a Rust identifier, so a derived type can
+/// carry it only through an explicit rename.
+pub const PROOF_ARGUMENT_NEWTYPE: &str = "$jolt_verifier::proof::Argument";
+
+fn deserialize_argument<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<u8>, D::Error> {
+    deserializer.deserialize_newtype_struct(PROOF_ARGUMENT_NEWTYPE, ArgumentVisitor)
+}
+
+struct ArgumentVisitor;
+
+impl<'de> Visitor<'de> for ArgumentVisitor {
+    type Value = Vec<u8>;
+
+    fn expecting(&self, formatter: &mut Formatter<'_>) -> FmtResult {
+        formatter.write_str("the proof argument bytes")
+    }
+
+    // bincode, postcard and serde_json reach this: the argument is decoded as
+    // a `Vec<u8>`.
+    fn visit_newtype_struct<D: Deserializer<'de>>(
+        self,
+        deserializer: D,
+    ) -> Result<Self::Value, D::Error> {
+        Vec::deserialize(deserializer)
+    }
+
+    // A deserializer that forwards a newtype struct to `deserialize_any` or to
+    // a sequence reaches this, and gets the same `Vec<u8>` decoding.
+    fn visit_seq<A: SeqAccess<'de>>(self, seq: A) -> Result<Self::Value, A::Error> {
+        Vec::deserialize(SeqAccessDeserializer::new(seq))
+    }
+
+    // An adapter that recognised `PROOF_ARGUMENT_NEWTYPE` reaches this.
+    fn visit_bytes<E: DeError>(self, bytes: &[u8]) -> Result<Self::Value, E> {
+        Ok(bytes.to_vec())
+    }
 }
 
 impl<PCS, VC, ZkProof> JoltProof<PCS, VC, ZkProof>
@@ -332,4 +390,20 @@ where
     /// filled only where the site is visited and the challenge set needs proof
     /// of work, so a BN254 proof carries none.
     pub pow_nonces: StagePowNonces,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::deserialize_argument;
+    use serde::de::value::{Error as ValueError, SeqDeserializer};
+
+    /// A deserializer that forwards a newtype struct to `deserialize_any`, as
+    /// serde's own value deserializers do, presents the argument as a
+    /// sequence.
+    #[test]
+    fn proof_argument_decodes_from_a_forwarded_sequence() {
+        let argument: Vec<u8> = (0..=u8::MAX).collect();
+        let forwarded = SeqDeserializer::<_, ValueError>::new(argument.iter().copied());
+        assert_eq!(deserialize_argument(forwarded), Ok(argument));
+    }
 }

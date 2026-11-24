@@ -579,9 +579,7 @@ mod tests {
 
     use jolt_witness::{JoltWitnessOracle, TraceBackend};
 
-    use super::super::testing::{
-        assert_parity, ram_fixture, random_scalars, silent_ram_fixture, FixtureShape, RamOp,
-    };
+    use super::super::testing::{assert_parity, ram_fixture, random_scalars, FixtureShape, RamOp};
     use super::*;
     use crate::reference::views::address_fold;
     use crate::ReferenceBackend;
@@ -717,7 +715,7 @@ mod tests {
             ],
             43,
         );
-        parity_on(&silent_ram_fixture(shape), shape, 47);
+        parity_on(&ram_fixture(shape, Vec::new(), Vec::new()), shape, 47);
     }
 
     #[test]
@@ -726,7 +724,7 @@ mod tests {
             log_t: 5,
             ram_k: 16,
         };
-        for prefix in [0, 1, 2, 3, 6, 7, 8, 14, 15, 16, 30, 31] {
+        for prefix in [1, 2, 3, 4, 7, 8, 9, 15, 16, 17, 31, 32] {
             let ops = mixed_ops().into_iter().cycle().take(prefix).collect();
             run_parity(shape, ops, 401 + prefix as u64);
         }

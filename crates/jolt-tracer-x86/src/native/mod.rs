@@ -189,7 +189,7 @@ impl X86TracerBackend {
         });
 
         compiled.run_record(&mut guest)?;
-        guest.check_exit(&mut host)?.require_halt()?;
+        guest.check_exit(&mut host, &plane)?.require_halt()?;
 
         let recorded =
             (guest.obs_cursor as usize - obs_start as usize) / core::mem::size_of::<Observation>();
@@ -256,7 +256,7 @@ impl X86TracerBackend {
         });
 
         compiled.run(&mut guest)?;
-        let exit = guest.check_exit(&mut host)?;
+        let exit = guest.check_exit(&mut host, &plane)?;
 
         Ok(RunOutput {
             trace_len: guest.trace_len as usize,
@@ -303,10 +303,10 @@ impl ExecutionBackend for X86TracerBackend {
         let data = TraceData::new(rows);
         let dimensions = ExecutionDimensions {
             trace_length: data.proof_len(),
-            ends_in_jump: data
+            ends_in_halt: data
                 .proof_rows()
                 .last()
-                .is_some_and(|row| row.circuit_flags().get(CircuitFlags::Jump)),
+                .is_some_and(|row| row.circuit_flags().get(CircuitFlags::Halt)),
             ram_bounds,
         };
         Ok(TraceOutput::with_dimensions(
@@ -478,7 +478,6 @@ struct Boundary {
     device_trusted_advice: Vec<u8>,
     device_untrusted_advice: Vec<u8>,
     device_outputs: Vec<u8>,
-    device_panic: bool,
     advice_tape: Vec<u8>,
     advice_cursor: usize,
 }
@@ -499,7 +498,6 @@ impl Boundary {
             device_trusted_advice: host.device.trusted_advice.clone(),
             device_untrusted_advice: host.device.untrusted_advice.clone(),
             device_outputs: host.device.outputs.clone(),
-            device_panic: host.device.panic,
             advice_tape: host.advice_tape.clone(),
             advice_cursor: host.advice_cursor,
         })
@@ -515,7 +513,6 @@ impl Boundary {
             .untrusted_advice
             .clone_from(&self.device_untrusted_advice);
         device.outputs.clone_from(&self.device_outputs);
-        device.panic = self.device_panic;
         device
     }
 }
@@ -607,7 +604,7 @@ impl ChunkedExecutionBackend for X86TracerBackend {
                 ));
                 continue;
             }
-            guest.check_exit(&mut host)?.require_halt()?;
+            guest.check_exit(&mut host, &plane)?.require_halt()?;
             break;
         }
         let trace_len = guest.trace_len as usize;
@@ -684,7 +681,7 @@ impl ChunkedExecutionBackend for X86TracerBackend {
 
         checkpoint.compiled.run_record_pausable(&mut guest)?;
         if guest.exit != ExitReason::Paused as u64 {
-            guest.check_exit(&mut host)?.require_halt()?;
+            guest.check_exit(&mut host, &plane)?.require_halt()?;
         }
 
         let recorded =

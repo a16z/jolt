@@ -9,7 +9,10 @@
 //! `FIELD_ADVICE_LIMB` (one range-bound low limb per row, the quotient staying
 //! in the register file) closed by `FIELD_ASSERT_ZERO`. These relations bind
 //! the result modulo the field characteristic. The field wrappers check
-//! that the returned integer is below the modulus before using it.
+//! that the returned integer is below the modulus before using it, and call
+//! `jolt_platform::spoil_proof` when it is not: the limbs of p satisfy every
+//! row as a reading of zero, so an ordinary panic would let a dishonest prover
+//! force a provable panicking outcome.
 //!
 //! The routed field's arithmetic owns field registers 1 through 14 (the BN254
 //! Montgomery constants stay in 1 and 2 for the whole run); guest code that
@@ -31,6 +34,15 @@
 //! multiplication (`abR² · R⁻¹`, `(aR)⁻¹ · R²`); addition and subtraction are
 //! representation-transparent. `Fp128` is stored canonically and needs no
 //! correction.
+
+// A guest selects one field, so the other field's helpers go unused: the
+// Montgomery constants and corrections serve only `Fr`, and the accumulating
+// kernels only `Fp128`. Guest builds deny warnings.
+#![expect(
+    dead_code,
+    unused_imports,
+    reason = "each field selector leaves the other field's helpers unused"
+)]
 
 use core::sync::atomic::{AtomicBool, Ordering};
 
@@ -94,7 +106,7 @@ mod emit {
         ($w:expr) => {
             // SAFETY: one fixed field-inline word; no Rust memory is touched.
             unsafe {
-                core::arch::asm!(".word {w}", w = const $w, options(nostack));
+                core::arch::asm!(".insn 4, {w}", w = const $w, options(nostack));
             }
         };
     }
@@ -259,6 +271,10 @@ mod emit {
         fixed!(r_word(FUNCT3_MUL, REG_OUT, REG_OUT, REG_A));
     }
     #[inline(always)]
+    pub fn out_add_a() {
+        fixed!(r_word(FUNCT3_ADD, REG_OUT, REG_OUT, REG_A));
+    }
+    #[inline(always)]
     pub fn acc_add_out() {
         fixed!(r_word(FUNCT3_ADD, REG_ACC, REG_ACC, REG_OUT));
     }
@@ -417,6 +433,19 @@ mod guest {
             ensure_montgomery_constants();
             emit::mul_out_rinv();
         }
+        finish()
+    }
+
+    /// Canonical multiply-add without exposing the intermediate product as advice.
+    /// Uses no accumulator register and runs no caller code while operands are live.
+    /// Canonical (non-Montgomery) limbs only.
+    #[inline(always)]
+    pub fn mul_add<const N: usize>(a: &[u64; N], b: &[u64; N], addend: &[u64; N]) -> [u64; N] {
+        load(REG_A, a);
+        load(REG_B, b);
+        emit::mul_out();
+        load(REG_A, addend);
+        emit::out_add_a();
         finish()
     }
     /// `Σ a[i]·b[i]` with the running sum resident in the field register file:
@@ -649,6 +678,6 @@ mod guest {
 }
 
 pub use guest::{
-    accumulators_free, add, bind_modulus, dot, dot_rows, inv, mul, neg, signed_sum, sub,
+    accumulators_free, add, bind_modulus, dot, dot_rows, inv, mul, mul_add, neg, signed_sum, sub,
     sum_of_products, weighted_dot_rows,
 };

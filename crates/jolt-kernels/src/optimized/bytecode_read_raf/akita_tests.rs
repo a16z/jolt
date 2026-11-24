@@ -20,21 +20,29 @@ use jolt_witness::{ProgramSource, TraceBackend};
 
 use super::*;
 use crate::optimized::booleanity::testing::{
-    mixed_rows, with_booleanity_backend, with_trace_backend,
+    mixed_rows, with_booleanity_backend, with_halting_backend, with_trace_backend, Halt,
 };
 use crate::optimized::parity::{probe_input_claim, run_lockstep, synthetic_point};
+use crate::optimized::streaming::DenseCap;
 use crate::ReferenceBackend;
 
 type AddressSlot = dyn PrepareKernel<Fr, BytecodeReadRafAddressPhase<Fr>>;
 
+fn read_raf_dimensions(
+    backend: &TraceBackend,
+    base_dimensions: BooleanityDimensions,
+) -> BytecodeReadRafDimensions {
+    let bytecode_len = backend.program_preprocessing().bytecode.bytecode.len();
+    BytecodeReadRafDimensions::new(
+        base_dimensions.log_t,
+        bytecode_len.ilog2() as usize,
+        base_dimensions.layout.bytecode(),
+    )
+}
+
 fn address_parity(log_t: usize, log_k_chunk: u8, committed_program: bool, kernel: &AddressSlot) {
     with_booleanity_backend(log_t, log_k_chunk, |backend, base_dimensions| {
-        let bytecode_len = backend.program_preprocessing().bytecode.bytecode.len();
-        let dimensions = BytecodeReadRafDimensions::new(
-            log_t,
-            bytecode_len.ilog2() as usize,
-            base_dimensions.layout.bytecode(),
-        );
+        let dimensions = read_raf_dimensions(backend, base_dimensions);
         address_parity_on(backend, dimensions, committed_program, kernel);
     });
 }
@@ -149,12 +157,7 @@ impl CycleCase {
     fn new(backend: &TraceBackend, base_dimensions: BooleanityDimensions) -> Self {
         let log_t = base_dimensions.log_t;
         let program = backend.program_preprocessing();
-        let bytecode_len = program.bytecode.bytecode.len();
-        let dimensions = BytecodeReadRafDimensions::new(
-            log_t,
-            bytecode_len.ilog2() as usize,
-            base_dimensions.layout.bytecode(),
-        );
+        let dimensions = read_raf_dimensions(backend, base_dimensions);
         let stage_cycle_points =
             std::array::from_fn(|stage| synthetic_point(log_t, 11 + stage as u64));
         let address_challenges = BytecodeReadRafAddressPhaseChallenges {
@@ -216,6 +219,33 @@ impl CycleCase {
             points: &self.points,
             challenges: &self.challenges,
         }
+    }
+}
+
+/// The cap the streaming cycle kernel's dense tables, its RA factors, its
+/// two coefficient tables and the fused increment, first fit together after
+/// `depth` binds.
+fn cap_at(relation: &BytecodeReadRafCycle<Fr>, depth: usize) -> DenseCap {
+    let tables = relation.dimensions().num_committed_ra_polys() + 3;
+    DenseCap {
+        bytes: tables * size_of::<Fr>(),
+        per_rows: 1 << depth,
+    }
+}
+
+/// The streaming cycle kernel under [`cap_at`] this many binds.
+struct StreamingFilledAt(usize);
+
+impl PrepareKernel<Fr, BytecodeReadRafCycle<Fr>> for StreamingFilledAt {
+    fn prepare(
+        &self,
+        _session: &mut ProofSession,
+        witness: &dyn JoltWitnessPlane<Fr>,
+        inputs: ProverInputs<'_, Fr, BytecodeReadRafCycle<Fr>>,
+    ) -> Result<Box<dyn SumcheckKernel<Fr, Relation = BytecodeReadRafCycle<Fr>>>, KernelError<Fr>>
+    {
+        let cap = cap_at(inputs.relation, self.0);
+        Ok(Box::new(CycleKernel::streaming(witness, &inputs, cap)?))
     }
 }
 
@@ -298,17 +328,22 @@ fn bytecode_cycle_matches_reference_k256() {
     cycle_parity(3, 8, &OptimizedBytecodeReadRafCycle);
 }
 
-/// 4 of 4 cycles leave no padding suffix and 4 of 64 leave one; both turn
-/// the RA factor dense at the first bind. 1,500 of 2,048, 2,048 of 2,048 and
-/// 6,000 of 8,192 turn it dense at the fourth: without doubling its branch
-/// tables for that bind up to 2,048 cycles, and after doubling them on
-/// 8,192, as on every long trace. Every case holds the fused increment of
-/// the cycles before the suffix from the resident rows; an empty trace is
-/// all suffix, and the kernel still holds cycle 0, for its entry term.
+/// 4 of 4 cycles leave no padding suffix and 4 of 64 leave one; 1,500 of
+/// 2,048 and 6,000 of 8,192 leave one that starts inside a pair row of the
+/// later streamed rounds, and 2,048 of 2,048 fill their domain; an empty
+/// trace is all suffix, and the kernel still visits cycle 0's pair row, for
+/// its entry term. The kernel fills its dense tables at the bind the
+/// production cap selects, the last on a shorter domain, and under caps that
+/// select the fourth bind, one between and the last two, which leave two
+/// entries and one per table. Every streamed round gathers the fused
+/// increment from the resident rows.
 #[test]
 fn streaming_cycle_matches_reference_over_resident_rows() {
     for (log_t, chunk) in [(2, 4), (6, 4), (6, 8)] {
         cycle_parity(log_t, chunk, &StreamingBytecodeReadRafCycle);
+        for depth in 4..=log_t {
+            cycle_parity(log_t, chunk, &StreamingFilledAt(depth));
+        }
     }
     for (log_t, rows) in [
         (11, mixed_rows(1500)),
@@ -318,30 +353,67 @@ fn streaming_cycle_matches_reference_over_resident_rows() {
     ] {
         with_trace_backend(log_t, 4, rows, |backend, base_dimensions| {
             cycle_parity_on(backend, base_dimensions, &StreamingBytecodeReadRafCycle);
+            if log_t == 11 {
+                for depth in [4, 7, log_t - 1, log_t] {
+                    cycle_parity_on(backend, base_dimensions, &StreamingFilledAt(depth));
+                }
+            }
         });
     }
 }
 
-/// Over a padded trace the streaming cycle kernel holds its coefficient
-/// tables and the fused increment for the cycles before the padding only,
-/// and its dense RA rows for the bound indices that hold one.
+/// A one-cycle domain has no round: the streaming cycle kernel holds its RA
+/// factor dense from the start, takes the fused increment of its cycle, a
+/// load that changes `rd`, as the rows' suffix value, and opens the reference
+/// kernel's claims.
 #[test]
-fn streaming_cycle_tables_stop_at_the_padding() {
+fn streaming_cycle_serves_a_one_cycle_domain() {
+    with_trace_backend(0, 4, mixed_rows(1), |backend, base_dimensions| {
+        let case = CycleCase::new(backend, base_dimensions);
+        let mut session = ProofSession::default();
+        let slots: [&CycleSlot; 2] = [&ReferenceBackend, &StreamingBytecodeReadRafCycle];
+        let [reference, streaming] = slots.map(|slot| {
+            slot.prepare(&mut session, backend, case.inputs())
+                .unwrap()
+                .output_claims(&case.claims)
+                .unwrap()
+        });
+        assert_eq!(reference, streaming);
+    });
+}
+
+/// The streaming cycle kernel holds one coefficient in each coefficient
+/// table, cycle 0's, and no table by cycle until the first bind at which its
+/// RA factors, its two coefficient tables and the fused increment fit its
+/// cap together: a cap one byte short of them after six binds fills at the
+/// seventh. Over a padded trace that bind fills the tables for the bound
+/// indices that hold a cycle before the padding.
+#[test]
+fn streaming_cycle_holds_no_table_until_its_tables_fit_the_cap() {
     with_trace_backend(11, 4, mixed_rows(1500), |backend, base_dimensions| {
         let case = CycleCase::new(backend, base_dimensions);
-        let mut kernel = CycleKernel::streaming(backend, &case.inputs()).unwrap();
-        assert_eq!(kernel.combined.prefix_len(), 1500);
-        assert_eq!(kernel.fused_combined.prefix_len(), 1500);
-        assert!(
-            matches!(&kernel.fused_inc, LazyFusedInc::Prefix { values, .. } if values.len() == 1500)
-        );
-        for round in 0..4 {
-            kernel.bind(Fr::from_u64(31 + round)).unwrap();
+        let fits = cap_at(&case.relation, 6);
+        let short = DenseCap {
+            bytes: fits.bytes - 1,
+            ..fits
+        };
+        for (cap, depth) in [(fits, 6), (short, 7)] {
+            let mut kernel = CycleKernel::streaming(backend, &case.inputs(), cap).unwrap();
+            for round in 0..depth {
+                assert!(kernel.rows.lazy().is_none());
+                assert_eq!(kernel.combined.prefix_len(), 1);
+                assert_eq!(kernel.fused_combined.prefix_len(), 1);
+                kernel.bind(Fr::from_u64(31 + round as u64)).unwrap();
+            }
+            let filled = 1500usize.div_ceil(1 << depth);
+            let rows = kernel.rows.lazy().unwrap();
+            assert_eq!(rows.ra.prefix_len(), filled);
+            assert!(
+                matches!(&rows.fused_inc, LazyFusedInc::Prefix { values, .. } if values.len() == filled)
+            );
+            assert_eq!(kernel.combined.prefix_len(), filled);
+            assert_eq!(kernel.fused_combined.prefix_len(), filled);
         }
-        assert_eq!(
-            kernel.ra.lazy().map(LazyFoldedRa::prefix_len),
-            Some(1500usize.div_ceil(16))
-        );
     });
 }
 
@@ -353,6 +425,38 @@ fn bytecode_address_matches_reference_k16() {
 #[test]
 fn bytecode_address_matches_reference_k256_committed() {
     address_parity(3, 8, true, &OptimizedBytecodeReadRafAddress);
+}
+
+/// Runs that end at `jolt.success` and at `EBREAK`: 37 of 64 cycles and 1,500
+/// of 2,048 leave padding after the halt, and 16 of 16 end at the halt on the
+/// domain's last cycle. The default and streaming kernels of both phases
+/// match the reference, the address phase in both program modes; the fused
+/// stages weigh the halt's link write.
+#[test]
+fn bytecode_read_raf_matches_reference_on_runs_that_end_at_a_halt() {
+    let address_kernels: [&AddressSlot; 2] = [
+        &OptimizedBytecodeReadRafAddress,
+        &StreamingBytecodeReadRafAddress,
+    ];
+    let cycle_kernels: [&CycleSlot; 2] = [
+        &OptimizedBytecodeReadRafCycle,
+        &StreamingBytecodeReadRafCycle,
+    ];
+    for halt in [Halt::Success, Halt::Panic] {
+        for (log_t, len) in [(6, 37), (4, 16), (11, 1500)] {
+            with_halting_backend(log_t, 4, len, halt, |backend, base_dimensions| {
+                let dimensions = read_raf_dimensions(backend, base_dimensions);
+                for kernel in address_kernels {
+                    for committed_program in [false, true] {
+                        address_parity_on(backend, dimensions, committed_program, kernel);
+                    }
+                }
+                for kernel in cycle_kernels {
+                    cycle_parity_on(backend, base_dimensions, kernel);
+                }
+            });
+        }
+    }
 }
 
 /// 4 of 64 cycles leave a padding suffix after a walk that ends inside a

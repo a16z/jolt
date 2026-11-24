@@ -17,7 +17,7 @@ use std::sync::Arc;
 use jolt_claims::protocols::jolt::JoltPolynomialId;
 
 use super::*;
-use crate::witnesses::{Extract, NextIsNoop, NextPc, NextUnexpandedPc, ShouldJump, WitnessEnv};
+use crate::witnesses::{Extract, NextIsNoop, NextPc, NextUnexpandedPc, WitnessEnv};
 use crate::{JoltWitnessOracle, PolynomialEncoding, Shape};
 
 fn base_preprocessing() -> JoltProgramPreprocessing {
@@ -424,7 +424,7 @@ fn ram_read_write_virtual_views_materialize_address_major_state() -> Result<(), 
 
     let val = materialized_virtual_view(&witness, JoltVirtualPolynomial::RamVal)?;
     let ra = materialized_virtual_view(&witness, JoltVirtualPolynomial::RamRa)?;
-    let base = 10 * 4;
+    let base = 9 * 4;
     assert_eq!(val.len(), 64);
     assert_eq!(ra.len(), 64);
     assert_eq!(val[base], Fr::from_u64(3));
@@ -588,8 +588,9 @@ fn ram_val_final_virtual_view_materializes_final_memory_and_public_io() -> Resul
     assert_eq!(val_final[1], Fr::from_u64(0x22));
     assert_eq!(val_final[2], Fr::from_u64(0x33));
     assert_eq!(val_final[3], Fr::from_u64(0x5544));
+    // Word 4 is the guard word at `io_end`; words 5 to 7 pad the I/O region.
     assert_eq!(val_final[4], Fr::from_u64(0));
-    assert_eq!(val_final[5], Fr::from_u64(1));
+    assert_eq!(val_final[5], Fr::from_u64(0));
     assert_eq!(val_final[16], Fr::from_u64(0x7766));
     Ok(())
 }
@@ -597,17 +598,8 @@ fn ram_val_final_virtual_view_materializes_final_memory_and_public_io() -> Resul
 #[test]
 fn lookahead_witnesses_pad_the_final_cycle() {
     let instruction = instruction(0x8000_0000);
-    let jump = JoltInstructionRow {
-        instruction_kind: JoltInstructionKind::JAL,
-        address: 0x8000_0004,
-        operands: NormalizedOperands {
-            rd: Some(1),
-            ..NormalizedOperands::default()
-        },
-        ..instruction
-    };
     let bytecode = BytecodePreprocessing::preprocess(
-        vec![instruction, jump],
+        vec![instruction],
         instruction.address as u64,
         RV64IMAC_JOLT,
     )
@@ -617,12 +609,6 @@ fn lookahead_witnesses_pad_the_final_cycle() {
     let row = checked_row(
         &preprocessing,
         instruction,
-        RegisterState::default(),
-        RamAccess::NoOp,
-    );
-    let jump_row = checked_row(
-        &preprocessing,
-        jump,
         RegisterState::default(),
         RamAccess::NoOp,
     );
@@ -637,21 +623,6 @@ fn lookahead_witnesses_pad_the_final_cycle() {
     assert_eq!(
         NextUnexpandedPc::extract(&row, None, &env),
         Ok(NextUnexpandedPc(0))
-    );
-    // The shift boundary at `T - 1` gives a final jump with no padding row
-    // the successor values of a no-op. Constraint 21 then forces
-    // `ShouldJump = 0`.
-    assert_eq!(
-        ShouldJump::extract(&jump_row, None, &env),
-        Ok(ShouldJump(false))
-    );
-    assert_eq!(
-        ShouldJump::extract(&jump_row, Some(&noop_next), &env),
-        Ok(ShouldJump(false))
-    );
-    assert_eq!(
-        ShouldJump::extract(&jump_row, Some(&row), &env),
-        Ok(ShouldJump(true))
     );
 }
 
@@ -828,7 +799,7 @@ fn ram_ra_materializes_remapped_address_chunks_and_noop_padding() {
     let memory_layout = compact_memory_layout();
     let access_address = memory_layout.stack_end;
     let remapped = memory_layout.remap_word_address(access_address);
-    assert_eq!(remapped, Ok(Some(10)));
+    assert_eq!(remapped, Ok(Some(9)));
     let load = memory_instruction(JoltInstructionKind::LD, RAM_START_ADDRESS as usize);
     let bytecode =
         BytecodePreprocessing::preprocess(vec![load], RAM_START_ADDRESS, RV64IMAC_JOLT).unwrap();
@@ -869,7 +840,7 @@ fn ram_ra_materializes_remapped_address_chunks_and_noop_padding() {
     let witness = TraceBackend::new(config().with_log_t(2), inputs);
     let table = committed_table(&witness, JoltCommittedPolynomial::RamRa(1)).unwrap();
     assert_eq!(table.len(), 16 * 4);
-    assert_eq!(hot_addresses(&table, 4), vec![Some(10), None, None, None]);
+    assert_eq!(hot_addresses(&table, 4), vec![Some(9), None, None, None]);
 }
 
 #[test]

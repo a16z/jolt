@@ -348,7 +348,8 @@ With field inline enabled, product virtualization adds a field-product lane:
 existing product lanes:
   Product = LeftInstructionInput * RightInstructionInput
   ShouldBranch = LookupOutput * BranchFlag
-  ShouldJump = JumpFlag * (1 - NextIsNoop)
+  (2 - ClaimedPanic) * HaltFlag + HaltPanicFlag
+    = 2 * (NextIsNoop - IsNoop)
 
 field-inline lane:
   FieldProduct = FieldRs1Value * FieldRs2Value
@@ -619,21 +620,19 @@ increment-reduction work:
 Field-inline disabled:
   1. BytecodeReadRaf
   2. Booleanity
-  3. RamHammingBooleanity
-  4. RamRaVirtualization
-  5. InstructionRaVirtualization
-  6. IncClaimReduction
-  7+. optional advice cycle-phase reductions
+  3. RamRaVirtualization
+  4. InstructionRaVirtualization
+  5. IncClaimReduction
+  6+. optional advice cycle-phase reductions
 
 Field-inline enabled:
   1. BytecodeReadRaf, with field-inline opcode/access terms enabled
   2. Booleanity
-  3. RamHammingBooleanity
-  4. RamRaVirtualization
-  5. InstructionRaVirtualization
-  6. IncClaimReduction
-  7. FieldRegistersIncClaimReduction
-  8+. optional advice cycle-phase reductions
+  3. RamRaVirtualization
+  4. InstructionRaVirtualization
+  5. IncClaimReduction
+  6. FieldRegistersIncClaimReduction
+  7+. optional advice cycle-phase reductions
 ```
 
 With field inline enabled, `BytecodeReadRaf` also consumes field-inline virtual

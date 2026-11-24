@@ -35,7 +35,7 @@ mod registers;
 
 pub use flags::{
     InstructionFlag, InstructionRafFlag, LookupTableFlag, NextIsFirstInSequence, NextIsNoop,
-    NextIsVirtual, OpFlag, ShouldBranch, ShouldJump,
+    NextIsVirtual, OpFlag, ShouldBranch,
 };
 pub use increments::{FusedInc, RamInc, RdInc};
 pub use lookups::{LookupIndex, LookupOutput, TableIndex};
@@ -45,7 +45,7 @@ pub use operands::{
     RightLookupOperand,
 };
 pub use pc::{BytecodePc, NextPc, NextUnexpandedPc, Pc, UnexpandedPc};
-pub use ram::{RamAddress, RamHammingWeight, RamReadValue, RamWriteValue, RemappedRamAddress};
+pub use ram::{RamAddress, RamReadValue, RamWriteValue, RemappedRamAddress};
 pub use registers::{RdWriteValue, Rs1Value, Rs2Value};
 
 pub(crate) use ram::ram_access_address;

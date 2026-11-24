@@ -244,15 +244,13 @@ mod tests {
                 RamOp::UnmappedWrite { pre: 9, post: 1 },
             ],
         );
-        // (cycle, word, pre, post); cycle 7 is the fixture's termination
-        // write, cycles 8.. are padding.
+        // (cycle, word, pre, post); cycles 7.. are padding.
         let expected = [
             (0, Some(2), 7, 7),
             (2, None, 3, 8),
             (3, Some(2), 7, 7),
             (5, Some(5), 0, 2),
             (6, None, 9, 1),
-            (7, Some(1), 0, 1),
         ];
         let log = RamEventLog::collect::<Fr>(&witness, shape.log_t, shape.ram_k).unwrap();
         let events: Vec<_> = log
@@ -280,9 +278,9 @@ mod tests {
         let witness = ram_fixture(shape, Vec::new(), ops.clone());
         // A configured domain shorter than the trace leaves no row handle.
         let mut shortened = ram_fixture(shape, Vec::new(), ops);
-        shortened.config.log_t = 1;
+        shortened.config.log_t = 0;
         assert!(matches!(
-            RamEventLog::collect::<Fr>(&shortened, 1, shape.ram_k),
+            RamEventLog::collect::<Fr>(&shortened, 0, shape.ram_k),
             Err(KernelError::Witness(WitnessError::UnavailableView { .. }))
         ));
         assert!(matches!(

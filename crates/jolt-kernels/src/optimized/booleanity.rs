@@ -960,7 +960,8 @@ impl<F: JoltField> SumcheckKernel<F> for OptimizedBooleanityCycleKernel<F> {
 }
 
 /// Trace-backed test fixtures shared by the optimized-kernel parity tests
-/// (this module and `optimized::ram_hamming_booleanity`): a tiny consistent
+/// (this module, `optimized::bytecode_read_raf` and
+/// `optimized::hamming_weight_claim_reduction`): a tiny consistent
 /// trace behind a full witness plane, so the reference kernels' dense
 /// `oracle_table` grids and the optimized kernels' typed bundle rows
 /// describe the same witness by construction.

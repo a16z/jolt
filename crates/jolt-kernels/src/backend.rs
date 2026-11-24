@@ -26,13 +26,12 @@ use jolt_poly::MultilinearPoly;
 #[cfg(feature = "allocative")]
 use jolt_poly::Polynomial;
 use jolt_poly::UnivariatePoly;
-use jolt_verifier::stages::relations::{ConcreteSumcheck, SumcheckInputClaims};
+use jolt_verifier::stages::relations::ConcreteSumcheck;
 use jolt_verifier::stages::stage1::outer_remainder::OuterRemainder;
 #[cfg(feature = "field-inline")]
 use jolt_verifier::stages::stage2::field_registers_claim_reduction::FieldRegistersClaimReduction;
 use jolt_verifier::stages::stage2::instruction_claim_reduction::InstructionClaimReduction;
 use jolt_verifier::stages::stage2::product_remainder::ProductRemainder;
-use jolt_verifier::stages::stage2::product_uniskip::ProductUniskip;
 use jolt_verifier::stages::stage2::ram_output_check::RamOutputCheck;
 use jolt_verifier::stages::stage2::ram_raf_evaluation::RamRafEvaluation;
 use jolt_verifier::stages::stage2::ram_read_write_checking::RamReadWriteChecking;
@@ -60,7 +59,6 @@ use jolt_verifier::stages::stage6b::committed_reduction_cycle_phase::{
 use jolt_verifier::stages::stage6b::field_registers_inc_claim_reduction::FieldRegistersIncClaimReduction;
 use jolt_verifier::stages::stage6b::inc_claim_reduction::IncClaimReduction;
 use jolt_verifier::stages::stage6b::instruction_ra_virtualization::InstructionRaVirtualization;
-use jolt_verifier::stages::stage6b::ram_hamming_booleanity::RamHammingBooleanity;
 use jolt_verifier::stages::stage6b::ram_ra_virtualization::RamRaVirtualization;
 use jolt_verifier::stages::stage7::advice_address_phase::{
     TrustedAdviceAddressPhase, UntrustedAdviceAddressPhase,
@@ -79,7 +77,7 @@ use crate::kernel::{ProverInputs, SumcheckKernel};
 #[cfg(not(feature = "akita"))]
 use crate::opening::JointOpeningPolynomials;
 use crate::opening::{RamInitialOpening, RamInitialOpeningEvaluation};
-use crate::uniskip::UniskipKernel;
+use crate::uniskip::{ProductUniskipUpstream, UniskipKernel};
 #[cfg(all(feature = "field-inline", not(feature = "akita")))]
 use crate::FieldInlineWitnessCommitment;
 #[cfg(not(feature = "akita"))]
@@ -162,7 +160,7 @@ where
     pub spartan_outer_uniskip: Box<dyn UniskipKernel<F, OuterRemainder<F>>>,
     pub spartan_outer_remainder: Box<dyn PrepareKernel<F, OuterRemainder<F>>>,
     pub spartan_product_uniskip:
-        Box<dyn UniskipKernel<F, ProductRemainder<F>, SumcheckInputClaims<F, ProductUniskip<F>>>>,
+        Box<dyn UniskipKernel<F, ProductRemainder<F>, ProductUniskipUpstream<F>>>,
     pub spartan_product_remainder: Box<dyn PrepareKernel<F, ProductRemainder<F>>>,
     pub ram_read_write: Box<dyn PrepareKernel<F, RamReadWriteChecking<F>>>,
     pub instruction_claim_reduction: Box<dyn PrepareKernel<F, InstructionClaimReduction<F>>>,
@@ -187,7 +185,6 @@ where
     pub booleanity_address: Box<dyn PrepareKernel<F, BooleanityAddressPhase<F>>>,
     pub bytecode_read_raf_cycle: Box<dyn PrepareKernel<F, BytecodeReadRafCycle<F>>>,
     pub booleanity_cycle: Box<dyn PrepareKernel<F, Booleanity<F>>>,
-    pub ram_hamming_booleanity: Box<dyn PrepareKernel<F, RamHammingBooleanity<F>>>,
     pub ram_ra_virtualization: Box<dyn PrepareKernel<F, RamRaVirtualization<F>>>,
     pub instruction_ra_virtualization: Box<dyn PrepareKernel<F, InstructionRaVirtualization<F>>>,
     pub inc_claim_reduction: Box<dyn PrepareKernel<F, IncClaimReduction<F>>>,
@@ -300,11 +297,13 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> KernelContext<'_, F, JoltBa
     pub fn product_uniskip_poly(
         &mut self,
         late_tau: &[F],
-        inputs: &SumcheckInputClaims<F, ProductUniskip<F>>,
+        upstream: &ProductUniskipUpstream<F>,
     ) -> Result<UnivariatePoly<F>, KernelError<F>> {
-        self.registry
-            .spartan_product_uniskip
-            .first_round_poly(&mut self.session, late_tau, inputs)
+        self.registry.spartan_product_uniskip.first_round_poly(
+            &mut self.session,
+            late_tau,
+            upstream,
+        )
     }
 
     pub fn prepare_outer_uniskip(&mut self, log_t: usize, tau: &[F]) -> Result<(), KernelError<F>> {

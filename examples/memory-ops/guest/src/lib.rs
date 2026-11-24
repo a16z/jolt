@@ -8,8 +8,8 @@ use jolt::UntrustedAdvice;
 ///
 /// Public because a guest build compiles only the entry point named by
 /// `JOLT_FUNC_NAME` among the `guest_only` ones: a private helper is dead code
-/// in the builds of `heap_top`, `rounded_advice`, `exact_rows` and
-/// `panic_halt`, which do not use it.
+/// in the builds of `heap_top`, `rounded_advice`, `exact_rows`, `panic_halt`
+/// and `exit_halt`, which do not use it.
 #[cfg(feature = "guest")]
 #[repr(align(8))]
 pub struct Scratch([u8; 24]);
@@ -176,7 +176,9 @@ fn exact_rows(pad: [u8; 2]) -> [u8; 2] {
             "sub {target}, {target}, {rows}",
             "jr {target}",
             ".rept 4096",
-            ".4byte 0x00000013", // addi x0, x0, 0: one ADDI row each
+            // `.insn`, not a data directive: the assembler maps data directives
+            // as `$d`, and jolt-program's `decode_elf` decodes no `$d` bytes.
+            ".insn 4, 0x00000013", // addi x0, x0, 0: one ADDI row each
             ".endr",
             "2:",
             target = out(reg) _,
@@ -187,10 +189,18 @@ fn exact_rows(pad: [u8; 2]) -> [u8; 2] {
     pad
 }
 
-/// Panics when `trigger` is set: the SDK's panic path writes the panic byte
-/// and halts at `ebreak`, so the run proves with `panic = true`.
+/// Panics when `trigger` is set: the SDK's panic path halts at `ebreak`, so
+/// the run proves with `panic = true`.
 #[jolt::provable(guest_only, heap_size = 65536, max_trace_length = 65536)]
 fn panic_halt(trigger: bool) -> u8 {
     assert!(!trigger, "panic_halt was asked to panic");
     7
+}
+
+/// Exits through `jolt::runtime::exit(code)` before returning. Every exit code
+/// halts at `ebreak`, Jolt's failure halt, so the run proves with
+/// `panic = true` for `exit(0)` as well; the code itself is not public.
+#[jolt::provable(guest_only, heap_size = 65536, max_trace_length = 65536)]
+fn exit_halt(code: i32) -> u8 {
+    jolt::runtime::exit(code)
 }

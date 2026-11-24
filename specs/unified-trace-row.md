@@ -74,20 +74,21 @@ The physical layout is:
 | Stable instruction tag | 2 | 56 |
 | Virtual-sequence remaining | 2 | 58 |
 | Three full encoded instruction operand IDs | 3 | 60 |
-| Row-control presence masks | 1 | 63 |
+| Row-control bits | 1 | 63 |
 | **Total, alignment 8** | **64** | |
 
-The metadata word retains its feature-dependent layout: 16 circuit-flag bits
-in base builds or 24 under `field-inline`, followed by seven instruction flags
-and the immediate sign. Eight bits remain unused in base builds and none in
-field-enabled builds. Byte 63 has the same definition in every feature mode:
+The metadata word holds the circuit flags in its low bits, 16 in base builds
+or 26 under `field-inline`, followed by the six instruction flags other than
+`IsNoop`. The row derives `IsNoop` from `bytecode_pc == 0`, which construction
+enforces. Ten bits remain unused in base builds and none in field-enabled
+builds. Byte 63 has the same definition in every feature mode:
 
 | Row-control bits | Meaning |
 | --- | --- |
 | 0–2 | Captured integer rs1, rs2, and rd presence |
 | 3 | Virtual-sequence count present |
 | 4–6 | Integer rs1, rs2, and rd operand presence |
-| 7 | Reserved, zero |
+| 7 | Immediate sign |
 
 Construction caches integer-operand presence from
 `instruction.integer_operands()`. That projection removes encoded operands
@@ -313,8 +314,8 @@ event's cycle. There is no full trace conversion or normalization copy.
 `ProverConfig::derive_from_dimensions` consumes `ExecutionDimensions`
 summarizing the `proof_rows()` prefix. It pads to the smallest power of two
 holding the proof rows, subject to the protocol minimum, with no reserved
-final no-op row. Its last-row Jump precondition
-(`ProverError::TraceDoesNotEndInJump`) also depends on that prefix: summarizing
+final no-op row. Its last-row halt precondition
+(`ProverError::TraceDoesNotEndInHalt`) also depends on that prefix: summarizing
 `rows()` can include canonical padding and reject an honest trace. Witness and
 field construction validate the same retained `proof_len` against the cycle
 domain, and random-access proof consumers use that same prefix. This shared

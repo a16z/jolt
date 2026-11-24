@@ -201,6 +201,8 @@ pub fn bytecode_read_raf_address_phase_input_values_from_upstream<F: JoltField>(
         outer_is_compressed: outer.is_compressed,
         outer_is_first_in_sequence: outer.is_first_in_sequence,
         outer_is_last_in_sequence: outer.is_last_in_sequence,
+        outer_halt: outer.halt,
+        outer_halt_panic: outer.halt_panic,
         #[cfg(feature = "field-inline")]
         outer_field_add: outer.field_add,
         #[cfg(feature = "field-inline")]
@@ -222,7 +224,7 @@ pub fn bytecode_read_raf_address_phase_input_values_from_upstream<F: JoltField>(
         #[cfg(feature = "field-inline")]
         outer_field_advice_limb: outer.field_advice_limb,
         outer_pc: outer.pc,
-        product_jump: product.jump_flag,
+        product_is_noop: product.is_noop,
         product_branch: product.branch_flag,
         product_write_lookup_output_to_rd: product.write_lookup_output_to_rd,
         product_virtual_instruction: product.virtual_instruction,

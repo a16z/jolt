@@ -31,7 +31,7 @@ use super::spartan::{pc_shift, unexpanded_pc_shift};
 pub const BYTECODE_STAGE_GAMMA_COUNTS: [usize; 5] = [
     // Stage 1: UnexpandedPC, Imm, then one per circuit flag (all Spartan outer).
     2 + NUM_CIRCUIT_FLAGS,
-    // Stage 2: the Jump, Branch, WriteLookupOutputToRD, and VirtualInstruction
+    // Stage 2: the IsNoop, Branch, WriteLookupOutputToRD, and VirtualInstruction
     // product-virtualization flags.
     4,
     // Stage 3: Imm (instruction input), UnexpandedPC (shift), the five
@@ -599,7 +599,7 @@ fn read_raf_flag_terms(
         }
     }
     for (selected, index) in [
-        (circuit_flags[CircuitFlags::Jump], 0),
+        (instruction_flags[InstructionFlags::IsNoop], 0),
         (instruction_flags[InstructionFlags::Branch], 1),
         (circuit_flags[CircuitFlags::WriteLookupOutputToRD], 2),
         (circuit_flags[CircuitFlags::VirtualInstruction], 3),
@@ -641,39 +641,32 @@ fn read_raf_flag_terms(
 }
 
 /// Dense indices for the distinct [`JoltInstructionRow::flag_class`]es of a
-/// bytecode table, in first-seen order (open addressing over the class key).
-/// Slots and keys are word-sized: a Jolt guest expands sub-word stores and
-/// loads into multi-row sequences.
+/// bytecode table, in first-seen order.
 struct FlagClasses {
     slots: Vec<usize>,
-    keys: Vec<usize>,
+    count: usize,
 }
 
 impl FlagClasses {
-    fn with_rows(rows: usize) -> Self {
+    fn new() -> Self {
         Self {
-            slots: vec![usize::MAX; (2 * rows).next_power_of_two().max(16)],
-            keys: Vec::new(),
+            slots: vec![0; JoltInstructionRow::FLAG_CLASS_KEYS],
+            count: 0,
         }
     }
 
-    /// The index of `key`'s class, and whether this call created it.
-    fn index(&mut self, key: u32) -> (usize, bool) {
-        let key = key as usize;
-        let mask = self.slots.len() - 1;
-        let mut slot = key.wrapping_mul(0x9e37_79b9) & mask;
-        loop {
-            match self.slots[slot] {
-                usize::MAX => {
-                    let class = self.keys.len();
-                    self.keys.push(key);
-                    self.slots[slot] = class;
-                    return (class, true);
-                }
-                class if self.keys[class] == key => return (class, false),
-                _ => slot = (slot + 1) & mask,
-            }
+    /// The index of `key`'s class, and whether this call created it; `None`
+    /// for a key outside the table.
+    #[inline(always)]
+    fn index(&mut self, key: u32) -> Option<(usize, bool)> {
+        let slot = self.slots.get_mut(key as usize)?;
+        if *slot != 0 {
+            return Some((*slot - 1, false));
         }
+        let class = self.count;
+        self.count += 1;
+        *slot = class + 1;
+        Some((class, true))
     }
 }
 
@@ -755,7 +748,9 @@ fn stage_gammas<'a, F>(inputs: &BytecodeReadRafStageValueInputs<'a, F>) -> [&'a 
 ///
 /// # Errors
 ///
-/// Rejects an `address_eq` whose length differs from the bytecode table's.
+/// Rejects an `address_eq` whose length differs from the bytecode table's,
+/// and a row whose flag class is not below
+/// [`JoltInstructionRow::FLAG_CLASS_KEYS`].
 pub fn read_raf_fold_stage_values<F>(
     inputs: BytecodeReadRafStageValueInputs<'_, F>,
     address_eq: &[F],
@@ -781,11 +776,17 @@ where
     let rows = inputs.bytecode.len();
     let mut addresses = Vec::with_capacity(rows);
     let mut imms = Vec::with_capacity(rows);
-    let mut classes = FlagClasses::with_rows(rows);
+    let mut classes = FlagClasses::new();
     let mut class_weights: Vec<F> = Vec::new();
     let mut class_rows: Vec<&JoltInstructionRow> = Vec::new();
     for (instruction, &eq) in inputs.bytecode.iter().zip(address_eq) {
-        let (class, created) = classes.index(instruction.flag_class());
+        let key = instruction.flag_class();
+        let Some((class, created)) = classes.index(key) else {
+            return Err(PointGeometryError::FlagClassOutOfRange {
+                key,
+                bound: JoltInstructionRow::FLAG_CLASS_KEYS,
+            });
+        };
         if created {
             class_weights.push(F::zero());
             class_rows.push(instruction);
@@ -873,7 +874,7 @@ where
 {
     let beta = challenge(BytecodeReadRafChallenge::Stage2Gamma);
 
-    opening(op_flag_product(CircuitFlags::Jump))
+    opening(instruction_flag_product(InstructionFlags::IsNoop))
         + beta.clone() * opening(instruction_flag_product(InstructionFlags::Branch))
         + challenge_pow_expr(BytecodeReadRafChallenge::Stage2Gamma, 2)
             * opening(op_flag_product(CircuitFlags::WriteLookupOutputToRD))
@@ -1058,6 +1059,10 @@ mod tests {
                                 is_first_in_sequence,
                                 is_compressed,
                             };
+                            assert!(
+                                (row.flag_class() as usize) < JoltInstructionRow::FLAG_CLASS_KEYS,
+                                "{row:?}"
+                            );
                             let mut hits = Vec::new();
                             let store =
                                 read_raf_flag_terms(&row, |stage, index| hits.push((stage, index)));
@@ -1135,5 +1140,22 @@ mod tests {
             read_raf_fold_stage_values(inputs(), &address_eq).unwrap(),
             expected
         );
+    }
+
+    #[test]
+    fn flag_classes_index_keys_in_first_seen_order_and_reject_larger_keys() {
+        let last = JoltInstructionRow::FLAG_CLASS_KEYS as u32 - 1;
+        let mut classes = FlagClasses::new();
+        for (key, expected) in [
+            (last, Some((0, true))),
+            (0, Some((1, true))),
+            (last + 1, None),
+            (u32::MAX, None),
+            (last, Some((0, false))),
+            (0, Some((1, false))),
+            (17, Some((2, true))),
+        ] {
+            assert_eq!(classes.index(key), expected);
+        }
     }
 }

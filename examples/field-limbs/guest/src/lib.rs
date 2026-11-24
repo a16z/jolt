@@ -1,8 +1,11 @@
 //! Conformance checks for the SDK's field-register limb conversions,
 //! `jolt::field_to_limbs!` and `jolt::field_from_limbs!`, in whichever proof
 //! field the guest is built for. Any failed check panics the guest.
+//!
+//! With a `scalar-*` feature the guest also multiplies through jolt-field's
+//! routed scalar type, whose readout must reject noncanonical advice.
 
-#![cfg_attr(feature = "guest", no_std)]
+#![cfg_attr(all(feature = "guest", not(feature = "scalar")), no_std)]
 
 use jolt::field_inline::{FieldInlineModulus, MODULUS};
 
@@ -30,6 +33,22 @@ fn check_limb_conversions(value: Option<[u64; 6]>, readout_width: Option<u8>) ->
     registers_survive_readouts();
     imports_replace_the_destination();
     readout
+}
+
+// The scalar type whose arithmetic the field-inline unit computes.
+#[cfg(feature = "scalar-bn254")]
+use jolt_field::Fr as Scalar;
+#[cfg(feature = "scalar-fp128")]
+use jolt_field::Prime128Offset6A23801F as Scalar;
+
+/// Whether `a * b` is zero, multiplied through the scalar type's `*`, which
+/// runs one field-inline multiplication and reads the product out as advice
+/// limbs. The std runtime binds the unit's modulus at boot.
+#[cfg(feature = "scalar")]
+#[jolt::provable(max_trace_length = 65536, stack_size = 1048576)]
+fn scalar_product_is_zero(a: u64, b: u64) -> bool {
+    use jolt_field::Ring;
+    Scalar::from_u64(a) * Scalar::from_u64(b) == Scalar::from_u64(0)
 }
 
 /// Canonical in both supported fields; the multi-limb values cross every limb

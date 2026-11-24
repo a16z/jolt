@@ -21,7 +21,8 @@ pub enum JoltRelationId {
     RamOutputCheck,
     RamValCheck,
     RamRaClaimReduction,
-    RamHammingBooleanity,
+    // Reserved codec slot; uninhabited and rejected during deserialization.
+    Reserved12(RetiredIdentifier),
     RamRaVirtualization,
     RegistersClaimReduction,
     RegistersReadWriteChecking,
@@ -46,6 +47,10 @@ pub enum RamReadWriteChallenge {
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum RamReadWritePublic {
     EqCycle,
+    /// Cycle equality times the write-protected-word mask C.
+    WriteProtectedEqCycle,
+    /// Cycle equality times the unmapped-word mask N.
+    UnmappedEqCycle,
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
@@ -74,11 +79,6 @@ pub enum RamRaClaimReductionChallenge {
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum RamRaVirtualizationPublic {
-    EqCycle,
-}
-
-#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
-pub enum RamHammingBooleanityPublic {
     EqCycle,
 }
 
@@ -237,6 +237,8 @@ pub enum SpartanProductVirtualizationPublic {
     UniskipLagrangeWeight(usize),
     LagrangeWeight(usize),
     TauKernel,
+    /// The statement's panic bit, read by product lane 3's input claim.
+    ClaimedPanic,
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
@@ -376,7 +378,8 @@ pub enum JoltVirtualPolynomial {
     LeftInstructionInput,
     RightInstructionInput,
     Product,
-    ShouldJump,
+    // Reserved codec slot; uninhabited and rejected during deserialization.
+    Reserved12(RetiredIdentifier),
     ShouldBranch,
     Rd,
     Imm,
@@ -398,7 +401,8 @@ pub enum JoltVirtualPolynomial {
     RamVal,
     RamValInit,
     RamValFinal,
-    RamHammingWeight,
+    // Reserved codec slot; uninhabited and rejected during deserialization.
+    Reserved34(RetiredIdentifier),
     UnivariateSkip,
     OpFlags(CircuitFlags),
     InstructionFlags(InstructionFlags),
@@ -490,7 +494,9 @@ pub enum JoltDerivedId {
     RamOutputCheck(RamOutputCheckPublic),
     RamRaClaimReduction(RamRaClaimReductionPublic),
     RamRaVirtualization(RamRaVirtualizationPublic),
-    RamHammingBooleanity(RamHammingBooleanityPublic),
+    // Reserved codec slot; uninhabited and rejected during deserialization.
+    #[from(skip)]
+    Reserved6(RetiredIdentifier),
     Booleanity(BooleanityPublic),
     IncClaimReduction(IncClaimReductionPublic),
     HammingWeightClaimReduction(HammingWeightClaimReductionPublic),
@@ -535,7 +541,7 @@ mod tests {
     }
 
     #[test]
-    fn retired_bytecode_identifiers_are_rejected_without_shifting_live_tags() {
+    fn retired_identifiers_are_rejected_without_shifting_live_tags() {
         let config = bincode::config::standard();
         for (id, tag) in [
             (JoltCommittedPolynomial::RamRa(3), vec![5, 3]),
@@ -562,5 +568,49 @@ mod tests {
             bincode::serde::decode_from_slice::<BytecodeClaimReductionPublic, _>(&[0, 0], config)
                 .is_err()
         );
+        for (id, tag) in [
+            (JoltRelationId::RamRaVirtualization, vec![13]),
+            (JoltRelationId::HammingWeightClaimReduction, vec![26]),
+        ] {
+            assert_eq!(bincode::serde::encode_to_vec(id, config).unwrap(), tag);
+            let (decoded, consumed) =
+                bincode::serde::decode_from_slice::<JoltRelationId, _>(&tag, config).unwrap();
+            assert_eq!(decoded, id);
+            assert_eq!(consumed, tag.len());
+        }
+        assert!(bincode::serde::decode_from_slice::<JoltRelationId, _>(&[12, 0], config).is_err());
+        assert_eq!(
+            bincode::serde::encode_to_vec(JoltVirtualPolynomial::UnivariateSkip, config).unwrap(),
+            vec![35]
+        );
+        assert!(
+            bincode::serde::decode_from_slice::<JoltVirtualPolynomial, _>(&[34, 0], config)
+                .is_err()
+        );
+        for (id, tag) in [
+            (JoltVirtualPolynomial::ShouldBranch, vec![13]),
+            (JoltVirtualPolynomial::Rd, vec![14]),
+        ] {
+            assert_eq!(bincode::serde::encode_to_vec(id, config).unwrap(), tag);
+        }
+        assert!(
+            bincode::serde::decode_from_slice::<JoltVirtualPolynomial, _>(&[12, 0], config)
+                .is_err()
+        );
+        for (id, tag) in [
+            (SpartanProductVirtualizationPublic::TauKernel, vec![2]),
+            (SpartanProductVirtualizationPublic::ClaimedPanic, vec![3]),
+        ] {
+            assert_eq!(bincode::serde::encode_to_vec(id, config).unwrap(), tag);
+        }
+        assert_eq!(
+            bincode::serde::encode_to_vec(
+                JoltDerivedId::Booleanity(BooleanityPublic::EqAddressCycle),
+                config
+            )
+            .unwrap(),
+            vec![7, 0]
+        );
+        assert!(bincode::serde::decode_from_slice::<JoltDerivedId, _>(&[6, 0], config).is_err());
     }
 }

@@ -775,6 +775,36 @@ mod tests {
         }
     }
 
+    /// `Halt` marks exactly the two halt kinds and `HaltPanic` exactly the failure
+    /// halt; both imply `Jump`, so a halt is a jump, and no halt touches RAM.
+    #[test]
+    fn halt_flags_mark_exactly_the_halt_kinds() {
+        for instr in JoltInstruction::iter() {
+            let flags = instr.circuit_flags();
+            let halt = flags[CircuitFlags::Halt];
+            let halt_panic = flags[CircuitFlags::HaltPanic];
+            assert!(!halt || flags[CircuitFlags::Jump], "{instr:?}");
+            assert!(!halt_panic || halt, "{instr:?}");
+            assert_eq!(
+                halt,
+                matches!(
+                    instr,
+                    JoltInstruction::Success(_) | JoltInstruction::Panic(_)
+                ),
+                "{instr:?}",
+            );
+            assert_eq!(
+                halt_panic,
+                matches!(instr, JoltInstruction::Panic(_)),
+                "{instr:?}"
+            );
+            assert!(
+                !halt || !(flags[CircuitFlags::Load] || flags[CircuitFlags::Store]),
+                "{instr:?}",
+            );
+        }
+    }
+
     #[test]
     fn source_instruction_uses_catalog_marker_types() {
         let row = SourceInstructionRow::default();

@@ -3,9 +3,10 @@ use jolt_riscv::{CircuitFlags, InstructionFlags};
 use serde::{Deserialize, Serialize};
 
 use crate::protocols::jolt::geometry::spartan::{
-    branch_flag_product, jump_flag_product, left_instruction_input_product, lookup_output_product,
+    branch_flag_product, is_noop_product, left_instruction_input_product, lookup_output_product,
     next_is_noop_product, product_tau_kernel, product_uniskip_opening, product_weight,
-    right_instruction_input_product, SpartanProductDimensions, PRODUCT_REMAINDER_DEGREE,
+    right_instruction_input_product, SpartanProductDimensions, PRODUCT_HALT_LANE_LEFT_FACTOR,
+    PRODUCT_REMAINDER_DEGREE,
 };
 use crate::protocols::jolt::{
     JoltChallengeId, JoltDerivedId, JoltExpr, JoltOpeningId, JoltRelationId,
@@ -29,8 +30,8 @@ pub struct ProductRemainderOutputClaims<C> {
     pub left_instruction_input: C,
     #[opening(RightInstructionInput)]
     pub right_instruction_input: C,
-    #[opening(OpFlags(CircuitFlags::Jump))]
-    pub jump_flag: C,
+    #[opening(InstructionFlags(InstructionFlags::IsNoop))]
+    pub is_noop: C,
     #[opening(OpFlags(CircuitFlags::WriteLookupOutputToRD))]
     pub write_lookup_output_to_rd: C,
     #[opening(LookupOutput)]
@@ -61,7 +62,8 @@ pub struct ProductRemainder {
 
 impl ProductRemainder {
     /// The ordinary lanes' left-factor expression
-    /// (`Σ_i product_weight(i) · left_i`). Exposed separately from
+    /// (`Σ_i product_weight(i) · left_i`; lane 3's left factor is the
+    /// constant [`PRODUCT_HALT_LANE_LEFT_FACTOR`]). Exposed separately from
     /// [`output_expression`](SymbolicSumcheck::output_expression) — which is
     /// `tau_kernel · left · right` built from these factors — so the
     /// composed relation can extend each factor with the field-inline lanes'
@@ -69,7 +71,7 @@ impl ProductRemainder {
     pub fn left_factor_expression<F: Ring>(&self) -> JoltExpr<F> {
         product_weight(0) * opening(left_instruction_input_product())
             + product_weight(1) * opening(lookup_output_product())
-            + product_weight(2) * opening(jump_flag_product())
+            + i128::from(PRODUCT_HALT_LANE_LEFT_FACTOR) * product_weight(2)
     }
 
     /// The ordinary lanes' right-factor expression; see
@@ -77,7 +79,7 @@ impl ProductRemainder {
     pub fn right_factor_expression<F: Ring>(&self) -> JoltExpr<F> {
         product_weight(0) * opening(right_instruction_input_product())
             + product_weight(1) * opening(branch_flag_product())
-            + product_weight(2) * (JoltExpr::one() - opening(next_is_noop_product()))
+            + product_weight(2) * (opening(next_is_noop_product()) - opening(is_noop_product()))
     }
 }
 

@@ -31,10 +31,16 @@ pub mod terminal;
 
 use self::cpu::{Cpu, HaltKind};
 use self::elf_analyzer::ElfAnalyzer;
+use self::mmu::CodeGuard;
 use self::terminal::Terminal;
 
 use common::constants::{DEFAULT_HEAP_SIZE, RAM_START_ADDRESS};
+use common::jolt_device::JoltDevice;
 use jolt_program::execution::TraceError;
+#[cfg(not(feature = "field-inline"))]
+use jolt_riscv::RV64IMAC_JOLT_ALL_INLINES;
+#[cfg(feature = "field-inline")]
+use jolt_riscv::RV64IMAC_JOLT_FIELD_INLINE;
 use std::io::Write;
 use std::path::Path;
 
@@ -104,6 +110,25 @@ impl Emulator {
     /// Take ownership of the advice tape, replacing it with an empty one
     pub fn take_advice_tape(&mut self) -> cpu::AdviceTape {
         std::mem::take(&mut self.cpu.advice_tape)
+    }
+
+    /// Takes the run's device with its public panic bit set from the halt
+    /// that ended the run: the bit claims a failure halt (EBREAK), and no
+    /// guest memory backs it.
+    #[expect(
+        clippy::expect_used,
+        reason = "create_emulator installs the device before any run"
+    )]
+    pub(crate) fn take_jolt_device(&mut self) -> JoltDevice {
+        let panicked = self.cpu.halted() == Some(HaltKind::Panic);
+        let mut device = self
+            .cpu
+            .get_mut_mmu()
+            .jolt_device
+            .take()
+            .expect("JoltDevice was not initialized");
+        device.panic = panicked;
+        device
     }
 
     /// Method for running [`riscv-tests`](https://github.com/riscv/riscv-tests) program.
@@ -303,6 +328,38 @@ impl Emulator {
         }
 
         self.cpu.update_pc(header.e_entry);
+    }
+
+    /// Guards the code of `elf_contents`: a store that changes a doubleword of
+    /// its code region, from its first source instruction through its last,
+    /// faults, and so does a fetch at an address that starts no decoded source
+    /// instruction. Install the `JoltDevice` first, since its `lowest_address`
+    /// anchors the word indices.
+    #[expect(
+        clippy::expect_used,
+        reason = "no error path, like create_emulator on over-long I/O: it panics without a JoltDevice or on a program image jolt-program rejects"
+    )]
+    pub fn protect_code(&mut self, elf_contents: &[u8]) {
+        #[cfg(not(feature = "field-inline"))]
+        let profile = RV64IMAC_JOLT_ALL_INLINES;
+        #[cfg(feature = "field-inline")]
+        let profile = RV64IMAC_JOLT_FIELD_INLINE;
+        let image = jolt_program::image::decode_elf(elf_contents, profile)
+            .expect("program ELF decoding failed");
+        let mmu = self.cpu.get_mut_mmu();
+        let jolt_device = mmu.jolt_device.as_ref().expect("JoltDevice not set");
+        let sources: Vec<(u64, bool)> = image
+            .instructions
+            .iter()
+            .map(|instruction| {
+                let row = instruction.row();
+                (row.address as u64, row.is_compressed)
+            })
+            .collect();
+        mmu.code_guard = Some(
+            CodeGuard::new(&sources, jolt_device.memory_layout.get_lowest_address())
+                .expect("decoded code region is valid"),
+        );
     }
 
     pub fn get_cpu(&self) -> &Cpu {

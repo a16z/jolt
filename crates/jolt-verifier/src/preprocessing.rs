@@ -7,7 +7,7 @@ use jolt_transcript::DigestHasher;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use sha3::Digest;
-use std::sync::Arc;
+use std::{ops::Range, sync::Arc};
 
 use crate::VerifierError;
 
@@ -116,6 +116,26 @@ impl<PCS: CommitmentScheme> ProgramPreprocessing<PCS> {
             })
     }
 
+    /// Require the entry to name a real instruction row. Bytecode read-RAF's
+    /// entry term pins cycle 0 to this row; were it a no-op, an all-padding
+    /// trace would satisfy every constraint under either panic claim. A
+    /// committed key carries no rows, so here this rejects only the padding
+    /// row at index 0; that its entry index names a real row is trusted
+    /// preprocessing, like the committed rows themselves.
+    pub fn validate_entry_row(&self) -> Result<(), VerifierError> {
+        let names_instruction = match self {
+            Self::Full(full) => full.bytecode.entry_instruction().is_some(),
+            Self::Committed(committed) => committed.meta.entry_bytecode_index != 0,
+        };
+        if names_instruction {
+            Ok(())
+        } else {
+            Err(VerifierError::EntryNotInstruction {
+                entry_address: self.entry_address(),
+            })
+        }
+    }
+
     pub fn bytecode_len(&self) -> usize {
         match self {
             Self::Full(full) => full.bytecode.code_size,
@@ -128,6 +148,25 @@ impl<PCS: CommitmentScheme> ProgramPreprocessing<PCS> {
             Self::Full(full) => full.ram.min_bytecode_address,
             Self::Committed(committed) => committed.meta.min_bytecode_address,
         }
+    }
+
+    /// The code region: derived from the bytecode in full mode, and taken from
+    /// the committed key's metadata, after its admission check, otherwise.
+    pub fn code_region(&self) -> Result<Range<usize>, VerifierError> {
+        match self {
+            Self::Full(full) => full.code_region(),
+            Self::Committed(committed) => committed
+                .meta
+                .validate_code_region(&committed.memory_layout)
+                .map(|()| committed.meta.code_region.clone()),
+        }
+        .map_err(|error| VerifierError::InvalidMemoryLayout {
+            reason: error.to_string(),
+        })
+    }
+
+    pub fn validate_code_region(&self) -> Result<(), VerifierError> {
+        self.code_region().map(|_| ())
     }
 
     pub fn program_image_len_words(&self) -> usize {
@@ -143,18 +182,18 @@ impl<PCS: CommitmentScheme> ProgramPreprocessing<PCS> {
 /// deployed verifier sees.
 #[cfg(all(not(feature = "akita"), not(feature = "field-inline")))]
 const PROGRAM_PREPROCESSING_DIGEST_DOMAIN: &[u8] =
-    b"jolt/program-preprocessing/dory-whole-bytecode/v2";
+    b"jolt/program-preprocessing/dory-whole-bytecode/v4";
 // Field flags use the common circuit columns; preprocessing has no side table.
 #[cfg(all(not(feature = "akita"), feature = "field-inline"))]
 const PROGRAM_PREPROCESSING_DIGEST_DOMAIN: &[u8] =
-    b"jolt/program-preprocessing/dory-whole-bytecode/field-inline/v2";
+    b"jolt/program-preprocessing/dory-whole-bytecode/field-inline/v4";
 
 #[cfg(all(feature = "akita", not(feature = "field-inline")))]
 const PROGRAM_PREPROCESSING_DIGEST_DOMAIN: &[u8] =
-    b"jolt/program-preprocessing/akita-whole-bytecode/v1";
+    b"jolt/program-preprocessing/akita-whole-bytecode/v3";
 #[cfg(all(feature = "akita", feature = "field-inline"))]
 const PROGRAM_PREPROCESSING_DIGEST_DOMAIN: &[u8] =
-    b"jolt/program-preprocessing/akita-whole-bytecode/field-inline/v1";
+    b"jolt/program-preprocessing/akita-whole-bytecode/field-inline/v3";
 
 impl<PCS: CommitmentScheme> ProgramPreprocessing<PCS> {
     /// The 32-byte program binding absorbed first into the Fiat-Shamir
@@ -231,6 +270,7 @@ where
         vc_setup: Option<VC::Setup>,
     ) -> Result<Self, VerifierError> {
         validate_memory_layout_admission(program.memory_layout())?;
+        program.validate_code_region()?;
         let preprocessing_digest = program.digest()?;
         Ok(Self {
             program,
@@ -319,43 +359,43 @@ mod tests {
     /// digest domain for the extended instruction and proof profile.
     #[cfg(all(not(feature = "akita"), not(feature = "field-inline")))]
     const FULL_PROGRAM_DIGEST: [u8; 32] = [
-        195, 13, 216, 23, 27, 147, 55, 214, 87, 178, 199, 179, 181, 252, 133, 87, 73, 138, 178, 64,
-        67, 98, 10, 55, 88, 69, 230, 213, 100, 194, 79, 40,
+        37, 30, 108, 251, 143, 233, 83, 81, 197, 142, 18, 131, 224, 193, 108, 49, 179, 161, 214,
+        77, 96, 8, 10, 193, 154, 127, 103, 66, 121, 163, 130, 126,
     ];
     #[cfg(all(not(feature = "akita"), feature = "field-inline"))]
     const FULL_PROGRAM_DIGEST: [u8; 32] = [
-        43, 186, 53, 231, 138, 38, 220, 221, 22, 240, 86, 227, 176, 159, 74, 198, 105, 80, 142,
-        119, 65, 56, 86, 111, 29, 184, 188, 195, 128, 44, 119, 116,
+        153, 200, 219, 83, 101, 88, 245, 14, 203, 253, 88, 62, 251, 163, 102, 138, 150, 64, 1, 74,
+        16, 135, 33, 2, 4, 198, 177, 166, 131, 69, 137, 75,
     ];
     #[cfg(all(feature = "akita", not(feature = "field-inline")))]
     const FULL_PROGRAM_DIGEST: [u8; 32] = [
-        30, 102, 52, 13, 245, 39, 249, 41, 68, 111, 163, 58, 53, 112, 39, 166, 255, 240, 40, 22, 8,
-        89, 12, 132, 92, 116, 184, 66, 207, 223, 163, 21,
+        243, 57, 226, 109, 218, 50, 100, 67, 233, 251, 47, 216, 31, 233, 225, 130, 149, 58, 138,
+        75, 77, 70, 43, 253, 77, 136, 119, 152, 161, 7, 97, 87,
     ];
     #[cfg(all(feature = "akita", feature = "field-inline"))]
     const FULL_PROGRAM_DIGEST: [u8; 32] = [
-        68, 121, 179, 118, 212, 228, 124, 245, 244, 99, 23, 109, 142, 223, 249, 74, 234, 18, 159,
-        169, 152, 96, 25, 205, 54, 111, 166, 114, 37, 214, 94, 253,
+        215, 216, 137, 51, 227, 118, 242, 84, 145, 11, 219, 149, 129, 90, 216, 205, 90, 171, 160,
+        89, 71, 6, 55, 2, 172, 39, 109, 131, 210, 144, 176, 209,
     ];
     #[cfg(all(not(feature = "akita"), not(feature = "field-inline")))]
     const COMMITTED_PROGRAM_DIGEST: [u8; 32] = [
-        24, 182, 30, 61, 253, 239, 142, 145, 158, 21, 164, 137, 178, 160, 196, 13, 102, 111, 52,
-        79, 5, 170, 47, 144, 250, 103, 245, 200, 0, 7, 92, 239,
+        56, 229, 27, 24, 90, 153, 33, 84, 112, 111, 123, 157, 42, 251, 251, 74, 55, 240, 120, 5,
+        194, 132, 199, 213, 187, 165, 140, 93, 103, 132, 24, 240,
     ];
     #[cfg(all(feature = "akita", not(feature = "field-inline")))]
     const COMMITTED_PROGRAM_DIGEST: [u8; 32] = [
-        162, 115, 253, 117, 193, 90, 170, 179, 83, 48, 162, 210, 247, 174, 32, 197, 203, 130, 132,
-        137, 175, 146, 79, 174, 37, 134, 227, 120, 225, 207, 210, 90,
+        239, 64, 15, 163, 17, 228, 64, 155, 160, 40, 157, 100, 49, 114, 216, 40, 203, 121, 19, 164,
+        153, 149, 245, 54, 18, 83, 72, 179, 92, 0, 10, 141,
     ];
     #[cfg(all(not(feature = "akita"), feature = "field-inline"))]
     const COMMITTED_PROGRAM_DIGEST: [u8; 32] = [
-        13, 31, 11, 170, 204, 237, 56, 96, 102, 167, 28, 199, 124, 26, 249, 34, 240, 227, 95, 100,
-        122, 247, 196, 109, 157, 33, 209, 23, 89, 209, 119, 169,
+        223, 67, 47, 152, 199, 217, 120, 121, 47, 66, 245, 171, 43, 142, 221, 39, 97, 159, 161, 71,
+        51, 150, 89, 123, 101, 3, 169, 64, 43, 196, 73, 189,
     ];
     #[cfg(all(feature = "akita", feature = "field-inline"))]
     const COMMITTED_PROGRAM_DIGEST: [u8; 32] = [
-        128, 144, 203, 144, 249, 178, 204, 53, 94, 99, 36, 178, 123, 56, 157, 214, 193, 175, 23,
-        126, 214, 94, 103, 230, 243, 144, 86, 65, 152, 201, 219, 87,
+        116, 114, 129, 126, 77, 36, 77, 126, 132, 221, 253, 189, 229, 206, 12, 27, 193, 192, 238,
+        97, 110, 123, 171, 90, 181, 126, 236, 243, 176, 32, 152, 170,
     ];
 
     /// An empty program over a real (non-zero) memory layout, so every layout
@@ -455,6 +495,33 @@ mod tests {
             .digest()
             .unwrap();
         assert_eq!(digest, FULL_PROGRAM_DIGEST);
+    }
+
+    #[test]
+    fn digest_and_protection_mask_bind_layout_in_both_program_modes() {
+        use jolt_program::preprocess::ram::write_protected_word_intervals;
+
+        for original in [
+            ProgramPreprocessing::<Pcs>::Full(Arc::new(program())),
+            ProgramPreprocessing::<Pcs>::Committed(committed()),
+        ] {
+            let mut changed = original.clone();
+            let layout = match &mut changed {
+                ProgramPreprocessing::Full(full) => &mut Arc::make_mut(full).memory_layout,
+                ProgramPreprocessing::Committed(committed) => &mut committed.memory_layout,
+            };
+            layout.stack_end += 16;
+            let mask = |program: &ProgramPreprocessing<Pcs>| {
+                write_protected_word_intervals(
+                    program.code_region().unwrap(),
+                    program.memory_layout(),
+                    program.memory_layout().max_ram_k().unwrap(),
+                )
+                .unwrap()
+            };
+            assert_ne!(mask(&original), mask(&changed));
+            assert_ne!(original.digest().unwrap(), changed.digest().unwrap());
+        }
     }
 
     #[test]

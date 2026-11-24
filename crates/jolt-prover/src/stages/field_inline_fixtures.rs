@@ -4,8 +4,8 @@
 //! (the same discipline as `jolt_witness::testing::with_sample_backend`), so
 //! the composed R1CS eq rows are satisfied and the stage sumchecks' hard
 //! self-checks hold — including the stage-4 register-file and RAM value
-//! checks (consistent register reads, and the termination store the witness
-//! plane's device-derived final RAM state demands). Two profiles: an
+//! checks (consistent register reads, and no RAM access, so the final RAM
+//! state equals the initial one). Two profiles: an
 //! ADDI-only trace (a field-inline guest executing zero field-inline instructions —
 //! every field-inline column is zero), and a field arithmetic trace (two field loads and
 //! a multiply, the stage-0 fixture's rows) whose decoded field-inline instruction
@@ -33,11 +33,12 @@ use jolt_program::execution::{FieldEvent, JoltProgram, TraceData, TraceOutput};
 use jolt_program::field_inline::{
     FieldEncodedValue, FieldInlineTraceData, FieldRegisterRead, FieldRegisterWrite,
 };
-use jolt_program::preprocess::{BytecodePreprocessing, JoltProgramPreprocessing, RAMPreprocessing};
+use jolt_program::preprocess::ram::RamWordMasks;
+use jolt_program::preprocess::JoltProgramPreprocessing;
 use jolt_riscv::{
     JoltInstructionKind, JoltInstructionProfile, JoltInstructionRow, JoltTraceRow,
-    NormalizedOperands, RamAccess, RamWrite, RegisterRead, RegisterState, RegisterWrite,
-    TraceRowError, RV64IMAC_JOLT_FIELD_INLINE,
+    NormalizedOperands, RamAccess, RegisterRead, RegisterState, RegisterWrite, TraceRowError,
+    RV64IMAC_JOLT_FIELD_INLINE,
 };
 use jolt_verifier::preprocessing::{JoltVerifierPreprocessing, ProgramPreprocessing};
 use jolt_verifier::stages::PrecommittedSchedule;
@@ -49,7 +50,7 @@ use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
 use crate::{JoltProverPreprocessing, ProverConfig};
 
 pub(crate) const ENTRY: u64 = RAM_START_ADDRESS;
-// 3, not 2: the field-inline fixture's six real rows do not fit four cycles.
+// Eight cycles: both fixture traces end at a halt followed by padding.
 pub(crate) const LOG_T: usize = 3;
 // Matches the witness backend's `JoltVmWitnessConfig` ram size (64).
 pub(crate) const RAM_LOG_K: usize = 6;
@@ -79,13 +80,17 @@ fn instruction(
 fn fixture_program_preprocessing(
     bytecode: Vec<JoltInstructionRow>,
 ) -> Arc<JoltProgramPreprocessing> {
-    Arc::new(JoltProgramPreprocessing {
-        bytecode: BytecodePreprocessing::preprocess(bytecode, ENTRY, RV64IMAC_JOLT_FIELD_INLINE)
-            .unwrap(),
-        ram: RAMPreprocessing::default(),
-        memory_layout: test_memory_layout(),
-        max_padded_trace_length: 1 << LOG_T,
-    })
+    Arc::new(
+        JoltProgramPreprocessing::new(
+            bytecode,
+            vec![(ENTRY, 0)],
+            test_memory_layout(),
+            ENTRY,
+            1 << LOG_T,
+            RV64IMAC_JOLT_FIELD_INLINE,
+        )
+        .unwrap(),
+    )
 }
 
 pub(crate) fn field_inline_backend(
@@ -145,14 +150,20 @@ fn field_row(instruction: JoltInstructionRow) -> JoltTraceRow {
     trace_row(instruction, RegisterState::default(), RamAccess::NoOp).unwrap()
 }
 
-/// A terminal JAL row: the only hand-craftable last real instruction — its
-/// `Jump` flag turns off the otherwise-unconditional PC-update row 16, and
-/// `ShouldJump` stays 0 because the successor is a no-op or absent — with the
-/// link write (`rd = address + 4`) row 13 demands.
-fn halt_jal_row(offset: usize, rd: u8) -> JoltTraceRow {
-    let jal = instruction(JoltInstructionKind::JAL, offset, Some(rd), None, None, 0);
+/// The terminal halt: `jolt.success`'s row carries `Jump` and `Halt` and targets
+/// 0, so a no-op or the `T−1` boundary follows it; it writes the link
+/// (`rd = address + 4`) row 13 demands.
+fn success_halt_row(offset: usize, rd: u8) -> JoltTraceRow {
+    let halt = instruction(
+        JoltInstructionKind::JoltSuccess,
+        offset,
+        Some(rd),
+        None,
+        None,
+        0,
+    );
     trace_row(
-        jal,
+        halt,
         RegisterState {
             rd: Some(RegisterWrite {
                 register: rd,
@@ -166,71 +177,12 @@ fn halt_jal_row(offset: usize, rd: u8) -> JoltTraceRow {
     .unwrap()
 }
 
-/// The guest termination convention, hand-crafted: the witness plane's final
-/// RAM state unconditionally carries `termination = 1` (a real guest writes
-/// it before halting), so any trace that must satisfy the stage-4 RAM value
-/// check needs a matching increment. Two rows: `ADDI x6, x0, 1` (a consistent
-/// register write of the stored value), then `SD x6, termination(x0)` (store
-/// flag on, `RamAddress = rs1 + imm = termination`, `RamWriteValue = rs2`).
-fn termination_store_rows(offset: usize) -> [JoltTraceRow; 2] {
-    let one = instruction(JoltInstructionKind::ADDI, offset, Some(6), Some(0), None, 1);
-    let termination = test_memory_layout().termination;
-    let store = instruction(
-        JoltInstructionKind::SD,
-        offset + 1,
-        None,
-        Some(0),
-        Some(6),
-        termination as i128,
-    );
-    [
-        trace_row(
-            one,
-            RegisterState {
-                rs1: Some(RegisterRead {
-                    register: 0,
-                    value: 0,
-                }),
-                rd: Some(RegisterWrite {
-                    register: 6,
-                    pre_value: 0,
-                    post_value: 1,
-                }),
-                ..Default::default()
-            },
-            RamAccess::NoOp,
-        )
-        .unwrap(),
-        trace_row(
-            store,
-            RegisterState {
-                rs1: Some(RegisterRead {
-                    register: 0,
-                    value: 0,
-                }),
-                rs2: Some(RegisterRead {
-                    register: 6,
-                    value: 1,
-                }),
-                ..Default::default()
-            },
-            RamAccess::Write(RamWrite {
-                address: termination,
-                pre_value: 0,
-                post_value: 1,
-            }),
-        )
-        .unwrap(),
-    ]
-}
-
 /// A field-inline guest executing only ordinary instructions (an ADDI with
-/// consistent register semantics, the termination store, then the terminal
-/// JAL): the rv64 eq rows are satisfied while every field-inline column is zero.
+/// consistent register semantics, then the terminal halt): the rv64 eq rows
+/// are satisfied while every field-inline column is zero.
 fn addi_only_program() -> (Vec<JoltInstructionRow>, Vec<JoltTraceRow>) {
     let addi = instruction(JoltInstructionKind::ADDI, 0, Some(1), Some(2), None, 3);
-    let [one, store] = termination_store_rows(1);
-    let jal = halt_jal_row(3, 5);
+    let halt = success_halt_row(1, 5);
     let rows = vec![
         trace_row(
             addi,
@@ -251,19 +203,9 @@ fn addi_only_program() -> (Vec<JoltInstructionRow>, Vec<JoltTraceRow>) {
             RamAccess::NoOp,
         )
         .unwrap(),
-        one,
-        store,
-        jal,
+        halt,
     ];
-    (
-        vec![
-            addi,
-            one.instruction(),
-            store.instruction(),
-            jal.instruction(),
-        ],
-        rows,
-    )
+    (vec![addi, halt.instruction()], rows)
 }
 
 pub(crate) fn addi_only_backend() -> TraceBackend {
@@ -300,16 +242,8 @@ fn field_arithmetic_program() -> (Vec<JoltInstructionRow>, Vec<JoltTraceRow>, Ve
         Some(2),
         0,
     );
-    let [one, store] = termination_store_rows(3);
-    let jal = halt_jal_row(5, 5);
-    let rows = vec![
-        field_row(load_a),
-        field_row(load_b),
-        field_row(mul),
-        one,
-        store,
-        jal,
-    ];
+    let halt = success_halt_row(3, 5);
+    let rows = vec![field_row(load_a), field_row(load_b), field_row(mul), halt];
     let field_events = vec![
         FieldEvent {
             cycle: 0,
@@ -355,14 +289,7 @@ fn field_arithmetic_program() -> (Vec<JoltInstructionRow>, Vec<JoltTraceRow>, Ve
         },
     ];
     (
-        vec![
-            load_a,
-            load_b,
-            mul,
-            one.instruction(),
-            store.instruction(),
-            jal.instruction(),
-        ],
+        vec![load_a, load_b, mul, halt.instruction()],
         rows,
         field_events,
     )
@@ -401,10 +328,10 @@ pub(crate) fn addi_only_preprocessing() -> JoltProverPreprocessing<DoryScheme, P
     prover_preprocessing(addi_only_program().0)
 }
 
-/// The stage-4+ recipes' checked-inputs carrier for the fixture traces,
-/// mirroring what shape validation derives for a field-inline proof at this scale
-/// (no advice, no precommitted objects, full program).
-pub(crate) fn test_checked_inputs() -> CheckedInputs {
+/// The stage recipes' checked-inputs carrier for the fixture traces over
+/// `program`, mirroring what shape validation derives for a field-inline proof
+/// at this scale (no advice, no precommitted objects, full program).
+pub(crate) fn test_checked_inputs(program: &JoltProgramPreprocessing) -> CheckedInputs {
     CheckedInputs {
         public_io: test_public_io(),
         zk: cfg!(feature = "zk"),
@@ -412,6 +339,12 @@ pub(crate) fn test_checked_inputs() -> CheckedInputs {
         ram_K: 1 << RAM_LOG_K,
         entry_address: ENTRY,
         preprocessing_digest: [0u8; 32],
+        ram_word_masks: RamWordMasks::new(
+            program.code_region().unwrap(),
+            &program.memory_layout,
+            1 << RAM_LOG_K,
+        )
+        .unwrap(),
         untrusted_advice_commitment_present: false,
         trusted_advice_commitment_present: false,
         vc_capacity: cfg!(feature = "zk").then_some(MAX_BLINDFOLD_GENERATORS),
@@ -599,6 +532,7 @@ pub(crate) mod twins {
     pub(crate) fn replay_stage2<C: Clone + Encoding>(
         transcript: &mut ProverState<Keccak>,
         config: &ProverConfig,
+        checked: &CheckedInputs,
         public_io: &JoltDevice,
         stage1: &Stage1ProverOutput<Fr, C>,
         stage2: &Stage2ProverOutput<Fr, C>,
@@ -612,7 +546,7 @@ pub(crate) mod twins {
         let tau_low = product_tau_low(&stage1.clear_output.remainder_point(), log_t).unwrap();
 
         let tau_high: Fr = draw_spartan_product_tau_high(transcript).unwrap();
-        let uniskip_relation = ProductUniskip::new(product_dimensions, tau_high);
+        let uniskip_relation = ProductUniskip::new(product_dimensions, tau_high, public_io.panic);
         let uniskip_inputs = product_uniskip_input_values_from_stage1(&stage1.clear_output);
         let uniskip_input_claim = uniskip_relation
             .input_claim(&uniskip_inputs, &NoChallenges::default())
@@ -633,6 +567,7 @@ pub(crate) mod twins {
                 read_write_dimensions,
                 log_k,
                 tau_low.clone(),
+                checked.ram_word_masks.clone(),
             ),
             product_remainder: ProductRemainder::new(
                 product_dimensions,
@@ -974,6 +909,7 @@ pub(crate) mod proving {
             let stage2 = prove_stage2::<Fr, DoryScheme, Pedersen<Bn254G1>, ProverState<Keccak>>(
                 self.backend,
                 self.mode,
+                self.checked,
                 self.config,
                 self.public_io,
                 &stage1.clear_output,

@@ -226,6 +226,7 @@ mod field_inline_zk {
     use jolt_crypto::{Bn254G1, Pedersen, PedersenSetup};
     use jolt_dory::DoryScheme;
     use jolt_field::Fr;
+    use jolt_program::preprocess::ram::RamWordMasks;
     use jolt_transcript::{prover_transcript, Keccak, ProverState};
     use jolt_verifier::stages::uniskip::{self, UniskipParams};
     use jolt_verifier::stages::PrecommittedSchedule;
@@ -255,8 +256,8 @@ mod field_inline_zk {
         )
         .unwrap();
 
-        // The committed shell carries the composed 50 output-claim values
-        // (45 common openings + five field value/product openings), row-committed in
+        // The committed shell carries the composed 51 output-claim values
+        // (46 common openings + five field value/product openings), row-committed in
         // capacity-sized chunks — the shape the verifier's
         // `composed_output_claim_count` check derives.
         let total: usize = out
@@ -265,7 +266,7 @@ mod field_inline_zk {
             .iter()
             .map(Vec::len)
             .sum();
-        assert_eq!(total, 50);
+        assert_eq!(total, 51);
         let row_lens: Vec<usize> = out
             .committed_witness
             .output_claim_rows
@@ -273,7 +274,7 @@ mod field_inline_zk {
             .map(Vec::len)
             .collect();
         let expected_row_lens: Vec<usize> = {
-            let mut remaining = 50usize;
+            let mut remaining = 51usize;
             let mut lens = Vec::new();
             while remaining > 0 {
                 let take = remaining.min(CAPACITY);
@@ -286,7 +287,7 @@ mod field_inline_zk {
         let committed = out.sumcheck_proof.as_committed().unwrap();
         assert_eq!(
             committed.output_claims.commitments.len(),
-            50usize.div_ceil(CAPACITY)
+            51usize.div_ceil(CAPACITY)
         );
 
         let checked = CheckedInputs {
@@ -296,6 +297,7 @@ mod field_inline_zk {
             ram_K: 1 << 4,
             entry_address: ENTRY,
             preprocessing_digest: [0u8; 32],
+            ram_word_masks: RamWordMasks::default(),
             untrusted_advice_commitment_present: false,
             trusted_advice_commitment_present: false,
             vc_capacity: Some(CAPACITY),

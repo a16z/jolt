@@ -28,10 +28,11 @@
 >   `TraceRowError` (a `thiserror` enum) on memory-row contract violations.
 >   `from_components` is the producer contract and depends only on `jolt-riscv`
 >   (no `jolt-prover-legacy`, no `tracer`, no lookup tables). `CircuitFlagSet`
->   uses a `u32`: field-inline appends ten flags to the fourteen base flags.
->   The row's packed metadata reserves 16 circuit-flag bits in base builds
->   and 24 with field-inline, followed by six instruction bits and the
->   immediate sign. Both builds keep the 64-byte layout.
+>   uses a `u32`: field-inline appends ten flags to the sixteen base flags.
+>   The row's packed metadata holds 16 circuit-flag bits in base builds and
+>   26 with field-inline, followed by the six instruction bits other than
+>   `IsNoop`, which the row derives from `bytecode_pc == 0`; the immediate
+>   sign is row-control bit 7. Both builds keep the 64-byte layout.
 > - `crates/jolt-lookup-tables/src/traits.rs`: `InstructionLookupTable for
 >   JoltTraceRow`, delegating through the row's cached `instruction_kind()` (this
 >   crate owns `LookupTableKind`, so the accessor cannot live in `jolt-riscv`).
@@ -250,8 +251,8 @@ unless a later optimization PR makes that explicit.
       `JoltTraceRow`, not raw `Cycle`.
 - [ ] Spartan outer sumcheck hot loops consume `JoltTraceRow` or
       phase-local columns derived from it.
-- [ ] RAM read-write, RAM RA, RAM hamming, register read-write, bytecode RA,
-      and instruction lookup phases no longer repeatedly adapt raw cycles for
+- [ ] RAM read-write, RAM RA, register read-write, bytecode RA, and
+      instruction lookup phases no longer repeatedly adapt raw cycles for
       final-row metadata.
 - [ ] `JoltTraceCycle::try_new` call sites in proof hot paths are removed or
       reduced to construction-time checks.
@@ -313,7 +314,7 @@ least these measurements:
 - time to build `Vec<JoltTraceRow>` from raw trace data;
 - Spartan outer sumcheck time;
 - instruction lookup read-RAF time;
-- RAM read-write, RAM RA, RAM hamming, and RAM val-check time;
+- RAM read-write, RAM RA, and RAM val-check time;
 - register read-write and register val-check time;
 - bytecode read-RAF time;
 - cache behavior when bytecode is small, medium, and intentionally large enough

@@ -62,8 +62,8 @@ use jolt_verifier::stages::{
     },
     stage6b::outputs::{
         BytecodeReductionCyclePhaseOutputClaims, InstructionRaVirtualizationOutputClaims,
-        ProgramImageReductionCyclePhaseOutputClaims, RamHammingBooleanityOutputClaims,
-        RamRaVirtualizationOutputClaims, Stage6bOutputClaims,
+        ProgramImageReductionCyclePhaseOutputClaims, RamRaVirtualizationOutputClaims,
+        Stage6bOutputClaims,
     },
     stage7::{
         committed_reduction_address_phase::{
@@ -149,7 +149,6 @@ fn visit_stage1<F: JoltField>(claims: &mut Stage1OutputClaims<F>, f: &mut dyn Fn
         next_is_virtual,
         next_is_first_in_sequence,
         lookup_output,
-        should_jump,
         add_operands,
         subtract_operands,
         multiply_operands,
@@ -164,6 +163,8 @@ fn visit_stage1<F: JoltField>(claims: &mut Stage1OutputClaims<F>, f: &mut dyn Fn
         is_compressed,
         is_first_in_sequence,
         is_last_in_sequence,
+        halt,
+        halt_panic,
     } = outer_remainder;
     for scalar in [
         left_instruction_input,
@@ -186,7 +187,6 @@ fn visit_stage1<F: JoltField>(claims: &mut Stage1OutputClaims<F>, f: &mut dyn Fn
         next_is_virtual,
         next_is_first_in_sequence,
         lookup_output,
-        should_jump,
         add_operands,
         subtract_operands,
         multiply_operands,
@@ -201,6 +201,8 @@ fn visit_stage1<F: JoltField>(claims: &mut Stage1OutputClaims<F>, f: &mut dyn Fn
         is_compressed,
         is_first_in_sequence,
         is_last_in_sequence,
+        halt,
+        halt_panic,
     ] {
         f(scalar);
     }
@@ -223,7 +225,7 @@ fn visit_stage2<F: JoltField>(claims: &mut Stage2OutputClaims<F>, f: &mut dyn Fn
     let ProductRemainderOutputClaims {
         left_instruction_input,
         right_instruction_input,
-        jump_flag,
+        is_noop,
         write_lookup_output_to_rd,
         lookup_output,
         branch_flag,
@@ -245,7 +247,7 @@ fn visit_stage2<F: JoltField>(claims: &mut Stage2OutputClaims<F>, f: &mut dyn Fn
         inc,
         left_instruction_input,
         right_instruction_input,
-        jump_flag,
+        is_noop,
         write_lookup_output_to_rd,
         lookup_output,
         branch_flag,
@@ -399,7 +401,6 @@ fn visit_stage6b<F: JoltField>(claims: &mut Stage6bOutputClaims<F>, f: &mut dyn 
     let Stage6bOutputClaims {
         bytecode_read_raf,
         booleanity,
-        ram_hamming_booleanity,
         ram_ra_virtualization,
         instruction_ra_virtualization,
         bytecode_reduction,
@@ -427,8 +428,6 @@ fn visit_stage6b<F: JoltField>(claims: &mut Stage6bOutputClaims<F>, f: &mut dyn 
     for scalar in ram_ra.iter_mut() {
         f(scalar);
     }
-    let RamHammingBooleanityOutputClaims { ram_hamming_weight } = ram_hamming_booleanity;
-    f(ram_hamming_weight);
     let RamRaVirtualizationOutputClaims {
         ram_ra: virt_ram_ra,
     } = ram_ra_virtualization;

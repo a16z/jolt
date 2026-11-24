@@ -885,7 +885,7 @@ fn stage2_formula_output_openings() -> Vec<(&'static str, JoltOpeningId)> {
         [
             spartan::left_instruction_input_product(),
             spartan::right_instruction_input_product(),
-            spartan::jump_flag_product(),
+            spartan::is_noop_product(),
             spartan::lookup_output_product(),
             spartan::branch_flag_product(),
             spartan::next_is_noop_product(),
@@ -1088,12 +1088,6 @@ fn stage6_formula_output_openings(
             ),
         ));
     }
-    openings.extend([ram::ram_hamming_weight()].into_iter().map(|id| {
-        (
-            "stage6.claims.ram_hamming_booleanity.ram_hamming_weight",
-            id,
-        )
-    }));
     openings.extend(
         relations::ram::RamRaVirtualizationOutputClaims::<Fr> {
             ram_ra: vec![Fr::zero(); dimensions.ram_ra_virtualization.num_committed_ra_polys()],
