@@ -165,11 +165,12 @@ mod tests {
     /// The image bound matches the interpreter's: the last byte below
     /// `stack_end` loads, the first canary byte does not.
     #[test]
-    fn image_ends_below_stack_end() {
+    fn image_ends_below_stack_end() -> Result<(), jolt_program::execution::TraceError> {
         use common::jolt_device::MemoryLayout;
         let layout = MemoryLayout::new(&crate::native::harness::memory_config());
-        let mut plane = MemoryPlane::for_layout(&layout).expect("plane");
+        let mut plane = MemoryPlane::for_layout(&layout)?;
         assert!(plane.init_from_image(&[(layout.stack_end - 1, 1)]).is_ok());
         assert!(plane.init_from_image(&[(layout.stack_end, 1)]).is_err());
+        Ok(())
     }
 }
