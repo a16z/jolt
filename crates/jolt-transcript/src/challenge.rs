@@ -126,10 +126,8 @@ pub trait ChallengeCodec: Sized + Sealed {
     /// Allocates only the returned vector, with capacity `len`.
     fn decode_challenges(bytes: &[u8], len: usize) -> Option<Vec<Self>>;
 
-    /// Decodes the same tape as a one-element challenge message.
-    fn decode_challenge(bytes: &[u8]) -> Option<Self> {
-        Self::decode_challenges(bytes, 1)?.pop()
-    }
+    /// `decode_challenges(bytes, 1)`'s one element, without allocating.
+    fn decode_challenge(bytes: &[u8]) -> Option<Self>;
 }
 
 /// A sponge whose squeezed bytes are uniform, up to the sponge's own
@@ -191,8 +189,13 @@ fn pool_bytes<F: PseudoMersenne>(len: usize) -> Option<usize> {
     }
 }
 
+/// The `len` challenges of a pooled message, in order; `None` if `bytes` is
+/// not exactly that message. An item is `None` once the pool is exhausted.
 #[cfg(feature = "solinas")]
-fn decode_pool<F, E, const D: usize>(bytes: &[u8], len: usize) -> Option<Vec<E>>
+fn pooled<F, E, const D: usize>(
+    bytes: &[u8],
+    len: usize,
+) -> Option<impl Iterator<Item = Option<E>> + '_>
 where
     F: PseudoMersenne,
     E: ExtField<F>,
@@ -201,22 +204,36 @@ where
         return None;
     }
     let mask = u128::MAX.checked_shr(128u32.checked_sub(F::MODULUS_BITS)?)?;
-    let mut accepted = bytes.chunks_exact(F::NUM_BYTES).filter_map(|candidate| {
-        let mut word = [0u8; 16];
-        word.get_mut(..F::NUM_BYTES)?.copy_from_slice(candidate);
-        let masked = (u128::from_le_bytes(word) & mask).to_le_bytes();
-        F::from_bytes_le_checked(masked.get(..F::NUM_BYTES)?)
-    });
-    let mut result = Vec::with_capacity(len);
-    for _ in 0..len {
+    let mut accepted = bytes
+        .chunks_exact(F::NUM_BYTES)
+        .filter_map(move |candidate| {
+            let mut word = [0u8; 16];
+            word.get_mut(..F::NUM_BYTES)?.copy_from_slice(candidate);
+            let masked = (u128::from_le_bytes(word) & mask).to_le_bytes();
+            F::from_bytes_le_checked(masked.get(..F::NUM_BYTES)?)
+        });
+    Some((0..len).map(move |_| {
         let mut coordinates = [F::default(); D];
         for coordinate in &mut coordinates {
             *coordinate = accepted.next()?;
         }
         // ExtField::from_base_fn supplies exactly 0..DEGREE; D is checked above.
-        result.push(E::from_base_fn(|i| {
+        Some(E::from_base_fn(|i| {
             coordinates.get(i).copied().unwrap_or_default()
-        }));
+        }))
+    }))
+}
+
+#[cfg(feature = "solinas")]
+fn decode_pool<F, E, const D: usize>(bytes: &[u8], len: usize) -> Option<Vec<E>>
+where
+    F: PseudoMersenne,
+    E: ExtField<F>,
+{
+    let challenges = pooled::<F, E, D>(bytes, len)?;
+    let mut result = Vec::with_capacity(len);
+    for challenge in challenges {
+        result.push(challenge?);
     }
     Some(result)
 }
@@ -236,6 +253,10 @@ macro_rules! prime_codec {
 
             fn decode_challenges(bytes: &[u8], len: usize) -> Option<Vec<Self>> {
                 decode_pool::<Self, Self, 1>(bytes, len)
+            }
+
+            fn decode_challenge(bytes: &[u8]) -> Option<Self> {
+                pooled::<Self, Self, 1>(bytes, 1)?.next().flatten()
             }
         }
     };
@@ -286,6 +307,10 @@ macro_rules! extension_codec {
 
             fn decode_challenges(bytes: &[u8], len: usize) -> Option<Vec<Self>> {
                 decode_pool::<F, Self, $degree>(bytes, len)
+            }
+
+            fn decode_challenge(bytes: &[u8]) -> Option<Self> {
+                pooled::<F, Self, $degree>(bytes, 1)?.next().flatten()
             }
         }
     };

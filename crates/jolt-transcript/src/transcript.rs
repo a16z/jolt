@@ -259,10 +259,14 @@ where
     // A rejected length or tape poisons the verifier even if the caller
     // discards the error and continues to check_eof.
     transcript.require(bytes.is_ok())?;
+    // Single-challenge tapes: 56 bytes for BN254, 32 for Akita's
+    // Prime128Offset6A23801F, and 8, 16 and 24 for the binary fields and
+    // Prime64Offset59. Other lengths take spongefish's boxed squeeze.
     let challenges = match bytes? {
         8 => decode(&transcript.squeeze_array::<8>()),
         16 => decode(&transcript.squeeze_array::<16>()),
         24 => decode(&transcript.squeeze_array::<24>()),
+        32 => decode(&transcript.squeeze_array::<32>()),
         56 => decode(&transcript.squeeze_array::<56>()),
         len => transcript.squeeze(len, decode),
     };
