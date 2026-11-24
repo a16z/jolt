@@ -3,22 +3,23 @@
 //! Two claims that must hold for a backend that executes guest-controlled
 //! data in-process:
 //! 1. the finalized code mapping is never writable and executable at once;
-//! 2. a guest access outside the memory plane surfaces as a defined error,
-//!    not as undefined behaviour.
+//! 2. a guest access outside the admitted RAM domain surfaces as a defined
+//!    error, not as undefined behaviour.
 
 #![cfg(all(target_arch = "x86_64", target_os = "linux"))]
 #![expect(clippy::expect_used, clippy::panic)]
 
 use common::constants::{RAM_START_ADDRESS, STACK_CANARY_SIZE};
-use common::jolt_device::{JoltDevice, MemoryConfig};
-use jolt_platform::{JOLT_ADVICE_WRITE_CALL_ID, JOLT_PRINT_CALL_ID, JOLT_PRINT_STRING};
+use common::jolt_device::{JoltDevice, MemoryConfig, MemoryLayout};
+use jolt_platform::JOLT_ADVICE_WRITE_CALL_ID;
 use jolt_program::execution::{
     ChunkedExecutionBackend, ExecutionBackend, JoltProgram, TraceError, TraceInputs,
 };
 use jolt_program::expand::{expand_instruction, ExpansionAllocator};
 use jolt_riscv::instructions::VirtualHostIO;
 use jolt_riscv::{
-    JoltInstructionKind as Kind, JoltInstructionRow, NormalizedOperands, RV64IMAC_JOLT,
+    JoltInstructionKind as Kind, JoltInstructionRow, NormalizedOperands, RamAccess, RamWrite,
+    RV64IMAC_JOLT,
 };
 use jolt_tracer_x86::harness::{
     compile_program, memory_config, run_program, single_row_program, terminal_row, ExitReason,
@@ -91,49 +92,62 @@ fn generated_code_mapping_is_not_writable() {
     );
 }
 
-/// A load whose effective address lies outside the guest memory plane must
-/// produce the defined out-of-bounds exit, not a host segfault.
+/// The end of the harness layout's RAM domain, where the memory plane ends,
+/// and an address far past it, still in the RAM region so it is not routed
+/// to the device helpers: the bounds check is what must catch both.
+fn out_of_bounds_addresses() -> [u64; 2] {
+    let ram_size = MemoryLayout::new(&memory_config())
+        .ram_size()
+        .expect("RAM size");
+    [
+        RAM_START_ADDRESS + ram_size,
+        RAM_START_ADDRESS + (1u64 << 40),
+    ]
+}
+
+/// A load at or past the end of the RAM domain must produce the defined
+/// out-of-bounds exit, not a host segfault.
 #[test]
 fn out_of_bounds_load_reports_a_fault() {
     let program = single_row_program(row(Kind::LD, Some(1), Some(2), 0));
-    let mut pre = [0u64; REGS];
-    // Far past the plane, but still in the RAM region so it is not routed to
-    // the device helpers: the bounds check is what must catch it.
-    pre[1] = RAM_START_ADDRESS + (1u64 << 40);
-
-    let outcome = run_program(&program, &pre, &[], &[]).expect("run should not error");
-    assert_eq!(
-        outcome.exit,
-        ExitReason::FaultOutOfBounds as u64,
-        "expected the out-of-bounds exit reason, got {} ({:?})",
-        outcome.exit,
-        outcome.helper_error
-    );
-    assert_eq!(
-        outcome.fault_addr, pre[1],
-        "the faulting guest address should be reported"
-    );
+    for address in out_of_bounds_addresses() {
+        let mut pre = [0u64; REGS];
+        pre[1] = address;
+        let outcome = run_program(&program, &pre, &[], &[]).expect("run should not error");
+        assert_eq!(
+            outcome.exit,
+            ExitReason::FaultOutOfBounds as u64,
+            "expected the out-of-bounds exit reason, got {} ({:?})",
+            outcome.exit,
+            outcome.helper_error
+        );
+        assert_eq!(
+            outcome.fault_addr, address,
+            "the faulting guest address should be reported"
+        );
+    }
 }
 
-/// A store outside the plane must likewise be caught rather than corrupting
-/// host memory.
+/// A store there must likewise be caught rather than corrupting host memory.
 #[test]
 fn out_of_bounds_store_reports_a_fault() {
     let mut store = row(Kind::SD, Some(1), None, 0);
     store.operands.rs2 = Some(3);
     let program = single_row_program(store);
-    let mut pre = [0u64; REGS];
-    pre[1] = RAM_START_ADDRESS + (1u64 << 40);
-    pre[3] = 0xdead_beef;
-
-    let outcome = run_program(&program, &pre, &[], &[]).expect("run should not error");
-    assert_eq!(
-        outcome.exit,
-        ExitReason::FaultOutOfBounds as u64,
-        "expected the out-of-bounds exit reason, got {} ({:?})",
-        outcome.exit,
-        outcome.helper_error
-    );
+    for address in out_of_bounds_addresses() {
+        let mut pre = [0u64; REGS];
+        pre[1] = address;
+        pre[3] = 0xdead_beef;
+        let outcome = run_program(&program, &pre, &[], &[]).expect("run should not error");
+        assert_eq!(
+            outcome.exit,
+            ExitReason::FaultOutOfBounds as u64,
+            "expected the out-of-bounds exit reason, got {} ({:?})",
+            outcome.exit,
+            outcome.helper_error
+        );
+        assert_eq!(outcome.fault_addr, address);
+    }
 }
 
 /// Run a single `SD` of `0xdead_beef` to `address` in the harness layout.
@@ -276,128 +290,114 @@ fn slow_load_rejects_addresses_below_the_lowest_mapped_word() {
     }
 }
 
+/// Every load kind reads zero from an untouched word at either end of the
+/// I/O gap and at the last word of the RAM domain.
 #[test]
-fn loads_reject_the_padding_between_io_end_and_ram() {
-    let config = MemoryConfig {
-        max_input_size: 24,
-        max_output_size: 0,
-        max_trusted_advice_size: 0,
-        max_untrusted_advice_size: 0,
-        ..memory_config()
-    };
-    let layout = JoltDevice::new(&config).memory_layout;
-    assert_eq!(layout.io_end, RAM_START_ADDRESS - 8);
+fn loads_read_zero_from_untouched_gap_and_padding_words() {
+    let layout = MemoryLayout::new(&memory_config());
+    let domain_end = RAM_START_ADDRESS + layout.ram_size().expect("RAM size");
     for kind in [
         Kind::LD,
         Kind::VirtualLoadB,
         Kind::VirtualLoadH,
         Kind::VirtualLoadW,
     ] {
-        for (address, accepted) in [(layout.io_end - 8, true), (layout.io_end, false)] {
-            let mut load = row(
-                kind,
-                Some(1),
-                Some(2),
-                i128::from(address) - i128::from(TEST_ADDR),
+        let program = single_row_program(row(kind, Some(1), Some(2), 0));
+        for address in [layout.io_end, RAM_START_ADDRESS - 8, domain_end - 8] {
+            let mut pre = [0u64; REGS];
+            pre[1] = address;
+            pre[2] = u64::MAX;
+            let outcome = run_program(&program, &pre, &[], &[]).expect("run load");
+            assert_eq!(
+                outcome.exit,
+                ExitReason::HaltedSuccess as u64,
+                "{kind:?} at {address:#x}: {:?}",
+                outcome.helper_error
             );
-            load.address += 4;
-            let program = JoltProgram::from_parts(
-                minimal_elf(TEST_ADDR),
-                vec![
-                    row(Kind::AUIPC, None, Some(1), 0),
-                    load,
-                    terminal_row(TEST_ADDR + 8),
-                ],
-                Vec::new(),
-                RAM_START_ADDRESS + 1024,
-                TEST_ADDR,
-            );
-            let inputs = TraceInputs::new(Vec::new(), Vec::new(), Vec::new(), config);
-            let result = X86TracerBackend::new()
-                .run_machine(&program, inputs)
-                .and_then(RunOutput::require_halt);
-            if accepted {
-                let _ = result.expect("load of the final I/O word");
-            } else {
-                assert!(matches!(
-                    result,
-                    Err(TraceError::Backend("host helper reported an error"))
-                ));
-            }
+            assert_eq!(outcome.regs[2], 0, "{kind:?} at {address:#x}");
         }
     }
 }
 
+/// A store below `lowest_address` fails with the interpreter's message for
+/// the same store.
 #[test]
-fn device_load_failures_report_io_overflow() {
-    let layout = JoltDevice::new(&memory_config()).memory_layout;
-    let mut pre = [0u64; REGS];
-    pre[1] = layout.io_end + 8;
-    let program = single_row_program(row(Kind::LD, Some(1), Some(2), 0));
-    let load = run_program(&program, &pre, &[], &[]).expect("run overflowing load");
-    assert_eq!(load.exit, ExitReason::FaultHelper as u64);
-    assert!(load
-        .helper_error
-        .expect("load error")
-        .contains("I/O overflow"));
-
-    // A host call never fails: it ignores a range a guest load would reject,
-    // as the interpreter does.
-    let program = single_row_program(row(Kind::VirtualHostIO(VirtualHostIO(())), None, None, 0));
-    for call in [JOLT_ADVICE_WRITE_CALL_ID, JOLT_PRINT_CALL_ID] {
-        pre[10] = u64::from(call);
-        pre[11] = layout.io_end + 8;
-        pre[12] = 1;
-        pre[13] = u64::from(JOLT_PRINT_STRING);
-        let read = run_program(&program, &pre, &[], &[]).expect("run overflowing host read");
-        assert_eq!(
-            read.exit,
-            ExitReason::HaltedSuccess as u64,
-            "{:?}",
-            read.helper_error
-        );
-        assert_eq!(read.advice_tape, [] as [u8; 0]);
-    }
+fn device_stores_below_the_lowest_mapped_word_fault() {
+    let address = JoltDevice::new(&memory_config())
+        .memory_layout
+        .get_lowest_address()
+        - 8;
+    let outcome = store_to(address);
+    assert_eq!(
+        outcome.exit,
+        ExitReason::FaultHelper as u64,
+        "expected the helper-fault exit reason, got {} ({:?})",
+        outcome.exit,
+        outcome.helper_error
+    );
+    let message = outcome.helper_error.expect("a helper error message");
+    assert!(
+        message.contains(&format!(
+            "Illegal device store: Unknown memory mapping: {address:#X}"
+        )),
+        "unexpected helper error: {message}"
+    );
 }
 
-/// Stores below `lowest_address` and at or above `io_end` fail with the
-/// interpreter's messages for the same stores.
+/// Host calls read what the guest stored in the I/O gap, including its last
+/// bytes and a range continuing into RAM.
 #[test]
-fn device_stores_outside_the_io_region_fault() {
-    let layout = JoltDevice::new(&memory_config()).memory_layout;
-    for (address, needle) in [
+fn host_calls_read_values_stored_in_the_io_gap() {
+    const VALUE: u64 = 0x8877_6655_4433_2211;
+    let mut store = row(Kind::SD, Some(1), None, 0);
+    store.operands.rs2 = Some(3);
+    let mut host_io = row(Kind::VirtualHostIO(VirtualHostIO(())), None, None, 0);
+    host_io.address += 4;
+    let program = JoltProgram::from_parts(
+        Vec::new(),
+        vec![store, host_io, terminal_row(TEST_ADDR + 8)],
+        Vec::new(),
+        RAM_START_ADDRESS + 1024,
+        TEST_ADDR,
+    );
+    for (ptr, tape) in [
+        (RAM_START_ADDRESS - 8, VALUE.to_le_bytes().to_vec()),
         (
-            layout.get_lowest_address() - 8,
-            "Illegal device store: Unknown memory mapping",
+            RAM_START_ADDRESS - 4,
+            [0x55, 0x66, 0x77, 0x88, 0, 0, 0, 0].to_vec(),
         ),
-        (layout.io_end, "I/O overflow: Attempted to write to"),
-        (layout.io_end + 8, "I/O overflow: Attempted to write to"),
     ] {
-        let outcome = store_to(address);
+        let mut pre = [0u64; REGS];
+        pre[1] = RAM_START_ADDRESS - 8;
+        pre[3] = VALUE;
+        pre[10] = u64::from(JOLT_ADVICE_WRITE_CALL_ID);
+        pre[11] = ptr;
+        pre[12] = 8;
+        let outcome = run_program(&program, &pre, &[], &[]).expect("run host read");
         assert_eq!(
             outcome.exit,
-            ExitReason::FaultHelper as u64,
-            "store to {address:#x}: expected the helper-fault exit reason, got {} ({:?})",
-            outcome.exit,
+            ExitReason::HaltedSuccess as u64,
+            "{:?}",
             outcome.helper_error
         );
-        let message = outcome.helper_error.expect("a helper error message");
-        assert!(
-            message.contains(needle) && message.contains(&format!("{address:#X}")),
-            "store to {address:#x}: unexpected helper error: {message}"
-        );
+        assert_eq!(outcome.advice_tape, tape, "range at {ptr:#x}");
     }
 }
 
 #[test]
 fn advice_write_follows_guest_load_bounds() {
     let layout = JoltDevice::new(&memory_config()).memory_layout;
+    let domain_end = RAM_START_ADDRESS + layout.ram_size().expect("RAM size");
     let program = single_row_program(row(Kind::VirtualHostIO(VirtualHostIO(())), None, None, 0));
     for (address, tape) in [
         (layout.get_lowest_address() - 1, None),
-        (layout.heap_end, None),
         (layout.get_lowest_address(), Some(0)),
+        (layout.io_end, Some(0)),
+        (RAM_START_ADDRESS - 1, Some(0)),
         (SCRATCH_START, Some(0xab)),
+        (layout.heap_end, Some(0)),
+        (domain_end - 1, Some(0)),
+        (domain_end, None),
     ] {
         let mut pre = [0u64; REGS];
         pre[10] = u64::from(JOLT_ADVICE_WRITE_CALL_ID);
@@ -455,7 +455,9 @@ fn layout_region_stores_accept_the_old_value_and_reject_changes() {
     }
 }
 
-fn heap_word_program(config: &MemoryConfig, offset: u64, value: u64) -> JoltProgram {
+/// Stores `value` to the doubleword at `RAM_START_ADDRESS + offset`, then
+/// loads it back.
+fn word_program(config: &MemoryConfig, offset: i64, value: u64) -> JoltProgram {
     let mut store = row(Kind::SD, Some(1), None, offset.into());
     store.operands.rs2 = Some(3);
     let mut rows = vec![
@@ -487,7 +489,7 @@ fn final_partial_canary_word_accepts_only_unchanged_stores() {
     };
     let inputs = TraceInputs::new(Vec::new(), Vec::new(), Vec::new(), config);
     let mut backend = X86TracerBackend::new();
-    let unchanged = heap_word_program(&config, 1152, 0);
+    let unchanged = word_program(&config, 1152, 0);
     let trace = backend
         .trace(&unchanged, inputs.clone())
         .expect("unchanged canary word");
@@ -510,65 +512,82 @@ fn final_partial_canary_word_accepts_only_unchanged_stores() {
         assert_eq!(replay.rows(), std::slice::from_ref(expected));
     }
     for value in [1, 256] {
-        let changed = heap_word_program(&config, 1152, value);
+        let changed = word_program(&config, 1152, value);
         assert!(matches!(
             X86TracerBackend::new().run_machine(&changed, inputs.clone()),
             Err(TraceError::Backend("host helper reported an error"))
         ));
     }
-    for offset in [1160, 1168] {
-        let outside = heap_word_program(&config, offset, 0);
-        assert!(X86TracerBackend::new()
-            .run_machine(&outside, inputs.clone())
-            .is_err());
-    }
 }
 
+/// Both ends of the I/O gap and both ends of the heap padding read as zero
+/// until stored, then keep the stored value through fast runs, records and
+/// one-row checkpoint replays. The RAM domain ends right after the padding.
 #[test]
-fn last_heap_word_survives_checkpoints() {
+fn io_gap_and_heap_padding_words_survive_checkpoints() {
     let config = MemoryConfig {
         program_size: Some(1025),
         stack_size: 0,
         heap_size: 8,
         ..Default::default()
     };
-    let inputs = TraceInputs::new(Vec::new(), Vec::new(), Vec::new(), config);
-    let program = heap_word_program(&config, 1160, 256);
-    let mut backend = X86TracerBackend::new();
-    backend.set_min_checkpoint_spacing_rows(1);
-    let trace = backend
-        .trace(&program, inputs.clone())
-        .expect("last heap word");
+    // The 33936 bytes from the lowest address, RAM_START_ADDRESS - 32768, to
+    // `heap_end` pad to an 8192-word domain ending at RAM_START_ADDRESS +
+    // 32768.
+    let layout = MemoryLayout::new(&config);
     assert_eq!(
-        trace.trace.rows()[3]
-            .registers()
-            .rd
-            .expect("load result")
-            .post_value,
-        256
+        (layout.io_end, layout.heap_end),
+        (RAM_START_ADDRESS - 16384, RAM_START_ADDRESS + 1168)
     );
-    assert!(trace
-        .final_memory
-        .as_ref()
-        .expect("final memory")
-        .bytes
-        .contains(&(1161, 1)));
-    let summary = backend
-        .execute(&program, inputs, 1)
-        .expect("checkpoint heap word");
-    assert_eq!(summary.checkpoints.len(), trace.trace.rows().len());
-    for (checkpoint, expected) in summary.checkpoints.iter().zip(trace.trace.rows()) {
-        let replay = backend.replay_chunk(checkpoint).expect("replay heap word");
-        assert_eq!(replay.rows(), std::slice::from_ref(expected));
-    }
-    for offset in [1168, 1176] {
-        let outside = heap_word_program(&config, offset, 0);
-        let inputs = TraceInputs::new(Vec::new(), Vec::new(), Vec::new(), config);
-        assert!(X86TracerBackend::new()
-            .run_machine(&outside, inputs)
+    let inputs = TraceInputs::new(Vec::new(), Vec::new(), Vec::new(), config);
+    for offset in [-16384, -8, 1168, 32760] {
+        let address = RAM_START_ADDRESS.wrapping_add_signed(offset);
+        let program = word_program(&config, offset, 256);
+        let mut backend = X86TracerBackend::new();
+        backend.set_min_checkpoint_spacing_rows(1);
+        let trace = backend.trace(&program, inputs.clone()).expect("trace");
+        let rows = trace.trace.rows();
+        assert_eq!(
+            rows[2].ram_access(),
+            RamAccess::Write(RamWrite {
+                address,
+                pre_value: 0,
+                post_value: 256,
+            }),
+            "offset {offset}"
+        );
+        assert_eq!(
+            rows[3].registers().rd.expect("load result").post_value,
+            256,
+            "offset {offset}"
+        );
+        let final_memory = trace.final_memory.expect("final memory");
+        assert!(
+            final_memory.bytes.contains(&(address + 1, 1)),
+            "offset {offset}"
+        );
+        let machine = backend
+            .run_machine(&program, inputs.clone())
             .and_then(RunOutput::require_halt)
-            .is_err());
+            .expect("machine run");
+        assert_eq!(machine.final_memory, final_memory, "offset {offset}");
+        let summary = backend
+            .execute(&program, inputs.clone(), 1)
+            .expect("checkpoints");
+        assert_eq!(summary.checkpoints.len(), rows.len());
+        for (checkpoint, expected) in summary.checkpoints.iter().zip(rows) {
+            let replay = backend.replay_chunk(checkpoint).expect("replay");
+            assert_eq!(
+                replay.rows(),
+                std::slice::from_ref(expected),
+                "offset {offset}"
+            );
+        }
     }
+    assert!(matches!(
+        X86TracerBackend::new().run_machine(&word_program(&config, 32768, 256), inputs),
+        Err(TraceError::Backend("guest RAM access out of bounds"))
+    ));
 }
 
 #[test]

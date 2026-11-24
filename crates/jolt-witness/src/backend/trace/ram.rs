@@ -184,46 +184,24 @@ impl TraceBackend {
         state: &mut [u64],
         bytes: &[(u64, u8)],
     ) -> Result<(), WitnessError> {
-        let dram_start = self.dram_start_address()?;
         for &(address, byte) in bytes {
-            let absolute_address = if address >= dram_start {
-                address
-            } else {
-                dram_start
-                    .checked_add(address)
-                    .ok_or_else(|| WitnessError::InvalidWitnessData {
-                        label: JOLT_VM_LABEL,
-                        reason: format!("final memory address offset {address:#x} overflows"),
-                    })?
-            };
-            let Some(word_index) = self.remapped_ram_address(absolute_address)? else {
+            let Some(word_index) = self.remapped_ram_address(address)? else {
                 continue;
             };
             if word_index >= state.len() {
                 return Err(WitnessError::InvalidWitnessData {
                     label: JOLT_VM_LABEL,
                     reason: format!(
-                        "final memory address {absolute_address:#x} remapped to {word_index}, beyond ram_k {}",
+                        "final memory address {address:#x} remapped to {word_index}, beyond ram_k {}",
                         state.len()
                     ),
                 });
             }
-            let shift = ((absolute_address & 7) * 8) as usize;
+            let shift = ((address & 7) * 8) as usize;
             state[word_index] =
                 (state[word_index] & !(0xff_u64 << shift)) | ((byte as u64) << shift);
         }
         Ok(())
-    }
-
-    pub(crate) fn dram_start_address(&self) -> Result<u64, WitnessError> {
-        self.preprocessing
-            .memory_layout
-            .stack_end
-            .checked_sub(self.preprocessing.memory_layout.program_size)
-            .ok_or_else(|| WitnessError::InvalidWitnessData {
-                label: JOLT_VM_LABEL,
-                reason: "memory layout stack_end is below program_size".to_owned(),
-            })
     }
 
     pub(crate) fn remapped_required_address(

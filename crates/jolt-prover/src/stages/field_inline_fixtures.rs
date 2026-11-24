@@ -33,7 +33,7 @@ use jolt_program::execution::{FieldEvent, JoltProgram, TraceData, TraceOutput};
 use jolt_program::field_inline::{
     FieldEncodedValue, FieldInlineTraceData, FieldRegisterRead, FieldRegisterWrite,
 };
-use jolt_program::preprocess::ram::RamWordMasks;
+use jolt_program::preprocess::ram::write_protected_word_intervals;
 use jolt_program::preprocess::JoltProgramPreprocessing;
 use jolt_riscv::{
     JoltInstructionKind, JoltInstructionProfile, JoltInstructionRow, JoltTraceRow,
@@ -339,7 +339,7 @@ pub(crate) fn test_checked_inputs(program: &JoltProgramPreprocessing) -> Checked
         ram_K: 1 << RAM_LOG_K,
         entry_address: ENTRY,
         preprocessing_digest: [0u8; 32],
-        ram_word_masks: RamWordMasks::new(
+        write_protected_word_intervals: write_protected_word_intervals(
             program.code_region().unwrap(),
             &program.memory_layout,
             1 << RAM_LOG_K,
@@ -567,7 +567,7 @@ pub(crate) mod twins {
                 read_write_dimensions,
                 log_k,
                 tau_low.clone(),
-                checked.ram_word_masks.clone(),
+                checked.write_protected_word_intervals.clone(),
             ),
             product_remainder: ProductRemainder::new(
                 product_dimensions,

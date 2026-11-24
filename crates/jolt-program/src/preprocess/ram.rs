@@ -124,10 +124,11 @@ pub fn code_region(
     Ok(words.unwrap_or_default())
 }
 
-/// The value-preserving RAM mask, restricted to the proof's address domain:
-/// the code region (see [`code_region`]) and the input, advice and canary
-/// regions rounded outward to doublewords, sorted, disjoint and merged,
-/// including intervals starting at index zero.
+/// Mask C: the code, canary, input and advice words, whose value every access
+/// must preserve. Restricted to the proof's address domain, it is the code
+/// region (see [`code_region`]) and the input, advice and canary regions
+/// rounded outward to doublewords, sorted, disjoint and merged, including
+/// intervals starting at index zero.
 pub fn write_protected_word_intervals(
     code_region: Range<usize>,
     memory_layout: &MemoryLayout,
@@ -190,93 +191,6 @@ pub fn write_protected_word_intervals(
         intervals.push((start, end));
     }
     let mut intervals = merge_word_intervals(intervals);
-    intervals.retain_mut(|(start, end)| {
-        *end = (*end).min(ram_k);
-        *start < *end
-    });
-    Ok(intervals)
-}
-
-/// The public RAM word masks of one proof's address domain, the `ram_K` words
-/// from the lowest mapped address. The RAM read-write sumcheck weights one claim
-/// by each mask.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct RamWordMasks {
-    /// Mask C: code, canary, input and advice words, whose value every access
-    /// must preserve. See [`write_protected_word_intervals`].
-    pub write_protected: Vec<(usize, usize)>,
-    /// Mask N: words no access may touch. See [`unmapped_word_intervals`].
-    pub unmapped: Vec<(usize, usize)>,
-}
-
-impl RamWordMasks {
-    pub fn new(
-        code_region: Range<usize>,
-        memory_layout: &MemoryLayout,
-        ram_k: usize,
-    ) -> Result<Self, PreprocessingError> {
-        let masks = Self {
-            write_protected: write_protected_word_intervals(code_region, memory_layout, ram_k)?,
-            unmapped: unmapped_word_intervals(memory_layout, ram_k)?,
-        };
-        // The prover classifies a word for both masks with one search over
-        // their merged intervals, which requires the masks to be disjoint.
-        let overlaps = masks.write_protected.iter().any(|&(start, end)| {
-            masks
-                .unmapped
-                .iter()
-                .any(|&(other_start, other_end)| start < other_end && other_start < end)
-        });
-        if overlaps {
-            return Err(PreprocessingError::InvalidUnmappedIntervals(
-                "unmapped words overlap write-protected words",
-            ));
-        }
-        Ok(masks)
-    }
-}
-
-/// The words of the proof's domain that every tracer refuses to access: the
-/// padding between `io_end` and `RAM_START_ADDRESS`, and the words from
-/// `heap_end` to the end of the domain. The tracers fault on an access starting
-/// at or above `io_end` below RAM, or at or above `heap_end` in RAM (see
-/// `tracer::emulator::mmu::address_fault` and the x86 helpers' guest-load
-/// bounds). Both bounds are doubleword aligned, so each tracer bound falls on a
-/// word boundary of this mask. `MemoryLayout::try_new` reserves the guard word
-/// at `io_end`, the first word past the outputs
-/// (`layouts_keep_an_unmapped_guard_word` pins it), so for a constructed layout
-/// the I/O interval is never empty and an access to the guard word is rejected
-/// by this mask as well as by the tracers. Admission does not recheck this for
-/// a layout decoded from a verifier key, which is trusted preprocessing; with
-/// `io_end == RAM_START_ADDRESS` this returns no I/O interval.
-pub fn unmapped_word_intervals(
-    memory_layout: &MemoryLayout,
-    ram_k: usize,
-) -> Result<Vec<(usize, usize)>, PreprocessingError> {
-    let lowest = memory_layout.get_lowest_address();
-    let word = |address: u64| -> Result<usize, PreprocessingError> {
-        let offset =
-            address
-                .checked_sub(lowest)
-                .ok_or(PreprocessingError::InvalidUnmappedIntervals(
-                    "bound is below lowest RAM address",
-                ))?;
-        if !offset.is_multiple_of(8) {
-            return Err(PreprocessingError::InvalidUnmappedIntervals(
-                "bound is not doubleword aligned",
-            ));
-        }
-        usize::try_from(offset / 8)
-            .map_err(|_| PreprocessingError::InvalidUnmappedIntervals("bound exceeds usize range"))
-    };
-    let io_gap = (word(memory_layout.io_end)?, word(RAM_START_ADDRESS)?);
-    let heap_padding = (word(memory_layout.heap_end)?, ram_k);
-    if io_gap.0 > io_gap.1 || io_gap.1 > heap_padding.0 {
-        return Err(PreprocessingError::InvalidUnmappedIntervals(
-            "regions are out of order",
-        ));
-    }
-    let mut intervals = merge_word_intervals(vec![io_gap, heap_padding]);
     intervals.retain_mut(|(start, end)| {
         *end = (*end).min(ram_k);
         *start < *end
@@ -390,11 +304,11 @@ pub fn compute_min_ram_k(
         .checked_add(program_image_len_words)
         .ok_or(RamDomainError::DomainTooLarge)?;
 
-    let io_end = usize::try_from(memory_layout.remapped_word_address(RAM_START_ADDRESS)?)
+    let ram_start = usize::try_from(memory_layout.remapped_word_address(RAM_START_ADDRESS)?)
         .map_err(|_| RamDomainError::DomainTooLarge)?;
 
     bytecode_end
-        .max(io_end)
+        .max(ram_start)
         .checked_next_power_of_two()
         .ok_or(RamDomainError::DomainTooLarge)
 }
@@ -425,7 +339,8 @@ pub fn compute_max_ram_k(memory_layout: &MemoryLayout) -> Result<usize, RamDomai
         | MemoryLayoutError::IoRegionTooLarge { .. }
         | MemoryLayoutError::HeapEndTooHigh { .. }
         | MemoryLayoutError::HeapEndUnaligned { .. }
-        | MemoryLayoutError::IoTooLong { .. }) => RamDomainError::MemoryLayout(error),
+        | MemoryLayoutError::IoTooLong { .. }
+        | MemoryLayoutError::IoSegmentMisplaced { .. }) => RamDomainError::MemoryLayout(error),
     })
 }
 
@@ -478,7 +393,7 @@ mod tests {
     use super::{
         compute_max_ram_k, compute_min_ram_k, PublicInitialRam, RAMPreprocessing, RamDomainError,
     };
-    use common::jolt_device::{JoltDevice, MemoryConfig, MemoryLayoutError};
+    use common::jolt_device::{JoltDevice, MemoryConfig, MemoryLayout, MemoryLayoutError};
 
     fn bounded_device() -> JoltDevice {
         JoltDevice::new(&MemoryConfig {
@@ -513,14 +428,18 @@ mod tests {
 
     #[test]
     fn protected_regions_merge_at_zero_and_clip_to_the_proof_domain() {
-        let mut layout = bounded_device().memory_layout;
+        // Trusted advice, untrusted advice and inputs hold words 0-1, 2 and 3-4.
+        let mut layout = MemoryLayout::new(&MemoryConfig {
+            program_size: Some(1024),
+            max_trusted_advice_size: 16,
+            max_untrusted_advice_size: 8,
+            max_input_size: 16,
+            max_output_size: 16,
+            stack_size: 8,
+            heap_size: 8,
+        });
         let lowest = layout.get_lowest_address();
-        layout.untrusted_advice_start = lowest;
-        layout.untrusted_advice_end = lowest + 8;
-        layout.trusted_advice_start = lowest + 8;
-        layout.trusted_advice_end = lowest + 24;
-        layout.input_start = lowest + 24;
-        layout.input_end = lowest + 40;
+        assert_eq!(layout.input_end, lowest + 40);
         layout.stack_end = lowest + 62;
         let code = 4..8;
         let intervals = super::write_protected_word_intervals(code.clone(), &layout, 16).unwrap();
@@ -620,20 +539,6 @@ mod tests {
             Err(RamDomainError::AddressSpaceOverflow {
                 lowest_address,
                 max_ram_k: 1usize << 61
-            })
-        );
-
-        layout.trusted_advice_start = 1u64 << 63;
-        layout.untrusted_advice_start = 1u64 << 63;
-        layout.heap_end = u64::MAX - 7;
-        assert_eq!(compute_max_ram_k(&layout), Ok(1usize << 60));
-        layout.trusted_advice_start += 8;
-        layout.untrusted_advice_start += 8;
-        assert_eq!(
-            compute_max_ram_k(&layout),
-            Err(RamDomainError::AddressSpaceOverflow {
-                lowest_address: (1u64 << 63) + 8,
-                max_ram_k: 1usize << 60
             })
         );
     }
