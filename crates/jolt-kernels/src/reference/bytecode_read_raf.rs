@@ -55,7 +55,8 @@ use super::naive::sample_dense_round;
 use crate::ProverInputs;
 #[cfg(feature = "field-inline")]
 use jolt_claims::protocols::field_inline::{
-    geometry::bytecode as field_inline_bytecode, FIELD_REGISTERS_LOG_K,
+    geometry::bytecode::{self as field_inline_bytecode, FieldBytecodeLeg},
+    FIELD_REGISTERS_LOG_K,
 };
 #[cfg(not(feature = "field-inline"))]
 use jolt_claims::protocols::jolt::geometry::bytecode::challenge_pow;
@@ -376,12 +377,11 @@ impl<F: JoltField> BytecodeReadRafAddressKernel<F> {
             let column =
                 |s: usize| Polynomial::new(field_rows.iter().map(|row| row[s]).collect::<Vec<F>>());
             FieldInlineAddressLegs {
-                weights: [gamma_powers[3], gamma_powers[4]],
-                pushforwards: [
-                    pushforward(read_write_cycle, false),
-                    pushforward(val_evaluation_cycle, false),
-                ],
-                values: [column(3), column(4)],
+                weights: FieldBytecodeLeg::ORDER.map(|leg| gamma_powers[leg.stage()]),
+                pushforwards: FieldBytecodeLeg::ORDER.map(|leg| {
+                    pushforward(leg.select(read_write_cycle, val_evaluation_cycle), false)
+                }),
+                values: FieldBytecodeLeg::ORDER.map(|leg| column(leg.stage())),
             }
         };
 
@@ -550,7 +550,15 @@ impl<F: JoltField> SumcheckKernel<F> for BytecodeReadRafAddressKernel<F> {
         // Committed mode stages the RAW bound `Val_s` values (the distinct
         // tables — the fused stages dedup through the store column).
         let val_stages = if self.committed_program {
-            self.values.iter().map(|table| table.evals()[0]).collect()
+            let values = self.values.iter().map(|table| table.evals()[0]);
+            #[cfg(all(feature = "akita", feature = "field-inline"))]
+            let values = values.chain(
+                self.field_inline
+                    .values
+                    .iter()
+                    .map(|table| table.evals()[0]),
+            );
+            values.collect()
         } else {
             Vec::new()
         };

@@ -532,11 +532,8 @@ where
         });
     }
 
-    // This build proves exactly one instruction profile. A full program carrying an
-    // instruction the build has no constraints for (a field-inline bridge row on a verifier
-    // without field-inline, whose rd write no RV64 row pins) rejects here rather than
-    // verifying against the base rows alone. Committed programs carry no rows to scan; with
-    // field-inline enabled, the full-program requirement below rejects them.
+    // Full artifacts expose rows for profile and operand checks. A committed Akita
+    // artifact relies on trusted preprocessing for row validity and stage 6 for selector binding.
     if let Some(full) = program.as_full() {
         if let Some(row) = full
             .bytecode
@@ -548,13 +545,7 @@ where
                 kind: row.instruction_kind,
             });
         }
-    }
-    program.validate_entry_row()?;
-    #[cfg(feature = "field-inline")]
-    {
-        let full = program
-            .as_full()
-            .ok_or_else(stage6b::field_inline::committed_program_rejection)?;
+        #[cfg(feature = "field-inline")]
         for row in &full.bytecode.bytecode {
             jolt_program::field_inline::validate_field_inline_instruction(row).map_err(
                 |error| VerifierError::InvalidFieldInlineBytecode {
@@ -563,6 +554,9 @@ where
             )?;
         }
     }
+    program.validate_entry_row()?;
+    #[cfg(all(feature = "field-inline", not(feature = "akita")))]
+    stage6b::field_inline::require_full_program(program.committed().is_some())?;
 
     let mut normalized_public_io = public_io.clone();
     normalized_public_io.outputs.truncate(

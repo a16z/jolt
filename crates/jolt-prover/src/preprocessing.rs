@@ -2,6 +2,7 @@ use jolt_claims::protocols::jolt::TracePolynomialOrder;
 use jolt_crypto::VectorCommitment;
 use jolt_openings::CommitmentScheme;
 use jolt_program::preprocess::JoltProgramPreprocessing;
+use jolt_verifier::config::JOLT_VERIFIER_INSTRUCTION_PROFILE;
 use jolt_verifier::JoltVerifierPreprocessing;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -11,7 +12,7 @@ use crate::PreprocessingError;
 pub(crate) fn validate_committed_mode(
     program: &JoltProgramPreprocessing,
 ) -> Result<(), PreprocessingError> {
-    if cfg!(feature = "field-inline") {
+    if cfg!(all(feature = "field-inline", not(feature = "akita"))) {
         return Err(PreprocessingError::InvalidCommittedProgram {
             reason: "field-inline requires full public bytecode preprocessing".to_owned(),
         });
@@ -21,6 +22,12 @@ pub(crate) fn validate_committed_mode(
             reason: "declared bytecode size differs from padded rows".to_owned(),
         });
     }
+    program
+        .bytecode
+        .validate_committed_rows(JOLT_VERIFIER_INSTRUCTION_PROFILE)
+        .map_err(|error| PreprocessingError::InvalidCommittedProgram {
+            reason: error.to_string(),
+        })?;
     // A committed key carries no rows, so its verifier can reject only entry
     // index 0 (`ProgramPreprocessing::validate_entry_row`).
     require_entry_instruction(program)
@@ -79,10 +86,52 @@ mod tests {
     use common::constants::RAM_START_ADDRESS;
     use common::jolt_device::{MemoryConfig, MemoryLayout};
     use jolt_program::preprocess::JoltProgramPreprocessing;
-    use jolt_riscv::{JoltInstructionKind, JoltInstructionRow, NormalizedOperands, RV64IMAC_JOLT};
+    use jolt_riscv::{
+        JoltInstructionKind as Kind, JoltInstructionRow, NormalizedOperands, RV64IMAC_JOLT,
+    };
 
     use super::JoltSharedPreprocessing;
     use crate::PreprocessingError;
+
+    #[cfg(all(feature = "akita", feature = "field-inline"))]
+    #[test]
+    fn committed_preprocessing_validates_prebuilt_rows() {
+        let mut program = program_with_entry(vec![addi_at_ram_start()], RAM_START_ADDRESS);
+        let row = &mut program.bytecode.bytecode[1];
+        row.instruction_kind = Kind::FIELD_MUL;
+        row.operands = NormalizedOperands {
+            rd: Some(3),
+            rs1: Some(1),
+            rs2: Some(2),
+            imm: 0,
+        };
+        super::validate_committed_mode(&program).unwrap();
+        for (kind, rd, rs1, rs2, imm) in [
+            (Kind::FIELD_MUL, Some(16), Some(1), Some(2), 0),
+            (Kind::FIELD_MUL, Some(3), None, Some(2), 0),
+            (Kind::FIELD_INV, Some(3), Some(1), Some(2), 0),
+            (Kind::FIELD_LOAD_IMM, Some(3), None, None, -1),
+            (Kind::FIELD_ADVICE_LIMB, Some(0), Some(1), Some(2), 0),
+            (
+                Kind::FIELD_LOAD_ACCUMULATE_FROM_MEMORY,
+                Some(1),
+                Some(32),
+                Some(2),
+                0,
+            ),
+        ] {
+            let row = &mut program.bytecode.bytecode[1];
+            row.instruction_kind = kind;
+            row.operands = NormalizedOperands { rd, rs1, rs2, imm };
+            assert!(
+                matches!(
+                    super::validate_committed_mode(&program),
+                    Err(PreprocessingError::InvalidCommittedProgram { .. })
+                ),
+                "{kind:?}"
+            );
+        }
+    }
 
     fn program_with_entry(
         bytecode: Vec<JoltInstructionRow>,
@@ -105,7 +154,7 @@ mod tests {
 
     fn addi_at_ram_start() -> JoltInstructionRow {
         JoltInstructionRow {
-            instruction_kind: JoltInstructionKind::ADDI,
+            instruction_kind: Kind::ADDI,
             address: RAM_START_ADDRESS as usize,
             operands: NormalizedOperands {
                 rd: Some(1),

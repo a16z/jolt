@@ -296,9 +296,12 @@ fn dory_zk_final_opening_batch_requires_commitment_binding() {
 fn akita_clear_preprocessing_digest_requires_fiat_shamir_binding() {
     use jolt_akita::{AkitaField, AkitaScheme};
     use jolt_prover::akita::preprocessing::AkitaVc;
-    use support::akita_fixtures::akita_muldiv_case;
+    #[cfg(feature = "field-inline")]
+    use support::akita_fixtures::akita_committed_field_inline_eqpoly_case as fixture;
+    #[cfg(not(feature = "field-inline"))]
+    use support::akita_fixtures::akita_muldiv_case as fixture;
 
-    let case = akita_muldiv_case();
+    let case = fixture();
     let (honest, tape) = record_challenges::<AkitaField, _>(|| {
         jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, AuditTranscript<'_, AkitaField>>(
             &case.preprocessing,
@@ -350,9 +353,12 @@ fn akita_clear_stage1_sumcheck_requires_fiat_shamir_challenges() {
     use jolt_akita::{AkitaField, AkitaScheme};
     use jolt_field::Ring;
     use jolt_prover::akita::preprocessing::AkitaVc;
-    use support::akita_fixtures::akita_muldiv_case;
+    #[cfg(feature = "field-inline")]
+    use support::akita_fixtures::akita_committed_field_inline_eqpoly_case as fixture;
+    #[cfg(not(feature = "field-inline"))]
+    use support::akita_fixtures::akita_muldiv_case as fixture;
 
-    let case = akita_muldiv_case();
+    let case = fixture();
     let (honest, tape) = record_challenges::<AkitaField, _>(|| {
         jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, AuditTranscript<'_, AkitaField>>(
             &case.preprocessing,

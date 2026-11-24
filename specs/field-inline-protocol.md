@@ -48,12 +48,11 @@ Regenerate draft field-inline proofs after upgrading. Byte parity against the
 updated legacy prover checks agreement within this revision; it does not
 establish compatibility with earlier proof bytes.
 
-Field-inline builds reject committed-program construction at preprocessing entry,
-before deriving setup or commitments, in both Dory and packed commitment paths.
-This also applies to programs containing only base instructions: the field-inline
-verifier requires full public bytecode. The verifier checks protocol and
-cheap input shapes before scanning full program metadata; stage 6a builds
-field-inline bytecode kernel geometry only on the prover path.
+Akita accepts field-inline programs in both full and committed modes. Trusted
+committed preprocessing validates the decoded rows and encodes field-register
+selectors in `ProgramBytecode`. The verifier authenticates those selectors in
+the bytecode reduction. Dory and BlindFold require the full bytecode table.
+See the [Akita committed-program protocol](field-inline-committed-program.md).
 
 Limb readout uses `FIELD_ADVICE_LIMB` repeatedly and checks the final quotient
 with `FIELD_ASSERT_ZERO`. The guest must also establish that the emitted
@@ -672,10 +671,11 @@ row's existing operand slots also supply field-register accesses through
 register file and read/write role, including implicit accumulator reads and
 bridge instructions with both integer and field destinations.
 
-There is no separate field-inline bytecode table. Preprocessing validates
-instruction operand shapes directly; the verifier repeats that validation for
-loaded program artifacts. Current field-inline verification requires full
-public bytecode; committed-program mode remains unsupported.
+Full-program verification checks field operand shapes directly on the loaded
+rows. Akita committed verification takes the bytecode and initial-image commitments
+from trusted preprocessing. Stages 6a and 6b bind the field read/write and
+value-evaluation selectors to the former commitment through two additional
+address-only openings.
 
 The field-register access claims extend the existing bytecode RLCs:
 

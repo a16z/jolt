@@ -163,16 +163,16 @@ fn prove_prepared(
     }
 }
 
-/// The Akita field-inline case: the eq-MLE field-inline guest proven by the MODULAR Akita
-/// prover (the only field-inline-capable one) over fp128, with the transparent grouped setup
-/// carrying the field-increment limb arity line — the Akita twin of the Dory
-/// `standard_field_inline_eqpoly_case`. Legacy-generated akita fixtures pin the field-inline
-/// axis disabled and cannot verify with field-inline enabled, so this is the only Akita
-/// fixture the akita verifier suites with field-inline enabled run over.
 #[cfg(feature = "field-inline")]
 pub fn akita_field_inline_eqpoly_case() -> &'static AkitaFixtureCase {
     static CASE: OnceLock<AkitaFixtureCase> = OnceLock::new();
-    CASE.get_or_init(field_inline::generate_eqpoly)
+    CASE.get_or_init(|| field_inline::generate_eqpoly(None))
+}
+
+#[cfg(feature = "field-inline")]
+pub fn akita_committed_field_inline_eqpoly_case() -> &'static AkitaFixtureCase {
+    static CASE: OnceLock<AkitaFixtureCase> = OnceLock::new();
+    CASE.get_or_init(|| field_inline::generate_eqpoly(Some(AkitaChunkProfile::new(1, 0))))
 }
 
 #[cfg(feature = "field-inline")]
@@ -238,7 +238,9 @@ mod field_inline {
             .expect("modular trace")
     }
 
-    pub(super) fn generate_eqpoly() -> AkitaFixtureCase {
+    pub(super) fn generate_eqpoly(
+        committed_profile: Option<AkitaChunkProfile>,
+    ) -> AkitaFixtureCase {
         let inputs = eqpoly_inputs();
         let mut program = Program::new("field-ops-guest");
         program.enable_field_inline();
@@ -261,7 +263,7 @@ mod field_inline {
         let trace_output = trace_modular(&jolt_program, &memory_layout, &inputs);
         let public_io = trace_output.device.clone();
 
-        let config = ProverConfig::derive_from_dimensions::<AkitaField>(
+        let mut config = ProverConfig::derive_from_dimensions::<AkitaField>(
             trace_output.dimensions,
             &memory_layout,
             program_preprocessing.ram.min_bytecode_address,
@@ -270,7 +272,13 @@ mod field_inline {
         )
         .expect("derive config");
         let log_t = config.trace_length.ilog2() as usize;
-        let prover_preprocessing = jolt_prover::akita::preprocessing::preprocess_full(
+        let preprocess = if let Some(profile) = committed_profile {
+            config.akita_chunk_profile = profile;
+            akita::preprocessing::preprocess_committed
+        } else {
+            akita::preprocessing::preprocess_full
+        };
+        let prover_preprocessing = preprocess(
             &AkitaScheduleArtifacts::shared_from_default_directory(AkitaChunkProfile::new(8, 2)),
             program_preprocessing,
             &config,

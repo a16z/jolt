@@ -79,9 +79,11 @@ fn zk_padding_entries_are_rejected() {
 #[cfg(feature = "akita")]
 #[test]
 fn akita_padding_entries_are_rejected() {
-    #[cfg(feature = "field-inline")]
-    use crate::support::akita_fixtures::akita_field_inline_eqpoly_case;
     use crate::support::akita_fixtures::AkitaFixtureCase;
+    #[cfg(feature = "field-inline")]
+    use crate::support::akita_fixtures::{
+        akita_committed_field_inline_eqpoly_case, akita_field_inline_eqpoly_case,
+    };
     #[cfg(not(feature = "field-inline"))]
     use crate::support::akita_fixtures::{akita_committed_muldiv_case, akita_muldiv_case};
 
@@ -100,5 +102,8 @@ fn akita_padding_entries_are_rejected() {
         check(akita_committed_muldiv_case());
     }
     #[cfg(feature = "field-inline")]
-    check(akita_field_inline_eqpoly_case());
+    {
+        check(akita_field_inline_eqpoly_case());
+        check(akita_committed_field_inline_eqpoly_case());
+    }
 }

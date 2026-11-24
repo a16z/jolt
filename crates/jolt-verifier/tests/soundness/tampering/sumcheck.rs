@@ -308,7 +308,7 @@ fn real_advice_case() -> VerifierFixtureCase {
     crate::support::verifier_fixtures::standard_advice_consumer_case()
 }
 
-// Field-inline verification currently requires full public bytecode.
+// This Dory fixture requires the ordinary instruction profile.
 #[cfg(all(
     feature = "prover-fixtures",
     not(feature = "zk"),

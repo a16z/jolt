@@ -690,7 +690,7 @@ mod field_inc {
     }
 
     #[test]
-    fn full_width_replanning_is_limited_to_one_full_and_three_bounded_groups() {
+    fn full_width_replanning_rejects_an_unsupported_producer_order() {
         let full = DenseGroupLayout::FullWidth { num_vars: 30 };
         let dense = dense_catalog();
         let full_dense = full_dense_catalog();
@@ -720,9 +720,9 @@ mod field_inc {
             .expect_err(
                 "unsupported full-width batch shapes must be rejected before planner search",
             );
-            assert!(error.to_string().contains(
-                "full-width batches support one field increment and at most three bounded groups"
-            ));
+            assert!(error
+                .to_string()
+                .contains("unsupported group order or count for a full-width field increment"));
         }
     }
 

@@ -346,7 +346,7 @@ impl<F: JoltField> BytecodeReadRafAddressPhase<F> {
 
     fn num_val_stages(&self) -> usize {
         if self.committed_program {
-            bytecode_reduction::NUM_BYTECODE_VAL_STAGES
+            bytecode_reduction::COMMITTED_BYTECODE_VALUES
         } else {
             0
         }

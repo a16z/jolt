@@ -2,11 +2,9 @@
 #![cfg(feature = "field-inline")]
 
 use jolt_claims::protocols::field_inline::geometry::bytecode::{
-    read_raf_folded_stage_values, read_raf_stage_values,
-    FieldInlineBytecodeReadRafStageValueInputs, FIELD_INLINE_BYTECODE_STAGE4_GAMMA_COUNT,
+    read_raf_folded_stage_values, read_raf_stage_values, FieldInlineBytecodeReadRafStageValueInputs,
 };
 use jolt_field::{Fr, Ring};
-use jolt_lookup_tables::{LookupTableKind, XLEN};
 use jolt_riscv::JoltInstructionRow;
 use jolt_riscv::{JoltInstructionKind, NormalizedOperands};
 
@@ -36,8 +34,8 @@ fn folded_stage_values_match_weighted_row_values() {
     };
     let read_write_point = field(4, 3);
     let val_evaluation_point = field(4, 7);
-    let stage4_gammas = field(FIELD_INLINE_BYTECODE_STAGE4_GAMMA_COUNT, 11);
-    let stage5_gammas = field(3 + LookupTableKind::<XLEN>::COUNT, 19);
+    let stage4_gammas = std::array::from_fn(|i| Fr::from_u64(i as u64 + 11));
+    let stage5_gammas = std::array::from_fn(|i| Fr::from_u64(i as u64 + 19));
     let inputs = || FieldInlineBytecodeReadRafStageValueInputs {
         bytecode: &bytecode,
         field_register_read_write_point: &read_write_point,
@@ -62,4 +60,28 @@ fn folded_stage_values_match_weighted_row_values() {
         read_raf_folded_stage_values(inputs(), &address_eq),
         expected
     );
+}
+
+/// The committed-field wire contract assigns every staged value a distinct η power.
+#[cfg(feature = "akita")]
+#[test]
+fn committed_reduction_authenticates_all_eight_bytecode_wires() {
+    use jolt_claims::protocols::jolt::{
+        geometry::claim_reductions::bytecode::bytecode_val_stage_opening,
+        relations::claim_reductions::bytecode::CyclePhase, BytecodeClaimReductionChallenge,
+        PrecommittedReductionDimensions,
+    };
+    use jolt_claims::{challenge, opening, SymbolicSumcheck};
+
+    let phase = CyclePhase::new(PrecommittedReductionDimensions::new(1, 1, true));
+    let input = phase.input_expression::<Fr>();
+    let eta = challenge(BytecodeClaimReductionChallenge::Eta);
+    assert_eq!(input.terms.len(), 8);
+    for wire in 0..8 {
+        let term = eta.clone().pow(wire) * opening(bytecode_val_stage_opening(wire));
+        assert!(
+            input.terms.contains(&term.terms[0]),
+            "missing η^{wire} coefficient for wire {wire}"
+        );
+    }
 }

@@ -34,15 +34,8 @@ impl BytecodePreprocessing {
         entry_address: u64,
         profile: JoltInstructionProfile,
     ) -> Result<Self, PreprocessingError> {
-        for instruction in &bytecode {
-            if !profile.supports_jolt(instruction.instruction_kind) {
-                return Err(PreprocessingError::IllegalTargetInstruction(
-                    instruction.instruction_kind,
-                ));
-            }
-            check_store_rd_disjoint(instruction)?;
-            #[cfg(feature = "field-inline")]
-            validate_field_inline_instruction(instruction)?;
+        for row in &bytecode {
+            validate_row(row, profile)?;
         }
         bytecode.insert(0, noop_instruction());
         let pc_map = BytecodePCMapper::try_new(&bytecode)?;
@@ -58,6 +51,16 @@ impl BytecodePreprocessing {
         })
     }
 
+    pub fn validate_committed_rows(
+        &self,
+        profile: JoltInstructionProfile,
+    ) -> Result<(), PreprocessingError> {
+        for instruction in &self.bytecode {
+            validate_row(instruction, profile)?;
+        }
+        Ok(())
+    }
+
     pub fn entry_bytecode_index(&self) -> Option<usize> {
         self.pc_map.get_first_pc(self.entry_address as usize)
     }
@@ -67,8 +70,12 @@ impl BytecodePreprocessing {
     /// no-op entry every cycle could be padding.
     pub fn entry_instruction(&self) -> Option<&JoltInstructionRow> {
         self.entry_bytecode_index()
+            .filter(|&index| index != 0)
             .and_then(|index| self.bytecode.get(index))
-            .filter(|row| row.instruction_kind != JoltInstructionKind::NoOp)
+            .filter(|row| {
+                row.address as u64 == self.entry_address
+                    && row.instruction_kind != JoltInstructionKind::NoOp
+            })
     }
 
     pub fn get_pc(&self, instruction: &JoltInstructionRow) -> Option<usize> {
@@ -286,6 +293,21 @@ impl BytecodePCMapper {
             Ok(Self::try_get_index(max_address)? + 1)
         }
     }
+}
+
+fn validate_row(
+    instruction: &JoltInstructionRow,
+    profile: JoltInstructionProfile,
+) -> Result<(), PreprocessingError> {
+    if !profile.supports_jolt(instruction.instruction_kind) {
+        return Err(PreprocessingError::IllegalTargetInstruction(
+            instruction.instruction_kind,
+        ));
+    }
+    check_store_rd_disjoint(instruction)?;
+    #[cfg(feature = "field-inline")]
+    validate_field_inline_instruction(instruction)?;
+    Ok(())
 }
 
 /// The store/rd-write disjointness check on the public bytecode: a

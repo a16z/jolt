@@ -11,7 +11,7 @@ use ark_serialize::{
 
 use crate::{JoltInstruction, NormalizedOperands, SourceInstruction};
 
-pub const FIELD_REGISTER_LOG_K: u8 = 4;
+pub use crate::FIELD_REGISTER_LOG_K;
 pub const FIELD_REGISTER_COUNT: u8 = 1 << FIELD_REGISTER_LOG_K;
 pub const FIELD_INLINE_OPCODE: u8 = 0x7b;
 pub const FIELD_INLINE_R_TYPE_FUNCT7: u8 = 0;

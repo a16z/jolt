@@ -14,7 +14,9 @@ use jolt_poly::eq_index_msb;
 use jolt_transcript::DigestHasher;
 use sha3::Digest;
 
-use super::super::geometry::claim_reductions::bytecode::bytecode_total_vars;
+use super::super::geometry::claim_reductions::bytecode::{
+    bytecode_total_vars, CommittedBytecodeProfile,
+};
 use super::super::geometry::ra::JoltRaPolynomialLayout;
 use super::super::{JoltAdviceKind, JoltCommittedPolynomial, TracePolynomialOrder};
 use super::geometry::LatticeGeometryError;
@@ -100,13 +102,13 @@ pub fn committed_program_packing_plan(
     }
     Ok(PrecommittedPackingPlan {
         bytecode: PrefixPackedObjectPlan::new_with_trace_order(
-            direct_program_role(JoltCommittedPolynomial::ProgramBytecode, 2)?,
-            b"program-bytecode-whole-v1",
+            CommitmentGroupRole::new(3, b"program_bytecode", "program-bytecode"),
+            CommittedBytecodeProfile::ACTIVE.packing_domain,
             vec![(JoltCommittedPolynomial::ProgramBytecode, bytecode_vars)],
             trace_order,
         )?,
         program_image: PrefixPackedObjectPlan::new(
-            direct_program_role(JoltCommittedPolynomial::ProgramImageInit, 3)?,
+            CommitmentGroupRole::new(4, b"program_image_init", "program-image-init"),
             b"program-image-init-v1",
             vec![(JoltCommittedPolynomial::ProgramImageInit, image_vars)],
         )?,
@@ -292,30 +294,6 @@ impl PrefixPackedObjectPlan {
     }
 }
 
-fn direct_program_role(
-    id: JoltCommittedPolynomial,
-    order: usize,
-) -> Result<CommitmentGroupRole, OpeningsError> {
-    let order = u64::try_from(order).map_err(|_| {
-        OpeningsError::InvalidSetup("direct program role order exceeds u64".to_owned())
-    })?;
-    match id {
-        JoltCommittedPolynomial::ProgramBytecode => Ok(CommitmentGroupRole::new(
-            order,
-            b"program_bytecode",
-            "program-bytecode",
-        )),
-        JoltCommittedPolynomial::ProgramImageInit => Ok(CommitmentGroupRole::new(
-            order,
-            b"program_image_init",
-            "program-image-init",
-        )),
-        _ => Err(OpeningsError::InvalidSetup(
-            "direct program role requires a committed-program polynomial".to_owned(),
-        )),
-    }
-}
-
 impl PrecommittedPackingPlan {
     pub fn objects(&self) -> impl Iterator<Item = &PrefixPackedObjectPlan> {
         [&self.bytecode, &self.program_image].into_iter()
@@ -485,16 +463,17 @@ mod tests {
             plan.bytecode.packing().ids(),
             [JoltCommittedPolynomial::ProgramBytecode]
         );
-        assert_eq!(plan.bytecode.packing().logical_num_vars(), 16);
+        let field = usize::from(CommittedBytecodeProfile::ACTIVE.extra_lanes != 0);
+        assert_eq!(plan.bytecode.packing().logical_num_vars(), 16 + field);
         let role = plan.bytecode.group_role();
-        assert_eq!(role.order(), 2);
+        assert_eq!(role.order(), 3);
         assert_eq!(role.transcript_label(), b"program_bytecode");
         assert_eq!(role.transcript_index(), None);
         assert_eq!(
             plan.program_image.packing().ids(),
             [JoltCommittedPolynomial::ProgramImageInit]
         );
-        assert_eq!(plan.program_image.group_role().order(), 3);
+        assert_eq!(plan.program_image.group_role().order(), 4);
         assert_eq!(
             plan.program_image
                 .logical_num_vars(JoltCommittedPolynomial::ProgramImageInit),
@@ -524,6 +503,30 @@ mod tests {
     }
 
     #[test]
+    fn bytecode_layout_digest_distinguishes_field_selectors_at_equal_arity() {
+        let order = TracePolynomialOrder::CycleMajor;
+        let active = committed_program_packing_plan(4, 2, order)
+            .unwrap()
+            .bytecode;
+        let arity = active.packing().logical_num_vars();
+        let other_domain: &[u8] = if arity == 12 {
+            b"program-bytecode-whole-v1"
+        } else {
+            assert_eq!(arity, 11);
+            b"program-bytecode-field-selectors-v1"
+        };
+        let other = PrefixPackedObjectPlan::new_with_trace_order(
+            active.group_role(),
+            other_domain,
+            vec![(JoltCommittedPolynomial::ProgramBytecode, arity)],
+            order,
+        )
+        .unwrap();
+        assert_eq!(active.packing(), other.packing());
+        assert_ne!(active.layout_digest(), other.layout_digest());
+    }
+
+    #[test]
     fn direct_program_plan_rejects_arity_above_34() {
         assert!(
             committed_program_packing_plan(1 << 26, 2, TracePolynomialOrder::CycleMajor).is_err()
@@ -531,8 +534,13 @@ mod tests {
         assert!(
             committed_program_packing_plan(2, 1 << 35, TracePolynomialOrder::CycleMajor).is_err()
         );
+        let max_rows = 1 << (DIRECT_PROGRAM_MAX_PHYSICAL_VARS - bytecode_total_vars(1).unwrap());
+        assert!(
+            committed_program_packing_plan(max_rows * 2, 2, TracePolynomialOrder::CycleMajor)
+                .is_err()
+        );
         let boundary =
-            committed_program_packing_plan(1 << 25, 2, TracePolynomialOrder::CycleMajor).unwrap();
+            committed_program_packing_plan(max_rows, 2, TracePolynomialOrder::CycleMajor).unwrap();
         assert_eq!(boundary.bytecode.packing().packed_num_vars(), 34);
     }
 }

@@ -60,7 +60,7 @@ as the advice and one-hot trace objects. Its `CommitmentGroupRole` has order 2
 and transcript label `field_inc`; the batch order is:
 
 ```text
-[UntrustedAdvice?, TrustedAdvice?, FieldInc, FusedInc, OneHotTrace]
+[UntrustedAdvice?, TrustedAdvice?, FieldInc, (ProgramBytecode, ProgramImageInit)?, FusedInc, OneHotTrace]
 ```
 
 `GroupedScheduleParams` records the object shapes needed to plan this batch.

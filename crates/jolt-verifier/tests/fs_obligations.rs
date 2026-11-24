@@ -607,6 +607,7 @@ fn is_source_type(name: &str) -> bool {
         "AkitaJointOpeningProof"
             | "ClearProofClaims"
             | "CommittedProgramPreprocessing"
+            | "FieldProgramWire"
             | "JoltCommitments"
             | "JoltDevice"
             | "JoltProgramPreprocessing"

@@ -21,9 +21,9 @@ existing two-phase reduction schedule adds rounds for larger static objects.
 
 Akita retains an independent bounded-dense bytecode group, its zero-prefix
 physical-floor embedding, CycleMajor-only admission, and trusted producer/grouped
-schedule checks before allocation. With nine lane variables, physical floor 14,
-and physical cap 34, its structural bytecode limit is 2^25 padded rows. This is
-not a deployment memory guarantee.
+schedule checks before allocation. Physical arity ranges from 14 to 34. The ordinary profile uses nine lane
+variables and admits at most `2^25` padded rows. The field profile uses ten
+and admits at most `2^24`. Actual capacity also depends on memory and schedule admission.
 
 Address-bit decomposition (`BytecodeRa`) and internal PCS response profiles are
 separate from bytecode-table partitioning and remain part of the protocol.
@@ -53,19 +53,21 @@ also take no count. SDK program preprocessing uses `ProgramPreprocessingMode`
 to select Full or Committed. Example `--committed-bytecode` flags take no value.
 
 Retired serialized identifier slots use uninhabited payloads to preserve live
-tags while rejecting old identifiers. Both backends introduce new preprocessing
-digest domains in this change:
+tags while rejecting old identifiers. Current preprocessing digest domains are listed below.
 
-- Dory: `jolt/program-preprocessing/dory-whole-bytecode/v2`.
-- Dory field-inline: `jolt/program-preprocessing/dory-whole-bytecode/field-inline/v2`.
-- Akita: `jolt/program-preprocessing/akita-whole-bytecode/v1`.
-- Akita field-inline: `jolt/program-preprocessing/akita-whole-bytecode/field-inline/v1`.
+- Ordinary Dory uses `jolt/program-preprocessing/dory-whole-bytecode/v4`.
+- Field-inline Dory uses `jolt/program-preprocessing/dory-whole-bytecode/field-inline/v4`.
+- Ordinary Akita uses `jolt/program-preprocessing/akita-whole-bytecode/v3`.
+- Akita field-inline uses `jolt/program-preprocessing/akita-whole-bytecode/field-inline/v3` for both views. Full programs have tag 0 and committed programs have tag 2.
 
 All existing Dory and Akita preprocessing and proofs must be regenerated,
 including full mode. Committed preprocessing records the coefficient trace order,
 and verification rejects a proof declaring a different order. Dory's domain
 version 2 includes this order binding. There is no old-format migration or
-automatic partitioning. Committed mode remains unsupported with field-inline.
+automatic partitioning. Akita field-inline committed bytecode appends three
+16-register selector blocks after the RAF flag. The lane axis grows to ten
+variables and the bytecode row limit is `2^24`. Dory field-inline requires full
+program preprocessing. [Field-inline encoding and claim equations](field-inline-committed-program.md)
 
 ## Validation and limits
 

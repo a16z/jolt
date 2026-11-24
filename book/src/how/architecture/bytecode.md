@@ -177,6 +177,6 @@ These implementations follow the Twist and Shout paper closely, with no notable 
 
 ## Committed-program bytecode
 
-In committed-program mode, Dory and Akita each commit one whole-bytecode polynomial (`ProgramBytecode`), with nine lane variables and one variable per bit of the padded bytecode row index. Neither backend exposes a bytecode-table chunk count.
+In committed-program mode, Dory and Akita each commit one whole-bytecode polynomial (`ProgramBytecode`), with one variable per bit of the padded bytecode row index. The ordinary profile uses nine lane variables. Akita’s field-inline profile uses ten to include selectors for the two field sources and destination. Neither backend exposes a bytecode-table chunk count.
 
 Dory embeds the balanced bytecode matrix into the joint opening grid. If that matrix exceeds the trace grid, the bytecode enlarges the joint grid and the precommitted reduction schedule, potentially increasing proving time and memory. A trace smaller than the bytecode remains supported. Akita gives bytecode its own polynomial group and opening point, so its bytecode arity is independent of the trace group.

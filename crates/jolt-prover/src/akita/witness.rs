@@ -82,7 +82,11 @@ pub struct DirectProgramObjects<PCS: CommitmentScheme> {
 
 impl<PCS: CommitmentScheme> DirectProgramObjects<PCS> {
     pub fn objects(&self) -> impl Iterator<Item = &DirectProgramObject<PCS>> {
-        [&self.bytecode, &self.program_image].into_iter()
+        self.ordered_objects().into_iter()
+    }
+
+    pub(super) fn ordered_objects(&self) -> [&DirectProgramObject<PCS>; 2] {
+        [&self.bytecode, &self.program_image]
     }
 }
 
