@@ -32,9 +32,9 @@ use jolt_claims::protocols::field_inline::geometry::product::{
 #[cfg(feature = "field-inline")]
 use jolt_claims::protocols::field_inline::{FieldInlinePolynomialId, FieldInlineVirtualPolynomial};
 use jolt_claims::protocols::jolt::geometry::spartan::{
-    branch_flag_product, jump_flag_product, left_instruction_input_product, lookup_output_product,
+    branch_flag_product, is_noop_product, left_instruction_input_product, lookup_output_product,
     next_is_noop_product, right_instruction_input_product, virtual_instruction_product,
-    write_lookup_output_to_rd_product,
+    write_lookup_output_to_rd_product, PRODUCT_HALT_LANE_LEFT_FACTOR,
 };
 use jolt_claims::protocols::jolt::JoltOpeningId;
 use jolt_claims::protocols::jolt::{JoltDerivedId, SpartanProductVirtualizationPublic};
@@ -43,20 +43,18 @@ use jolt_poly::lagrange::{
     centered_lagrange_evals, centered_lagrange_kernel, interpolate_to_coeffs, poly_mul,
 };
 use jolt_poly::{BindingOrder, Polynomial, UnivariatePoly};
-use jolt_verifier::stages::relations::SumcheckInputClaims;
 use jolt_verifier::stages::stage2::product_remainder::ProductRemainder;
-use jolt_verifier::stages::stage2::product_uniskip::ProductUniskip;
 use jolt_witness::JoltWitnessOracle;
 #[cfg(feature = "field-inline")]
 use jolt_witness::WitnessError;
 
 use super::views::{dense_view, eq_table};
-use crate::uniskip::UniskipKernel;
+use crate::uniskip::{ProductUniskipUpstream, UniskipKernel};
 use crate::NaiveSumcheckProver;
 use crate::ProverInputs;
 use crate::{KernelError, PrepareKernel, ProofSession, ReferenceBackend, SumcheckKernel};
 use jolt_witness::JoltWitnessPlane;
-impl<F: JoltField> UniskipKernel<F, ProductRemainder<F>, SumcheckInputClaims<F, ProductUniskip<F>>>
+impl<F: JoltField> UniskipKernel<F, ProductRemainder<F>, ProductUniskipUpstream<F>>
     for ReferenceBackend
 {
     /// Runs on `tau_low` only — `τ_high` is drawn after this call and reaches
@@ -81,7 +79,7 @@ impl<F: JoltField> UniskipKernel<F, ProductRemainder<F>, SumcheckInputClaims<F, 
         &self,
         session: &mut ProofSession,
         late_tau: &[F],
-        _inputs: &SumcheckInputClaims<F, ProductUniskip<F>>,
+        _upstream: &ProductUniskipUpstream<F>,
     ) -> Result<UnivariatePoly<F>, KernelError<F>> {
         let &[tau_high] = late_tau else {
             return Err(KernelError::InvariantViolation {
@@ -126,7 +124,7 @@ pub struct SpartanProductKernel<F: JoltField> {
     eq_cycle: Vec<F>,
     left_instruction_input: Vec<F>,
     lookup_output: Vec<F>,
-    jump_flag: Vec<F>,
+    is_noop: Vec<F>,
     right_instruction_input: Vec<F>,
     branch_flag: Vec<F>,
     next_is_noop: Vec<F>,
@@ -165,7 +163,7 @@ impl<F: JoltField> SpartanProductKernel<F> {
             eq_cycle: eq_table(tau_low),
             left_instruction_input: dense_view(witness, left_instruction_input_product())?,
             lookup_output: dense_view(witness, lookup_output_product())?,
-            jump_flag: dense_view(witness, jump_flag_product())?,
+            is_noop: dense_view(witness, is_noop_product())?,
             right_instruction_input: dense_view(witness, right_instruction_input_product())?,
             branch_flag: dense_view(witness, branch_flag_product())?,
             next_is_noop: dense_view(witness, next_is_noop_product())?,
@@ -188,10 +186,10 @@ impl<F: JoltField> SpartanProductKernel<F> {
     fn composed_lane_factors(&self, weights: &[F], j: usize) -> Result<(F, F), KernelError<F>> {
         let left = weights[0] * self.left_instruction_input[j]
             + weights[1] * self.lookup_output[j]
-            + weights[2] * self.jump_flag[j];
+            + weights[2] * F::from_u64(u64::from(PRODUCT_HALT_LANE_LEFT_FACTOR));
         let right = weights[0] * self.right_instruction_input[j]
             + weights[1] * self.branch_flag[j]
-            + weights[2] * (F::one() - self.next_is_noop[j]);
+            + weights[2] * (self.next_is_noop[j] - self.is_noop[j]);
         #[cfg(feature = "field-inline")]
         {
             let (field_left, field_right) = composed_remainder_factor_contributions(
@@ -284,7 +282,7 @@ impl<F: JoltField> SpartanProductKernel<F> {
                 Polynomial::new(self.left_instruction_input),
             ),
             (lookup_output_product(), Polynomial::new(self.lookup_output)),
-            (jump_flag_product(), Polynomial::new(self.jump_flag)),
+            (is_noop_product(), Polynomial::new(self.is_noop)),
             (
                 right_instruction_input_product(),
                 Polynomial::new(self.right_instruction_input),

@@ -65,6 +65,19 @@ impl BytecodePreprocessing {
         self.pc_map.get_first_pc(self.entry_address as usize)
     }
 
+    /// The entry's bytecode row when the entry names a real instruction (not
+    /// absent, not a no-op). An accepted proof starts at this row; with a
+    /// no-op entry every cycle could be padding.
+    pub fn entry_instruction(&self) -> Option<&JoltInstructionRow> {
+        self.entry_bytecode_index()
+            .filter(|&index| index != 0)
+            .and_then(|index| self.bytecode.get(index))
+            .filter(|row| {
+                row.address as u64 == self.entry_address
+                    && row.instruction_kind != JoltInstructionKind::NoOp
+            })
+    }
+
     pub fn get_pc(&self, instruction: &JoltInstructionRow) -> Option<usize> {
         self.pc_map.get_instruction_pc(instruction)
     }
@@ -149,6 +162,20 @@ impl BytecodePCMapper {
             let bytecode_index = Self::try_get_index(address)?;
             let virtual_sequence_length =
                 Self::validate_run(bytecode_index, address, first_row, rest)?;
+            // A proof may end at any halt row (product lane 3 lets padding
+            // follow it), so a halt must be a whole source instruction: inside
+            // a multi-row instruction it would end the proof inside that
+            // instruction.
+            if virtual_sequence_length > 1
+                && run
+                    .iter()
+                    .any(|row| JoltInstruction::from(*row).circuit_flags()[CircuitFlags::Halt])
+            {
+                return Err(PreprocessingError::HaltInSequence {
+                    bytecode_index,
+                    address,
+                });
+            }
 
             let first_pc = last_pc
                 .checked_add(1)
@@ -435,6 +462,74 @@ mod tests {
                 last_sequence: 1,
             }
         );
+    }
+
+    #[test]
+    fn halts_must_be_whole_source_instructions() {
+        let halt = |instruction_kind, address, virtual_sequence_remaining| JoltInstructionRow {
+            instruction_kind,
+            ..instruction(address, virtual_sequence_remaining)
+        };
+        for run in [
+            vec![
+                instruction(0x8000_0004, Some(1)),
+                halt(JoltInstructionKind::JoltSuccess, 0x8000_0004, Some(0)),
+            ],
+            vec![
+                halt(JoltInstructionKind::JoltPanic, 0x8000_0004, Some(1)),
+                instruction(0x8000_0004, Some(0)),
+            ],
+        ] {
+            assert_eq!(
+                BytecodePCMapper::try_new(&run),
+                Err(PreprocessingError::HaltInSequence {
+                    bytecode_index: BytecodePCMapper::get_index(0x8000_0004),
+                    address: 0x8000_0004,
+                })
+            );
+        }
+        // `jolt.success` decodes to one plain row; EBREAK lowers to a one-row sequence.
+        let panic = JoltInstructionRow {
+            is_first_in_sequence: true,
+            ..halt(JoltInstructionKind::JoltPanic, 0x8000_0008, Some(0))
+        };
+        assert!(BytecodePCMapper::try_new(&[
+            halt(JoltInstructionKind::JoltSuccess, 0x8000_0004, None),
+            panic,
+        ])
+        .is_ok());
+    }
+
+    #[test]
+    fn entry_instruction_requires_a_real_row() {
+        let preprocessing = BytecodePreprocessing::preprocess(
+            vec![
+                instruction(0x8000_0000, None),
+                instruction(0x8000_0004, None),
+            ],
+            0x8000_0000,
+            RV64IMAC_JOLT,
+        )
+        .unwrap();
+        assert_eq!(
+            preprocessing.entry_instruction(),
+            preprocessing.bytecode.get(1)
+        );
+        for entry_address in [0, 0x8000_0008] {
+            let moved = BytecodePreprocessing {
+                entry_address,
+                ..preprocessing.clone()
+            };
+            assert_eq!(moved.entry_instruction(), None, "{entry_address:#x}");
+        }
+        // A deserialized slot table can point a real address at trailing padding.
+        let mut crafted = preprocessing;
+        crafted.pc_map.slots[1].first_pc = 3;
+        assert_eq!(
+            crafted.bytecode[3].instruction_kind,
+            JoltInstructionKind::NoOp
+        );
+        assert_eq!(crafted.entry_instruction(), None);
     }
 
     #[test]

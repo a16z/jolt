@@ -3,10 +3,10 @@
 ## Guest × mode acceptance matrix
 
 `crates/jolt-prover/tests/e2e_matrix.rs` holds one guest table per instruction
-profile. The ordinary profile has fourteen cases: muldiv, fibonacci, memory-ops,
+profile. The ordinary profile has sixteen cases: muldiv, fibonacci, memory-ops,
 heap-top, stdlib, memory-copy, sha2, sha3 through both its unaligned and aligned
-entry points, advice-consumer, rounded-advice, btreemap, exact-domain, and
-panic-halt. Heap-top stores the last byte below the linker's `__heap_end`.
+entry points, advice-consumer, rounded-advice, btreemap, exact-domain,
+panic-halt, exit-zero and exit-one. Heap-top stores the last byte below the linker's `__heap_end`.
 Rounded-advice, another memory-ops entry point, configures 12 bytes of
 untrusted advice and supplies 16, the rounded capacity the verifier admits.
 Enabling `field-inline` selects five: `field_ops`, `field_limbs`, `muldiv`,
@@ -17,14 +17,21 @@ protocol with no field activity, and the two cases both profiles share.
 `exact_domain` runs a memory-ops guest entry whose execution fills 2^12 rows
 exactly and bakes that domain in as the maximum, so the proof has no padding
 row and the halt sits at row T−1. `panic_halt` proves a guest panic, which
-ends at `ebreak`, with `panic = true`.
+ends at `ebreak`, with `panic = true`. `exit_zero` and `exit_one` call
+`jolt::runtime::exit(0)` and `exit(1)`: every exit code ends at `ebreak`, so
+both also prove with `panic = true`.
 
 The shared runner checks each guest's output against a natively computed
 value, its panic status, the halt that ends its run (`jolt.success`, or
 `ebreak` for a panic), its trace bound, and field activity, then proves it with
-the optimized backend. The compiled protocol selects Dory clear by default,
-Dory ZK with `zk`, or Akita with `akita`. The mode is part of every test name
-(`matrix::clear::sha2`, `matrix::zk::field_ops`,
+the optimized backend. The proof must verify under the guest's panic status
+and fail under the opposite one. The flipped claim changes the statement and
+so diverges the transcript before stage 1: this checks statement binding, not
+the end rule. The lane-3 signal is the base-build engine twin
+`lane_three_binds_the_claimed_panic_bit` in `engine_twins.rs`, which flips the
+claim only in the product uni-skip input. The compiled protocol selects Dory
+clear by default, Dory ZK with `zk`, or Akita with `akita`. The mode is part
+of every test name (`matrix::clear::sha2`, `matrix::zk::field_ops`,
 `matrix::akita::muldiv`). CI runs each profile table in all three
 modes, so a guest added to either table gains all three arms at once.
 Specialized checks (tampering, committed programs, forced one-hot sizes)

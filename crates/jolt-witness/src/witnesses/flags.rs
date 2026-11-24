@@ -26,14 +26,6 @@ pub struct NextIsVirtual(pub bool);
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct NextIsFirstInSequence(pub bool);
 
-/// Jump instruction actually taken: the jump flag is set and the successor
-/// is not a no-op under the [`NextIsNoop`] convention. At `T - 1`, constraint
-/// 21 (`ShouldJump = Jump · (1 − NextIsNoop)`) and the shift boundary force
-/// `ShouldJump = 0`. That includes a final jump with no padding row after it,
-/// which happens when the trace exactly fills its power-of-two domain.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct ShouldJump(pub bool);
-
 /// Branch instruction whose comparison output is 1.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ShouldBranch(pub bool);
@@ -70,7 +62,6 @@ bool_to_field!(
     NextIsNoop,
     NextIsVirtual,
     NextIsFirstInSequence,
-    ShouldJump,
     ShouldBranch,
     InstructionRafFlag,
     OpFlag,
@@ -110,20 +101,6 @@ impl Extract for NextIsFirstInSequence {
         Ok(Self(next.is_some_and(|row| {
             row.circuit_flags()[CircuitFlags::IsFirstInSequence]
         })))
-    }
-}
-
-impl Extract for ShouldJump {
-    #[inline]
-    fn extract(
-        row: &TraceRow,
-        next: Option<&TraceRow>,
-        env: &WitnessEnv<'_>,
-    ) -> Result<Self, WitnessError> {
-        let next_is_noop = NextIsNoop::extract(row, next, env)?.0;
-        Ok(Self(
-            row.circuit_flags()[CircuitFlags::Jump] && !next_is_noop,
-        ))
     }
 }
 

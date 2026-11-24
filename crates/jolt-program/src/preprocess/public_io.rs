@@ -39,22 +39,6 @@ impl PublicIoMemory {
             });
         }
 
-        segments.push(PublicMemorySegment {
-            start_index: layout.remapped_word_address(layout.panic)? as u128,
-            words: vec![public_io.panic as u64],
-        });
-
-        // A witness may end after any jump: at the last cycle the end-of-trace
-        // boundary zeroes ShouldJump, so the jump target goes unchecked. For a
-        // non-panic claim this word is what rules out a truncated execution;
-        // the SDK writes it last, just before `jolt.success`.
-        if !public_io.panic {
-            segments.push(PublicMemorySegment {
-                start_index: layout.remapped_word_address(layout.termination)? as u128,
-                words: vec![1],
-            });
-        }
-
         Ok(Self {
             segments,
             io_mask_start,
@@ -91,27 +75,25 @@ mod tests {
 
         let memory = PublicIoMemory::new(&device).expect("public IO memory should materialize");
 
-        assert_eq!(memory.segments.len(), 4);
+        assert_eq!(memory.segments.len(), 2);
         assert_eq!(memory.segments[0].words, vec![42]);
         assert_eq!(memory.segments[1].words, vec![7]);
-        assert_eq!(memory.segments[2].words, vec![0]);
-        assert_eq!(memory.segments[3].words, vec![1]);
         assert!(memory.io_mask_start < memory.io_mask_end);
     }
 
+    /// The panic claim is not memory: product lane 3 binds it.
     #[test]
-    fn omits_termination_word_on_panic() {
+    fn panic_claim_adds_no_public_memory() {
         let mut device = JoltDevice::new(&MemoryConfig {
             program_size: Some(1024),
-            max_trusted_advice_size: 0,
-            max_untrusted_advice_size: 0,
             ..Default::default()
         });
+        device.inputs = vec![42];
+        device.outputs = vec![7];
+        let success = PublicIoMemory::new(&device).expect("public IO memory should materialize");
         device.panic = true;
+        let panic = PublicIoMemory::new(&device).expect("public IO memory should materialize");
 
-        let memory = PublicIoMemory::new(&device).expect("public IO memory should materialize");
-
-        assert_eq!(memory.segments.len(), 1);
-        assert_eq!(memory.segments[0].words, vec![1]);
+        assert_eq!(success, panic);
     }
 }

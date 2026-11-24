@@ -114,9 +114,11 @@ mod clear {
                 }),
                 "the guest must exercise increments outside the bounded dense envelope ({label})",
             );
-            output.verify(&output.proof).unwrap_or_else(|error| {
-                panic!("Akita field-inline proof must verify ({label}): {error}")
-            });
+            output
+                .verify(&output.public_io, &output.proof)
+                .unwrap_or_else(|error| {
+                    panic!("Akita field-inline proof must verify ({label}): {error}")
+                });
             proofs.push(output.proof);
         }
         assert!(
@@ -136,7 +138,7 @@ mod clear {
                 |_, _, _| (),
             );
             output
-                .verify(&output.proof)
+                .verify(&output.public_io, &output.proof)
                 .unwrap_or_else(|error| panic!("committed field-ops proof ({label}): {error}"));
             output.proof
         });
@@ -169,9 +171,11 @@ mod clear {
                 AkitaField::from_u64(0),
                 "an all-zero polynomial opens to zero ({label})",
             );
-            output.verify(&output.proof).unwrap_or_else(|error| {
-                panic!("field-inactive Akita proof must verify ({label}): {error}")
-            });
+            output
+                .verify(&output.public_io, &output.proof)
+                .unwrap_or_else(|error| {
+                    panic!("field-inactive Akita proof must verify ({label}): {error}")
+                });
             proofs.push(output.proof);
         }
         assert!(
@@ -184,7 +188,7 @@ mod clear {
     fn akita_field_inline_tampered_proofs_are_rejected() {
         let (output, inc) = akita::prove(&field_ops(), None, JoltBackend::optimized(), collect_inc);
         output
-            .verify(&output.proof)
+            .verify(&output.public_io, &output.proof)
             .expect("base proof must verify before tampering");
         let one = AkitaField::from_u64(1);
 
@@ -247,7 +251,7 @@ mod clear {
             let mut tampered = output.proof.clone();
             tamper(&mut tampered);
             assert!(
-                output.verify(&tampered).is_err(),
+                output.verify(&output.public_io, &tampered).is_err(),
                 "tampered Akita field-inline proof must be rejected: {name}",
             );
         }

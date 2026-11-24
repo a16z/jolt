@@ -113,10 +113,10 @@ pub fn prove<D>(
 }
 
 impl ProveOutput {
-    pub fn verify(&self, proof: &Proof) -> Result<(), VerifierError> {
+    pub fn verify(&self, public_io: &JoltDevice, proof: &Proof) -> Result<(), VerifierError> {
         jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, VerifierState<'_, Keccak>>(
             &self.verifier_preprocessing,
-            &self.public_io,
+            public_io,
             proof,
             self.trusted.as_ref(),
         )

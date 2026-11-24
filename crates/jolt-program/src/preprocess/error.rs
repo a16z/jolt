@@ -55,6 +55,13 @@ pub enum PreprocessingError {
     BytecodeTooLarge,
     #[error("invalid unmapped RAM intervals: {0}")]
     InvalidUnmappedIntervals(&'static str),
+    #[error(
+        "bytecode instruction at index {bytecode_index} (address {address:#x}) halts inside a multi-row instruction; a halt must be a whole source instruction"
+    )]
+    HaltInSequence {
+        bytecode_index: usize,
+        address: usize,
+    },
     #[cfg(feature = "field-inline")]
     #[error("invalid field-inline instruction: {0}")]
     InvalidFieldInlineInstruction(#[from] FieldInlineInstructionError),

@@ -38,4 +38,6 @@ pub enum ExpansionError {
     UnsupportedInstruction,
     #[error("registered inline expansion requires an InlineExpansionProvider")]
     InlineProviderRequired,
+    #[error("expansion placed a halt inside a multi-row sequence")]
+    HaltInSequence,
 }

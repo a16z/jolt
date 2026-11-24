@@ -163,6 +163,26 @@ impl<PCS: CommitmentScheme> ProgramPreprocessing<PCS> {
             })
     }
 
+    /// Require the entry to name a real instruction row. Bytecode read-RAF's
+    /// entry term pins cycle 0 to this row; were it a no-op, an all-padding
+    /// trace would satisfy every constraint under either panic claim. A
+    /// committed key carries no rows, so here this rejects only the padding
+    /// row at index 0; that its entry index names a real row is trusted
+    /// preprocessing, like the committed rows themselves.
+    pub fn validate_entry_row(&self) -> Result<(), VerifierError> {
+        let names_instruction = match self {
+            Self::Full(full) => full.bytecode.entry_instruction().is_some(),
+            Self::Committed(committed) => committed.meta.entry_bytecode_index != 0,
+        };
+        if names_instruction {
+            Ok(())
+        } else {
+            Err(VerifierError::EntryNotInstruction {
+                entry_address: self.entry_address(),
+            })
+        }
+    }
+
     pub fn bytecode_len(&self) -> usize {
         match self {
             Self::Full(full) => full.bytecode.code_size,
@@ -207,18 +227,18 @@ impl<PCS: CommitmentScheme> ProgramPreprocessing<PCS> {
 /// Domain for both program views. The hashed encoding includes the program-view tag.
 #[cfg(all(not(feature = "akita"), not(feature = "field-inline")))]
 const PROGRAM_PREPROCESSING_DIGEST_DOMAIN: &[u8] =
-    b"jolt/program-preprocessing/dory-whole-bytecode/v3";
+    b"jolt/program-preprocessing/dory-whole-bytecode/v4";
 // Field flags use the common circuit columns; preprocessing has no side table.
 #[cfg(all(not(feature = "akita"), feature = "field-inline"))]
 const PROGRAM_PREPROCESSING_DIGEST_DOMAIN: &[u8] =
-    b"jolt/program-preprocessing/dory-whole-bytecode/field-inline/v3";
+    b"jolt/program-preprocessing/dory-whole-bytecode/field-inline/v4";
 
 #[cfg(all(feature = "akita", not(feature = "field-inline")))]
 const PROGRAM_PREPROCESSING_DIGEST_DOMAIN: &[u8] =
-    b"jolt/program-preprocessing/akita-whole-bytecode/v2";
+    b"jolt/program-preprocessing/akita-whole-bytecode/v3";
 #[cfg(all(feature = "akita", feature = "field-inline"))]
 const PROGRAM_PREPROCESSING_DIGEST_DOMAIN: &[u8] =
-    b"jolt/program-preprocessing/akita-whole-bytecode/field-inline/v2";
+    b"jolt/program-preprocessing/akita-whole-bytecode/field-inline/v3";
 
 impl<PCS: CommitmentScheme> ProgramPreprocessing<PCS> {
     /// The 32-byte program binding absorbed first into the Fiat-Shamir
@@ -384,43 +404,43 @@ mod tests {
     /// digest domain for the extended instruction and proof profile.
     #[cfg(all(not(feature = "akita"), not(feature = "field-inline")))]
     const FULL_PROGRAM_DIGEST: [u8; 32] = [
-        23, 122, 87, 153, 110, 232, 141, 118, 12, 218, 209, 189, 206, 198, 99, 177, 87, 60, 161,
-        30, 70, 226, 249, 122, 184, 166, 153, 230, 177, 3, 18, 249,
+        37, 30, 108, 251, 143, 233, 83, 81, 197, 142, 18, 131, 224, 193, 108, 49, 179, 161, 214,
+        77, 96, 8, 10, 193, 154, 127, 103, 66, 121, 163, 130, 126,
     ];
     #[cfg(all(not(feature = "akita"), feature = "field-inline"))]
     const FULL_PROGRAM_DIGEST: [u8; 32] = [
-        251, 31, 23, 216, 138, 216, 194, 197, 138, 63, 68, 72, 177, 150, 8, 96, 155, 175, 220, 235,
-        199, 3, 85, 26, 85, 117, 40, 26, 71, 65, 222, 135,
+        153, 200, 219, 83, 101, 88, 245, 14, 203, 253, 88, 62, 251, 163, 102, 138, 150, 64, 1, 74,
+        16, 135, 33, 2, 4, 198, 177, 166, 131, 69, 137, 75,
     ];
     #[cfg(all(feature = "akita", not(feature = "field-inline")))]
     const FULL_PROGRAM_DIGEST: [u8; 32] = [
-        28, 231, 178, 202, 141, 29, 196, 251, 78, 7, 162, 60, 46, 243, 226, 160, 50, 84, 1, 192,
-        143, 8, 12, 118, 7, 205, 36, 177, 52, 85, 138, 8,
+        243, 57, 226, 109, 218, 50, 100, 67, 233, 251, 47, 216, 31, 233, 225, 130, 149, 58, 138,
+        75, 77, 70, 43, 253, 77, 136, 119, 152, 161, 7, 97, 87,
     ];
     #[cfg(all(feature = "akita", feature = "field-inline"))]
     const FULL_PROGRAM_DIGEST: [u8; 32] = [
-        8, 185, 214, 73, 203, 201, 101, 109, 121, 105, 231, 113, 161, 93, 74, 171, 164, 36, 61,
-        233, 121, 23, 81, 23, 133, 204, 39, 125, 20, 157, 76, 42,
+        215, 216, 137, 51, 227, 118, 242, 84, 145, 11, 219, 149, 129, 90, 216, 205, 90, 171, 160,
+        89, 71, 6, 55, 2, 172, 39, 109, 131, 210, 144, 176, 209,
     ];
     #[cfg(all(not(feature = "akita"), not(feature = "field-inline")))]
     const COMMITTED_PROGRAM_DIGEST: [u8; 32] = [
-        158, 161, 98, 135, 29, 157, 211, 232, 239, 40, 125, 170, 135, 92, 240, 183, 12, 209, 77,
-        117, 208, 74, 227, 209, 2, 203, 119, 84, 125, 244, 225, 230,
+        56, 229, 27, 24, 90, 153, 33, 84, 112, 111, 123, 157, 42, 251, 251, 74, 55, 240, 120, 5,
+        194, 132, 199, 213, 187, 165, 140, 93, 103, 132, 24, 240,
     ];
     #[cfg(all(feature = "akita", not(feature = "field-inline")))]
     const COMMITTED_PROGRAM_DIGEST: [u8; 32] = [
-        219, 246, 16, 177, 240, 252, 72, 252, 86, 153, 158, 116, 63, 226, 12, 251, 64, 189, 144,
-        17, 231, 76, 224, 109, 187, 147, 53, 44, 195, 243, 250, 53,
+        239, 64, 15, 163, 17, 228, 64, 155, 160, 40, 157, 100, 49, 114, 216, 40, 203, 121, 19, 164,
+        153, 149, 245, 54, 18, 83, 72, 179, 92, 0, 10, 141,
     ];
     #[cfg(all(not(feature = "akita"), feature = "field-inline"))]
     const COMMITTED_PROGRAM_DIGEST: [u8; 32] = [
-        169, 156, 59, 157, 38, 84, 58, 199, 168, 30, 229, 210, 47, 110, 66, 45, 120, 66, 3, 196,
-        226, 205, 145, 191, 19, 158, 23, 40, 221, 62, 93, 23,
+        223, 67, 47, 152, 199, 217, 120, 121, 47, 66, 245, 171, 43, 142, 221, 39, 97, 159, 161, 71,
+        51, 150, 89, 123, 101, 3, 169, 64, 43, 196, 73, 189,
     ];
     #[cfg(all(feature = "akita", feature = "field-inline"))]
     const COMMITTED_PROGRAM_DIGEST: [u8; 32] = [
-        93, 98, 10, 67, 222, 34, 62, 118, 187, 183, 21, 173, 2, 105, 246, 101, 172, 194, 210, 36,
-        146, 197, 3, 86, 216, 118, 4, 220, 221, 117, 241, 20,
+        95, 225, 232, 208, 173, 83, 6, 83, 173, 36, 31, 186, 185, 176, 133, 32, 70, 12, 70, 125,
+        76, 198, 33, 156, 35, 242, 108, 193, 90, 68, 189, 33,
     ];
 
     /// An empty program over a real (non-zero) memory layout, so every layout

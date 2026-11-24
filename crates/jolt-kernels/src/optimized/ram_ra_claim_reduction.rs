@@ -523,9 +523,7 @@ mod tests {
 
     use jolt_witness::TraceBackend;
 
-    use super::super::testing::{
-        assert_parity, ram_fixture, random_scalars, silent_ram_fixture, FixtureShape, RamOp,
-    };
+    use super::super::testing::{assert_parity, ram_fixture, random_scalars, FixtureShape, RamOp};
     use super::*;
     use crate::reference::views::address_fold;
     use crate::ReferenceBackend;
@@ -625,7 +623,7 @@ mod tests {
         let mut ops = mixed_ops();
         ops.insert(1, RamOp::UnmappedWrite { pre: 6, post: 2 });
         run_parity(shape, ops, 67);
-        parity_on(&silent_ram_fixture(shape), shape, 71);
+        parity_on(&ram_fixture(shape, Vec::new(), Vec::new()), shape, 71);
     }
 
     #[test]

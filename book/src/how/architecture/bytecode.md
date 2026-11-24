@@ -52,7 +52,7 @@ The bytecode read-checking sumcheck combines claims from five different sumcheck
 The five stages are:
 
 - **Stage 1**: Spartan outer sumcheck claims (program counter, immediate values, circuit flags)
-- **Stage 2**: Product virtualization claims (jump/branch flags, register write flags)
+- **Stage 2**: Product virtualization claims (no-op/branch flags, register write flags)
 - **Stage 3**: Shift sumcheck claims (instruction operand flags, virtual instruction metadata)
 - **Stage 4**: Register read-write checking claims (register addresses)
 - **Stage 5**: Register value evaluation and instruction lookup claims (register addresses, lookup table flags)
@@ -95,7 +95,7 @@ $$
 
 **Stage 2** (Product virtualization):
 $$
-\widetilde{\textsf{Val}}_2(k) = \texttt{jump\_flag}(k) + \beta_2 \cdot \texttt{branch\_flag}(k) + \beta_2^2 \cdot \texttt{is\_rd\_not\_zero}(k) + \beta_2^3 \cdot \texttt{write\_lookup\_to\_rd}(k)
+\widetilde{\textsf{Val}}_2(k) = \texttt{is\_noop}(k) + \beta_2 \cdot \texttt{branch\_flag}(k) + \beta_2^2 \cdot \texttt{write\_lookup\_output\_to\_rd}(k) + \beta_2^3 \cdot \texttt{virtual\_instruction}(k)
 $$
 
 **Stage 3** (Shift sumcheck):

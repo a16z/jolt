@@ -255,8 +255,7 @@ fn record_device_store_pre(state: &mut GuestState, host: &HostContext, address: 
 }
 
 /// `Sd`/`VirtualStore*` slow path: device-region, unaligned, or
-/// out-of-bounds addresses. `JoltDevice::store` also handles the
-/// panic/termination bits.
+/// out-of-bounds addresses. `JoltDevice::store` writes only outputs.
 pub extern "sysv64" fn slow_store_doubleword(
     state: *mut GuestState,
     address: u64,
@@ -304,10 +303,7 @@ pub extern "sysv64" fn slow_store_doubleword(
                     format!("Store changes protected doubleword at {address:#x}"),
                 );
             }
-        } else if host.device.is_output(byte_address)
-            || host.device.is_panic(byte_address)
-            || host.device.is_termination(byte_address)
-        {
+        } else if host.device.is_output(byte_address) {
             host.device.store(byte_address, byte);
         } else {
             return fail(

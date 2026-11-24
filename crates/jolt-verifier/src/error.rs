@@ -129,6 +129,8 @@ pub enum VerifierError {
 
     #[error("bytecode carries {kind:?}, which this verifier build has no constraints for")]
     UnsupportedInstruction { kind: JoltInstructionKind },
+    #[error("program entry {entry_address:#x} does not name an instruction row")]
+    EntryNotInstruction { entry_address: u64 },
     #[error("invalid field-inline bytecode: {reason}")]
     InvalidFieldInlineBytecode { reason: String },
 

@@ -21,7 +21,7 @@ use jolt_witness::{ProgramSource, TraceBackend};
 
 use super::*;
 use crate::optimized::booleanity::testing::{
-    mixed_rows, with_booleanity_backend, with_trace_backend,
+    mixed_rows, with_booleanity_backend, with_halting_backend, with_trace_backend, Halt,
 };
 use crate::optimized::parity::{probe_input_claim, run_lockstep, synthetic_point};
 use crate::optimized::streaming::DenseCap;
@@ -29,14 +29,21 @@ use crate::ReferenceBackend;
 
 type AddressSlot = dyn PrepareKernel<Fr, BytecodeReadRafAddressPhase<Fr>>;
 
+fn read_raf_dimensions(
+    backend: &TraceBackend,
+    base_dimensions: BooleanityDimensions,
+) -> BytecodeReadRafDimensions {
+    let bytecode_len = backend.program_preprocessing().bytecode.bytecode.len();
+    BytecodeReadRafDimensions::new(
+        base_dimensions.log_t,
+        bytecode_len.ilog2() as usize,
+        base_dimensions.layout.bytecode(),
+    )
+}
+
 fn address_parity(log_t: usize, log_k_chunk: u8, committed_program: bool, kernel: &AddressSlot) {
     with_booleanity_backend(log_t, log_k_chunk, |backend, base_dimensions| {
-        let bytecode_len = backend.program_preprocessing().bytecode.bytecode.len();
-        let dimensions = BytecodeReadRafDimensions::new(
-            log_t,
-            bytecode_len.ilog2() as usize,
-            base_dimensions.layout.bytecode(),
-        );
+        let dimensions = read_raf_dimensions(backend, base_dimensions);
         address_parity_on(backend, dimensions, committed_program, kernel);
     });
 }
@@ -151,12 +158,7 @@ impl CycleCase {
     fn new(backend: &TraceBackend, base_dimensions: BooleanityDimensions) -> Self {
         let log_t = base_dimensions.log_t;
         let program = backend.program_preprocessing();
-        let bytecode_len = program.bytecode.bytecode.len();
-        let dimensions = BytecodeReadRafDimensions::new(
-            log_t,
-            bytecode_len.ilog2() as usize,
-            base_dimensions.layout.bytecode(),
-        );
+        let dimensions = read_raf_dimensions(backend, base_dimensions);
         let stage_cycle_points =
             std::array::from_fn(|stage| synthetic_point(log_t, 11 + stage as u64));
         let address_challenges = BytecodeReadRafAddressPhaseChallenges {
@@ -424,6 +426,38 @@ fn bytecode_address_matches_reference_k16() {
 #[test]
 fn bytecode_address_matches_reference_k256_committed() {
     address_parity(3, 8, true, &OptimizedBytecodeReadRafAddress);
+}
+
+/// Runs that end at `jolt.success` and at `EBREAK`: 37 of 64 cycles and 1,500
+/// of 2,048 leave padding after the halt, and 16 of 16 end at the halt on the
+/// domain's last cycle. The default and streaming kernels of both phases
+/// match the reference, the address phase in both program modes; the fused
+/// stages weigh the halt's link write.
+#[test]
+fn bytecode_read_raf_matches_reference_on_runs_that_end_at_a_halt() {
+    let address_kernels: [&AddressSlot; 2] = [
+        &OptimizedBytecodeReadRafAddress,
+        &StreamingBytecodeReadRafAddress,
+    ];
+    let cycle_kernels: [&CycleSlot; 2] = [
+        &OptimizedBytecodeReadRafCycle,
+        &StreamingBytecodeReadRafCycle,
+    ];
+    for halt in [Halt::Success, Halt::Panic] {
+        for (log_t, len) in [(6, 37), (4, 16), (11, 1500)] {
+            with_halting_backend(log_t, 4, len, halt, |backend, base_dimensions| {
+                let dimensions = read_raf_dimensions(backend, base_dimensions);
+                for kernel in address_kernels {
+                    for committed_program in [false, true] {
+                        address_parity_on(backend, dimensions, committed_program, kernel);
+                    }
+                }
+                for kernel in cycle_kernels {
+                    cycle_parity_on(backend, base_dimensions, kernel);
+                }
+            });
+        }
+    }
 }
 
 /// 4 of 64 cycles leave a padding suffix after a walk that ends inside a

@@ -31,7 +31,7 @@ use super::spartan::{pc_shift, unexpanded_pc_shift};
 pub const BYTECODE_STAGE_GAMMA_COUNTS: [usize; 5] = [
     // Stage 1: UnexpandedPC, Imm, then one per circuit flag (all Spartan outer).
     2 + NUM_CIRCUIT_FLAGS,
-    // Stage 2: the Jump, Branch, WriteLookupOutputToRD, and VirtualInstruction
+    // Stage 2: the IsNoop, Branch, WriteLookupOutputToRD, and VirtualInstruction
     // product-virtualization flags.
     4,
     // Stage 3: Imm (instruction input), UnexpandedPC (shift), the five
@@ -628,7 +628,7 @@ fn read_raf_flag_terms(
         }
     }
     for (selected, index) in [
-        (circuit_flags[CircuitFlags::Jump], 0),
+        (instruction_flags[InstructionFlags::IsNoop], 0),
         (instruction_flags[InstructionFlags::Branch], 1),
         (circuit_flags[CircuitFlags::WriteLookupOutputToRD], 2),
         (circuit_flags[CircuitFlags::VirtualInstruction], 3),
@@ -903,7 +903,7 @@ where
 {
     let beta = challenge(BytecodeReadRafChallenge::Stage2Gamma);
 
-    opening(op_flag_product(CircuitFlags::Jump))
+    opening(instruction_flag_product(InstructionFlags::IsNoop))
         + beta.clone() * opening(instruction_flag_product(InstructionFlags::Branch))
         + challenge_pow_expr(BytecodeReadRafChallenge::Stage2Gamma, 2)
             * opening(op_flag_product(CircuitFlags::WriteLookupOutputToRD))

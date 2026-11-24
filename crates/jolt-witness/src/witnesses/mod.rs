@@ -35,7 +35,7 @@ mod registers;
 
 pub use flags::{
     InstructionFlag, InstructionRafFlag, LookupTableFlag, NextIsFirstInSequence, NextIsNoop,
-    NextIsVirtual, OpFlag, ShouldBranch, ShouldJump,
+    NextIsVirtual, OpFlag, ShouldBranch,
 };
 pub use increments::{FusedInc, RamInc, RdInc};
 pub use lookups::{LookupIndex, LookupOutput, TableIndex};

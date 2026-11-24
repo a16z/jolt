@@ -361,7 +361,7 @@ pub fn lane_weights<F: JoltField>(
     {
         let coeff = eta_powers[1];
         let g = inputs.stage2_gammas;
-        weights[layout.circuit_start + (CircuitFlags::Jump as usize)] += coeff * g[0];
+        weights[layout.instr_start + (InstructionFlags::IsNoop as usize)] += coeff * g[0];
         weights[layout.instr_start + (InstructionFlags::Branch as usize)] += coeff * g[1];
         weights[layout.circuit_start + (CircuitFlags::WriteLookupOutputToRD as usize)] +=
             coeff * g[2];

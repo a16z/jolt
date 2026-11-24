@@ -55,10 +55,10 @@ to select Full or Committed. Example `--committed-bytecode` flags take no value.
 Retired serialized identifier slots use uninhabited payloads to preserve live
 tags while rejecting old identifiers. Current preprocessing digest domains are listed below.
 
-- Ordinary Dory uses `jolt/program-preprocessing/dory-whole-bytecode/v3`.
-- Field-inline Dory uses `jolt/program-preprocessing/dory-whole-bytecode/field-inline/v3`.
-- Ordinary Akita uses `jolt/program-preprocessing/akita-whole-bytecode/v2`.
-- Akita field-inline uses `jolt/program-preprocessing/akita-whole-bytecode/field-inline/v2` for both views. Full programs have tag 0 and committed programs have tag 2.
+- Ordinary Dory uses `jolt/program-preprocessing/dory-whole-bytecode/v4`.
+- Field-inline Dory uses `jolt/program-preprocessing/dory-whole-bytecode/field-inline/v4`.
+- Ordinary Akita uses `jolt/program-preprocessing/akita-whole-bytecode/v3`.
+- Akita field-inline uses `jolt/program-preprocessing/akita-whole-bytecode/field-inline/v3` for both views. Full programs have tag 0 and committed programs have tag 2.
 
 All existing Dory and Akita preprocessing and proofs must be regenerated,
 including full mode. Committed preprocessing records the coefficient trace order,

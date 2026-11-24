@@ -46,6 +46,10 @@ pub enum CircuitFlags {
     IsFirstInSequence,
     /// Last instruction in a virtual sequence.
     IsLastInSequence,
+    /// The row ends the run: a halt jumps to address 0, which only padding occupies.
+    Halt,
+    /// The halt is a failure halt (EBREAK); the public panic bit must be 1.
+    HaltPanic,
     #[cfg(feature = "field-inline")]
     FieldAdd,
     #[cfg(feature = "field-inline")]
@@ -85,6 +89,8 @@ pub const CIRCUIT_FLAGS: [CircuitFlags; NUM_CIRCUIT_FLAGS] = [
     CircuitFlags::IsCompressed,
     CircuitFlags::IsFirstInSequence,
     CircuitFlags::IsLastInSequence,
+    CircuitFlags::Halt,
+    CircuitFlags::HaltPanic,
     #[cfg(feature = "field-inline")]
     CircuitFlags::FieldAdd,
     #[cfg(feature = "field-inline")]

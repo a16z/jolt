@@ -496,19 +496,18 @@ mod tests {
     jolt_riscv::for_each_jolt_instruction_kind!(assert_memory_row_tables);
 
     /// Registry invariant: a `Jump` row's target is its lookup output, so a table-free jump targets
-    /// address 0, which only padding occupies. Exactly the halt kinds may do that.
+    /// address 0, which only padding occupies. Exactly the rows flagged `Halt` may do that.
     #[test]
     fn table_free_jumps_are_exactly_the_halts() {
         for instruction in JoltInstruction::iter() {
-            let kind = instruction.kind();
-            let jump = instruction.circuit_flags()[CircuitFlags::Jump];
+            let flags = instruction.circuit_flags();
             let table_free = InstructionLookupTable::<64>::lookup_table(&instruction).is_none();
-            let halt = [
-                JoltInstructionKind::JoltSuccess,
-                JoltInstructionKind::JoltPanic,
-            ]
-            .contains(&kind);
-            assert_eq!(jump && table_free, halt, "{kind:?}");
+            assert_eq!(
+                flags[CircuitFlags::Jump] && table_free,
+                flags[CircuitFlags::Halt],
+                "{:?}",
+                instruction.kind()
+            );
         }
     }
 

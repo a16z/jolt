@@ -18,11 +18,9 @@ common::jolt_device.rs::MemoryLayout.max_trusted_advice_size
 common::jolt_device.rs::MemoryLayout.max_untrusted_advice_size
 common::jolt_device.rs::MemoryLayout.output_end
 common::jolt_device.rs::MemoryLayout.output_start
-common::jolt_device.rs::MemoryLayout.panic
 common::jolt_device.rs::MemoryLayout.program_size
 common::jolt_device.rs::MemoryLayout.stack_end
 common::jolt_device.rs::MemoryLayout.stack_size
-common::jolt_device.rs::MemoryLayout.termination
 common::jolt_device.rs::MemoryLayout.trusted_advice_end
 common::jolt_device.rs::MemoryLayout.trusted_advice_start
 common::jolt_device.rs::MemoryLayout.untrusted_advice_end
