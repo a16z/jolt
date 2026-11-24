@@ -28,16 +28,6 @@ const SESSION: [u8; 32] = protocol_tag(b"jolt/challenge-codecs/v1");
 const INSTANCE: [u8; 32] = [0x42; 32];
 
 fn round_trip<F: ChallengeCodec + PartialEq + Debug>() {
-    let mut stock = verifier_transcript::<Keccak>(&SESSION, &INSTANCE, &[]);
-    let expected = stock.verifier_message_as(F::challenge_bytes(1).unwrap(), |tape| {
-        F::decode_challenges(tape, 1).unwrap().pop().unwrap()
-    });
-    let mut prover = prover_transcript::<Keccak>(&SESSION, &INSTANCE);
-    assert_eq!(
-        FieldTranscript::<F>::challenge(&mut prover).unwrap(),
-        expected
-    );
-
     for len in [1, 17, 28] {
         let mut prover = prover_transcript::<Keccak>(&SESSION, &INSTANCE);
         prover.send(&BytesMsg(b"before".to_vec()));
@@ -388,6 +378,20 @@ fn known_answer<F: ChallengeCodec + CanonicalBytes + PartialEq + Debug>(
     verifier.check_eof().unwrap();
     assert_eq!(canonical_hex(&values), expected);
     assert_eq!(hex_bytes(&tail), continuation);
+
+    if len == 1 {
+        let mut prover = prover_transcript::<Keccak>(&SESSION, &INSTANCE);
+        prover.send(&BytesMsg(b"before".to_vec()));
+        let challenge = FieldTranscript::<F>::challenge(&mut prover).unwrap();
+        let mut verifier = verifier_transcript::<Keccak>(&SESSION, &INSTANCE, prover.narg_string());
+        assert_eq!(verifier.prover_message::<BytesMsg>().unwrap().0, b"before");
+        assert_eq!(
+            FieldTranscript::<F>::challenge(&mut verifier).unwrap(),
+            challenge
+        );
+        assert_eq!(verifier.verifier_message::<[u8; 16]>(), tail);
+        assert_eq!(vec![challenge], values);
+    }
 }
 
 #[cfg_attr(

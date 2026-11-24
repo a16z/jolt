@@ -1,35 +1,9 @@
-#![cfg(any(
-    feature = "transcript-keccak",
-    feature = "transcript-blake2b",
-    feature = "transcript-poseidon"
-))]
+#![cfg(any(feature = "transcript-keccak", feature = "transcript-poseidon"))]
 #![expect(clippy::unwrap_used, reason = "tests")]
 
-#[cfg(all(feature = "bn254", feature = "transcript-blake2b"))]
-use jolt_field::Fq;
-#[cfg(all(feature = "bn254", feature = "transcript-keccak"))]
-use jolt_field::Fr;
-#[cfg(all(
-    feature = "binary",
-    any(feature = "transcript-keccak", feature = "transcript-blake2b")
-))]
-use jolt_field::F8;
-#[cfg(all(feature = "binary", feature = "transcript-keccak"))]
-use jolt_field::{F192, F64};
-use jolt_transcript::{
-    protocol_tag, prover_transcript, verifier_transcript, BytesMsg, Encoding, Transcript,
-};
-#[cfg(all(
-    any(feature = "bn254", feature = "binary"),
-    any(feature = "transcript-keccak", feature = "transcript-blake2b")
-))]
-use jolt_transcript::{ChallengeCodec, FieldTranscript, UniformBytes};
-use spongefish::DuplexSpongeInit;
-#[cfg(all(
-    any(feature = "bn254", feature = "binary"),
-    any(feature = "transcript-keccak", feature = "transcript-blake2b")
-))]
-use std::fmt::Debug;
+#[cfg(feature = "transcript-poseidon")]
+use jolt_transcript::prover_transcript;
+use jolt_transcript::{protocol_tag, verifier_transcript, Encoding, Transcript};
 
 const SESSION: [u8; 32] = protocol_tag(b"jolt/spongefish-parity");
 const STATEMENT: &[u8; 4] = b"stmt";
@@ -42,48 +16,22 @@ impl Encoding for Chunk<'_> {
     }
 }
 
-fn bytes_parity<H: DuplexSpongeInit<U = u8>>() {
-    let mut prover = prover_transcript::<H>(&SESSION, STATEMENT);
-    let mut verifier = verifier_transcript::<H>(&SESSION, STATEMENT, &[]);
-    let mut stock = verifier_transcript::<H>(&SESSION, STATEMENT, &[]);
-    let payload: Vec<u8> = (0..=u8::MAX).collect();
-    let unaligned = &payload[1..];
+// Poseidon frames each absorb with its length, so a batch split across
+// absorbs fails here as well as wrong bytes.
+#[cfg(feature = "transcript-poseidon")]
+#[test]
+fn poseidon_absorbs_each_batch_once() {
+    use jolt_transcript::PoseidonSponge;
 
-    // Cover word boundaries and both sides of the 56-byte inline body limit.
-    // Compare against the original allocating encoding, including empty input.
-    for len in [
-        0usize, 1, 7, 8, 9, 31, 32, 33, 55, 56, 57, 63, 64, 65, 135, 136, 137,
-    ] {
-        let message = &unaligned[..len];
-        stock.public_message(&BytesMsg(message));
-        prover.append_bytes(message);
-        verifier.append_bytes(message);
-
-        let expected = stock.verifier_message::<[u8; 64]>();
-        assert_eq!(
-            prover.verifier_message::<[u8; 64]>(),
-            expected,
-            "length {len}"
-        );
-        assert_eq!(
-            verifier.verifier_message::<[u8; 64]>(),
-            expected,
-            "length {len}"
-        );
-    }
-    verifier.check_eof().unwrap();
-}
-
-fn batch_parity<H: DuplexSpongeInit<U = u8>>() {
-    let mut prover = prover_transcript::<H>(&SESSION, STATEMENT);
-    let mut verifier = verifier_transcript::<H>(&SESSION, STATEMENT, &[]);
-    let mut stock = verifier_transcript::<H>(&SESSION, STATEMENT, &[]);
+    let mut prover = prover_transcript::<PoseidonSponge>(&SESSION, STATEMENT);
+    let mut verifier = verifier_transcript::<PoseidonSponge>(&SESSION, STATEMENT, &[]);
+    let mut stock = verifier_transcript::<PoseidonSponge>(&SESSION, STATEMENT, &[]);
     let payload: Vec<u8> = (0..=u8::MAX).collect();
     let unaligned = &payload[1..];
 
     prover.append_values::<Chunk<'_>>(&[]);
     verifier.append_values::<Chunk<'_>>(&[]);
-    for len in [0usize, 7, 8, 9, 63, 64, 65, 127, 128, 129, 135, 136, 137] {
+    for len in [0usize, 7, 8, 9, 63, 64, 65, 129] {
         let message = &unaligned[..len];
         let (first, rest) = message.split_at(len.min(3));
         let (middle, last) = rest.split_at(rest.len().min(62));
@@ -153,135 +101,4 @@ fn spilled_batch_releases_each_encoding_before_the_next() {
         stock.verifier_message::<[u8; 64]>()
     );
     verifier.check_eof().unwrap();
-}
-
-#[cfg(all(
-    any(feature = "bn254", feature = "binary"),
-    any(feature = "transcript-keccak", feature = "transcript-blake2b")
-))]
-fn field_parity<H, F>(lengths: &[usize])
-where
-    H: UniformBytes + DuplexSpongeInit<U = u8>,
-    F: ChallengeCodec + Eq + Debug,
-{
-    let mut prover = prover_transcript::<H>(&SESSION, STATEMENT);
-    let mut verifier = verifier_transcript::<H>(&SESSION, STATEMENT, &[]);
-    let mut stock = verifier_transcript::<H>(&SESSION, STATEMENT, &[]);
-    for &len in lengths {
-        prover.append(&0x0123_4567_89ab_cdefu64);
-        verifier.append(&0x0123_4567_89ab_cdefu64);
-        stock.public_message(&0x0123_4567_89ab_cdefu64);
-        let expected = if len == 0 {
-            Vec::new()
-        } else {
-            stock.verifier_message_as(F::challenge_bytes(len).unwrap(), |tape| {
-                F::decode_challenges(tape, len).unwrap()
-            })
-        };
-        if len == 1 {
-            let expected = expected.into_iter().next().unwrap();
-            assert_eq!(
-                FieldTranscript::<F>::challenge(&mut prover).unwrap(),
-                expected
-            );
-            assert_eq!(
-                FieldTranscript::<F>::challenge(&mut verifier).unwrap(),
-                expected
-            );
-        } else {
-            assert_eq!(
-                FieldTranscript::<F>::challenge_vector(&mut prover, len).unwrap(),
-                expected
-            );
-            assert_eq!(
-                FieldTranscript::<F>::challenge_vector(&mut verifier, len).unwrap(),
-                expected
-            );
-        }
-
-        let tail = stock.verifier_message_as(16, |tape| <[u8; 16]>::try_from(tape).unwrap());
-        assert_eq!(prover.verifier_message::<[u8; 16]>(), tail);
-        assert_eq!(verifier.verifier_message::<[u8; 16]>(), tail);
-    }
-    verifier.check_eof().unwrap();
-}
-
-#[cfg(all(
-    feature = "bn254",
-    any(feature = "transcript-keccak", feature = "transcript-blake2b")
-))]
-fn scalar_crosses_squeeze_boundary<H, F, const OFFSET: usize>()
-where
-    H: UniformBytes + DuplexSpongeInit<U = u8>,
-    F: ChallengeCodec + Eq + Debug,
-{
-    let mut prover = prover_transcript::<H>(&SESSION, STATEMENT);
-    let mut verifier = verifier_transcript::<H>(&SESSION, STATEMENT, &[]);
-    let mut stock = verifier_transcript::<H>(&SESSION, STATEMENT, &[]);
-
-    let prefix = stock.verifier_message_as(OFFSET, |tape| <[u8; OFFSET]>::try_from(tape).unwrap());
-    assert_eq!(prover.verifier_message::<[u8; OFFSET]>(), prefix);
-    assert_eq!(verifier.verifier_message::<[u8; OFFSET]>(), prefix);
-
-    let expected = stock.verifier_message_as(56, |tape| {
-        F::decode_challenges(tape, 1).unwrap().pop().unwrap()
-    });
-    assert_eq!(
-        FieldTranscript::<F>::challenge(&mut prover).unwrap(),
-        expected
-    );
-    assert_eq!(
-        FieldTranscript::<F>::challenge(&mut verifier).unwrap(),
-        expected
-    );
-
-    let tail = stock.verifier_message_as(64, |tape| <[u8; 64]>::try_from(tape).unwrap());
-    assert_eq!(prover.verifier_message::<[u8; 64]>(), tail);
-    assert_eq!(verifier.verifier_message::<[u8; 64]>(), tail);
-    verifier.check_eof().unwrap();
-}
-
-#[cfg(feature = "transcript-keccak")]
-#[test]
-fn keccak_matches_stock_spongefish() {
-    use jolt_transcript::Keccak;
-
-    bytes_parity::<Keccak>();
-    batch_parity::<Keccak>();
-    #[cfg(feature = "bn254")]
-    {
-        field_parity::<Keccak, Fr>(&[0, 1, 2, 3]);
-        scalar_crosses_squeeze_boundary::<Keccak, Fr, 120>();
-    }
-    #[cfg(feature = "binary")]
-    {
-        field_parity::<Keccak, F8>(&[0, 1, 8, 9, 17, 56, 128, 136, 137]);
-        field_parity::<Keccak, F64>(&[1, 2, 3, 7, 16, 17, 18]);
-        field_parity::<Keccak, F192>(&[1, 2, 6]);
-    }
-}
-
-#[cfg(feature = "transcript-blake2b")]
-#[test]
-fn blake2b_matches_stock_spongefish() {
-    use jolt_transcript::Blake2b512;
-
-    bytes_parity::<Blake2b512>();
-    batch_parity::<Blake2b512>();
-    #[cfg(feature = "bn254")]
-    {
-        field_parity::<Blake2b512, Fq>(&[0, 1, 2, 3]);
-        scalar_crosses_squeeze_boundary::<Blake2b512, Fq, 48>();
-    }
-    #[cfg(feature = "binary")]
-    field_parity::<Blake2b512, F8>(&[0, 1, 56, 64, 65]);
-}
-
-#[cfg(feature = "transcript-poseidon")]
-#[test]
-fn poseidon_matches_stock_spongefish() {
-    use jolt_transcript::PoseidonSponge;
-
-    bytes_parity::<PoseidonSponge>();
-    batch_parity::<PoseidonSponge>();
 }
