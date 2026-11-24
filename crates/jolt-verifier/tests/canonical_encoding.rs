@@ -1,3 +1,5 @@
+// The bundled Dory proof uses the standard instruction profile's wire layout.
+#![cfg(not(any(feature = "akita", feature = "field-inline")))]
 #![expect(
     clippy::expect_used,
     clippy::unwrap_used,
