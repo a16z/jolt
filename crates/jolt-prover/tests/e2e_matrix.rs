@@ -263,6 +263,7 @@ mod matrix {
     /// The memory-ops guest's `exit_halt` entry: `jolt::runtime::exit(code)`
     /// ends the run at `ebreak` for every code, so even `exit(0)` proves with
     /// `panic = true` and no output.
+    #[cfg(not(feature = "field-inline"))]
     fn exit_halt(code: i32) -> GuestCase {
         GuestCase {
             func: Some("exit_halt"),
@@ -277,6 +278,7 @@ mod matrix {
     /// already held by the first input word, the first stack-canary word and
     /// a code word back to each, which write protection admits because no
     /// protected word changes.
+    #[cfg(not(feature = "field-inline"))]
     fn protected_rewrite() -> GuestCase {
         let probe = GuestCase {
             func: Some("protected_rewrite"),
