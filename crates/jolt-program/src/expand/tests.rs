@@ -178,6 +178,45 @@ fn halts_lower_to_one_row_that_links_into_a_temporary() -> Result<(), ExpansionE
     Ok(())
 }
 
+/// A halt must be a whole source instruction, whether a recipe emits it
+/// directly or through a nested source-only expansion.
+#[test]
+fn halts_inside_a_sequence_are_rejected() {
+    struct HaltingProvider(SourceInstructionKind);
+
+    impl InlineExpansionProvider for HaltingProvider {
+        fn expand_inline(
+            &mut self,
+            instruction: &SourceInstruction,
+            _profile: JoltInstructionProfile,
+        ) -> Result<ExpandedInstructionSequence, ExpansionError> {
+            let mut builder = InlineExpansionBuilder::new(*instruction.row());
+            builder.emit_i(Kind::ADDI, 0, 0, 0);
+            builder.emit_i(self.0, 0, 0, 0);
+            builder.finalize()
+        }
+    }
+
+    let input = instruction(SourceInstructionKind::Inline, Some(3), false);
+    for halt in [
+        SourceInstructionKind::JoltSuccess,
+        SourceInstructionKind::EBREAK,
+    ] {
+        assert!(
+            matches!(
+                expand_instruction_with_provider(
+                    &input,
+                    &mut ExpansionAllocator::new(),
+                    &mut HaltingProvider(halt),
+                    RV64IMAC_JOLT,
+                ),
+                Err(ExpansionError::HaltInSequence)
+            ),
+            "{halt:?}"
+        );
+    }
+}
+
 #[test]
 fn inline_requires_provider() {
     let mut allocator = ExpansionAllocator::new();

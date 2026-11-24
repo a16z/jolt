@@ -7,7 +7,7 @@
 #![expect(clippy::expect_used)]
 
 use jolt_program::execution::{ChunkedExecutionBackend, ExecutionBackend};
-use jolt_riscv::JoltTraceRow;
+use jolt_riscv::{JoltInstructionKind, JoltTraceRow};
 use jolt_tracer_x86::X86TracerBackend;
 
 use jolt_inlines_keccak256 as _;
@@ -61,6 +61,14 @@ fn assert_chunks_compose_spaced(
             summary.checkpoints.len(),
             expected.len().div_ceil(chunk_size),
             "chunk_size {chunk_size}: checkpoint count"
+        );
+        assert_eq!(
+            summary.device.outputs, eager.device.outputs,
+            "chunk_size {chunk_size}: outputs"
+        );
+        assert_eq!(
+            summary.device.panic, eager.device.panic,
+            "chunk_size {chunk_size}: panic claim"
         );
         if let Some(rows) = min_spacing {
             // A boundary exists at most spacing + one group past any mark, so
@@ -124,6 +132,42 @@ fn fibonacci_chunks_compose() {
         // groups, and a size past the trace length is a single chunk.
         &[1, 7, 100, 1 << 18],
     );
+}
+
+#[test]
+fn panic_halt_chunks_compose() {
+    let Some((program, inputs)) = setup(
+        "memory-ops-guest",
+        "panic_halt",
+        postcard::to_stdvec(&true).expect("postcard"),
+    ) else {
+        return;
+    };
+    let mut backend = X86TracerBackend::new();
+    let eager = backend
+        .trace(&program, inputs.clone())
+        .expect("eager trace");
+    let (halt, prefix) = eager.trace.rows().split_last().expect("panic trace");
+    assert_eq!(
+        halt.instruction_kind(),
+        Some(JoltInstructionKind::JoltPanic)
+    );
+
+    // Each replay restores guest memory. A checkpoint just before EBREAK
+    // puts the halt in its own chunk with only two restores.
+    backend.set_min_checkpoint_spacing_rows(prefix.len());
+    let summary = backend
+        .execute(&program, inputs, prefix.len())
+        .expect("chunked execute");
+    assert!(summary.device.panic);
+    assert_eq!(summary.device.outputs, eager.device.outputs);
+    assert_eq!(summary.trace_len, eager.trace.len());
+    let expected_chunks = [prefix, std::slice::from_ref(halt)];
+    assert_eq!(summary.checkpoints.len(), expected_chunks.len());
+    for (checkpoint, expected) in summary.checkpoints.iter().zip(expected_chunks).rev() {
+        let replay = backend.replay_chunk(checkpoint).expect("replay");
+        assert_eq!(replay.rows(), expected);
+    }
 }
 
 #[test]

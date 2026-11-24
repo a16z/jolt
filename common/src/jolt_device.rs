@@ -139,6 +139,8 @@ pub struct JoltDevice {
     #[serde(serialize_with = "serialize_advice_stripped")]
     pub untrusted_advice: Vec<u8>,
     pub outputs: Vec<u8>,
+    /// The public claim that the run ended at a failure halt (EBREAK). The
+    /// tracers set it from the halt kind; no guest memory backs it.
     pub panic: bool,
     pub memory_layout: MemoryLayout,
 }
@@ -234,11 +236,7 @@ impl JoltDevice {
     }
 
     pub fn load(&self, address: u64) -> u8 {
-        if self.is_panic(address) {
-            self.panic as u8
-        } else if self.is_termination(address) {
-            0
-        } else if self.is_input(address) {
+        if self.is_input(address) {
             let internal_address = self.convert_read_address(address);
             self.inputs.get(internal_address).copied().unwrap_or(0)
         } else if self.is_trusted_advice(address) {
@@ -263,13 +261,6 @@ impl JoltDevice {
     }
 
     pub fn store(&mut self, address: u64, value: u8) {
-        if address == self.memory_layout.panic {
-            self.panic = true;
-            return;
-        } else if self.is_panic(address) || self.is_termination(address) {
-            return;
-        }
-
         let internal_address = self.convert_write_address(address);
         let max_output_size =
             (self.memory_layout.output_end - self.memory_layout.output_start) as usize;
@@ -311,14 +302,6 @@ impl JoltDevice {
 
     pub fn is_output(&self, address: u64) -> bool {
         address >= self.memory_layout.output_start && address < self.memory_layout.output_end
-    }
-
-    pub fn is_panic(&self, address: u64) -> bool {
-        address >= self.memory_layout.panic && address < self.memory_layout.termination
-    }
-
-    pub fn is_termination(&self, address: u64) -> bool {
-        address >= self.memory_layout.termination && address < self.memory_layout.io_end
     }
 
     fn convert_read_address(&self, address: u64) -> usize {
@@ -408,10 +391,10 @@ pub struct MemoryLayout {
     pub stack_end: u64,
     pub heap_size: u64,
     pub heap_end: u64,
-    pub panic: u64,
-    pub termination: u64,
-    /// End of the memory region containing inputs, outputs, the panic bit,
-    /// and the termination bit.
+    /// Exclusive end of the I/O region. `try_new` sets it to `output_end` and
+    /// pads the region so that the doubleword at `io_end` is an unmapped guard
+    /// word (`io_end <= RAM_START_ADDRESS - 8`); verifier-key admission does
+    /// not recheck this.
     pub io_end: u64,
 }
 
@@ -447,8 +430,6 @@ impl core::fmt::Debug for MemoryLayout {
             .field("stack_end", &format_args!("{:#X}", self.stack_end))
             .field("heap_size", &format_args!("{:#X}", self.heap_size))
             .field("heap_end", &format_args!("{:#X}", self.heap_end))
-            .field("panic", &format_args!("{:#X}", self.panic))
-            .field("termination", &format_args!("{:#X}", self.termination))
             .field("io_end", &format_args!("{:#X}", self.io_end))
             .finish()
     }
@@ -503,13 +484,13 @@ impl MemoryLayout {
             });
         }
 
-        // Adds 16 to account for panic bit and termination bit
-        // (they each occupy one full 8-byte word)
+        // One unmapped guard word after the outputs keeps `io_end` below
+        // `RAM_START_ADDRESS` for every layout.
         let io_region_bytes = max_input_size
             .checked_add(max_trusted_advice_size)
             .and_then(|s| s.checked_add(max_untrusted_advice_size))
             .and_then(|s| s.checked_add(max_output_size))
-            .and_then(|s| s.checked_add(16))
+            .and_then(|s| s.checked_add(8))
             .ok_or(MemoryLayoutError::SizeOverflow { region: "I/O" })?;
 
         // Padded so that the witness index corresponding to `input_start`
@@ -574,15 +555,7 @@ impl MemoryLayout {
         let output_end = output_start
             .checked_add(max_output_size)
             .ok_or(MemoryLayoutError::SizeOverflow { region: "output" })?;
-        let panic = output_end;
-        let termination = panic
-            .checked_add(8)
-            .ok_or(MemoryLayoutError::SizeOverflow {
-                region: "termination",
-            })?;
-        let io_end = termination
-            .checked_add(8)
-            .ok_or(MemoryLayoutError::SizeOverflow { region: "I/O" })?;
+        let io_end = output_end;
 
         // stack grows downwards (decreasing addresses) from the top of the stack down to stack_end
         let stack_end = RAM_START_ADDRESS
@@ -620,8 +593,6 @@ impl MemoryLayout {
             stack_end,
             heap_size,
             heap_end,
-            panic,
-            termination,
             io_end,
         };
         let _ = layout.max_ram_k()?;
@@ -828,8 +799,7 @@ mod tests {
             ..Default::default()
         };
         let mut device = JoltDevice::new(&memory_config);
-        // Use io_end which bypasses panic/termination early returns
-        // but still lands past the output region in convert_write_address
+        // `io_end` is `output_end`, the first byte past the outputs.
         let overflow_address = device.memory_layout.io_end;
         device.store(overflow_address, 0x42);
     }
@@ -921,10 +891,61 @@ mod tests {
         assert_eq!(layout.input_end, layout.input_start + 4096);
         assert_eq!(layout.output_start, layout.input_end);
         assert_eq!(layout.output_end, layout.output_start + 4096);
-        assert_eq!(layout.panic, layout.output_end);
-        assert_eq!(layout.termination, layout.panic + 8);
-        assert_eq!(layout.io_end, layout.termination + 8);
+        assert_eq!(layout.io_end, layout.output_end);
+        assert!(layout.io_end + 8 <= RAM_START_ADDRESS);
         assert_eq!(layout.get_lowest_address(), region_start);
+    }
+
+    /// The padded I/O region always reserves the doubleword at `io_end`, so an
+    /// unmapped guard word follows the outputs, including when the I/O words
+    /// fill one doubleword short of a power of two.
+    #[test]
+    fn layouts_keep_an_unmapped_guard_word() {
+        let config = |advice: u64, input: u64, output: u64| MemoryConfig {
+            program_size: Some(1024),
+            max_trusted_advice_size: advice,
+            max_untrusted_advice_size: advice,
+            max_input_size: input,
+            max_output_size: output,
+            ..Default::default()
+        };
+        for (config, lowest, io_end) in [
+            (MemoryConfig::default(), 0x7FFF_8000, 0x7FFF_C000),
+            (config(0, 4096, 4096), 0x7FFF_C000, 0x7FFF_E000),
+            // Four I/O words, a power of two.
+            (
+                config(0, 16, 16),
+                RAM_START_ADDRESS - 64,
+                RAM_START_ADDRESS - 32,
+            ),
+            // Three I/O words, with and without outputs: the guard word is
+            // the region's last word.
+            (
+                config(0, 16, 8),
+                RAM_START_ADDRESS - 32,
+                RAM_START_ADDRESS - 8,
+            ),
+            (
+                config(0, 24, 0),
+                RAM_START_ADDRESS - 32,
+                RAM_START_ADDRESS - 8,
+            ),
+            // Five I/O words.
+            (
+                config(0, 24, 16),
+                RAM_START_ADDRESS - 64,
+                RAM_START_ADDRESS - 24,
+            ),
+        ] {
+            let layout = MemoryLayout::new(&MemoryConfig {
+                program_size: Some(1024),
+                ..config
+            });
+            assert_eq!(layout.get_lowest_address(), lowest, "{config:?}");
+            assert_eq!(layout.io_end, io_end, "{config:?}");
+            assert_eq!(layout.io_end, layout.output_end, "{config:?}");
+            assert!(layout.io_end + 8 <= RAM_START_ADDRESS, "{config:?}");
+        }
     }
 
     #[test]

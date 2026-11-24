@@ -2,11 +2,13 @@
 //!
 //! Table cases check native expected output and the halt that ends the run,
 //! prove with the optimized backend, and verify through the public verifier
-//! API. Field-inline builds select the active field-ops and field-limbs cases
+//! API, which must also reject each proof under the opposite panic claim.
+//! Field-inline builds select the active field-ops and field-limbs cases
 //! and the inactive muldiv case; ordinary builds select the general guest
 //! table. Both tables also prove `exact_domain`, a run that fills its padded
 //! domain with no padding row, and `panic_halt`, a guest panic proved with
-//! `panic = true`. Akita builds also prove `fibonacci_ring_512` and assert the
+//! `panic = true`. The general table also proves `exit_zero` and `exit_one`:
+//! every exit code halts at `ebreak`, so both prove with `panic = true`. Akita builds also prove `fibonacci_ring_512` and assert the
 //! ring dimension of its trace commitment. Specialized suites retain tampering,
 //! reference-backend parity, committed programs, and other mode-specific checks.
 
@@ -43,9 +45,30 @@ mod matrix {
     #[cfg(feature = "field-inline")]
     use jolt_host::field_inline::canonical_limbs;
 
+    use common::jolt_device::JoltDevice;
     use jolt_kernels::optimized::StreamingFamilies;
 
     use crate::support::GuestCase;
+
+    /// Checks that `verify` rejects the proof under the opposite panic claim.
+    /// The claim is part of the statement, so the flip diverges the transcript
+    /// before stage 1: this pins statement binding, not lane 3, which
+    /// `engine_twins.rs` `halting::lane_three_binds_the_claimed_panic_bit`
+    /// isolates in the base build.
+    fn assert_rejects_the_opposite_panic_claim<E>(
+        public_io: &JoltDevice,
+        verify: impl FnOnce(&JoltDevice) -> Result<(), E>,
+    ) {
+        let flipped = JoltDevice {
+            panic: !public_io.panic,
+            ..public_io.clone()
+        };
+        assert!(
+            verify(&flipped).is_err(),
+            "the proof also verifies with panic = {}",
+            flipped.panic
+        );
+    }
 
     #[cfg(not(feature = "field-inline"))]
     fn encode<T: Serialize>(value: &T) -> Vec<u8> {
@@ -205,6 +228,20 @@ mod matrix {
         }
     }
 
+    /// The memory-ops guest's `exit_halt` entry: `jolt::runtime::exit(code)`
+    /// ends the run at `ebreak` for every code, so even `exit(0)` proves with
+    /// `panic = true` and no output.
+    #[cfg(not(feature = "field-inline"))]
+    fn exit_halt(code: i32) -> GuestCase {
+        GuestCase {
+            func: Some("exit_halt"),
+            inputs: postcard::to_stdvec(&code).expect("serialize the exit code"),
+            expected_output: Some(Vec::new()),
+            panics: true,
+            ..GuestCase::new("memory-ops-guest")
+        }
+    }
+
     /// The fibonacci guest's `fib(n)`, with the wrapping `u128` additions of
     /// its release build.
     #[cfg(feature = "akita")]
@@ -242,6 +279,8 @@ mod matrix {
                 };
                 exact_domain => super::exact_domain();
                 panic_halt => super::panic_halt();
+                exit_zero => super::exit_halt(0);
+                exit_one => super::exit_halt(1);
                 fibonacci => GuestCase {
                     inputs: encode(&100u32),
                     expected_output: Some(encode(&354_224_848_179_261_915_075u128)),
@@ -477,6 +516,7 @@ mod matrix {
     #[cfg(all(not(feature = "akita"), not(feature = "field-inline")))]
     mod mode {
         use super::StreamingFamilies;
+        use common::jolt_device::JoltDevice;
         use jolt_crypto::{Bn254G1, Pedersen};
         use jolt_dory::DoryScheme;
         use jolt_field::Fr;
@@ -555,13 +595,16 @@ mod matrix {
                 &public_io,
             )
             .expect("Dory proof");
-            jolt_verifier::verify::<Fr, DoryScheme, Pedersen<Bn254G1>, VerifierState<'_, Keccak>>(
-                &preprocessing.verifier,
-                &public_io,
-                &proof,
-                trusted.as_ref().map(|advice| &advice.commitment),
-            )
-            .expect("Dory proof must verify");
+            let verify = |public_io: &JoltDevice| {
+                jolt_verifier::verify::<Fr, DoryScheme, Pedersen<Bn254G1>, VerifierState<'_, Keccak>>(
+                    &preprocessing.verifier,
+                    public_io,
+                    &proof,
+                    trusted.as_ref().map(|advice| &advice.commitment),
+                )
+            };
+            verify(&public_io).expect("Dory proof must verify");
+            super::assert_rejects_the_opposite_panic_claim(&public_io, verify);
             postcard::to_stdvec(&proof).expect("encode proof")
         }
     }
@@ -569,6 +612,7 @@ mod matrix {
     #[cfg(all(feature = "akita", not(feature = "field-inline")))]
     mod mode {
         use super::StreamingFamilies;
+        use common::jolt_device::JoltDevice;
         use jolt_akita::{AkitaChunkProfile, AkitaField, AkitaScheduleArtifacts, AkitaScheme};
         use jolt_prover::akita;
         use jolt_prover::akita::preprocessing::{self, AkitaVc};
@@ -664,13 +708,16 @@ mod matrix {
                 &public_io,
             )
             .expect("Akita proof");
-            jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, VerifierState<'_, Keccak>>(
-                &preprocessing.verifier,
-                &public_io,
-                &proof,
-                trusted.as_ref().map(|object| &object.commitment),
-            )
-            .expect("Akita proof must verify");
+            let verify = |public_io: &JoltDevice| {
+                jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, VerifierState<'_, Keccak>>(
+                    &preprocessing.verifier,
+                    public_io,
+                    &proof,
+                    trusted.as_ref().map(|object| &object.commitment),
+                )
+            };
+            verify(&public_io).expect("Akita proof must verify");
+            super::assert_rejects_the_opposite_panic_claim(&public_io, verify);
             if families != StreamingFamilies::default() {
                 preprocessing.pcs_setup = eager_setup;
                 let eager = akita::prove::<AkitaField, AkitaScheme, AkitaVc, ProverState<Keccak>>(
@@ -725,6 +772,9 @@ mod matrix {
                     dory::prove(case, JoltBackend::optimized().with_streaming(families));
                 dory::verify_full(&preprocessing, &public_io, &proof)
                     .expect("field-inline Dory proof must verify");
+                super::assert_rejects_the_opposite_panic_claim(&public_io, |public_io| {
+                    dory::verify_full(&preprocessing, public_io, &proof)
+                });
                 #[cfg(not(feature = "zk"))]
                 if families != StreamingFamilies::default() {
                     let (_, _, eager) = dory::prove(case, JoltBackend::optimized());
@@ -756,6 +806,9 @@ mod matrix {
                 &output.proof,
             )
             .expect("field-inline Akita proof must verify");
+            super::assert_rejects_the_opposite_panic_claim(&output.public_io, |public_io| {
+                akita::verify_full(&output.verifier_preprocessing, public_io, &output.proof)
+            });
             if families != StreamingFamilies::default() {
                 let (eager, ()) = akita::prove(case, JoltBackend::optimized(), |_, _, _| ());
                 assert_eq!(

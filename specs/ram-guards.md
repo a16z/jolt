@@ -39,7 +39,7 @@ The changes are:
 
 - Allowing LR/SC on the I/O window. The RAM-only guards stay.
 - Constraining the rest of the tracers' memory-map policy. The constraints check protected words, address selection and unmapped words only.
-- Constraining how a run ends. The constraints accept a trace whose last real row is any jump.
+- How a run ends: [`halt-end-rule.md`](./halt-end-rule.md) specifies the end rule.
 - Proving these properties in Lean. The jolt-qed project will re-prove its theorems against the new constraints separately.
 
 ## Evaluation
@@ -55,7 +55,7 @@ The changes are:
 - [ ] Same-value stores into the code region are accepted.
 - [ ] A memory row whose `ra` is all zero is rejected by the verifier; a non-memory row with zero `ra` is accepted; a load of the lowest mapped word is accepted.
 - [ ] A memory row that selects two words is rejected by the verifier, and so is a non-memory row that selects a word.
-- [ ] Verifier witnesses that load or store at `io_end`, at `heap_end`, or at the last word of the domain are rejected; an honest guest that uses its whole heap, including a partial final word, proves.
+- [ ] Verifier witnesses that load or store at `io_end` (the guard word after the outputs), at `heap_end`, or at the last word of the domain are rejected; an honest guest that uses its whole heap, including a partial final word, proves.
 - [ ] Stage 6b has no RAM Hamming-booleanity member, and the stage-7 reduction has no RAM Hamming-weight leg in base or Akita mode.
 - [ ] The retired identifier slots fail to decode, and the live identifiers after them keep their bincode tags.
 - [ ] The e2e matrix passes in clear, ZK and Akita modes for both the ordinary and the field-inline instruction profile.

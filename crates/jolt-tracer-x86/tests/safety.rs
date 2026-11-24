@@ -286,18 +286,14 @@ fn loads_reject_the_padding_between_io_end_and_ram() {
         ..memory_config()
     };
     let layout = JoltDevice::new(&config).memory_layout;
-    assert_eq!(layout.io_end, RAM_START_ADDRESS - 24);
+    assert_eq!(layout.io_end, RAM_START_ADDRESS - 8);
     for kind in [
         Kind::LD,
         Kind::VirtualLoadB,
         Kind::VirtualLoadH,
         Kind::VirtualLoadW,
     ] {
-        for (address, accepted) in [
-            (layout.io_end - 8, true),
-            (layout.io_end, false),
-            (layout.io_end + 8, false),
-        ] {
+        for (address, accepted) in [(layout.io_end - 8, true), (layout.io_end, false)] {
             let mut load = row(
                 kind,
                 Some(1),
@@ -460,23 +456,13 @@ fn layout_region_stores_accept_the_old_value_and_reject_changes() {
 }
 
 fn heap_word_program(config: &MemoryConfig, offset: u64, value: u64) -> JoltProgram {
-    let layout = JoltDevice::new(config).memory_layout;
     let mut store = row(Kind::SD, Some(1), None, offset.into());
     store.operands.rs2 = Some(3);
-    let mut terminate = row(
-        Kind::SD,
-        Some(1),
-        None,
-        i128::from(layout.termination) - i128::from(RAM_START_ADDRESS),
-    );
-    terminate.operands.rs2 = Some(4);
     let mut rows = vec![
         row(Kind::AUIPC, None, Some(1), 0),
         row(Kind::ADDI, Some(0), Some(3), value.into()),
         store,
         row(Kind::LD, Some(1), Some(2), offset.into()),
-        row(Kind::ADDI, Some(0), Some(4), 1),
-        terminate,
     ];
     for (i, row) in rows.iter_mut().enumerate() {
         row.address = RAM_START_ADDRESS as usize + 4 * i;

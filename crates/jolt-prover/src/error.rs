@@ -78,14 +78,13 @@ pub enum ProverError<F: JoltField> {
     #[error("the reservation exceeds usize::MAX bytes, so the memory budget of {budget} bytes cannot cover it")]
     MemoryReservationOverflow { budget: usize },
 
-    /// The trace's last row is not a jump. The last row's successor is a
-    /// padding no-op, or is absent when the trace fills its domain; the shift
-    /// boundary treats an absent successor as a no-op. Only a jump's next-PC
-    /// constraint is waived for a no-op successor, so any other final row (a
-    /// taken self-branch, or the row before a trap that emitted none) makes
-    /// the honest witness fail R1CS.
-    #[error("trace does not end in a jump; tracers end every run at a halt row (jolt.success or ebreak), which carries the jump flag")]
-    TraceDoesNotEndInJump,
+    /// The trace is empty or its last row is not a halt (`jolt.success` or
+    /// EBREAK). The last row's successor is a padding no-op, or is absent when
+    /// the trace fills its domain (the shift boundary treats it as a no-op),
+    /// and only a halt may precede padding: the R1CS rejects any other final
+    /// row, so the honest witness would fail.
+    #[error("trace is empty or does not end at a halt (jolt.success or ebreak)")]
+    TraceDoesNotEndInHalt,
 
     /// A cross-stage carry or kernel contract the prover itself must uphold
     /// was violated — a prover bug, never a capability gap, so never worth

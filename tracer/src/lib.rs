@@ -148,7 +148,6 @@ pub fn trace(
 /// instruction; a run that stopped anywhere else returns
 /// [`TraceError::EndedWithoutHalt`]. Reports a panic halt (log + backtrace),
 /// then extracts the advice tape, final memory, and device.
-#[expect(clippy::expect_used)]
 pub(crate) fn finish_emulator(
     mut emulator: Emulator,
 ) -> Result<(AdviceTape, Memory, JoltDevice), TraceError> {
@@ -161,13 +160,8 @@ pub(crate) fn finish_emulator(
     }
 
     let advice_tape = emulator.take_advice_tape();
-    let cpu = emulator.get_mut_cpu();
-    let final_memory = cpu.mmu.memory.memory.take_memory();
-    let jolt_device = cpu
-        .get_mut_mmu()
-        .jolt_device
-        .take()
-        .expect("JoltDevice was not initialized");
+    let jolt_device = emulator.take_jolt_device();
+    let final_memory = emulator.get_mut_cpu().mmu.memory.memory.take_memory();
     Ok((advice_tape, final_memory, jolt_device))
 }
 
@@ -532,12 +526,7 @@ impl LazyTracer for Checkpoint {
     }
 
     fn get_jolt_device(mut self) -> JoltDevice {
-        self.emulator_state
-            .get_mut_cpu()
-            .get_mut_mmu()
-            .jolt_device
-            .take()
-            .unwrap()
+        self.emulator_state.take_jolt_device()
     }
 }
 
@@ -680,12 +669,7 @@ impl LazyTracer for CheckpointingTracer {
     }
 
     fn get_jolt_device(mut self) -> JoltDevice {
-        self.emulator_state
-            .get_mut_cpu()
-            .get_mut_mmu()
-            .jolt_device
-            .take()
-            .expect("JoltDevice was not initialized")
+        self.emulator_state.take_jolt_device()
     }
 }
 

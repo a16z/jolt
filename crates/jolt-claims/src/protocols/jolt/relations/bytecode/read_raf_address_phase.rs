@@ -70,6 +70,10 @@ pub struct BytecodeReadRafAddressPhaseInputClaims<C> {
     pub outer_is_first_in_sequence: C,
     #[opening(OpFlags(CircuitFlags::IsLastInSequence), from = SpartanOuter)]
     pub outer_is_last_in_sequence: C,
+    #[opening(OpFlags(CircuitFlags::Halt), from = SpartanOuter)]
+    pub outer_halt: C,
+    #[opening(OpFlags(CircuitFlags::HaltPanic), from = SpartanOuter)]
+    pub outer_halt_panic: C,
     #[cfg(feature = "field-inline")]
     #[opening(OpFlags(CircuitFlags::FieldAdd), from = SpartanOuter)]
     pub outer_field_add: C,
@@ -102,8 +106,8 @@ pub struct BytecodeReadRafAddressPhaseInputClaims<C> {
     pub outer_field_advice_limb: C,
     #[opening(PC, from = SpartanOuter)]
     pub outer_pc: C,
-    #[opening(OpFlags(CircuitFlags::Jump), from = SpartanProductVirtualization)]
-    pub product_jump: C,
+    #[opening(InstructionFlags(InstructionFlags::IsNoop), from = SpartanProductVirtualization)]
+    pub product_is_noop: C,
     #[opening(InstructionFlags(InstructionFlags::Branch), from = SpartanProductVirtualization)]
     pub product_branch: C,
     #[opening(OpFlags(CircuitFlags::WriteLookupOutputToRD), from = SpartanProductVirtualization)]

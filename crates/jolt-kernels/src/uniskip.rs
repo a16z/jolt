@@ -19,15 +19,23 @@ use jolt_poly::UnivariatePoly;
 use jolt_verifier::stages::relations::{
     ConcreteSumcheck, ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckOutputClaims,
 };
+use jolt_verifier::stages::stage2::product_uniskip::ProductUniskip;
 use jolt_witness::JoltWitnessPlane;
 
 use crate::{KernelError, ProofSession};
 
+/// What a product uni-skip front may reuse at its base nodes: the selected
+/// stage-1 product-lane openings and the claimed panic bit lane 3's input claim
+/// reads (`SpartanProductVirtualizationPublic::ClaimedPanic`).
+pub struct ProductUniskipUpstream<F: JoltField> {
+    pub openings: SumcheckInputClaims<F, ProductUniskip<F>>,
+    pub claimed_panic: bool,
+}
+
 /// The uni-skip front slot of a stage. `R` is never named by the methods —
 /// it types the slot to the remainder relation the parked state becomes.
-/// `I` carries the upstream claims needed for interpolation: `()` for outer,
-/// and the selected stage-1 product claims for product virtualization (including
-/// the two field-register products under `field-inline`).
+/// `I` carries the upstream values needed for interpolation: `()` for outer,
+/// and [`ProductUniskipUpstream`] for product virtualization.
 pub trait UniskipKernel<F, R, I = ()>
 where
     F: JoltField,

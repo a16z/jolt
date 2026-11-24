@@ -237,6 +237,8 @@ pub enum SpartanProductVirtualizationPublic {
     UniskipLagrangeWeight(usize),
     LagrangeWeight(usize),
     TauKernel,
+    /// The statement's panic bit, read by product lane 3's input claim.
+    ClaimedPanic,
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
@@ -376,7 +378,8 @@ pub enum JoltVirtualPolynomial {
     LeftInstructionInput,
     RightInstructionInput,
     Product,
-    ShouldJump,
+    // Reserved codec slot; uninhabited and rejected during deserialization.
+    Reserved12(RetiredIdentifier),
     ShouldBranch,
     Rd,
     Imm,
@@ -584,6 +587,22 @@ mod tests {
             bincode::serde::decode_from_slice::<JoltVirtualPolynomial, _>(&[34, 0], config)
                 .is_err()
         );
+        for (id, tag) in [
+            (JoltVirtualPolynomial::ShouldBranch, vec![13]),
+            (JoltVirtualPolynomial::Rd, vec![14]),
+        ] {
+            assert_eq!(bincode::serde::encode_to_vec(id, config).unwrap(), tag);
+        }
+        assert!(
+            bincode::serde::decode_from_slice::<JoltVirtualPolynomial, _>(&[12, 0], config)
+                .is_err()
+        );
+        for (id, tag) in [
+            (SpartanProductVirtualizationPublic::TauKernel, vec![2]),
+            (SpartanProductVirtualizationPublic::ClaimedPanic, vec![3]),
+        ] {
+            assert_eq!(bincode::serde::encode_to_vec(id, config).unwrap(), tag);
+        }
         assert_eq!(
             bincode::serde::encode_to_vec(
                 JoltDerivedId::Booleanity(BooleanityPublic::EqAddressCycle),

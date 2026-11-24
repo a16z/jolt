@@ -137,7 +137,33 @@ mod tests {
     fn fixture() -> Fixture {
         let mut case = GuestCase::new("muldiv-guest");
         case.inputs = postcard::to_stdvec(&[9u32, 5, 3]).expect("guest inputs");
-        let run = support::prepare(&case);
+        prepared_fixture(&case, |program| {
+            dory::from_shared(JoltSharedPreprocessing::new(program).expect("shared preprocessing"))
+                .expect("preprocessing")
+        })
+    }
+
+    /// The memory-ops guest's `panic_halt` entry asked to panic, under
+    /// committed preprocessing: its run ends at `ebreak`.
+    fn committed_panic_fixture() -> Fixture {
+        let case = GuestCase {
+            func: Some("panic_halt"),
+            inputs: postcard::to_stdvec(&true).expect("guest inputs"),
+            panics: true,
+            ..GuestCase::new("memory-ops-guest")
+        };
+        prepared_fixture(&case, |program| {
+            dory::preprocess_committed(program).expect("committed preprocessing")
+        })
+    }
+
+    fn prepared_fixture(
+        case: &GuestCase,
+        preprocess: impl FnOnce(
+            JoltProgramPreprocessing,
+        ) -> JoltProverPreprocessing<DoryScheme, Pedersen<Bn254G1>>,
+    ) -> Fixture {
+        let run = support::prepare(case);
         let config = ProverConfig::derive_from_dimensions::<Fr>(
             run.trace.dimensions,
             &run.preprocessing.memory_layout,
@@ -146,10 +172,7 @@ mod tests {
             run.preprocessing.max_padded_trace_length,
         )
         .expect("derive config");
-        let preprocessing = dory::from_shared(
-            JoltSharedPreprocessing::new(run.preprocessing).expect("shared preprocessing"),
-        )
-        .expect("preprocessing");
+        let preprocessing = preprocess(run.preprocessing);
         let public_io = run.trace.device.clone();
         let program = preprocessing.program_arc().expect("program preprocessing");
         let witness = TraceBackend::new(
@@ -267,12 +290,26 @@ mod tests {
     /// - Stage 8's joint opening collects no columns.
     #[test]
     fn streaming_kernels_reproduce_the_default_proof() {
+        assert_streaming_reproduces_the_default_proof(fixture());
+    }
+
+    /// `streaming_kernels_reproduce_the_default_proof` for a committed
+    /// program whose run ends at `ebreak`, so the proof claims
+    /// `panic = true`. Stage 8 opens the precommitted bytecode and
+    /// program-image tables beside the trace views, and the bytecode table's
+    /// `Halt` and `HaltPanic` lanes hold that `ebreak`'s flags.
+    #[test]
+    fn streaming_kernels_reproduce_the_default_committed_proof() {
+        assert_streaming_reproduces_the_default_proof(committed_panic_fixture());
+    }
+
+    fn assert_streaming_reproduces_the_default_proof(fixture: Fixture) {
         let Fixture {
             config,
             preprocessing,
             public_io,
             witness,
-        } = fixture();
+        } = fixture;
         let rows = witness.random_access().expect("resident rows");
         assert!(
             rows.physical_cycles() < rows.cycles(),
