@@ -6,8 +6,9 @@
 use std::{
     env, fs,
     io::{self, Cursor, Read},
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{Arc, Mutex, MutexGuard},
+    time::Duration,
 };
 
 #[cfg(unix)]
@@ -34,6 +35,7 @@ static VERIFIER_FIXTURE_LOCK: Mutex<()> = Mutex::new(());
 const FIXTURE_MAGIC: &[u8; 8] = b"JVCF0021";
 const REGENERATE_ARTIFACTS_ENV: &str = "JOLT_VERIFIER_REGENERATE_VERIFIER_FIXTURES";
 const VERIFIER_FIXTURE_LOCK_FILE: &str = "jolt-verifier-fixtures.lock";
+const FINISHED_RUN_AGE: Duration = Duration::from_hours(24);
 
 #[cfg(unix)]
 const LOCK_EX: c_int = 2;
@@ -413,10 +415,50 @@ fn load_or_generate_fixture(
         }
     }
 
-    let fixture = generate();
     if regenerate || cfg!(feature = "zk") {
+        let fixture = generate();
         write_fixture_file(&path, &fixture);
+        return fixture;
     }
+    generate_once_per_run(kind, generate)
+}
+
+/// Shares one generated fixture between the test processes of a nextest run,
+/// which executes every test in its own process. The first process to need a
+/// fixture stores it under the run's ID and the run's later processes load it.
+/// A later run never reads it: that run may be built from different prover
+/// code, and a proof kept across runs would keep these suites passing after
+/// that code breaks. Callers hold `verifier_fixture_lock`, so one process
+/// generates while the others wait and then load.
+fn generate_once_per_run(
+    kind: VerifierFixtureKind,
+    generate: impl FnOnce() -> GeneratedVerifierFixture,
+) -> GeneratedVerifierFixture {
+    let Some(run_id) = env::var_os("NEXTEST_RUN_ID") else {
+        return generate();
+    };
+    let runs = Path::new(env!("CARGO_TARGET_TMPDIR")).join("jolt-verifier-fixtures");
+    let run = runs.join(run_id);
+    let path = run.join(format!("{}.jvcf", kind.fixture_name()));
+    if path.exists() {
+        if let Some(fixture) = read_fixture_file(&path) {
+            return fixture;
+        }
+    }
+
+    let fixture = generate();
+    if !run.exists() {
+        // Nothing else deletes the directories of finished runs. A run lasts
+        // minutes, so a directory untouched for `FINISHED_RUN_AGE` belongs to
+        // no run that is still going.
+        for other in fs::read_dir(&runs).into_iter().flatten().flatten() {
+            let modified = other.metadata().and_then(|metadata| metadata.modified());
+            if modified.is_ok_and(|at| at.elapsed().is_ok_and(|age| age > FINISHED_RUN_AGE)) {
+                let _ = fs::remove_dir_all(other.path());
+            }
+        }
+    }
+    write_fixture_file(&path, &fixture);
     fixture
 }
 
