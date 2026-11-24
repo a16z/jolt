@@ -17,7 +17,7 @@ import Jolt.Sumchecks
 def jolt_step [ZKField f]
   (claimed_panic : Bool)
   (inputs: SumcheckVars f)
-  (mem_reg mem_ram mem_elfaddress mem_bitflags mem_rs1 mem_rs2 mem_rd mem_imm: RAM f)
+  (mem_reg mem_ram mem_elfaddress mem_bitflags mem_rs1 mem_rs2 mem_rd mem_imm mem_write_protected: RAM f)
   : ZKBuilder f PUnit :=
   do
   uniform_claims inputs
@@ -25,7 +25,7 @@ def jolt_step [ZKField f]
 
   lookup_step inputs
 
-  memory_step inputs mem_reg mem_ram mem_elfaddress mem_bitflags mem_rs1 mem_rs2 mem_rd mem_imm
+  memory_step inputs mem_reg mem_ram mem_elfaddress mem_bitflags mem_rs1 mem_rs2 mem_rd mem_imm mem_write_protected
 
 /--
   Build constraints for a new Jolt step and constrain them with the previous step's state.
@@ -34,8 +34,8 @@ def jolt_next_step [ZKField f]
   (claimed_panic : Bool)
   (cycle_inputs: SumcheckVars f)
   (next_cycle_inputs: SumcheckVars f)
-  (mem_reg mem_ram mem_elfaddress mem_bitflags mem_rs1 mem_rs2 mem_rd mem_imm: RAM f)
+  (mem_reg mem_ram mem_elfaddress mem_bitflags mem_rs1 mem_rs2 mem_rd mem_imm mem_write_protected: RAM f)
   : ZKBuilder f PUnit :=
   do
-  jolt_step claimed_panic cycle_inputs mem_reg mem_ram mem_elfaddress mem_bitflags mem_rs1 mem_rs2 mem_rd mem_imm
+  jolt_step claimed_panic cycle_inputs mem_reg mem_ram mem_elfaddress mem_bitflags mem_rs1 mem_rs2 mem_rd mem_imm mem_write_protected
   non_uniform_claims cycle_inputs next_cycle_inputs

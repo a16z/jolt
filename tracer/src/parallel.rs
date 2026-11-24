@@ -10,6 +10,7 @@
 
 use crate::emulator::cpu::{ChunkCpuState, Cpu, HostIo};
 use crate::emulator::decode_cache::DecodeCache;
+use crate::emulator::io_gap::IoGapMemory;
 use crate::emulator::memory::Memory;
 use crate::emulator::mmu::{ChunkMmuState, CodeGuard};
 use crate::emulator::terminal::DummyTerminal;
@@ -27,6 +28,8 @@ pub struct ChunkCheckpoint {
     /// JoltDevice outputs at the boundary: the guest can read outputs back,
     /// so they are live per-chunk state (inputs/advice regions are static).
     outputs: Vec<u8>,
+    /// The I/O gap at the boundary, which lives outside the memory image.
+    io_gap: IoGapMemory,
 }
 
 impl ChunkCheckpoint {
@@ -46,6 +49,7 @@ impl ChunkCheckpoint {
             cpu: cpu.capture_chunk_state(),
             mmu: cpu.mmu.capture_chunk_state(),
             outputs: device.outputs.clone(),
+            io_gap: cpu.mmu.io_gap.clone(),
         }
     }
 
@@ -67,6 +71,9 @@ impl ChunkCheckpoint {
                 }
             }
             None => return Some("jolt_device: absent on cpu".to_string()),
+        }
+        if self.io_gap != cpu.mmu.io_gap {
+            return Some("io_gap: contents differ".to_string());
         }
         None
     }
@@ -165,7 +172,7 @@ impl ChunkWorker {
 
     /// Install a chunk: seed CPU+MMU state, adopt `image` as the working
     /// memory (returns the previous buffer for the pool), patch device
-    /// outputs, and reset the decode cache.
+    /// outputs and the I/O gap, and reset the decode cache.
     #[expect(clippy::expect_used)]
     pub fn install_chunk(&mut self, checkpoint: &ChunkCheckpoint, image: Vec<u64>) -> Vec<u64> {
         self.cpu.install_chunk_state(&checkpoint.cpu);
@@ -178,6 +185,7 @@ impl ChunkWorker {
             .as_mut()
             .expect("worker device installed at construction");
         device.outputs.clone_from(&checkpoint.outputs);
+        self.cpu.mmu.io_gap.clone_from(&checkpoint.io_gap);
         self.cpu.mmu.decode_cache = self.decode_template.clone();
         previous
     }

@@ -778,8 +778,8 @@ impl MacroBuilder {
         let untrusted_advice_start = memory_layout.untrusted_advice_start;
         let trusted_advice_start = memory_layout.trusted_advice_start;
         // The layout rounds each size up to a multiple of eight. The rounded size
-        // is the effective maximum: the tracer admits and the verifier's region
-        // covers exactly that many bytes, so the guest reads and writes all of it.
+        // is the effective maximum: the verifier's region covers exactly that
+        // many bytes, so the guest reads and writes all of it.
         let max_input_len = memory_layout.max_input_size as usize;
         let max_output_len = memory_layout.max_output_size as usize;
         let max_untrusted_advice_len = memory_layout.max_untrusted_advice_size as usize;

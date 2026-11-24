@@ -6,10 +6,13 @@
 //! Field-inline builds select the active field-ops and field-limbs cases
 //! and the inactive muldiv case; ordinary builds select the general guest
 //! table. Both tables also prove `exact_domain`, a run that fills its padded
-//! domain with no padding row, and `panic_halt`, a guest panic proved with
-//! `panic = true`. The general table also proves `exit_zero` and `exit_one`:
-//! every exit code halts at `ebreak`, so both prove with `panic = true`. Akita builds also prove `fibonacci_ring_512` and assert the
-//! ring dimension of its trace commitment. Specialized suites retain tampering,
+//! domain with no padding row, `panic_halt`, a guest panic proved with
+//! `panic = true`, and `ram_padding`, loads and stores in the I/O gap and the
+//! heap padding. The general table also proves `exit_zero` and `exit_one`
+//! (every exit code halts at `ebreak`, so both prove with `panic = true`) and
+//! `protected_rewrite`, same-value stores to write-protected words. Akita
+//! builds also prove `fibonacci_ring_512` and assert the ring dimension of its
+//! trace commitment. Specialized suites retain tampering,
 //! reference-backend parity, committed programs, and other mode-specific checks.
 
 #[cfg(feature = "prover-fixtures")]
@@ -45,7 +48,8 @@ mod matrix {
     #[cfg(feature = "field-inline")]
     use jolt_host::field_inline::canonical_limbs;
 
-    use common::jolt_device::JoltDevice;
+    use common::constants::RAM_START_ADDRESS;
+    use common::jolt_device::{JoltDevice, MemoryConfig, MemoryLayout};
     use jolt_kernels::optimized::StreamingFamilies;
 
     use crate::support::GuestCase;
@@ -228,6 +232,34 @@ mod matrix {
         }
     }
 
+    /// The memory-ops guest's `ram_padding` entry at the first I/O-gap word,
+    /// the first heap-padding word and the last word of the admitted RAM
+    /// domain of the layout the harness builds the guest with.
+    fn ram_padding() -> GuestCase {
+        let probe = GuestCase {
+            func: Some("ram_padding"),
+            ..GuestCase::new("memory-ops-guest")
+        };
+        let (_, _, program_size, _) = crate::support::program(&probe).decode();
+        let layout = MemoryLayout::try_new(&MemoryConfig {
+            program_size: Some(program_size),
+            ..MemoryConfig::default()
+        })
+        .expect("the guest's memory layout");
+        let ram_end = RAM_START_ADDRESS + layout.ram_size().expect("the admitted RAM domain");
+        assert!(layout.io_end < RAM_START_ADDRESS && layout.heap_end < ram_end);
+        let addresses = [layout.io_end, layout.heap_end, ram_end - 8];
+        let loads: [[u64; 3]; 3] = std::array::from_fn(|i| {
+            let stored = 0x0123_4567_89ab_cdef ^ i as u64;
+            [0, stored, (stored & 0x00ff_ffff_ffff_ffff) | (0xa5 << 56)]
+        });
+        GuestCase {
+            inputs: postcard::to_stdvec(&addresses).expect("serialize the addresses"),
+            expected_output: Some(postcard::to_stdvec(&loads).expect("serialize the loads")),
+            ..probe
+        }
+    }
+
     /// The memory-ops guest's `exit_halt` entry: `jolt::runtime::exit(code)`
     /// ends the run at `ebreak` for every code, so even `exit(0)` proves with
     /// `panic = true` and no output.
@@ -239,6 +271,30 @@ mod matrix {
             expected_output: Some(Vec::new()),
             panics: true,
             ..GuestCase::new("memory-ops-guest")
+        }
+    }
+
+    /// The memory-ops guest's `protected_rewrite` entry: it stores the value
+    /// already held by the first input word, the first stack-canary word and
+    /// a code word back to each, which write protection admits because no
+    /// protected word changes.
+    #[cfg(not(feature = "field-inline"))]
+    fn protected_rewrite() -> GuestCase {
+        let probe = GuestCase {
+            func: Some("protected_rewrite"),
+            ..GuestCase::new("memory-ops-guest")
+        };
+        let (_, _, program_size, _) = crate::support::program(&probe).decode();
+        let layout = MemoryLayout::try_new(&MemoryConfig {
+            program_size: Some(program_size),
+            ..MemoryConfig::default()
+        })
+        .expect("the guest's memory layout");
+        GuestCase {
+            inputs: postcard::to_stdvec(&[layout.input_start, layout.stack_end])
+                .expect("serialize the addresses"),
+            expected_output: Some(encode(&3u8)),
+            ..probe
         }
     }
 
@@ -281,6 +337,7 @@ mod matrix {
                 panic_halt => super::panic_halt();
                 exit_zero => super::exit_halt(0);
                 exit_one => super::exit_halt(1);
+                protected_rewrite => super::protected_rewrite();
                 fibonacci => GuestCase {
                     inputs: encode(&100u32),
                     expected_output: Some(encode(&354_224_848_179_261_915_075u128)),
@@ -291,12 +348,7 @@ mod matrix {
                     expected_output: Some(encode(&memory_ops_reference())),
                     ..GuestCase::new("memory-ops-guest")
                 };
-                // Stores the last byte below the linker's `__heap_end`.
-                heap_top => GuestCase {
-                    func: Some("heap_top"),
-                    expected_output: Some(encode(&0xa523_4567_89ab_cdef_u64)),
-                    ..GuestCase::new("memory-ops-guest")
-                };
+                ram_padding => super::ram_padding();
                 // 127 bytes: one full block through the initial compression,
                 // then a 63-byte tail that needs the two-block padding, so both
                 // SHA-256 inline instructions run.
@@ -401,6 +453,7 @@ mod matrix {
                 field_ops => crate::support::field_inline::field_ops();
                 exact_domain => super::exact_domain();
                 panic_halt => super::panic_halt();
+                ram_padding => super::ram_padding();
                 field_limbs => super::field_limbs();
                 muldiv => crate::support::field_inline::muldiv();
             }

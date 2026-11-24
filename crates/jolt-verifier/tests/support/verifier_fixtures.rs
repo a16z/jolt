@@ -32,7 +32,7 @@ use super::guest_fixtures::{fixture_witness, prepare_guest, PreparedGuest};
 static VERIFIER_FIXTURE_LOCK: Mutex<()> = Mutex::new(());
 // Bump whenever cached proofs stop verifying: cached ZK fixtures load without an
 // acceptance check.
-const FIXTURE_MAGIC: &[u8; 8] = b"JVCF0020";
+const FIXTURE_MAGIC: &[u8; 8] = b"JVCF0021";
 const REGENERATE_ARTIFACTS_ENV: &str = "JOLT_VERIFIER_REGENERATE_VERIFIER_FIXTURES";
 const VERIFIER_FIXTURE_LOCK_FILE: &str = "jolt-verifier-fixtures.lock";
 const FINISHED_RUN_AGE: Duration = Duration::from_hours(24);

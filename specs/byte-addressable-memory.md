@@ -156,23 +156,20 @@ expensive; (4) making the RAM sumchecks somewhat more complex is nearly irreleva
 ## Current RAM guards
 
 The ordinary RAM read-write relation in `jolt-claims` also checks protected-word
-preservation, memory-row address selection and unmapped-word exclusion. With
-$E(j)=eq(r_0,j)$, the public protected-word mask $C(k)$ and the public
-unmapped-word mask $N(k)$, its batched identity is
+preservation and memory-row address selection. With $E(j)=eq(r_0,j)$ and the
+public protected-word mask $C(k)$, its batched identity is
 
 ```
 Read(r0) + gamma Write(r0) + gamma^3 (Load + Store)(r0)
   = sum_(k,j) E(j) ra(k,j)
-      [(1 + gamma) Val(k,j) + (gamma + gamma^2 C(k)) Inc(j) + gamma^3
-       + gamma^4 N(k)].
+      [(1 + gamma) Val(k,j) + (gamma + gamma^2 C(k)) Inc(j) + gamma^3].
 ```
 
 The third unbatched input is zero, with output weight `E*C`. The fourth input uses
-the Load and Store openings already produced by the outer remainder. The fifth
-input is zero, with output weight `E*N`. The three
+the Load and Store openings already produced by the outer remainder. The three
 output openings remain Val, ra and Inc at the existing joint point, with degree
 three and unchanged round count. Clear verification and BlindFold consume this
-single relation; both masks come from authenticated preprocessing (the code
+single relation; the mask comes from authenticated preprocessing (the code
 region and the memory layout) in both modes.
 
 `C` is the union of canonical sorted, disjoint, nonadjacent half-open intervals
@@ -189,49 +186,40 @@ check its bounds and canonical empty form (`0..0`); hidden source coverage is
 part of the trusted key. The preprocessing digest domains are versioned for the
 added metadata.
 
-`N` covers the I/O padding `[io_end, RAM_START_ADDRESS)` and the heap padding
-from `heap_end` to the end of the proof's RAM domain, clipped to that domain
-(`unmapped_word_intervals`). Both bounds are doubleword aligned: layout
-construction rounds every I/O region size to a multiple of eight and rounds
-`heap_end` up to a doubleword, admission rejects an unaligned `heap_end`, and
-`unmapped_word_intervals` rejects an unaligned bound. `RamWordMasks` carries `C`
-and `N` together and rejects masks that overlap.
-
 ELF admission rejects any writable section, including `.bss`, that overlaps the
 code region, including gaps between instructions. Read-only bytes and text
 padding inside the region are also frozen. The SDK linker aligns rodata and
 writable data to eight bytes, but arbitrary ELF inputs still require this check.
 
-The optimized kernel fuses the count term, with `gamma^4 N(k)` folded into its
-coefficient, and the modified increment coefficient into its existing sparse
-accumulations. Before address binding one binary search over both masks'
-merged, tagged intervals gives an index's Boolean membership in each. During
-low-bit address binding it keeps full blocks and at most two weighted boundary
-blocks per interval; after address binding it keeps one scalar per mask. It
-allocates no K-sized mask or extra trace-sized table and makes no extra trace
-pass. The verifier evaluates each mask's MLE once, in `O(s log K)` for `s`
-intervals.
+The optimized kernel fuses the count term and the modified increment
+coefficient into its existing sparse accumulations. Before address binding a
+binary search over the mask's sorted intervals gives an index's Boolean
+membership. During low-bit address binding it keeps full blocks and at most two
+weighted boundary blocks per interval; after address binding it keeps one
+scalar. It allocates no K-sized mask or extra trace-sized table and makes no
+extra trace pass. The verifier evaluates the mask's MLE once, in `O(s log K)`
+for `s` intervals.
 
 Commitments bind the trace before the random cycle point `r0` and batching
 challenge `gamma`. The fourth identity, with Booleanity of every committed
 `RamRa` chunk, makes the selector one-hot on memory rows and zero elsewhere. It
 is the only RAM one-hotness check: RAM has no Hamming-booleanity sumcheck and no
 leg in the stage-7 Hamming-weight reduction. Given that, the third identity tests
-the fixed vector of protected-word increments at `r0`, and the fifth tests the
-fixed 0/1 vector `sum_k N(k) ra(k,j)` of unmapped selections. The cycle
-zero-test bound is at most `log T/|F|` for each, and batching the five
-identities adds at most `4/|F|` for fixed nonzero residuals in the ideal uniform
-challenge analysis. The total protocol error also
-includes sumcheck, RA reductions, commitments and transcript security.
+the fixed vector of protected-word increments at `r0`. The cycle zero-test
+bound is at most `log T/|F|`, and batching the four identities adds at most
+`3/|F|` for fixed nonzero residuals in the ideal uniform challenge analysis.
+The total protocol error also includes sumcheck, RA reductions, commitments and
+transcript security.
 Final-memory equality alone would not exclude a code modification followed by
 restoration.
 
 Tracer admission rejects changed protected words before mutation and permits
-same-value stores at every width. It also rejects loads below `lowest_address`
-and any access at or above `io_end` below DRAM or at or above `heap_end` in
-DRAM. AMOs, successful SC, lazy tracing, parallel replay and native fast stores use
-these guards. The constraints continue to leave the tracer's other memory-map
-permissions separate. Host calls read guest buffers under the guest-load bounds
+same-value stores at every width. It also rejects loads and stores below
+`lowest_address` and any access at or beyond the end of the admitted RAM domain,
+`lowest_address + 8 * max_ram_K`; the I/O gap `[io_end, RAM_START_ADDRESS)` and
+the heap padding from `heap_end` to that end are zero-initialized read/write
+memory. AMOs, successful SC, lazy tracing, parallel replay and native fast stores use
+these guards. Host calls read guest buffers under the guest-load bounds
 through `identity_loads_succeed`; a buffer with a byte below `lowest_address` is
 logged and ignored rather than failing the run.
 

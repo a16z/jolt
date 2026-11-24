@@ -12,7 +12,7 @@ set_option linter.unusedVariables false
 -/
 def memory_step [ZKField f]
   (inputs: SumcheckVars f)
-  (mem_reg mem_ram mem_elfaddress mem_bitflags mem_rs1 mem_rs2 mem_rd mem_imm: RAM f) /- We don't currently support storing tuples inside RAM so we've split them into separate ROMs -/
+  (mem_reg mem_ram mem_elfaddress mem_bitflags mem_rs1 mem_rs2 mem_rd mem_imm mem_write_protected: RAM f) /- We don't currently support storing tuples inside RAM so we've split them into separate ROMs -/
   : ZKBuilder f PUnit := do
     -- Ensure that the fields in the bytecode match the corresponding R1CS inputs.
     --
@@ -53,6 +53,18 @@ def memory_step [ZKField f]
     -- let rd <- ram_read mem_reg inputs.Bytecode_RD
     -- constrainEq rd inputs.RD_Read
     -- ram_write mem_reg inputs.Bytecode_RD inputs.RD_Write
+
+    -- Bind the write-protected-word mask C (`write_protected_word_intervals`
+    -- in crates/jolt-program/src/preprocess/ram.rs) at the doubleword a
+    -- memory cycle accesses, keyed by that doubleword's byte address
+    -- `RamAddress`. The RAM read-write checking sumcheck forbids a store that
+    -- changes a word only where C is 1; see
+    -- RamReadWriteChecking_Vars.uniform_claims in Sumchecks.lean. R1CS
+    -- (`RamAddrEqZeroIfNotLoadStore`) forces `RamAddress = 0` on every
+    -- non-memory cycle, where the access-count claim makes `RamRa = 0` and the
+    -- value irrelevant, but `ramRead` still needs key 0 in the ROM.
+    let v <- ZKBuilder.ramRead mem_write_protected inputs.JoltR1CSInputs.RamAddress
+    ZKBuilder.constrainEq v inputs.RamReadWriteChecking_Vars.WriteProtected
 
     -- Ensure that the values in RAM match the RAM read/write inputs.
     --

@@ -253,8 +253,11 @@ fn rv64_eq_constraint_rows<F: Field>() -> ConstraintRows<F> {
     // `materialize_inline`), so such an access lands within 2 KiB of 0 or
     // 2^64: past that RAM, or below `lowest_address`, which is at least 2^30
     // because `MemoryLayout::try_new` pads I/O below `RAM_START_ADDRESS` = 2^31
-    // to a power of two and rejects a region reaching 0. The tracer rejects
-    // accesses below `lowest_address` and past the allocated RAM.
+    // to a power of two and rejects a region reaching 0. The tracers reject
+    // accesses below `lowest_address` and at or past the end of the admitted
+    // RAM domain, `lowest_address + 8·max_ram_k`. `MemoryLayout::max_ram_k`
+    // keeps that end within 2^64, so the power of two `8·max_ram_k` is at most
+    // 2^63 and the end at most 2^63 + 2^31.
     a_rows.push(row::<F>(&[(V_FLAG_LOAD, 1), (V_FLAG_STORE, 1)]));
     b_rows.push(row::<F>(&[
         (V_RAM_ADDRESS, 1),

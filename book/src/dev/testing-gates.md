@@ -3,23 +3,29 @@
 ## Guest × mode acceptance matrix
 
 `crates/jolt-prover/tests/e2e_matrix.rs` holds one guest table per instruction
-profile. The ordinary profile has sixteen cases: muldiv, fibonacci, memory-ops,
-heap-top, stdlib, memory-copy, sha2, sha3 through both its unaligned and aligned
-entry points, advice-consumer, rounded-advice, btreemap, exact-domain,
-panic-halt, exit-zero and exit-one. Heap-top stores the last byte below the linker's `__heap_end`.
-Rounded-advice, another memory-ops entry point, configures 12 bytes of
-untrusted advice and supplies 16, the rounded capacity the verifier admits.
-Enabling `field-inline` selects five: `field_ops`, `field_limbs`, `muldiv`,
-`exact_domain`, and `panic_halt`, covering active field operations, the SDK's
-checked limb conversions, an ordinary guest proved under the field-inline
-protocol with no field activity, and the two cases both profiles share.
+profile. The ordinary profile has seventeen cases: muldiv, fibonacci,
+memory-ops, ram-padding, stdlib, memory-copy, sha2, sha3 through both its
+unaligned and aligned entry points, advice-consumer, rounded-advice, btreemap,
+exact-domain, panic-halt, exit-zero, exit-one and protected-rewrite. Rounded-advice, another memory-ops entry
+point, configures 12 bytes of untrusted advice and supplies 16, the rounded
+capacity the verifier admits. Enabling `field-inline` selects six: `field_ops`,
+`field_limbs`, `muldiv`, `exact_domain`, `panic_halt`, and `ram_padding`,
+covering active field operations, the SDK's checked limb conversions, an
+ordinary guest proved under the field-inline protocol with no field activity,
+and the three cases both profiles share.
 
 `exact_domain` runs a memory-ops guest entry whose execution fills 2^12 rows
 exactly and bakes that domain in as the maximum, so the proof has no padding
 row and the halt sits at row T−1. `panic_halt` proves a guest panic, which
-ends at `ebreak`, with `panic = true`. `exit_zero` and `exit_one` call
-`jolt::runtime::exit(0)` and `exit(1)`: every exit code ends at `ebreak`, so
-both also prove with `panic = true`.
+ends at `ebreak`, with `panic = true`. `ram_padding`, another memory-ops entry,
+loads the first I/O-gap word, the first heap-padding word and the last word of
+the [admitted RAM domain](../how/architecture/ram.md#address-remapping), expects
+zero, stores and reloads each (including a byte store), and leaves the values
+in place at the halt. `exit_zero` and `exit_one` call `jolt::runtime::exit(0)`
+and `exit(1)`: every exit code ends at `ebreak`, so both also prove with
+`panic = true`. `protected_rewrite` stores the value already held by an input
+word, a stack-canary word and a code word back to each; write protection
+rejects only a store that changes a protected word, so the run proves.
 
 The shared runner checks each guest's output against a natively computed
 value, its panic status, the halt that ends its run (`jolt.success`, or

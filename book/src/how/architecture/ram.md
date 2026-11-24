@@ -13,9 +13,26 @@ Jolt is currently configured so that $K^{1/d} = 2^4$ if $T < 2^{25}$ and $K^{1/d
 ## Address remapping
 
 We treat each 8-byte-aligned doubleword in the guest memory as one "cell" for the purposes of memory checking.
-Our RISC-V [emulator](./emulation.md) is configured to use `0x80000000` as the DRAM start address -- the stack and heap occupy addresses above the start address, while Jolt reserves some memory below the start address for program inputs and outputs.
+Our RISC-V [emulator](./emulation.md) is configured to use `0x80000000` (`RAM_START_ADDRESS`) as the DRAM start address: the program image, stack and heap occupy addresses at and above it, while Jolt reserves memory below it for advice, program inputs and outputs.
+`MemoryLayout::try_new` (`common/src/jolt_device.rs`) places the regions in this order, from the lowest address up:
 
-![memory layout](../../imgs/memory_layout.png)
+| Region | Addresses | Guest access |
+|---|---|---|
+| Below the I/O region | below `lowest_address` | Loads and stores fault |
+| Advice | `[lowest_address, input_start)`: trusted and untrusted advice, the larger first | Write-protected |
+| Inputs | `[input_start, input_end)` | Write-protected |
+| Outputs | `[output_start, output_end)`; `output_end` is `io_end` | Read/write |
+| I/O gap | `[io_end, RAM_START_ADDRESS)`, at least one doubleword | Read/write |
+| Program image | `[RAM_START_ADDRESS, stack_end)`; `stack_end` is `RAM_START_ADDRESS + program_size` | Read/write, except the write-protected code region |
+| Stack canary | `[stack_end, stack_end + STACK_CANARY_SIZE)` | Write-protected |
+| Stack | `stack_size` bytes above the canary, growing down toward it | Read/write |
+| Heap | `heap_size` bytes above the stack, up to `heap_end` | Read/write |
+| Heap padding | `[heap_end, lowest_address + 8 * max_ram_K)` | Read/write |
+| Beyond the admitted RAM domain | from `lowest_address + 8 * max_ram_K` | Loads and stores fault |
+
+A store to a write-protected doubleword must leave its value unchanged (see [protected words](#read-write-checking-and-protected-words)).
+Initial RAM is zero outside the program image, the inputs and the advice, so a load of any other word that no earlier store wrote returns 0, in the I/O gap and the heap padding as anywhere else.
+`LR` and `SC` also fault below `RAM_START_ADDRESS`, in the I/O gap as elsewhere (see [atomic operations](./emulation.md#atomic-operations-lrsc)).
 
 For the purposes of the memory checking argument, we remap the memory address to a witness index:
 
@@ -23,12 +40,26 @@ For the purposes of the memory checking argument, we remap the memory address to
 (address - memory_layout.lowest_address) / 8
 ```
 
-where `lowest_address` is the left-most address depicted in the diagram above.
+where `lowest_address` is the start of the I/O region, as in the table above.
 The division by eight reflects the fact that we treat guest memory as "doubleword-addressable" for the purposes of memory-checking.
 
+`max_ram_K` (`MemoryLayout::max_ram_k`) is the smallest power-of-two number of
+doublewords covering `[lowest_address, heap_end)`, and
+`[lowest_address, lowest_address + 8 * max_ram_K)` is the admitted RAM domain.
+The tracers back its RAM part, the `MemoryLayout::ram_size` bytes from
+`RAM_START_ADDRESS`, and fault on any access at or beyond its end. A proof's own
+power-of-two domain $K$ must cover every word its run touches, so a run that
+touches the heap padding can need $K$ up to `max_ram_K`. The verifier admits $K$
+only if it covers the I/O region, the I/O gap and the program image and does not
+exceed `max_ram_K`.
+
 Layout admission requires `heap_end <= 2^64 - 8` and
-`lowest_address + 8 * max_ram_K <= 2^64`, where `max_ram_K` is the maximum
-admitted power-of-two-padded RAM domain, not the domain selected by one proof.
+`lowest_address + 8 * max_ram_K <= 2^64`. It also requires the I/O segments
+(advice, inputs, outputs) to follow one another from `lowest_address` without
+gaps or overlap, each doubleword aligned and exactly its configured size, with
+each advice capacity zero or a power of two, each advice segment starting at a
+multiple of its size from `lowest_address`, and `io_end = output_end <=
+RAM_START_ADDRESS` (`MemoryLayout::validate_io_segments`).
 Checked layout construction, full and committed preprocessing admission, and
 verifier-key deserialization enforce these bounds before execution or verification.
 The ELF decoder also rejects odd instruction addresses, matching bytecode admission's
@@ -55,16 +86,13 @@ An access misaligned for its width, such as an `LH` at an odd address or any mis
 
 ## Read-write checking and protected words
 
-RAM read-write checking enforces value consistency, address selection, value
-preservation on protected words and the exclusion of unmapped words.
+RAM read-write checking enforces value consistency, address selection and value
+preservation on protected words.
 Let $E(j)=\widetilde{\textsf{eq}}(r_0,j)$, where $r_0$ is the outer sumcheck's
 cycle point, and let $C(k)$ select the words of the code region (the
 doubleword holding the first source instruction through the one holding the
 last), program input, trusted advice, untrusted advice or the stack canary
 `[stack_end, stack_end + STACK_CANARY_SIZE)`.
-Let $N(k)$ select the unmapped words of the proof's domain: the padding
-`[io_end, RAM_START_ADDRESS)` between the I/O region and DRAM, and the words
-from `heap_end` to `lowest_address + 8K`.
 Stage 2 proves
 
 $$
@@ -72,7 +100,7 @@ $$
  +\gamma^3(\textsf{Load}+\textsf{Store})(r_0)
  =\sum_{k,j}E(j)\textsf{ra}(k,j)
  \left[(1+\gamma)\textsf{Val}(k,j)
- +(\gamma+\gamma^2 C(k))\textsf{Inc}(j)+\gamma^3+\gamma^4 N(k)\right].
+ +(\gamma+\gamma^2 C(k))\textsf{Inc}(j)+\gamma^3\right].
 $$
 
 The $\gamma^2$ identity forces zero increments on protected words. It rejects
@@ -84,19 +112,6 @@ and Store flags. Together with Booleanity of every committed RAM chunk, it
 requires one selected address on memory rows and none on other rows. It is the
 only RAM one-hotness check (see [No-op cycles](#no-op-cycles)). Virtual memory
 rows and the field-inline memory accumulator carry these same flags.
-The $\gamma^4$ identity, $0=\sum_{k,j}E(j)N(k)\textsf{ra}(k,j)$, forbids
-selecting an unmapped word on any row. With `ra` zero-or-one-hot on each
-cycle (the $\gamma^3$ identity with Booleanity), each cycle's count
-$v(j)=\sum_k N(k)\textsf{ra}(k,j)$ is 0 or 1 and is fixed before $r_0$ is
-drawn. The sum equals $\widetilde{v}(r_0)$, which vanishes at a random $r_0$
-only if every count is zero, that is, no cycle selects an unmapped word,
-except with probability $\log T/|\mathbb{F}|$. Layout construction rounds
-`heap_end` up to a doubleword, matching the linker's aligned `__heap_end`, and
-admission rejects an unaligned `heap_end`, so a guest that uses the whole heap
-never touches a word in $N$. `io_end` is the end of the outputs; layout
-construction reserves an unmapped guard word there (admission does not recheck
-this for a layout decoded from a verifier key), so $N$ starts at that word and
-an access to it fails the $\gamma^4$ identity.
 
 The code region runs from the doubleword holding the first real source
 instruction through the one holding the last. It excludes synthetic
@@ -114,10 +129,10 @@ the memory layout. ELF admission rejects a writable section that overlaps the
 code region. Padding and read-only data inside the region are frozen with the
 code; text padding outside it protects nothing.
 
-At the final opening point, the verifier evaluates the multilinear extensions
-of both masks, rather than testing membership at a field-valued address. For
-$s$ intervals this takes $O(s\log K)$ arithmetic; $C$ has at most five
-intervals and $N$ at most two. The optimized prover uses
+At the final opening point, the verifier evaluates the multilinear extension
+of $C$, rather than testing membership at a field-valued address. For
+$s$ intervals this takes $O(s\log K)$ arithmetic, and $C$ has at most five
+intervals. The optimized prover uses
 interval endpoints and at most two boundary weights per interval while binding
 address bits. It adds no dense mask, trace pass, commitment, opening point or
 sumcheck round; the maximum degree remains three.
@@ -129,13 +144,13 @@ value throughout execution. Equality of initial and final RAM alone would permit
 a temporary modification.
 
 The interpreter, replay tracer and native tracer reject a changed protected
-word before writing it, reject loads below `lowest_address`, and reject any
-access at or above `io_end` below DRAM or at or above `heap_end` in DRAM. The
-constraints reject the same accesses: the $\gamma^2$ identity rejects the
-store, the $\gamma^3$ identity with RAF evaluation rejects any address outside
-the proof's domain `[lowest_address, lowest_address + 8K)`, and the
-$\gamma^4$ identity rejects any access to a word in $N$. The rest of the tracer's store-permission policy has no
-matching constraint. The tracers also reject an instruction fetch at an address
+word before writing it, reject loads and stores below `lowest_address`, and
+reject any access at or beyond `lowest_address + 8 * max_ram_K`, the end of the
+admitted RAM domain. The constraints reject the same accesses: the $\gamma^2$
+identity rejects the store, the $\gamma^3$ identity with RAF evaluation
+confines every access to the proof's domain
+`[lowest_address, lowest_address + 8K)`, and the verifier admits no $K$ above
+`max_ram_K`. The tracers also reject an instruction fetch at an address
 that starts no decoded source instruction, such as a jump into data, padding or
 the middle of an instruction: the native tracer compiles only the decoded
 instructions, and the interpreter checks each address before decoding it. Host calls (prints, cycle
@@ -235,29 +250,29 @@ This arrangement minimizes verifier computation. If we placed untrusted advice f
 ## Output Check
 
 Jolt ensures correctness of guest program outputs via the **output check** sumcheck.
-Guest I/O occupies a designated [memory region](#address-remapping) below `0x80000000`: advice, inputs and outputs, then unmapped padding that starts with the guard word layout construction reserves.
+Guest I/O occupies a designated [memory region](#address-remapping) below `0x80000000`: advice, inputs and outputs, followed by the I/O gap.
 At execution completion, the outputs have been written into this region.
 The panic bit is not memory: the statement carries it, and the [end rule](./r1cs_constraints.md#ending-a-run) binds it to the halt that ends the run.
 
-Verifying that the claimed outputs are correct amounts to checking that the following polynomials agree on [`input_start`, `0x80000000`): the inputs, the outputs and the unmapped padding after them (advice lies below `input_start` and enters through $\widetilde{\textsf{Val}}_\text{init}$):
+Verifying that the claimed outputs are correct amounts to checking that the final memory state, $\widetilde{\textsf{Val}}_\text{final}$, agrees with $\widetilde{\textsf{Val}}_\text{io}$ on [`input_start`, `output_end`), the inputs and the outputs.
+Advice lies below `input_start` and enters through $\widetilde{\textsf{Val}}_\text{init}$.
+The I/O gap starts at `output_end`, and its final contents are not part of the statement: values a run leaves there are not outputs.
 
-![final memory](../../imgs/final_memory_state.png)
-
-Note that `val_io` only contains information known by the verifier: the inputs and the claimed outputs, with every other word from `input_start` up to `0x80000000` zero.
-To check that these two polynomials are equal, we use the following sumcheck:
+Note that `val_io` only contains information known by the verifier: the inputs and the claimed outputs, with every other word from `input_start` up to `output_end` zero.
+To check that these two polynomials agree on that range, we use the following sumcheck:
 
 $$
 0 = \sum_{k \in \{0, 1\}^{\log K}} \widetilde{\textsf{eq}}(r_\text{address}, k) \cdot \widetilde{\textsf{io-range}}(k) \cdot \left( \widetilde{\textsf{Val}}_\text{final}(k) - \widetilde{\textsf{Val}}_\text{io}(k) \right)
 $$
 
-where $\widetilde{\textsf{io-range}}$ is a "range mask" polynomial, equal to 1 on [`input_start`, `0x80000000`) and 0 elsewhere.
+where $\widetilde{\textsf{io-range}}$ is a "range mask" polynomial, equal to 1 on [`input_start`, `output_end`) and 0 elsewhere.
 The MLE for a range mask polynomial that isolates the range $[\text{start}, \text{end})$ can be written as follows:
 
 $$
 \widetilde{\textsf{mask}}_\text{start, end}(r) = \widetilde{\textsf{LT}}(r, \text{end}) - \widetilde{\textsf{LT}}(r, \text{start})
 $$
 
-It is implemented in code as `RangeMaskPolynomial`.
+The verifier evaluates it with `jolt_poly::range_mask_mle_msb`; with no input or output capacity the range is empty and the mask is zero.
 
 This output check sumcheck generates a claim about the final memory state polynomial ($\widetilde{\textsf{Val}}_\text{final}$), which, being virtual, is proven using the $\widetilde{\textsf{Val}}_\text{final}$ evaluation sumcheck:
 

@@ -53,11 +53,10 @@ pub struct RamReadWriteChallenges<F> {
 }
 
 /// RAM read-write checking batches value consistency, write-protected value
-/// preservation, address selection and unmapped-word exclusion. Its public
-/// weights are cycle equality and that equality times the write-protected-word
-/// mask C or the unmapped-word mask N; all five identities share `ra`, `val` and
-/// `inc`. The last claim, `Σ eq·N·ra = 0`, forces every cycle's zero-or-one-hot
-/// `ra` (pinned by the fourth claim and Booleanity) off the unmapped words.
+/// preservation and address selection. Its public weights are cycle equality
+/// and that equality times the write-protected-word mask C; all four identities
+/// share `ra`, `val` and `inc`. No claim excludes a word of the domain: RAF
+/// evaluation confines every access to the `ram_K` words from `lowest_address`.
 #[derive(Clone)]
 pub struct ReadWriteChecking {
     shape: ReadWriteDimensions,
@@ -104,13 +103,6 @@ impl ReadWriteChecking {
                         + v(JoltVirtualPolynomial::OpFlags(CircuitFlags::Store)),
                     output: v(JoltVirtualPolynomial::RamRa),
                     output_weight: RamReadWritePublic::EqCycle.into(),
-                    offset: false,
-                },
-                UnbatchedClaim {
-                    input_relation: JoltRelationId::SpartanOuter,
-                    input: UnbatchedClaimExpr::constant(0),
-                    output: v(JoltVirtualPolynomial::RamRa),
-                    output_weight: RamReadWritePublic::UnmappedEqCycle.into(),
                     offset: false,
                 },
             ],

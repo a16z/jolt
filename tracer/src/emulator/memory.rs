@@ -3,31 +3,58 @@ use std::collections::HashMap;
 #[cfg(not(feature = "std"))]
 use alloc::{vec, vec::Vec};
 
-/// Backing storage for guest memory, at doubleword granularity.
+/// Backing storage for guest RAM from `RAM_START_ADDRESS`, at doubleword
+/// granularity. The I/O segments live in `JoltDevice` and the I/O gap in the
+/// MMU's `IoGapMemory`, outside this backing and its checkpoint maps.
 ///
 /// `Flat` is the execution backing: one contiguous zero-initialized array
-/// covering the whole guest address range (uninitialized reads are 0, same as
-/// the historical sparse map). `Sparse` backs replay from a checkpoint, whose
-/// memory image is exactly the first-touch values recorded while the chunk
-/// originally executed — materializing those as a flat array per checkpoint
-/// would defeat the point of checkpoints.
-#[derive(Clone, Debug)]
+/// covering guest RAM, `MemoryLayout::ram_size` bytes for a Jolt guest.
+/// `Sparse` backs replay from a checkpoint, whose memory image is exactly the
+/// first-touch values recorded while the chunk originally executed —
+/// materializing those as a flat array per checkpoint would defeat the point
+/// of checkpoints.
+#[derive(Debug)]
 enum MemoryBacking {
     Flat(Vec<u64>),
     Sparse(HashMap<usize, u64>),
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct MemoryData {
     backing: MemoryBacking,
     num_doublewords: usize,
     /// One past the highest doubleword index ever accessed through
     /// `access_u64` on a flat backing. Everything at or beyond this index is
-    /// still zero, so memory snapshots only need to copy the prefix below it.
+    /// still zero, so snapshots, clones and the final image only read the
+    /// prefix below it.
     high_water: usize,
     /// Checkpoint memory. If this is `Some`, the initial values of all memory accesses will be
     /// stored.
     checkpoint: Option<HashMap<usize, u64>>,
+}
+
+/// A flat backing spans guest RAM up to the end of the RAM domain, most of
+/// which a run never touches, so a clone copies only the prefix below
+/// `high_water` into a fresh zeroed allocation instead of copying and
+/// committing every page.
+impl Clone for MemoryData {
+    fn clone(&self) -> Self {
+        let backing = match &self.backing {
+            MemoryBacking::Flat(dwords) => {
+                let touched = self.high_water.min(dwords.len());
+                let mut copy = vec![0; dwords.len()];
+                copy[..touched].copy_from_slice(&dwords[..touched]);
+                MemoryBacking::Flat(copy)
+            }
+            MemoryBacking::Sparse(map) => MemoryBacking::Sparse(map.clone()),
+        };
+        Self {
+            backing,
+            num_doublewords: self.num_doublewords,
+            high_water: self.high_water,
+            checkpoint: self.checkpoint.clone(),
+        }
+    }
 }
 
 #[cold]
@@ -306,8 +333,8 @@ impl Memory {
     }
 
     pub(crate) fn validate_address(&self, address: u64) -> bool {
-        let word_index = (address >> 3) as usize;
-        word_index < self.data.get_num_doublewords()
+        usize::try_from(address >> 3)
+            .is_ok_and(|word_index| word_index < self.data.get_num_doublewords())
     }
 
     pub fn get_byte(&self, address: u64) -> u8 {
@@ -338,6 +365,8 @@ impl Memory {
         }
     }
 
+    /// Every nonzero byte, keyed by offset from the start of the backing, in
+    /// ascending order.
     pub fn materialized_nonzero_bytes(&self) -> Vec<(u64, u8)> {
         let mut bytes = Vec::new();
         let push_nonzero = |index: usize, doubleword: u64, bytes: &mut Vec<(u64, u8)>| {
@@ -354,7 +383,8 @@ impl Memory {
         };
         match &self.data.backing {
             MemoryBacking::Flat(dwords) => {
-                for (index, &doubleword) in dwords.iter().enumerate() {
+                let touched = self.data.high_water.min(dwords.len());
+                for (index, &doubleword) in dwords[..touched].iter().enumerate() {
                     push_nonzero(index, doubleword, &mut bytes);
                 }
             }

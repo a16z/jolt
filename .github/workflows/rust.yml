@@ -521,9 +521,10 @@ jobs:
         uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2
         with:
           tool: nextest
-      # e2e_matrix selects field_ops, exact_domain, panic_halt, field_limbs, and
-      # muldiv for the field-inline profile. Run the full package to retain its specialized
-      # parity, tamper, and limb-conversion suites alongside matrix acceptance.
+      # e2e_matrix selects field_ops, exact_domain, panic_halt, ram_padding,
+      # field_limbs, and muldiv for the field-inline profile. Run the full package
+      # to retain its specialized parity, tamper, and limb-conversion suites
+      # alongside matrix acceptance.
       # test-prover-field-inline-zk runs the same package in the zk Dory mode.
       - name: Run field-inline matrix and specialized suites (clear)
         run: cargo nextest run --cargo-profile ci -p jolt-prover --features prover-fixtures,field-inline
@@ -606,7 +607,7 @@ jobs:
         uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2
         with:
           tool: nextest
-      # The same field_ops, field_limbs, and muldiv matrix table runs over fp128.
+      # The same field-inline matrix table runs over fp128.
       # The full package also runs Akita field-inline parity and tamper suites.
       - name: Run Akita field-inline matrix and specialized suites
         run: cargo nextest run --cargo-profile ci -p jolt-prover --features prover-fixtures,field-inline,akita
