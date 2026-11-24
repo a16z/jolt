@@ -16,16 +16,16 @@ These claim reduction sumchecks serve two purposes:
 1. Reduce the number of claims that need to be virtualized by a subsequent sumcheck. E.g. if the same virtual polynomial $P$ is opened at two different points $r_1$ and $r_2$, a claim reduction can be applied to avoid running two instances of the sumcheck that virtualized $P$. 
 2. Reduce the number of claims that need to be proven via PCS opening proof. Dory's homomorphic batching and Akita's native trace batching both use claims at a common point. Akita's independently committed objects can retain their own opening points in the final grouped proof.
 
-The claim-reduction formulas live in `crates/jolt-claims/src/protocols/jolt/relations/claim_reductions/`, with prover kernels in `crates/jolt-kernels/src/optimized/`. They include:
+The claim-reduction formulas live in `crates/jolt-claims/src/protocols/jolt/relations/claim_reductions/` (the RAM RA reduction lives with the other RAM relations, in `relations/ram/`), with prover kernels in `crates/jolt-kernels/src/optimized/`. They include:
 
-- **Instruction lookups** (`instruction_lookups.rs`): Aggregates instruction lookup claims (lookup outputs and operands) from Spartan.
+- **Instruction lookups** (`instruction.rs`): Aggregates instruction lookup claims (lookup outputs and operands) from Spartan.
 - **Registers** (`registers.rs`): Reduces register read/write claims (rd, rs1, rs2) from Spartan.
-- **RAM RA** (`ram_ra.rs`): Consolidates the four RAM read-address (RA) claims from various RAM-related sumchecks (raf evaluation, read-write checking, Val evaluation, Val-final evaluation) into a single claim for the RA virtualization sumcheck.
+- **RAM RA** (`ram/ra_claim_reduction.rs`): Consolidates the three RAM read-address (RA) claims from the RAM-related sumchecks (raf evaluation, read-write checking, and the value check) into a single claim for the RA virtualization sumcheck.
 - **Increments** (`increments.rs`): Reduces claims related to increment checks.
 - **Hamming weight** (`hamming_weight.rs`): Reduces hamming weight-related claims.
-- **Advice** (`advice.rs`, Dory only): Reduces claims from advice polynomials. Akita obtains its advice opening claims directly from Stage 4's RAM value check.
-- **Bytecode** (`bytecode.rs`): Reduces committed bytecode openings for Stage 8.
-- **Program image** (`program_image.rs`): Reduces committed initial-memory image openings for Stage 8.
+- **Advice** (`advice/`, Dory only): Reduces claims from advice polynomials. Akita obtains its advice opening claims directly from Stage 4's RAM value check.
+- **Bytecode** (`bytecode/`): Reduces committed bytecode openings for Stage 8.
+- **Program image** (`program_image/`): Reduces committed initial-memory image openings for Stage 8.
 
 ### How claim reduction sumchecks work
 
