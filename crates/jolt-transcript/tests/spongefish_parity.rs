@@ -40,6 +40,38 @@ impl Encoding for Chunk<'_> {
     }
 }
 
+fn bytes_parity<H: DuplexSpongeInit<U = u8>>() {
+    let mut prover = prover_transcript::<H>(&SESSION, STATEMENT);
+    let mut verifier = verifier_transcript::<H>(&SESSION, STATEMENT, &[]);
+    let mut stock = verifier_transcript::<H>(&SESSION, STATEMENT, &[]);
+    let payload: Vec<u8> = (0..=u8::MAX).collect();
+    let unaligned = &payload[1..];
+
+    // Cover word boundaries and both sides of the 56-byte inline body limit.
+    // Compare against the original allocating encoding, including empty input.
+    for len in [
+        0usize, 1, 7, 8, 9, 31, 32, 33, 55, 56, 57, 63, 64, 65, 135, 136, 137,
+    ] {
+        let message = &unaligned[..len];
+        stock.public_message(&jolt_transcript::BytesMsg(message));
+        prover.append_bytes(message);
+        verifier.append_bytes(message);
+
+        let expected = stock.verifier_message::<[u8; 64]>();
+        assert_eq!(
+            prover.verifier_message::<[u8; 64]>(),
+            expected,
+            "length {len}"
+        );
+        assert_eq!(
+            verifier.verifier_message::<[u8; 64]>(),
+            expected,
+            "length {len}"
+        );
+    }
+    verifier.check_eof().unwrap();
+}
+
 fn batch_parity<H: DuplexSpongeInit<U = u8>>() {
     let mut prover = prover_transcript::<H>(&SESSION, STATEMENT);
     let mut verifier = verifier_transcript::<H>(&SESSION, STATEMENT, &[]);
@@ -212,6 +244,7 @@ where
 fn keccak_matches_stock_spongefish() {
     use jolt_transcript::Keccak;
 
+    bytes_parity::<Keccak>();
     batch_parity::<Keccak>();
     #[cfg(feature = "bn254")]
     {
@@ -231,6 +264,7 @@ fn keccak_matches_stock_spongefish() {
 fn blake2b_matches_stock_spongefish() {
     use jolt_transcript::Blake2b512;
 
+    bytes_parity::<Blake2b512>();
     batch_parity::<Blake2b512>();
     #[cfg(feature = "bn254")]
     {
@@ -246,5 +280,6 @@ fn blake2b_matches_stock_spongefish() {
 fn poseidon_matches_stock_spongefish() {
     use jolt_transcript::PoseidonSponge;
 
+    bytes_parity::<PoseidonSponge>();
     batch_parity::<PoseidonSponge>();
 }

@@ -136,7 +136,18 @@ pub trait Transcript: Sealed {
     /// Absorbs `bytes` as a [`BytesMsg`]: a `u64` length, the bytes, and zero
     /// padding to the next word.
     fn append_bytes(&mut self, bytes: &[u8]) {
-        self.absorb(&BytesMsg(bytes));
+        // Keep the length, body and padding in a single absorb: Poseidon
+        // frames each absorb call, so splitting them would change the protocol.
+        if bytes.len() <= 64 - WORD_BYTES {
+            let mut inline = AlignedBytes::<64>::default();
+            let (length, body) = inline.0.split_at_mut(WORD_BYTES);
+            length.copy_from_slice(&(bytes.len() as u64).to_le_bytes());
+            body.split_at_mut(bytes.len()).0.copy_from_slice(bytes);
+            let len = WORD_BYTES + bytes.len() + word_padding(bytes.len());
+            self.absorb(&WordAligned(inline.0.split_at(len).0));
+        } else {
+            self.absorb(&BytesMsg(bytes));
+        }
     }
 
     /// Checks a proof of work of `bits` bits whose nonce the proof carries
