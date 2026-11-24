@@ -29,12 +29,12 @@
 
 use jolt_field::Ring;
 use spongefish::{
-    DuplexSpongeInit, DuplexSpongeInterface, Encoding, FromUniform, ProverState, Transcript as _,
+    DuplexSpongeInit, DuplexSpongeInterface, Encoding, ProverState, Transcript as _,
     VerificationError, VerifierState,
 };
 
 use crate::challenge::message_bytes;
-use crate::codec::{word_padding, BytesMsg, WORD_BYTES};
+use crate::codec::{word_padding, AlignedBytes, BytesMsg, INLINE_BYTES, WORD_BYTES};
 use crate::pow::{nonce_word, SpongePow, CHECK_BYTES};
 use crate::{ChallengeCodec, ChallengeSetSize, UniformBytes};
 use sealed::Sealed;
@@ -106,7 +106,7 @@ pub trait Transcript: Sealed {
         if values.is_empty() {
             return;
         }
-        let mut inline = AlignedBytes::<64>::default();
+        let mut inline = AlignedBytes::<INLINE_BYTES>::default();
         let mut len = 0;
         let mut values = values.iter();
         while let Some(value) = values.next() {
@@ -136,18 +136,7 @@ pub trait Transcript: Sealed {
     /// Absorbs `bytes` as a [`BytesMsg`]: a `u64` length, the bytes, and zero
     /// padding to the next word.
     fn append_bytes(&mut self, bytes: &[u8]) {
-        // Keep the length, body and padding in a single absorb: Poseidon
-        // frames each absorb call, so splitting them would change the protocol.
-        if bytes.len() <= 64 - WORD_BYTES {
-            let mut inline = AlignedBytes::<64>::default();
-            let (length, body) = inline.0.split_at_mut(WORD_BYTES);
-            length.copy_from_slice(&(bytes.len() as u64).to_le_bytes());
-            body.split_at_mut(bytes.len()).0.copy_from_slice(bytes);
-            let len = WORD_BYTES + bytes.len() + word_padding(bytes.len());
-            self.absorb(&WordAligned(inline.0.split_at(len).0));
-        } else {
-            self.absorb(&BytesMsg(bytes));
-        }
+        self.absorb(&BytesMsg(bytes));
     }
 
     /// Checks a proof of work of `bits` bits whose nonce the proof carries
@@ -195,29 +184,6 @@ struct WordAligned<'a>(&'a [u8]);
 impl Encoding for WordAligned<'_> {
     fn encode(&self) -> impl AsRef<[u8]> {
         self.0
-    }
-}
-
-#[repr(align(8))]
-struct AlignedBytes<const N: usize>([u8; N]);
-
-impl<const N: usize> Default for AlignedBytes<N> {
-    fn default() -> Self {
-        Self([0; N])
-    }
-}
-
-impl<const N: usize> AsMut<[u8]> for AlignedBytes<N> {
-    fn as_mut(&mut self) -> &mut [u8] {
-        &mut self.0
-    }
-}
-
-impl<const N: usize> FromUniform for AlignedBytes<N> {
-    type Repr = Self;
-
-    fn from_uniform(tape: Self) -> Self {
-        tape
     }
 }
 

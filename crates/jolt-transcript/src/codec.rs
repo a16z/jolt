@@ -8,13 +8,17 @@
 //! little-endian. [`protocol_tag`] pads a protocol name to the 32-byte tag
 //! that opens a sub-protocol.
 
-use spongefish::{Encoding, FromNarg, NargReader, VerificationError};
+use spongefish::{Encoding, FromNarg, FromUniform, NargReader, VerificationError};
 
 /// Bytes in one absorbed word.
 pub const WORD_BYTES: usize = 8;
 
 /// Bytes in a protocol tag: four words.
 pub const TAG_BYTES: usize = 32;
+
+/// Stack capacity, a whole number of words, for short absorbed messages.
+pub(crate) const INLINE_BYTES: usize = 64;
+const _: () = assert!(INLINE_BYTES.is_multiple_of(WORD_BYTES));
 
 /// Zero bytes that pad `len` bytes to the next word.
 #[must_use]
@@ -74,12 +78,61 @@ impl From<Vec<u8>> for BytesMsg {
 impl<B: AsRef<[u8]>> Encoding for BytesMsg<B> {
     fn encode(&self) -> impl AsRef<[u8]> {
         let body = self.0.as_ref();
-        let pad = word_padding(body.len());
-        let mut out = Vec::with_capacity(WORD_BYTES + body.len() + pad);
-        out.extend_from_slice(&(body.len() as u64).to_le_bytes());
-        out.extend_from_slice(body);
-        out.resize(out.len() + pad, 0);
-        out
+        let len = WORD_BYTES + body.len() + word_padding(body.len());
+        // `out` is zeroed, so the padding is already in place.
+        let frame = |out: &mut [u8]| {
+            let (length, rest) = out.split_at_mut(WORD_BYTES);
+            length.copy_from_slice(&(body.len() as u64).to_le_bytes());
+            rest.split_at_mut(body.len()).0.copy_from_slice(body);
+        };
+        let mut inline = AlignedBytes::<INLINE_BYTES>::default();
+        if let Some(out) = inline.0.get_mut(..len) {
+            frame(out);
+            FramedBytes::Inline(inline, len)
+        } else {
+            let mut out = vec![0; len];
+            frame(&mut out);
+            FramedBytes::Heap(out)
+        }
+    }
+}
+
+/// [`BytesMsg`]'s absorbed form: its first `len` bytes on the stack, or a
+/// heap buffer when it exceeds [`INLINE_BYTES`].
+enum FramedBytes {
+    Inline(AlignedBytes<INLINE_BYTES>, usize),
+    Heap(Vec<u8>),
+}
+
+impl AsRef<[u8]> for FramedBytes {
+    fn as_ref(&self) -> &[u8] {
+        match self {
+            Self::Inline(bytes, len) => bytes.0.split_at(*len).0,
+            Self::Heap(bytes) => bytes,
+        }
+    }
+}
+
+#[repr(align(8))]
+pub(crate) struct AlignedBytes<const N: usize>(pub(crate) [u8; N]);
+
+impl<const N: usize> Default for AlignedBytes<N> {
+    fn default() -> Self {
+        Self([0; N])
+    }
+}
+
+impl<const N: usize> AsMut<[u8]> for AlignedBytes<N> {
+    fn as_mut(&mut self) -> &mut [u8] {
+        &mut self.0
+    }
+}
+
+impl<const N: usize> FromUniform for AlignedBytes<N> {
+    type Repr = Self;
+
+    fn from_uniform(tape: Self) -> Self {
+        tape
     }
 }
 
@@ -144,10 +197,12 @@ mod tests {
         assert_eq!(&bytes[..8], &4u64.to_le_bytes());
         assert_eq!(&bytes[8..12], &[1, 2, 3, 4]);
         assert_eq!(&bytes[12..], &[0; 4]);
-        for len in 0..=17 {
-            let encoded = BytesMsg(vec![0xA5u8; len]).encode().as_ref().to_vec();
+        for len in (0usize..=17).chain(55..=65) {
+            let body: Vec<u8> = (0..len).map(|i| i as u8 ^ 0xA5).collect();
+            let encoded = BytesMsg(&body).encode().as_ref().to_vec();
             assert_eq!(encoded.len(), 8 + len.div_ceil(8) * 8, "length {len}");
             assert_eq!(&encoded[..8], &(len as u64).to_le_bytes());
+            assert_eq!(&encoded[8..8 + len], &body[..]);
             assert!(encoded[8 + len..].iter().all(|&byte| byte == 0));
         }
     }
