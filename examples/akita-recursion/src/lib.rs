@@ -1,6 +1,9 @@
 #![cfg(feature = "akita")]
 
+mod argument;
+
 use akita_types::setup_claims::{SetupBatchStatement, SetupQuery};
+use argument::ArgumentAsBytes;
 use common::jolt_device::JoltDevice;
 use jolt_akita::deferred::{SetupClaimAccumulator, SetupClaimAdvice, SetupMode};
 use jolt_akita::{
@@ -10,6 +13,7 @@ use jolt_crypto::NoVectorCommitment;
 use jolt_verifier::verifier::verify_with_context;
 use jolt_verifier::{JoltProof, JoltVerifierPreprocessing};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use std::marker::PhantomData;
 use std::slice::Iter;
 
 pub type Vc = NoVectorCommitment<AkitaField>;
@@ -106,8 +110,12 @@ impl SetupClaimAdvice<AkitaField> for AnswerTape<'_> {
 }
 
 pub fn decode_exact<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, String> {
-    let (value, consumed) = bincode::serde::decode_from_slice(bytes, bincode::config::standard())
-        .map_err(|e| e.to_string())?;
+    let (value, consumed) = bincode::serde::seed_decode_from_slice(
+        ArgumentAsBytes(PhantomData::<T>),
+        bytes,
+        bincode::config::standard(),
+    )
+    .map_err(|e| e.to_string())?;
     if consumed != bytes.len() {
         return Err("trailing transport bytes".into());
     }
