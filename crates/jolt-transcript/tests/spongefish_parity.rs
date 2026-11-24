@@ -16,7 +16,9 @@ use jolt_field::Fr;
 use jolt_field::F8;
 #[cfg(all(feature = "binary", feature = "transcript-keccak"))]
 use jolt_field::{F192, F64};
-use jolt_transcript::{protocol_tag, prover_transcript, verifier_transcript, Encoding, Transcript};
+use jolt_transcript::{
+    protocol_tag, prover_transcript, verifier_transcript, BytesMsg, Encoding, Transcript,
+};
 #[cfg(all(
     any(feature = "bn254", feature = "binary"),
     any(feature = "transcript-keccak", feature = "transcript-blake2b")
@@ -53,7 +55,7 @@ fn bytes_parity<H: DuplexSpongeInit<U = u8>>() {
         0usize, 1, 7, 8, 9, 31, 32, 33, 55, 56, 57, 63, 64, 65, 135, 136, 137,
     ] {
         let message = &unaligned[..len];
-        stock.public_message(&jolt_transcript::BytesMsg(message));
+        stock.public_message(&BytesMsg(message));
         prover.append_bytes(message);
         verifier.append_bytes(message);
 
