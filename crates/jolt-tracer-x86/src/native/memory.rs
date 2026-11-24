@@ -155,7 +155,7 @@ impl Drop for MemoryPlane {
 
 #[cfg(test)]
 mod tests {
-    use super::MemoryPlane;
+    use super::{MemoryPlane, TraceError};
 
     #[test]
     fn rejects_unaligned_size() {
@@ -165,7 +165,7 @@ mod tests {
     /// The image bound matches the interpreter's: the last byte below
     /// `stack_end` loads, the first canary byte does not.
     #[test]
-    fn image_ends_below_stack_end() -> Result<(), jolt_program::execution::TraceError> {
+    fn image_ends_below_stack_end() -> Result<(), TraceError> {
         use common::jolt_device::MemoryLayout;
         let layout = MemoryLayout::new(&crate::native::harness::memory_config());
         let mut plane = MemoryPlane::for_layout(&layout)?;
