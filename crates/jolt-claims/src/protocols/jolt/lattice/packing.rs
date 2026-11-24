@@ -102,13 +102,13 @@ pub fn committed_program_packing_plan(
     }
     Ok(PrecommittedPackingPlan {
         bytecode: PrefixPackedObjectPlan::new_with_trace_order(
-            direct_program_role(JoltCommittedPolynomial::ProgramBytecode, 2)?,
+            CommitmentGroupRole::new(3, b"program_bytecode", "program-bytecode"),
             CommittedBytecodeProfile::ACTIVE.packing_domain,
             vec![(JoltCommittedPolynomial::ProgramBytecode, bytecode_vars)],
             trace_order,
         )?,
         program_image: PrefixPackedObjectPlan::new(
-            direct_program_role(JoltCommittedPolynomial::ProgramImageInit, 3)?,
+            CommitmentGroupRole::new(4, b"program_image_init", "program-image-init"),
             b"program-image-init-v1",
             vec![(JoltCommittedPolynomial::ProgramImageInit, image_vars)],
         )?,
@@ -294,28 +294,6 @@ impl PrefixPackedObjectPlan {
     }
 }
 
-fn direct_program_role(
-    id: JoltCommittedPolynomial,
-    order: u64,
-) -> Result<CommitmentGroupRole, OpeningsError> {
-    let order = order + CommittedBytecodeProfile::ACTIVE.preceding_groups;
-    match id {
-        JoltCommittedPolynomial::ProgramBytecode => Ok(CommitmentGroupRole::new(
-            order,
-            b"program_bytecode",
-            "program-bytecode",
-        )),
-        JoltCommittedPolynomial::ProgramImageInit => Ok(CommitmentGroupRole::new(
-            order,
-            b"program_image_init",
-            "program-image-init",
-        )),
-        _ => Err(OpeningsError::InvalidSetup(
-            "direct program role requires a committed-program polynomial".to_owned(),
-        )),
-    }
-}
-
 impl PrecommittedPackingPlan {
     pub fn objects(&self) -> impl Iterator<Item = &PrefixPackedObjectPlan> {
         [&self.bytecode, &self.program_image].into_iter()
@@ -488,14 +466,14 @@ mod tests {
         let field = usize::from(CommittedBytecodeProfile::ACTIVE.extra_lanes != 0);
         assert_eq!(plan.bytecode.packing().logical_num_vars(), 16 + field);
         let role = plan.bytecode.group_role();
-        assert_eq!(role.order(), 2 + field as u64);
+        assert_eq!(role.order(), 3);
         assert_eq!(role.transcript_label(), b"program_bytecode");
         assert_eq!(role.transcript_index(), None);
         assert_eq!(
             plan.program_image.packing().ids(),
             [JoltCommittedPolynomial::ProgramImageInit]
         );
-        assert_eq!(plan.program_image.group_role().order(), 3 + field as u64);
+        assert_eq!(plan.program_image.group_role().order(), 4);
         assert_eq!(
             plan.program_image
                 .logical_num_vars(JoltCommittedPolynomial::ProgramImageInit),

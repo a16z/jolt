@@ -204,9 +204,7 @@ impl<PCS: CommitmentScheme> ProgramPreprocessing<PCS> {
     }
 }
 
-/// Domain separator for [`ProgramPreprocessing::digest`]. Bump the version
-/// whenever the digest input changes: it is the only compatibility switch a
-/// deployed verifier sees.
+/// Domain for both program views. The hashed encoding includes the program-view tag.
 #[cfg(all(not(feature = "akita"), not(feature = "field-inline")))]
 const PROGRAM_PREPROCESSING_DIGEST_DOMAIN: &[u8] =
     b"jolt/program-preprocessing/dory-whole-bytecode/v3";
@@ -239,17 +237,12 @@ impl<PCS: CommitmentScheme> ProgramPreprocessing<PCS> {
                     reason: error.to_string(),
                 }
             })?;
-        let domain = PROGRAM_PREPROCESSING_DIGEST_DOMAIN;
-        #[cfg(all(feature = "akita", feature = "field-inline"))]
-        let domain = if self.committed().is_some() {
-            b"jolt/program-preprocessing/akita-whole-bytecode/field-inline/committed/v2".as_slice()
-        } else {
-            domain
-        };
-        Ok(DigestHasher::new_with_prefix(domain)
-            .chain_update(encoded)
-            .finalize()
-            .into())
+        Ok(
+            DigestHasher::new_with_prefix(PROGRAM_PREPROCESSING_DIGEST_DOMAIN)
+                .chain_update(encoded)
+                .finalize()
+                .into(),
+        )
     }
 }
 
@@ -426,8 +419,8 @@ mod tests {
     ];
     #[cfg(all(feature = "akita", feature = "field-inline"))]
     const COMMITTED_PROGRAM_DIGEST: [u8; 32] = [
-        225, 102, 26, 58, 53, 60, 106, 157, 247, 133, 245, 97, 175, 255, 190, 197, 105, 10, 180,
-        43, 10, 234, 105, 160, 150, 60, 131, 44, 144, 60, 92, 220,
+        93, 98, 10, 67, 222, 34, 62, 118, 187, 183, 21, 173, 2, 105, 246, 101, 172, 194, 210, 36,
+        146, 197, 3, 86, 216, 118, 4, 220, 221, 117, 241, 20,
     ];
 
     /// An empty program over a real (non-zero) memory layout, so every layout

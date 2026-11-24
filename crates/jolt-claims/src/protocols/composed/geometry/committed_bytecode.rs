@@ -1,8 +1,10 @@
-//! Profile selection for the committed bytecode row, its read-RAF wires and its PCS groups.
+//! Committed bytecode row geometry and read-RAF wires for the selected profile.
 
 #[cfg(all(feature = "akita", feature = "field-inline"))]
 use crate::protocols::field_inline::{geometry::bytecode::FieldBytecodeLeg, FIELD_REGISTERS_LOG_K};
-use crate::protocols::jolt::geometry::claim_reductions::bytecode::CommittedBytecodeProfile;
+use crate::protocols::jolt::geometry::claim_reductions::bytecode::{
+    CommittedBytecodeProfile, REGISTER_COUNT,
+};
 #[cfg(all(feature = "akita", feature = "field-inline"))]
 use crate::protocols::jolt::{
     geometry::claim_reductions::bytecode::{
@@ -16,6 +18,22 @@ use jolt_field::JoltField;
 use jolt_poly::EqPolynomial;
 #[cfg(all(feature = "akita", feature = "field-inline"))]
 use jolt_riscv::FIELD_REGISTER_COUNT;
+use jolt_riscv::{JoltInstructionRow, NormalizedOperands};
+
+/// Whether every encoded selector fits its one-hot register block.
+pub fn is_valid_committed_program_registers(row: &JoltInstructionRow) -> bool {
+    let fits = |operands: NormalizedOperands, width: usize| {
+        [operands.rd, operands.rs1, operands.rs2]
+            .into_iter()
+            .flatten()
+            .all(|register| usize::from(register) < width)
+    };
+    #[cfg(all(feature = "akita", feature = "field-inline"))]
+    if !fits(row.field_operands(), usize::from(FIELD_REGISTER_COUNT)) {
+        return false;
+    }
+    fits(row.integer_operands(), REGISTER_COUNT)
+}
 
 impl CommittedBytecodeProfile {
     #[cfg(not(all(feature = "akita", feature = "field-inline")))]
@@ -23,7 +41,6 @@ impl CommittedBytecodeProfile {
         extra_lanes: 0,
         extra_cycle_stages: &[],
         packing_domain: b"program-bytecode-whole-v1",
-        preceding_groups: 0,
     };
 
     #[cfg(all(feature = "akita", feature = "field-inline"))]
@@ -34,7 +51,6 @@ impl CommittedBytecodeProfile {
             FieldBytecodeLeg::ORDER[1].stage(),
         ],
         packing_domain: b"program-bytecode-field-selectors-v1",
-        preceding_groups: 1, // FieldInc precedes the direct program objects.
     };
 }
 

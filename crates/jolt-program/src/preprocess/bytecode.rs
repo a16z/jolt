@@ -1,6 +1,6 @@
 #[cfg(feature = "serialization")]
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use common::constants::{ALIGNMENT_FACTOR_BYTECODE, RAM_START_ADDRESS, REGISTER_COUNT};
+use common::constants::{ALIGNMENT_FACTOR_BYTECODE, RAM_START_ADDRESS};
 use jolt_riscv::{
     CircuitFlags, Flags, JoltInstruction, JoltInstructionKind, JoltInstructionProfile,
     JoltInstructionRow,
@@ -57,12 +57,6 @@ impl BytecodePreprocessing {
     ) -> Result<(), PreprocessingError> {
         for instruction in &self.bytecode {
             validate_row(instruction, profile)?;
-            let integer = instruction.integer_operands();
-            for register in [integer.rd, integer.rs1, integer.rs2].into_iter().flatten() {
-                if register >= REGISTER_COUNT {
-                    return Err(PreprocessingError::InvalidRegister { register });
-                }
-            }
         }
         Ok(())
     }

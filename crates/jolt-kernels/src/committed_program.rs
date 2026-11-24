@@ -2,6 +2,7 @@
 //! Both commitment backends use one whole bytecode grid.
 //! Each row uses the shared lane layout, interleaved by the trace order.
 
+use jolt_claims::protocols::composed::geometry::committed_bytecode::is_valid_committed_program_registers;
 use jolt_claims::protocols::jolt::geometry::claim_reductions::bytecode::{
     bytecode_total_vars, is_valid_committed_program_immediate, BYTECODE_LANE_LAYOUT,
     COMMITTED_BYTECODE_LANE_CAPACITY, INVALID_COMMITTED_PROGRAM_IMMEDIATE,
@@ -97,13 +98,17 @@ pub fn build_committed_bytecode_coeffs<F: JoltField>(
         bytecode_total_vars(instructions.len()).map_err(|error| KernelError::InvalidGeometry {
             reason: error.to_string(),
         })?;
-    if instructions
-        .iter()
-        .any(|instruction| !is_valid_committed_program_immediate(instruction.operands.imm))
-    {
-        return Err(KernelError::InvalidGeometry {
-            reason: INVALID_COMMITTED_PROGRAM_IMMEDIATE.to_owned(),
-        });
+    for instruction in instructions {
+        if !is_valid_committed_program_immediate(instruction.operands.imm) {
+            return Err(KernelError::InvalidGeometry {
+                reason: INVALID_COMMITTED_PROGRAM_IMMEDIATE.to_owned(),
+            });
+        }
+        if !is_valid_committed_program_registers(instruction) {
+            return Err(KernelError::InvalidGeometry {
+                reason: "committed bytecode register exceeds its selector block".to_owned(),
+            });
+        }
     }
     let len = 1usize
         .checked_shl(num_vars as u32)
@@ -140,6 +145,33 @@ pub fn program_image_words_padded(bytecode_words: &[u64]) -> Vec<u64> {
     let mut words = bytecode_words.to_vec();
     words.resize(padded_len, 0);
     words
+}
+
+#[cfg(test)]
+#[test]
+fn committed_grid_rejects_registers_outside_their_blocks() {
+    use jolt_field::Fr;
+    use jolt_riscv::{JoltInstructionKind as Kind, NormalizedOperands};
+
+    let assert_rejected = |instruction_kind, register| {
+        let row = JoltInstructionRow {
+            instruction_kind,
+            operands: NormalizedOperands {
+                rd: Some(register),
+                rs1: Some(1),
+                rs2: Some(2),
+                imm: 0,
+            },
+            ..JoltInstructionRow::default()
+        };
+        assert!(matches!(
+            build_committed_bytecode_coeffs::<Fr>(&[row], TracePolynomialOrder::CycleMajor),
+            Err(KernelError::InvalidGeometry { .. })
+        ));
+    };
+    assert_rejected(Kind::ADD, 128);
+    #[cfg(all(feature = "akita", feature = "field-inline"))]
+    assert_rejected(Kind::FIELD_MUL, 16);
 }
 
 #[cfg(all(test, feature = "akita", feature = "field-inline"))]

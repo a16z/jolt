@@ -35,12 +35,11 @@ pub const NUM_BYTECODE_VAL_STAGES: usize = 5;
 #[cfg(feature = "akita")]
 pub const NUM_BYTECODE_VAL_STAGES: usize = 6;
 
-/// Composition selects the extra lanes, cycle bindings and Akita group layout together.
+/// Composition selects the extra lanes, cycle bindings and packing domain together.
 pub(crate) struct CommittedBytecodeProfile {
     pub(crate) extra_lanes: usize,
     pub(crate) extra_cycle_stages: &'static [usize],
     pub(crate) packing_domain: &'static [u8],
-    pub(crate) preceding_groups: u64,
 }
 
 impl CommittedBytecodeProfile {
@@ -53,7 +52,7 @@ impl CommittedBytecodeProfile {
 pub const COMMITTED_BYTECODE_VALUES: usize =
     CommittedBytecodeProfile::wire(CommittedBytecodeProfile::ACTIVE.extra_cycle_stages.len());
 
-const REGISTER_COUNT: usize = 1 << REGISTER_ADDRESS_BITS;
+pub(crate) const REGISTER_COUNT: usize = 1 << REGISTER_ADDRESS_BITS;
 
 pub const fn total_lanes() -> usize {
     BYTECODE_LANE_LAYOUT.raf_flag_idx + 1 + CommittedBytecodeProfile::ACTIVE.extra_lanes

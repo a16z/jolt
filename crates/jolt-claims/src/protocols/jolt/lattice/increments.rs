@@ -1,7 +1,5 @@
 //! Direct Akita commitment layout for the RV64 fused increment polynomial.
 
-#[cfg(feature = "akita")]
-use super::super::geometry::claim_reductions::bytecode::CommittedBytecodeProfile;
 use jolt_field::Field;
 #[cfg(feature = "akita")]
 use jolt_openings::CommitmentGroupRole;
@@ -53,11 +51,7 @@ impl FusedIncLayout {
 /// Orders the bounded fused increment after advice and direct program objects.
 #[cfg(feature = "akita")]
 pub const fn fused_inc_group_role() -> CommitmentGroupRole {
-    CommitmentGroupRole::new(
-        4 + CommittedBytecodeProfile::ACTIVE.preceding_groups,
-        b"fused_inc",
-        "fused-inc",
-    )
+    CommitmentGroupRole::new(5, b"fused_inc", "fused-inc")
 }
 
 #[cfg(test)]

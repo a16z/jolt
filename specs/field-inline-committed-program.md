@@ -18,7 +18,7 @@ After the RAF flag, append three 16-lane blocks in order: field Rd, Rs1 and Rs2.
 | Advice limb | Rd names the integer limb destination | Encoded rs1 supplies the field read, encoded rs2 the field write |
 | Ordinary instruction or padding | Existing integer projection | All three blocks zero |
 
-Akita checks the rows again at the committed-field constructor, including prebuilt program inputs. It enforces the instruction profile, field operand shapes, store/Rd disjointness and projected integer bounds before indexing the grid. The entry index must select the declared address and the padded size must match the rows and be a power of two. Legal encoding is a property of trusted preprocessing. The proof binds execution to the resulting commitment.
+Akita checks the rows again at the committed-field constructor, including prebuilt program inputs. Preprocessing checks the instruction profile, field operand shapes and store/Rd disjointness. The grid encoder checks the projected integer and field indices against their selector block widths before writing coefficients. The entry index must select the declared address and the padded size must match the rows and be a power of two. Legal encoding is a property of trusted preprocessing. The proof binds execution to the resulting commitment.
 
 ## Stage 6
 
@@ -43,7 +43,7 @@ For N padded bytecode rows the field profile uses 1,024 lanes per row and logica
 
 Setup, stage-0 hint assembly and stage-8 opening use the same group order. The Akita adapter checks strictly ascending auxiliary sort keys and passes the groups to the batch prover and verifier by position. The main group follows the auxiliaries.
 
-| Present group | Auxiliary sort order in the combined profile | Source |
+| Present group | Auxiliary sort key | Source |
 |---|---:|---|
 | Untrusted advice, if present | 0 | Bounded advice object |
 | Trusted advice, if present | 1 | Bounded advice object |
@@ -55,7 +55,7 @@ Setup, stage-0 hint assembly and stage-8 opening use the same group order. The A
 
 The adapter resolves the final trace shape in the trusted catalog. Its combined schedule admits one full-width field increment, three bounded program/image/fused producers, and up to two leading bounded advice producers. The verifier validates the selected row and binds the opening points, commitments and roles.
 
-Full program artifacts use tag 0. Ordinary committed artifacts use tag 1. Akita committed-field artifacts use tag 2 and reject tag 1 on decode. The digest domain is `jolt/program-preprocessing/akita-whole-bytecode/field-inline/committed/v2`. The bytecode packing label `program-bytecode-field-selectors-v1` distinguishes layouts even when the physical arities match.
+Full program artifacts use tag 0. Ordinary committed artifacts use tag 1. Akita committed-field artifacts use tag 2 and reject tag 1 on decode. Both Akita field-inline views hash the tagged serialization under `jolt/program-preprocessing/akita-whole-bytecode/field-inline/v2`. The bytecode packing label `program-bytecode-field-selectors-v1` distinguishes layouts even when the physical arities match.
 
 ## Verification and measurements
 

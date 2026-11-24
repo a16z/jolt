@@ -124,7 +124,6 @@ mod tests {
                 Some(2),
                 0,
             ),
-            (Kind::ADD, Some(128), Some(1), Some(2), 0),
         ] {
             let row = &mut program.bytecode.bytecode[1];
             row.instruction_kind = kind;
@@ -137,34 +136,6 @@ mod tests {
                 "{kind:?}"
             );
         }
-    }
-
-    #[cfg(not(feature = "field-inline"))]
-    #[test]
-    fn ordinary_committed_preprocessing_checks_prebuilt_registers() {
-        use jolt_riscv::{JoltInstructionKind as Kind, NormalizedOperands};
-
-        let mut program = JoltProgramPreprocessing::new(
-            Vec::new(),
-            Vec::new(),
-            MemoryLayout::default(),
-            0,
-            1 << 12,
-            RV64IMAC_JOLT,
-        )
-        .unwrap();
-        let row = &mut program.bytecode.bytecode[1];
-        row.instruction_kind = Kind::ADD;
-        row.operands = NormalizedOperands {
-            rd: Some(3),
-            rs1: Some(1),
-            rs2: Some(2),
-            imm: 0,
-        };
-        super::validate_committed_mode(&program).unwrap();
-        program.bytecode.bytecode[1].operands.rd = Some(128);
-        assert!(matches!(super::validate_committed_mode(&program),
-            Err(PreprocessingError::InvalidCommittedProgram {reason}) if reason == "integer register 128 is outside the register file"));
     }
 
     #[test]
