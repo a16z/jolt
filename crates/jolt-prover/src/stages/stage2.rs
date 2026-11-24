@@ -21,6 +21,7 @@ use jolt_claims::protocols::jolt::{JoltRelationId, TraceDimensions};
 use jolt_claims::NoChallenges;
 use jolt_crypto::VectorCommitment;
 use jolt_field::JoltField;
+use jolt_kernels::uniskip::ProductUniskipUpstream;
 use jolt_kernels::{JoltBackend, KernelContext};
 use jolt_openings::CommitmentScheme;
 use jolt_program::preprocess::PublicIoMemory;
@@ -110,14 +111,17 @@ where
 
     let tau_high_pow_nonce = grind_pow::<F, _>(PowSite::Stage2TauHigh, transcript)?;
     let tau_high: F = draw_spartan_product_tau_high(transcript)?;
-    let uniskip_relation = ProductUniskip::new(product_dimensions, tau_high);
+    let uniskip_relation = ProductUniskip::new(product_dimensions, tau_high, public_io.panic);
     // The field-inline lane inputs enter the composed input claim exactly as on the
     // verifier — composed through the shared seam, before `input_claim`.
-    let uniskip_inputs = product_uniskip_input_values_from_stage1(stage1);
+    let upstream = ProductUniskipUpstream {
+        openings: product_uniskip_input_values_from_stage1(stage1),
+        claimed_panic: public_io.panic,
+    };
     let uniskip_input_claim =
-        uniskip_relation.input_claim(&uniskip_inputs, &NoChallenges::default())?;
+        uniskip_relation.input_claim(&upstream.openings, &NoChallenges::default())?;
     let uniskip_poly = tracing::info_span!("SpartanProductUniskip::first_round_poly")
-        .in_scope(|| backend.product_uniskip_poly(&[tau_high], &uniskip_inputs))?;
+        .in_scope(|| backend.product_uniskip_poly(&[tau_high], &upstream))?;
     // The canonical composed lane domain also determines the verifier's uni-skip check.
     let proved_uniskip = mode.prove_uniskip(
         uniskip_poly,

@@ -83,7 +83,10 @@ use jolt_claims::protocols::composed::r1cs::{
     spartan_outer_constraints, spartan_outer_opening_columns, spartan_outer_row_weights,
     SPARTAN_OUTER_SECOND_GROUP_ROW_COUNT, SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE,
 };
-use jolt_riscv::{CircuitFlagSet, CircuitFlags, InstructionFlags, JoltTraceRow as TraceRow};
+use jolt_riscv::{
+    CircuitFlagSet, CircuitFlags, InstructionFlags, JoltTraceRow as TraceRow, CIRCUIT_FLAGS,
+    NUM_CIRCUIT_FLAGS,
+};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_utils::unsafe_allocate_zero_vec;
 use jolt_verifier::stages::relations::{
@@ -94,10 +97,10 @@ use jolt_verifier::stages::stage1::outer_remainder::OuterRemainder;
 #[cfg(feature = "field-inline")]
 use jolt_witness::field_inline::FieldInlineSpartanRow;
 use jolt_witness::witnesses::{
-    lookup_values, Extract as _, Imm, LeftInstructionInput, LeftLookupOperand, LookupOutput,
+    lookup_values, Imm, LeftInstructionInput, LeftLookupOperand, LookupOutput,
     NextIsFirstInSequence, NextIsVirtual, NextPc, NextUnexpandedPc, Pc, Product, RamAddress,
     RamReadValue, RamWriteValue, RdWriteValue, RightInstructionInput, RightLookupOperand, Rs1Value,
-    Rs2Value, ShouldBranch, ShouldJump, UnexpandedPc, WitnessEnv,
+    Rs2Value, ShouldBranch, UnexpandedPc, WitnessEnv,
 };
 use jolt_witness::{JoltWitnessPlane, WitnessBundle, WitnessError};
 #[cfg(feature = "parallel")]
@@ -189,7 +192,6 @@ struct SpartanOuterRow {
     next_is_virtual: NextIsVirtual,
     next_is_first_in_sequence: NextIsFirstInSequence,
     lookup_output: LookupOutput,
-    should_jump: ShouldJump,
     circuit_flags: CircuitFlagSet,
 }
 
@@ -234,7 +236,7 @@ impl WitnessBundle for SpartanOuterRow {
     fn from_row(
         row: &TraceRow,
         next: Option<&TraceRow>,
-        env: &WitnessEnv<'_>,
+        _env: &WitnessEnv<'_>,
     ) -> Result<Self, WitnessError> {
         let circuit_flags = row.circuit_flags();
         let instruction_flags = row.instruction_flags();
@@ -275,7 +277,6 @@ impl WitnessBundle for SpartanOuterRow {
                 next_flags.is_some_and(|flags| flags[CircuitFlags::IsFirstInSequence]),
             ),
             lookup_output: LookupOutput(lookup_output),
-            should_jump: ShouldJump::extract(row, next, env)?,
             circuit_flags,
         })
     }
@@ -446,7 +447,7 @@ impl SpartanOuterRow {
             add + sub + mul,
             1 - add - sub - mul,
             flag(self.circuit_flags[CircuitFlags::Assert]),
-            flag(self.should_jump.0),
+            jump,
             flag(self.circuit_flags[CircuitFlags::VirtualInstruction])
                 - flag(self.circuit_flags[CircuitFlags::IsLastInSequence]),
             flag(self.next_is_virtual.0) - flag(self.next_is_first_in_sequence.0),
@@ -1322,7 +1323,7 @@ impl<F: JoltField> OuterRemainderKernel<F> {
 
     /// Az/Bz column weights at both stream values over the composed opening-column
     /// selection, from the same `jolt-claims` sources the verifier's coefficient build
-    /// uses (35 rv64 columns without field-inline; the non-contiguous 45 + 5 selection
+    /// uses (36 rv64 columns without field-inline; the non-contiguous 46 + 5 selection
     /// under `field-inline`).
     fn derived_weights(uniskip_challenge: F) -> Result<DerivedWeights<F>, KernelError<F>> {
         let matrices = spartan_outer_constraints::<F>();
@@ -1428,6 +1429,8 @@ impl<F: JoltField> OuterRemainderKernel<F> {
 }
 
 const VARIABLE_COUNT: usize = SPARTAN_OUTER_R1CS_INPUTS.len();
+/// The circuit flags close `SPARTAN_OUTER_R1CS_INPUTS`, in `CIRCUIT_FLAGS` order.
+const FLAG_INPUT_BASE: usize = VARIABLE_COUNT - NUM_CIRCUIT_FLAGS;
 
 /// Which canonical inputs are boolean-valued: those stay on the small-scalar
 /// accumulator, whose 5-limb (320-bit) window only has headroom when the
@@ -1439,8 +1442,7 @@ const BOOLEAN_INPUT: [bool; VARIABLE_COUNT] = {
     mask[3] = true; // ShouldBranch
     mask[17] = true; // NextIsVirtual
     mask[18] = true; // NextIsFirstInSequence
-    mask[20] = true; // ShouldJump
-    let mut flag = 21; // the circuit flags
+    let mut flag = FLAG_INPUT_BASE;
     while flag < VARIABLE_COUNT {
         mask[flag] = true;
         flag += 1;
@@ -1470,39 +1472,8 @@ impl<F: JoltField> ClaimAccumulator<F> {
         flag(3, row.should_branch.0);
         flag(17, row.next_is_virtual.0);
         flag(18, row.next_is_first_in_sequence.0);
-        flag(20, row.should_jump.0);
-        flag(21, row.circuit_flags[CircuitFlags::AddOperands]);
-        flag(22, row.circuit_flags[CircuitFlags::SubtractOperands]);
-        flag(23, row.circuit_flags[CircuitFlags::MultiplyOperands]);
-        flag(24, row.circuit_flags[CircuitFlags::Load]);
-        flag(25, row.circuit_flags[CircuitFlags::Store]);
-        flag(26, row.circuit_flags[CircuitFlags::Jump]);
-        flag(27, row.circuit_flags[CircuitFlags::WriteLookupOutputToRD]);
-        flag(28, row.circuit_flags[CircuitFlags::VirtualInstruction]);
-        flag(29, row.circuit_flags[CircuitFlags::Assert]);
-        flag(30, row.circuit_flags[CircuitFlags::DoNotUpdateUnexpandedPC]);
-        flag(31, row.circuit_flags[CircuitFlags::Advice]);
-        flag(32, row.circuit_flags[CircuitFlags::IsCompressed]);
-        flag(33, row.circuit_flags[CircuitFlags::IsFirstInSequence]);
-        flag(34, row.circuit_flags[CircuitFlags::IsLastInSequence]);
-        #[cfg(feature = "field-inline")]
-        {
-            flag(35, row.circuit_flags[CircuitFlags::FieldAdd]);
-            flag(36, row.circuit_flags[CircuitFlags::FieldSub]);
-            flag(37, row.circuit_flags[CircuitFlags::FieldMul]);
-            flag(38, row.circuit_flags[CircuitFlags::FieldInv]);
-            flag(39, row.circuit_flags[CircuitFlags::FieldAssertEq]);
-            flag(
-                40,
-                row.circuit_flags[CircuitFlags::FieldLoadAccumulateFromRegister],
-            );
-            flag(41, row.circuit_flags[CircuitFlags::FieldAssertZero]);
-            flag(42, row.circuit_flags[CircuitFlags::FieldLoadImm]);
-            flag(
-                43,
-                row.circuit_flags[CircuitFlags::FieldLoadAccumulateFromMemory],
-            );
-            flag(44, row.circuit_flags[CircuitFlags::FieldAdviceLimb]);
+        for (offset, circuit_flag) in CIRCUIT_FLAGS.into_iter().enumerate() {
+            flag(FLAG_INPUT_BASE + offset, row.circuit_flags[circuit_flag]);
         }
 
         let mut word = |index: usize, magnitude: u128, is_positive: bool| {

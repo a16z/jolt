@@ -62,8 +62,10 @@ where
         stage: JoltRelationId::SpartanProductVirtualization,
         reason: error.to_string(),
     })?;
-    let product_uniskip_input =
-        selected_product_uniskip_input_expr::<PCS::Field>(&product_weights)?;
+    let product_uniskip_input = selected_product_uniskip_input_expr::<PCS::Field>(
+        &product_weights,
+        F::from_bool(input.checked.public_io.panic),
+    )?;
     builder = add_stage(
         builder,
         "stage2.product_uniskip",
@@ -272,7 +274,7 @@ fn stage2_output_ids_and_aliases<F: JoltField>(
     let product_order = ProductRemainderOutputClaims::<F> {
         left_instruction_input: F::zero(),
         right_instruction_input: F::zero(),
-        jump_flag: F::zero(),
+        is_noop: F::zero(),
         write_lookup_output_to_rd: F::zero(),
         lookup_output: F::zero(),
         branch_flag: F::zero(),
@@ -338,11 +340,16 @@ fn stage2_output_ids_and_aliases<F: JoltField>(
 
 fn selected_product_uniskip_input_expr<F: JoltField>(
     weights: &[F],
+    claimed_panic: F,
 ) -> Result<VerifierExpr<F>, VerifierError> {
     use crate::stages::relations::SymbolicOf;
     use crate::stages::stage2::product_uniskip::ProductUniskip;
     let relation = SymbolicOf::<F, ProductUniskip<F>>::new(SpartanProductDimensions::new(0));
-    bake_product_weights(map_expr(relation.input_expression()), weights, None)
+    bake_product_weights(
+        map_expr(relation.input_expression()),
+        weights,
+        ProductCoefficient::ClaimedPanic(claimed_panic),
+    )
 }
 
 fn selected_product_remainder_output_expr<F: JoltField>(
@@ -355,14 +362,19 @@ fn selected_product_remainder_output_expr<F: JoltField>(
     bake_product_weights(
         map_expr(relation.output_expression()),
         weights,
-        Some(tau_kernel),
+        ProductCoefficient::TauKernel(tau_kernel),
     )
+}
+
+enum ProductCoefficient<F> {
+    TauKernel(F),
+    ClaimedPanic(F),
 }
 
 fn bake_product_weights<F: JoltField>(
     mut expr: VerifierExpr<F>,
     weights: &[F],
-    tau_kernel: Option<F>,
+    coefficient: ProductCoefficient<F>,
 ) -> Result<VerifierExpr<F>, VerifierError> {
     use jolt_claims::protocols::jolt::SpartanProductVirtualizationPublic;
     if weights.len() != SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE {
@@ -377,12 +389,28 @@ fn bake_product_weights<F: JoltField>(
                 JoltDerivedId::SpartanProductVirtualization(public),
             )) = &factor
             {
-                let value = match public {
-                    SpartanProductVirtualizationPublic::UniskipLagrangeWeight(i)
-                    | SpartanProductVirtualizationPublic::LagrangeWeight(i) => {
-                        weights.get(*i).copied()
-                    }
-                    SpartanProductVirtualizationPublic::TauKernel => tau_kernel,
+                let value = match (public, &coefficient) {
+                    (
+                        SpartanProductVirtualizationPublic::UniskipLagrangeWeight(i)
+                        | SpartanProductVirtualizationPublic::LagrangeWeight(i),
+                        _,
+                    ) => weights.get(*i).copied(),
+                    (
+                        SpartanProductVirtualizationPublic::TauKernel,
+                        ProductCoefficient::TauKernel(value),
+                    )
+                    | (
+                        SpartanProductVirtualizationPublic::ClaimedPanic,
+                        ProductCoefficient::ClaimedPanic(value),
+                    ) => Some(*value),
+                    (
+                        SpartanProductVirtualizationPublic::TauKernel,
+                        ProductCoefficient::ClaimedPanic(_),
+                    )
+                    | (
+                        SpartanProductVirtualizationPublic::ClaimedPanic,
+                        ProductCoefficient::TauKernel(_),
+                    ) => None,
                 }
                 .ok_or_else(|| VerifierError::BlindFoldConstructionFailed {
                     reason: "missing product coefficient".to_string(),
@@ -398,7 +426,7 @@ fn bake_product_weights<F: JoltField>(
 }
 
 #[cfg(test)]
-#[cfg_attr(feature = "field-inline", expect(clippy::unwrap_used))]
+#[expect(clippy::unwrap_used, reason = "test fixtures fail loudly")]
 #[cfg_attr(
     not(feature = "field-inline"),
     expect(
@@ -411,11 +439,6 @@ mod tests {
     #[cfg(feature = "field-inline")]
     use crate::stages::stage2::outputs::{
         FieldRegistersClaimReductionOutputClaims, FieldRegistersProductOutputClaims,
-    };
-    #[cfg(feature = "field-inline")]
-    use jolt_claims::protocols::jolt::geometry::spartan::{
-        product_outer_opening, product_should_branch_outer_opening,
-        product_should_jump_outer_opening,
     };
     use jolt_field::{Fr, Ring};
 
@@ -445,7 +468,7 @@ mod tests {
             product_remainder: ProductRemainderOutputClaims {
                 left_instruction_input: fr(4),
                 right_instruction_input: fr(5),
-                jump_flag: fr(6),
+                is_noop: fr(6),
                 write_lookup_output_to_rd: fr(7),
                 lookup_output: fr(8),
                 branch_flag: fr(9),
@@ -526,70 +549,61 @@ mod tests {
         );
     }
 
-    /// The lowered composed uni-skip input expression evaluates identically to the clear
-    /// `ProductUniskip::input_claim` composition on synthetic values (with field-inline
-    /// enabled: all five lanes; the field-inline inputs read from the stage-1 field-inline
-    /// carrier rows).
-    #[cfg(feature = "field-inline")]
+    /// The lowered uni-skip input expression evaluates identically to the clear
+    /// `ProductUniskip::input_claim` on synthetic values under both claimed panic bits
+    /// (with field-inline enabled: all five lanes, the field-inline inputs read from the
+    /// stage-1 field-inline carrier rows).
     #[test]
-    fn lowered_uniskip_input_matches_the_clear_composed_claim() {
+    fn lowered_uniskip_input_matches_the_clear_claim() {
         use crate::stages::relations::ConcreteSumcheck as _;
         use crate::stages::stage2::product_uniskip::{ProductUniskip, ProductUniskipInputClaims};
-        use jolt_claims::protocols::field_inline::geometry::spartan::outer_opening;
-        use jolt_claims::protocols::field_inline::FieldInlineVirtualPolynomial;
-        use jolt_claims::NoChallenges;
+        use jolt_claims::{InputClaims as _, NoChallenges};
 
         let tau_high = fr(23);
-        let relation = ProductUniskip::new(SpartanProductDimensions::new(4), tau_high);
-        let inputs = ProductUniskipInputClaims::<Fr> {
+        let base = ProductUniskipInputClaims::<Fr> {
             product: fr(3),
             should_branch: fr(5),
-            should_jump: fr(7),
+            halt: fr(17),
+            halt_panic: fr(19),
         };
-        let field_product = fr(11);
-        let field_inv_product = fr(13);
+        #[cfg(feature = "field-inline")]
         let inputs = ComposedClaims {
-            base: inputs,
+            base,
             field_inline: FieldProductUniskipInputs {
-                product: field_product,
-                inv_product: field_inv_product,
+                product: fr(11),
+                inv_product: fr(13),
             },
         };
-        let clear = relation
-            .input_claim(&inputs, &NoChallenges::default())
-            .unwrap();
-
+        #[cfg(not(feature = "field-inline"))]
+        let inputs = base;
         let weights =
             centered_lagrange_evals(SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE, tau_high).unwrap();
-        let lowered_expr = selected_product_uniskip_input_expr::<Fr>(&weights).unwrap();
-        let lowered = lowered_expr.evaluate(
-            |id| match id {
-                ComposedOpeningId::Jolt(id) => {
-                    if *id == product_outer_opening() {
-                        inputs.product
-                    } else if *id == product_should_branch_outer_opening() {
-                        inputs.should_branch
-                    } else if *id == product_should_jump_outer_opening() {
-                        inputs.should_jump
-                    } else {
-                        fr(0)
-                    }
-                }
-                ComposedOpeningId::FieldInline(id) => {
-                    if *id == outer_opening(FieldInlineVirtualPolynomial::FieldProduct) {
-                        field_product
-                    } else if *id == outer_opening(FieldInlineVirtualPolynomial::FieldInvProduct) {
-                        field_inv_product
-                    } else {
-                        fr(0)
-                    }
-                }
-            },
-            |_| fr(0),
-            |_| fr(0),
-        );
 
-        assert_eq!(lowered, clear);
+        for claimed_panic in [false, true] {
+            let relation =
+                ProductUniskip::new(SpartanProductDimensions::new(4), tau_high, claimed_panic);
+            let clear = relation
+                .input_claim(&inputs, &NoChallenges::default())
+                .unwrap();
+            let lowered =
+                selected_product_uniskip_input_expr::<Fr>(&weights, Fr::from_bool(claimed_panic))
+                    .unwrap()
+                    .evaluate(
+                        |id| {
+                            #[cfg(feature = "field-inline")]
+                            let value = inputs.resolve_input(id);
+                            #[cfg(not(feature = "field-inline"))]
+                            let value = match id {
+                                ComposedOpeningId::Jolt(id) => inputs.resolve_input(id),
+                                ComposedOpeningId::FieldInline(_) => None,
+                            };
+                            value.unwrap_or_else(|| fr(0))
+                        },
+                        |_| fr(0),
+                        |_| fr(0),
+                    );
+            assert_eq!(lowered, clear, "claimed panic {claimed_panic}");
+        }
     }
 
     /// The lowered composed remainder output expression evaluates identically to the clear
@@ -618,7 +632,7 @@ mod tests {
         let outputs = ProductRemainderOutputClaims::<Fr> {
             left_instruction_input: fr(2),
             right_instruction_input: fr(3),
-            jump_flag: fr(5),
+            is_noop: fr(5),
             write_lookup_output_to_rd: fr(7),
             lookup_output: fr(11),
             branch_flag: fr(13),

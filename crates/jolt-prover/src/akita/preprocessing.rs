@@ -166,7 +166,7 @@ pub fn preprocess_committed_with_advice(
         program
             .metadata()
             .ok_or_else(|| PreprocessingError::InvalidCommittedProgram {
-                reason: "entry address is absent from bytecode preprocessing".to_owned(),
+                reason: "bytecode preprocessing has no valid code region".to_owned(),
             })?;
     let trace_order = config.trace_polynomial_order;
     let plan = committed_program_packing_plan(
@@ -299,7 +299,11 @@ mod tests {
         )
         .unwrap();
         let config = ProverConfig::derive_from_dimensions::<AkitaField>(
-            ExecutionDimensions::default(),
+            ExecutionDimensions {
+                trace_length: 1,
+                ends_in_halt: true,
+                ..Default::default()
+            },
             &program.memory_layout,
             program.ram.min_bytecode_address,
             program.ram.bytecode_words.len(),

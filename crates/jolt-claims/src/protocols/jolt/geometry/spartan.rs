@@ -1,7 +1,7 @@
 use jolt_field::Ring;
 use jolt_riscv::{CircuitFlags, InstructionFlags, NUM_CIRCUIT_FLAGS};
 
-use crate::derived;
+use crate::{derived, opening};
 
 use super::super::{
     JoltDerivedId, JoltExpr, JoltOpeningId, JoltRelationId, JoltVirtualPolynomial,
@@ -12,7 +12,7 @@ pub(crate) const OUTER_REMAINDER_DEGREE: usize = 3;
 pub(crate) const PRODUCT_REMAINDER_DEGREE: usize = 3;
 pub(crate) const SHIFT_DEGREE: usize = 2;
 
-pub const SPARTAN_OUTER_R1CS_INPUTS: [JoltVirtualPolynomial; 21 + NUM_CIRCUIT_FLAGS] = [
+pub const SPARTAN_OUTER_R1CS_INPUTS: [JoltVirtualPolynomial; 20 + NUM_CIRCUIT_FLAGS] = [
     JoltVirtualPolynomial::LeftInstructionInput,
     JoltVirtualPolynomial::RightInstructionInput,
     JoltVirtualPolynomial::Product,
@@ -33,7 +33,6 @@ pub const SPARTAN_OUTER_R1CS_INPUTS: [JoltVirtualPolynomial; 21 + NUM_CIRCUIT_FL
     JoltVirtualPolynomial::NextIsVirtual,
     JoltVirtualPolynomial::NextIsFirstInSequence,
     JoltVirtualPolynomial::LookupOutput,
-    JoltVirtualPolynomial::ShouldJump,
     JoltVirtualPolynomial::OpFlags(CircuitFlags::AddOperands),
     JoltVirtualPolynomial::OpFlags(CircuitFlags::SubtractOperands),
     JoltVirtualPolynomial::OpFlags(CircuitFlags::MultiplyOperands),
@@ -48,6 +47,8 @@ pub const SPARTAN_OUTER_R1CS_INPUTS: [JoltVirtualPolynomial; 21 + NUM_CIRCUIT_FL
     JoltVirtualPolynomial::OpFlags(CircuitFlags::IsCompressed),
     JoltVirtualPolynomial::OpFlags(CircuitFlags::IsFirstInSequence),
     JoltVirtualPolynomial::OpFlags(CircuitFlags::IsLastInSequence),
+    JoltVirtualPolynomial::OpFlags(CircuitFlags::Halt),
+    JoltVirtualPolynomial::OpFlags(CircuitFlags::HaltPanic),
     #[cfg(feature = "field-inline")]
     JoltVirtualPolynomial::OpFlags(CircuitFlags::FieldAdd),
     #[cfg(feature = "field-inline")]
@@ -171,6 +172,72 @@ where
     ))
 }
 
+fn product_claimed_panic<F>() -> JoltExpr<F>
+where
+    F: Ring,
+{
+    derived(JoltDerivedId::from(
+        SpartanProductVirtualizationPublic::ClaimedPanic,
+    ))
+}
+
+/// One term of product lane 3's output: `(constant + per_panic·Π)·OpFlags(flag)`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct HaltLaneTerm {
+    pub(crate) flag: CircuitFlags,
+    pub(crate) constant: i8,
+    pub(crate) per_panic: i8,
+}
+
+/// Product lane 3's constant left factor; its right factor is
+/// `NextIsNoop − IsNoop`.
+pub const PRODUCT_HALT_LANE_LEFT_FACTOR: u8 = 2;
+
+/// The output of product lane 3: every cycle satisfies
+/// `2·(NextIsNoop − IsNoop) = (2 − Π)·Halt + HaltPanic`, with `Π` the claimed
+/// panic bit. Over boolean flags the left side is −2, 0 or 2, and the output
+/// is 0 on a row with neither flag, 2 on a halt whose `HaltPanic` equals `Π`,
+/// and 1 or 3 on a halt of the other kind or on `HaltPanic` without `Halt`.
+/// A field of characteristic other than 2, 3 and 5 keeps −2, 0, 1, 2 and 3
+/// distinct, so the lane holds exactly when `IsNoop` is unchanged across a
+/// cycle that carries neither flag, or rises from 0 to 1 across a halt of the
+/// claimed kind. The lane does not read `Jump`: that a halt is a jump is a
+/// fact about the halt kinds, pinned by jolt-riscv's
+/// `halt_flags_mark_exactly_the_halt_kinds`.
+///
+/// Do not reuse this lane over a binary field. In characteristic 2 with
+/// `Π = 0` both the left side and the `Halt` coefficient vanish and the lane
+/// reduces to `0 = HaltPanic`, so a real row with no halt flags followed by
+/// padding satisfies it.
+pub(crate) const PRODUCT_HALT_LANE_OUTPUT: [HaltLaneTerm; 2] = [
+    HaltLaneTerm {
+        flag: CircuitFlags::Halt,
+        constant: 2,
+        per_panic: -1,
+    },
+    HaltLaneTerm {
+        flag: CircuitFlags::HaltPanic,
+        constant: 1,
+        per_panic: 0,
+    },
+];
+
+/// [`PRODUCT_HALT_LANE_OUTPUT`] over the Spartan-outer flag openings, with `Π`
+/// the `ClaimedPanic` derived public.
+pub(crate) fn product_halt_lane_output<F>() -> JoltExpr<F>
+where
+    F: Ring,
+{
+    PRODUCT_HALT_LANE_OUTPUT
+        .into_iter()
+        .fold(JoltExpr::zero(), |output, term| {
+            let flag = opening(outer_opening(JoltVirtualPolynomial::OpFlags(term.flag)));
+            output
+                + i128::from(term.constant) * flag.clone()
+                + i128::from(term.per_panic) * (product_claimed_panic() * flag)
+        })
+}
+
 pub fn product_uniskip_opening() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::UnivariateSkip,
@@ -184,10 +251,6 @@ pub fn product_outer_opening() -> JoltOpeningId {
 
 pub fn product_should_branch_outer_opening() -> JoltOpeningId {
     outer_opening(JoltVirtualPolynomial::ShouldBranch)
-}
-
-pub fn product_should_jump_outer_opening() -> JoltOpeningId {
-    outer_opening(JoltVirtualPolynomial::ShouldJump)
 }
 
 pub fn left_instruction_input_product() -> JoltOpeningId {
@@ -211,9 +274,9 @@ pub fn lookup_output_product() -> JoltOpeningId {
     )
 }
 
-pub fn jump_flag_product() -> JoltOpeningId {
+pub fn is_noop_product() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
-        JoltVirtualPolynomial::OpFlags(CircuitFlags::Jump),
+        JoltVirtualPolynomial::InstructionFlags(InstructionFlags::IsNoop),
         JoltRelationId::SpartanProductVirtualization,
     )
 }

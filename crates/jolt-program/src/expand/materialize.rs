@@ -191,7 +191,18 @@ impl ExpansionState {
                 })?;
             }
         }
-        (options.stamp)(rows.into_vec(), source.is_compressed, self.profile)
+        let rows = rows.into_vec();
+        // A proof may end at any halt row (product lane 3 lets padding follow
+        // it), so a halt must be a whole source instruction, never one row of
+        // a longer expansion.
+        if rows.len() > 1
+            && rows
+                .iter()
+                .any(|row| JoltInstruction::from(*row).circuit_flags()[CircuitFlags::Halt])
+        {
+            return Err(ExpansionError::HaltInSequence);
+        }
+        (options.stamp)(rows, source.is_compressed, self.profile)
     }
 
     fn materialize_unstamped(

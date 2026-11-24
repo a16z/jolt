@@ -885,7 +885,7 @@ fn stage2_formula_output_openings() -> Vec<(&'static str, JoltOpeningId)> {
         [
             spartan::left_instruction_input_product(),
             spartan::right_instruction_input_product(),
-            spartan::jump_flag_product(),
+            spartan::is_noop_product(),
             spartan::lookup_output_product(),
             spartan::branch_flag_product(),
             spartan::next_is_noop_product(),

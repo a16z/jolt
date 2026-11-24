@@ -123,8 +123,8 @@ pub fn spartan_outer_constraints<F: JoltField>() -> ConstraintMatrices<F> {
     }
 }
 
-pub fn trace_constraints<F: JoltField>() -> ConstraintMatrices<F> {
-    let constraints = rv64::rv64_trace_constraints();
+pub fn trace_constraints<F: JoltField>(claimed_panic: bool) -> ConstraintMatrices<F> {
+    let constraints = rv64::rv64_trace_constraints(claimed_panic);
     #[cfg(feature = "field-inline")]
     {
         append_field_inline_columns(
@@ -355,9 +355,11 @@ mod tests {
         V_FIELD_INV_PRODUCT, V_FIELD_PRODUCT, V_FIELD_RD_VALUE, V_FIELD_RS1_VALUE,
         V_FIELD_RS2_VALUE,
     };
-    use super::rv64::NUM_PRODUCT_CONSTRAINTS;
     #[cfg(feature = "field-inline")]
     use super::rv64::{flag_column, V_CONST, V_IMM, V_RD_WRITE_VALUE, V_RS1_VALUE};
+    use super::rv64::{
+        rv64_trace_constraints, NUM_PRODUCT_CONSTRAINTS, V_FLAG_HALT, V_FLAG_HALT_PANIC,
+    };
     use super::*;
     use crate::protocols::composed::geometry::{
         SPARTAN_PRODUCT_BASE_LANES, SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE,
@@ -383,14 +385,17 @@ mod tests {
     #[cfg(not(feature = "field-inline"))]
     #[test]
     fn default_composed_constraints_match_rv64_shape() {
-        let composed = trace_constraints::<Fr>();
-        let rv64 = rv64::rv64_trace_constraints::<Fr>();
+        for claimed_panic in [false, true] {
+            let composed = trace_constraints::<Fr>(claimed_panic);
+            let rv64 = rv64_trace_constraints::<Fr>(claimed_panic);
 
-        assert_eq!(composed.num_constraints, rv64.num_constraints);
-        assert_eq!(composed.num_vars, rv64.num_vars);
-        assert_eq!(composed.a, rv64.a);
-        assert_eq!(composed.b, rv64.b);
-        assert_eq!(composed.c, rv64.c);
+            assert_eq!(composed.num_constraints, rv64.num_constraints);
+            assert_eq!(composed.num_vars, rv64.num_vars);
+            assert_eq!(composed.a, rv64.a);
+            assert_eq!(composed.b, rv64.b);
+            assert_eq!(composed.c, rv64.c);
+        }
+        let composed = trace_constraints::<Fr>(false);
         assert_eq!(SPARTAN_PRODUCT_BASE_LANES, NUM_PRODUCT_CONSTRAINTS);
         assert_eq!(
             composed.num_constraints - SPARTAN_OUTER_ROW_COUNT,
@@ -401,7 +406,7 @@ mod tests {
     #[cfg(feature = "field-inline")]
     #[test]
     fn field_inline_composed_constraints_append_field_shape() {
-        let composed = trace_constraints::<Fr>();
+        let composed = trace_constraints::<Fr>(false);
 
         assert_eq!(composed.num_constraints, NUM_CONSTRAINTS_PER_CYCLE);
         assert_eq!(composed.num_vars, NUM_VARS_PER_CYCLE);
@@ -452,7 +457,7 @@ mod tests {
     #[test]
     #[expect(clippy::indexing_slicing, reason = "tests index fixture data")]
     fn field_inline_composed_constraints_share_constant_column() {
-        let composed = trace_constraints::<Fr>();
+        let composed = trace_constraints::<Fr>(false);
         let mut witness = vec![Fr::zero(); composed.num_vars];
 
         witness[V_CONST] = Fr::from_u64(1);
@@ -532,5 +537,63 @@ mod tests {
             composed_uniskip_input_contribution(&weights, SPARTAN_PRODUCT_BASE_LANES, &inputs),
             Some(expected_input),
         );
+    }
+
+    /// Pins the two consumers of the lane-3 owner against each other: row 21's
+    /// output of the full-trace matrix and the product uni-skip's lane-3 input,
+    /// on distinct flag values under both claimed panic bits.
+    #[test]
+    #[expect(clippy::indexing_slicing, reason = "tests index fixture data")]
+    fn halt_lane_row_matches_product_uniskip_input() {
+        use crate::protocols::jolt::geometry::spartan::{outer_opening, SpartanProductDimensions};
+        use crate::protocols::jolt::relations::spartan::ProductUniskip;
+        use crate::protocols::jolt::{
+            JoltDerivedId, JoltVirtualPolynomial, SpartanProductVirtualizationPublic,
+        };
+        use crate::SymbolicSumcheck;
+        use jolt_field::Ring;
+        use jolt_riscv::CircuitFlags;
+
+        let (halt, halt_panic) = (Fr::from_u64(7), Fr::from_u64(11));
+        let input = ProductUniskip::new(SpartanProductDimensions::new(3)).input_expression::<Fr>();
+        for claimed_panic in [false, true] {
+            let matrices = rv64_trace_constraints::<Fr>(claimed_panic);
+            let mut z = vec![Fr::from_u64(0); matrices.num_vars];
+            z[V_FLAG_HALT] = halt;
+            z[V_FLAG_HALT_PANIC] = halt_panic;
+            let row = &matrices.c[RV64_NUM_CONSTRAINTS_PER_CYCLE - 1];
+            let output: Fr = row
+                .iter()
+                .map(|&(column, coefficient)| coefficient * z[column])
+                .sum();
+            let lane = input.evaluate(
+                |id| {
+                    [
+                        (CircuitFlags::Halt, halt),
+                        (CircuitFlags::HaltPanic, halt_panic),
+                    ]
+                    .into_iter()
+                    .find(|(flag, _)| *id == outer_opening(JoltVirtualPolynomial::OpFlags(*flag)))
+                    .map_or(Fr::from_u64(0), |(_, value)| value)
+                },
+                |_| Fr::from_u64(0),
+                |id| {
+                    if *id
+                        == JoltDerivedId::from(
+                            SpartanProductVirtualizationPublic::UniskipLagrangeWeight(2),
+                        )
+                    {
+                        Fr::from_u64(1)
+                    } else if *id
+                        == JoltDerivedId::from(SpartanProductVirtualizationPublic::ClaimedPanic)
+                    {
+                        Fr::from_bool(claimed_panic)
+                    } else {
+                        Fr::from_u64(0)
+                    }
+                },
+            );
+            assert_eq!(output, lane, "claimed panic {claimed_panic}");
+        }
     }
 }

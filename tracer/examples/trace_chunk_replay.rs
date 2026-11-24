@@ -7,7 +7,7 @@
 //!   (a) the worker's end state to match the next checkpoint bit-exactly at
 //!       every boundary (and pass-1's final state after the last chunk),
 //!   (b) the concatenated replayed rows to equal the serial trace() rows,
-//!   (c) final memory and JoltDevice outputs/panic to match trace()'s.
+//!   (c) final memory, JoltDevice outputs and the panic claim to match trace()'s.
 //!
 //! Usage:
 //!   cargo run --release -p tracer --example trace_chunk_replay -- [filter]
@@ -22,6 +22,7 @@ mod support;
 use support::chain_input;
 use tracer::instruction::Cycle;
 use tracer::parallel::{ChunkWorker, PassOne, SnapshotPool};
+use tracer::HaltKind;
 
 /// Same (guest, input) pairs as the golden-trace gate, plus per-guest chunk
 /// sizes in ticks (chosen to force multiple chunks; muldiv gets a tiny one).
@@ -118,9 +119,12 @@ fn run_case(guest: &str, input: &[u8], chunk_ticks: usize) -> Result<(usize, usi
         .jolt_device
         .as_ref()
         .ok_or("worker lost its JoltDevice")?;
-    if worker_device.outputs != serial_device.outputs || worker_device.panic != serial_device.panic
-    {
-        return Err("final device outputs/panic diverged".to_string());
+    if worker_device.outputs != serial_device.outputs {
+        return Err("final device outputs diverged".to_string());
+    }
+    // A live device carries no panic bit; `finish_emulator` sets it from the halt.
+    if (worker.cpu().halted() == Some(HaltKind::Panic)) != serial_device.panic {
+        return Err("final halt kind disagrees with the panic claim".to_string());
     }
     Ok((chunk_count, replayed.len()))
 }

@@ -44,16 +44,17 @@ const MAX_REGISTER_ID: u8 = u8::MAX - 1;
 
 const REGISTER_NONE: u8 = u8::MAX;
 
-/// Field-inline builds use 24 circuit-flag bits; base builds retain the original
-/// 16-bit layout. Seven instruction flags and the immediate sign follow them.
-const META_INSTRUCTION_FLAGS_SHIFT: u32 = if cfg!(feature = "field-inline") {
-    24
-} else {
-    16
-};
+/// The meta word holds the circuit flags in its low `NUM_CIRCUIT_FLAGS` bits (16
+/// in base builds, 26 with field-inline), then the instruction flags without
+/// `IsNoop`: the flags below `IsNoop` keep their bit and the ones above it move
+/// down one. `IsNoop` is derived from `bytecode_pc == 0`, and the immediate's
+/// sign is control bit 7.
+const META_INSTRUCTION_FLAGS_SHIFT: u32 = NUM_CIRCUIT_FLAGS as u32;
 const META_CIRCUIT_FLAGS_MASK: u32 = (1 << META_INSTRUCTION_FLAGS_SHIFT) - 1;
-const META_INSTRUCTION_FLAGS_MASK: u32 = (1u32 << (NUM_INSTRUCTION_FLAGS as u32)) - 1;
-const META_IMM_NEGATIVE_SHIFT: u32 = META_INSTRUCTION_FLAGS_SHIFT + NUM_INSTRUCTION_FLAGS as u32;
+const IS_NOOP_BIT: u32 = InstructionFlags::IsNoop as u32;
+const META_LOW_INSTRUCTION_FLAGS: u32 = (1 << IS_NOOP_BIT) - 1;
+const META_STORED_INSTRUCTION_FLAG_BITS: u32 = NUM_INSTRUCTION_FLAGS as u32 - 1;
+const META_STORED_INSTRUCTION_FLAGS_MASK: u32 = (1 << META_STORED_INSTRUCTION_FLAG_BITS) - 1;
 
 const CAPTURE_RS1: u8 = 1;
 const CAPTURE_RS2: u8 = 1 << 1;
@@ -62,21 +63,19 @@ const VIRTUAL_SEQUENCE_PRESENT: u8 = 1 << 3;
 const INTEGER_RS1: u8 = 1 << 4;
 const INTEGER_RS2: u8 = 1 << 5;
 const INTEGER_RD: u8 = 1 << 6;
+const IMM_NEGATIVE: u8 = 1 << 7;
 
 const _: () = {
-    assert!(NUM_CIRCUIT_FLAGS <= META_INSTRUCTION_FLAGS_SHIFT as usize);
-    assert!(META_IMM_NEGATIVE_SHIFT < u32::BITS);
-    let instruction_mask = META_INSTRUCTION_FLAGS_MASK << META_INSTRUCTION_FLAGS_SHIFT;
-    let sign_mask = 1 << META_IMM_NEGATIVE_SHIFT;
+    assert!(META_INSTRUCTION_FLAGS_SHIFT + META_STORED_INSTRUCTION_FLAG_BITS <= u32::BITS);
+    let instruction_mask = META_STORED_INSTRUCTION_FLAGS_MASK << META_INSTRUCTION_FLAGS_SHIFT;
     assert!(META_CIRCUIT_FLAGS_MASK & instruction_mask == 0);
-    assert!((META_CIRCUIT_FLAGS_MASK | instruction_mask) & sign_mask == 0);
     let capture_mask = CAPTURE_RS1 | CAPTURE_RS2 | CAPTURE_RD;
     let integer_mask = INTEGER_RS1 | INTEGER_RS2 | INTEGER_RD;
     assert!(capture_mask.count_ones() == 3);
     assert!(integer_mask.count_ones() == 3);
     assert!(capture_mask & integer_mask == 0);
     assert!((capture_mask | integer_mask) & VIRTUAL_SEQUENCE_PRESENT == 0);
-    assert!(capture_mask | integer_mask | VIRTUAL_SEQUENCE_PRESENT == 0x7f);
+    assert!(capture_mask | integer_mask | VIRTUAL_SEQUENCE_PRESENT | IMM_NEGATIVE == u8::MAX);
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -269,6 +268,9 @@ impl JoltTraceRow {
         let circuit_flags = lowered.circuit_flags();
         let instruction_flags = lowered.instruction_flags();
         let is_noop = instruction_flags.get(InstructionFlags::IsNoop);
+        // `is_noop` and `instruction_flags` derive `IsNoop` from `bytecode_pc == 0`,
+        // which this check makes exact; `new` is the only constructor (`Default`
+        // calls it).
         if is_noop != (bytecode_pc == 0) {
             return Err(TraceRowError::InvalidBytecodePc {
                 kind,
@@ -366,14 +368,15 @@ impl JoltTraceRow {
                 * VIRTUAL_SEQUENCE_PRESENT)
             | (u8::from(integer_operands.rs1.is_some()) * INTEGER_RS1)
             | (u8::from(integer_operands.rs2.is_some()) * INTEGER_RS2)
-            | (u8::from(integer_operands.rd.is_some()) * INTEGER_RD);
+            | (u8::from(integer_operands.rd.is_some()) * INTEGER_RD)
+            | (u8::from(imm < 0) * IMM_NEGATIVE);
 
         Ok(Self {
             values,
             unexpanded_pc: instruction.address as u64,
             imm_abs: imm_magnitude as u64,
             bytecode_pc,
-            meta: pack_meta(circuit_flags, instruction_flags, imm < 0),
+            meta: pack_meta(circuit_flags, instruction_flags),
             jolt_tag: kind.tag().0,
             virtual_sequence_remaining: instruction.virtual_sequence_remaining.unwrap_or(0),
             rs1_id: checked_register_id(instruction.operands.rs1)?,
@@ -490,7 +493,7 @@ impl JoltTraceRow {
     #[inline(always)]
     pub fn imm(&self) -> i128 {
         let magnitude = self.imm_abs as i128;
-        if self.meta & (1 << META_IMM_NEGATIVE_SHIFT) != 0 {
+        if self.control & IMM_NEGATIVE != 0 {
             -magnitude
         } else {
             magnitude
@@ -571,9 +574,12 @@ impl JoltTraceRow {
 
     #[inline(always)]
     pub fn instruction_flags(&self) -> InstructionFlagSet {
-        InstructionFlagSet::from_bits(
-            ((self.meta >> META_INSTRUCTION_FLAGS_SHIFT) & META_INSTRUCTION_FLAGS_MASK) as u8,
-        )
+        let stored =
+            (self.meta >> META_INSTRUCTION_FLAGS_SHIFT) & META_STORED_INSTRUCTION_FLAGS_MASK;
+        let bits = (stored & META_LOW_INSTRUCTION_FLAGS)
+            | ((stored & !META_LOW_INSTRUCTION_FLAGS) << 1)
+            | (u32::from(self.is_noop()) << IS_NOOP_BIT);
+        InstructionFlagSet::from_bits(bits as u8)
     }
 
     #[inline(always)]
@@ -588,7 +594,7 @@ impl JoltTraceRow {
 
     #[inline(always)]
     pub fn is_noop(&self) -> bool {
-        self.meta & (1 << (META_INSTRUCTION_FLAGS_SHIFT + InstructionFlags::IsNoop as u32)) != 0
+        self.bytecode_pc == 0
     }
 
     /// Stable final-row identity, reconstructed from the cached tag.
@@ -599,14 +605,10 @@ impl JoltTraceRow {
 }
 
 #[inline]
-fn pack_meta(
-    circuit_flags: CircuitFlagSet,
-    instruction_flags: InstructionFlagSet,
-    imm_negative: bool,
-) -> u32 {
-    circuit_flags.bits()
-        | ((instruction_flags.bits() as u32) << META_INSTRUCTION_FLAGS_SHIFT)
-        | ((imm_negative as u32) << META_IMM_NEGATIVE_SHIFT)
+fn pack_meta(circuit_flags: CircuitFlagSet, instruction_flags: InstructionFlagSet) -> u32 {
+    let bits = u32::from(instruction_flags.bits());
+    let stored = (bits & META_LOW_INSTRUCTION_FLAGS) | ((bits >> 1) & !META_LOW_INSTRUCTION_FLAGS);
+    circuit_flags.bits() | (stored << META_INSTRUCTION_FLAGS_SHIFT)
 }
 
 #[inline(always)]
@@ -972,18 +974,81 @@ mod tests {
 
     #[test]
     fn flags_round_trip_through_meta() {
+        let stored_flags = (0..NUM_INSTRUCTION_FLAGS as u8)
+            .filter(|&bit| bit != InstructionFlags::IsNoop as u8)
+            .map(|bit| InstructionFlagSet::from_bits(1 << bit));
         for circuit_flag in CIRCUIT_FLAGS {
             let circuit_flags = CircuitFlagSet::default().set(circuit_flag);
-            let instruction_flags = InstructionFlagSet::default().set(InstructionFlags::IsNoop);
-            for imm_negative in [false, true] {
-                let row = JoltTraceRow {
-                    meta: pack_meta(circuit_flags, instruction_flags, imm_negative),
-                    imm_abs: 7,
-                    ..JoltTraceRow::default()
+            for instruction_flags in stored_flags.clone() {
+                for imm_negative in [false, true] {
+                    for bytecode_pc in [0, 1] {
+                        let row = JoltTraceRow {
+                            meta: pack_meta(circuit_flags, instruction_flags),
+                            control: if imm_negative { IMM_NEGATIVE } else { 0 },
+                            imm_abs: 7,
+                            bytecode_pc,
+                            ..JoltTraceRow::default()
+                        };
+                        let expected = if bytecode_pc == 0 {
+                            instruction_flags.set(InstructionFlags::IsNoop)
+                        } else {
+                            instruction_flags
+                        };
+                        assert_eq!(row.circuit_flags(), circuit_flags);
+                        assert_eq!(row.instruction_flags(), expected);
+                        assert_eq!(row.imm(), if imm_negative { -7 } else { 7 });
+                    }
+                }
+            }
+        }
+    }
+
+    /// Every final kind's row reports the flags its decoded instruction declares,
+    /// including the halts' `Halt`/`HaltPanic` and the sequence and compression
+    /// flags the row metadata contributes.
+    #[test]
+    fn trace_row_flags_match_the_decoded_instruction() {
+        for &kind in JoltInstructionKind::ALL {
+            let noop = kind == JoltInstructionKind::NoOp;
+            let plain = instruction(
+                kind,
+                NormalizedOperands {
+                    imm: -3,
+                    ..Default::default()
+                },
+            );
+            let sequenced = JoltInstructionRow {
+                virtual_sequence_remaining: Some(0),
+                is_first_in_sequence: true,
+                is_compressed: true,
+                ..plain
+            };
+            let sources = if noop {
+                vec![plain]
+            } else {
+                vec![plain, sequenced]
+            };
+            for source in sources {
+                let flags = JoltInstruction::from(source).circuit_flags();
+                let ram = if flags.get(CircuitFlags::Load) {
+                    RamAccess::Read(RamRead::default())
+                } else if flags.get(CircuitFlags::Store) {
+                    RamAccess::Write(RamWrite::default())
+                } else {
+                    RamAccess::NoOp
                 };
-                assert_eq!(row.circuit_flags(), circuit_flags);
-                assert_eq!(row.instruction_flags(), instruction_flags);
-                assert_eq!(row.imm(), if imm_negative { -7 } else { 7 });
+                let row =
+                    JoltTraceRow::new(source, RegisterState::default(), ram, u32::from(!noop))
+                        .unwrap();
+                let decoded = JoltInstruction::from(row.instruction());
+                assert_eq!(row.circuit_flags(), decoded.circuit_flags(), "{kind:?}");
+                assert_eq!(
+                    row.instruction_flags(),
+                    decoded.instruction_flags(),
+                    "{kind:?}"
+                );
+                assert_eq!(row.is_noop(), noop, "{kind:?}");
+                assert_eq!(row.imm(), -3, "{kind:?}");
             }
         }
     }
