@@ -234,41 +234,31 @@ pub trait FieldTranscript<F>: Transcript {
     }
 }
 
-/// Draws a vector of `len` challenges using one codec message.
-fn draw_challenges<T, F>(transcript: &mut T, len: usize) -> Result<Vec<F>, VerificationError>
-where
-    T: Sealed + ?Sized,
-    F: ChallengeCodec,
-{
-    let bytes = message_bytes::<F>(len);
-    if len == 0 {
-        transcript.require(bytes.is_ok())?;
-        return bytes.map(|_| Vec::new());
-    }
-    draw(transcript, bytes, |tape| F::decode_challenges(tape, len))
-}
-
-fn draw<T, U>(
-    transcript: &mut T,
-    bytes: Result<usize, VerificationError>,
+/// Squeezes one codec message of `len` challenges in `F` and decodes it.
+fn draw<F, U>(
+    transcript: &mut (impl Sealed + ?Sized),
+    len: usize,
     decode: impl FnOnce(&[u8]) -> Option<U>,
 ) -> Result<U, VerificationError>
 where
-    T: Sealed + ?Sized,
+    F: ChallengeCodec,
 {
     // A rejected length or tape poisons the verifier even if the caller
     // discards the error and continues to check_eof.
+    let bytes = message_bytes::<F>(len);
     transcript.require(bytes.is_ok())?;
-    // Single-challenge tapes: 56 bytes for BN254, 32 for Akita's
-    // Prime128Offset6A23801F, and 8, 16 and 24 for the binary fields and
-    // Prime64Offset59. Other lengths take spongefish's boxed squeeze.
+    // An empty message squeezes nothing. Single-challenge tapes: 56 bytes for
+    // BN254, 32 for Akita's Prime128Offset6A23801F, and 8, 16 and 24 for the
+    // binary fields and Prime64Offset59. Other lengths take spongefish's
+    // boxed squeeze.
     let challenges = match bytes? {
+        0 => decode(&[]),
         8 => decode(&transcript.squeeze_array::<8>()),
         16 => decode(&transcript.squeeze_array::<16>()),
         24 => decode(&transcript.squeeze_array::<24>()),
         32 => decode(&transcript.squeeze_array::<32>()),
         56 => decode(&transcript.squeeze_array::<56>()),
-        len => transcript.squeeze(len, decode),
+        bytes => transcript.squeeze(bytes, decode),
     };
     transcript.require(challenges.is_some())?;
     challenges.ok_or(VerificationError)
@@ -330,11 +320,11 @@ where
     const CHALLENGE_SET: ChallengeSetSize = F::CHALLENGE_SET_SIZE;
 
     fn challenge_vector(&mut self, len: usize) -> Result<Vec<F>, VerificationError> {
-        draw_challenges(self, len)
+        draw::<F, _>(self, len, |tape| F::decode_challenges(tape, len))
     }
 
     fn challenge(&mut self) -> Result<F, VerificationError> {
-        draw(self, message_bytes::<F>(1), F::decode_challenge)
+        draw::<F, _>(self, 1, F::decode_challenge)
     }
 }
 
@@ -346,10 +336,10 @@ where
     const CHALLENGE_SET: ChallengeSetSize = F::CHALLENGE_SET_SIZE;
 
     fn challenge_vector(&mut self, len: usize) -> Result<Vec<F>, VerificationError> {
-        draw_challenges(self, len)
+        draw::<F, _>(self, len, |tape| F::decode_challenges(tape, len))
     }
 
     fn challenge(&mut self) -> Result<F, VerificationError> {
-        draw(self, message_bytes::<F>(1), F::decode_challenge)
+        draw::<F, _>(self, 1, F::decode_challenge)
     }
 }

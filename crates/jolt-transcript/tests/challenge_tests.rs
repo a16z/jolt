@@ -209,7 +209,8 @@ fn messages_above_the_byte_cap_are_rejected_before_touching_the_sponge() {
 }
 
 /// An empty message skips the squeeze, so it leaves every sponge untouched,
-/// including the Blake2b bridge, where an empty squeeze is not a no-op.
+/// including the Blake2b bridge, where an empty squeeze is not a no-op: it
+/// enters squeeze mode, which changes how the next absorb lands.
 #[cfg(all(feature = "bn254", feature = "transcript-blake2b"))]
 #[test]
 fn empty_messages_leave_the_sponge_untouched() {
@@ -223,7 +224,9 @@ fn empty_messages_leave_the_sponge_untouched() {
             FieldTranscript::<Fr>::challenge_vector(&mut prover, 0).unwrap(),
             [] as [Fr; 0]
         );
+        prover.append(&7u64);
         let mut fresh = prover_transcript::<H>(&SESSION, &INSTANCE);
+        fresh.append(&7u64);
         assert_eq!(
             prover.verifier_message::<[u8; 16]>(),
             fresh.verifier_message::<[u8; 16]>()
@@ -233,7 +236,9 @@ fn empty_messages_leave_the_sponge_untouched() {
             FieldTranscript::<Fr>::challenge_vector(&mut verifier, 0).unwrap(),
             [] as [Fr; 0]
         );
+        verifier.append(&7u64);
         let mut fresh = verifier_transcript::<H>(&SESSION, &INSTANCE, &[]);
+        fresh.append(&7u64);
         assert_eq!(
             verifier.verifier_message::<[u8; 16]>(),
             fresh.verifier_message::<[u8; 16]>()
