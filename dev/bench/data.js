@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795551255371,
+  "lastUpdate": 1795572094017,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -269962,6 +269962,270 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 889472,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "qvd@andrew.cmu.edu",
+            "name": "Quang Dao",
+            "username": "quangvdao"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "6d8c3572a705386c712bdad8a0bdf47437f7bf73",
+          "message": "perf(jolt-transcript): avoid allocations in absorbs and challenge draws (#2521)\n\n* perf(jolt-transcript): avoid allocations for small messages\n\n* perf(jolt-transcript): compute grind difficulty from bit widths\n\n* fix(jolt-transcript): release spilled encodings before continuing\n\n* test(jolt-transcript): cover scalar refill and exhaustion\n\n* fix(transcript): inline small byte messages and refresh FS inventory\n\n* style(jolt-transcript): import BytesMsg in the spongefish parity test\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* refactor(jolt-transcript): let BytesMsg own its stack framing\n\nappend_bytes wrote the BytesMsg layout a second time for short bodies.\nBytesMsg::encode now frames bodies whose encoding fits in INLINE_BYTES on\nthe stack and larger ones on the heap, so append_bytes absorbs a BytesMsg\nagain and prover sends and verifier reads of short BytesMsg values skip\nthe allocation too. The absorbed bytes are unchanged.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* perf(jolt-transcript): draw Akita's scalar challenges without allocating\n\nPrime128Offset6A23801F, Akita's field, draws a 32-byte tape, which fell\nthrough draw's fixed-size arms to spongefish's boxed squeeze, and the\nsolinas codecs decoded single draws through a one-element Vec. Add the\n32-byte arm and give the solinas codecs a decode_challenge that reads the\nfirst element from the same pooled decoder decode_challenges uses. Every\ncodec now implements decode_challenge, so the trait no longer provides a\ndefault.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* test(jolt-transcript): pin scalar draws with known answers\n\nCheck challenge() against the frozen single-challenge known answers on\nboth sides instead of against the pre-change stock squeeze and decode.\nDrop the parity checks that compared the new paths with the old ones:\nthe BytesMsg parity is now the same code path, and the field and\nsqueeze-boundary parity exercised spongefish's unchanged squeeze. Keep\nthe batch check on Poseidon only, the sponge whose per-absorb framing\ncatches a split batch.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* refactor(jolt-transcript): pass draw a challenge count\n\ndraw took the message's byte count as a Result so that its callers could\ncompute it and draw could poison the verifier on a rejected length. It\nnow takes the challenge count, computes the byte count itself and owns\nthe poisoning. An empty message gets its own no-squeeze arm, which\nreplaces draw_challenges' len == 0 branch, so both FieldTranscript\nmethods call draw directly.\n\nempty_messages_leave_the_sponge_untouched now absorbs after the empty\ndraw. Blake2b's empty squeeze only shows in the next absorb, so the test\npreviously passed even without the guard.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n---------\n\nCo-authored-by: Michael Zhu <mchl.zhu.96@gmail.com>\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-24T16:48:03-08:00",
+          "tree_id": "daa118e16f78f91743240179136e69fb4c90651a",
+          "url": "https://github.com/a16z/jolt/commit/6d8c3572a705386c712bdad8a0bdf47437f7bf73"
+        },
+        "date": 1795572083291,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 3.8242,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 888168,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.5935,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 464104,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 463948,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 464048,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.8406,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 463856,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-mem",
+            "value": 888884,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 1.871,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 463660,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 4.8697,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 464112,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 5.9957,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 130988,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.9883,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 888640,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.6399,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 463500,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.4781,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 463952,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 26.0292,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 463716,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 5.4898,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 463472,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 37.378,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 691372,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 18.3429,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 609032,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 74.394,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 627296,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.8593,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 464064,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 2.1331,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 463840,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 18.2143,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 888648,
             "unit": "KB",
             "extra": ""
           }
