@@ -209,7 +209,8 @@ fn messages_above_the_byte_cap_are_rejected_before_touching_the_sponge() {
 }
 
 /// An empty message skips the squeeze, so it leaves every sponge untouched,
-/// including the Blake2b bridge, where an empty squeeze is not a no-op.
+/// including the Blake2b bridge, where an empty squeeze is not a no-op: it
+/// enters squeeze mode, which changes how the next absorb lands.
 #[cfg(all(feature = "bn254", feature = "transcript-blake2b"))]
 #[test]
 fn empty_messages_leave_the_sponge_untouched() {
@@ -223,7 +224,9 @@ fn empty_messages_leave_the_sponge_untouched() {
             FieldTranscript::<Fr>::challenge_vector(&mut prover, 0).unwrap(),
             [] as [Fr; 0]
         );
+        prover.append(&7u64);
         let mut fresh = prover_transcript::<H>(&SESSION, &INSTANCE);
+        fresh.append(&7u64);
         assert_eq!(
             prover.verifier_message::<[u8; 16]>(),
             fresh.verifier_message::<[u8; 16]>()
@@ -233,7 +236,9 @@ fn empty_messages_leave_the_sponge_untouched() {
             FieldTranscript::<Fr>::challenge_vector(&mut verifier, 0).unwrap(),
             [] as [Fr; 0]
         );
+        verifier.append(&7u64);
         let mut fresh = verifier_transcript::<H>(&SESSION, &INSTANCE, &[]);
+        fresh.append(&7u64);
         assert_eq!(
             verifier.verifier_message::<[u8; 16]>(),
             fresh.verifier_message::<[u8; 16]>()
@@ -378,6 +383,20 @@ fn known_answer<F: ChallengeCodec + CanonicalBytes + PartialEq + Debug>(
     verifier.check_eof().unwrap();
     assert_eq!(canonical_hex(&values), expected);
     assert_eq!(hex_bytes(&tail), continuation);
+
+    if len == 1 {
+        let mut prover = prover_transcript::<Keccak>(&SESSION, &INSTANCE);
+        prover.send(&BytesMsg(b"before".to_vec()));
+        let challenge = FieldTranscript::<F>::challenge(&mut prover).unwrap();
+        let mut verifier = verifier_transcript::<Keccak>(&SESSION, &INSTANCE, prover.narg_string());
+        assert_eq!(verifier.prover_message::<BytesMsg>().unwrap().0, b"before");
+        assert_eq!(
+            FieldTranscript::<F>::challenge(&mut verifier).unwrap(),
+            challenge
+        );
+        assert_eq!(verifier.verifier_message::<[u8; 16]>(), tail);
+        assert_eq!(vec![challenge], values);
+    }
 }
 
 #[cfg_attr(

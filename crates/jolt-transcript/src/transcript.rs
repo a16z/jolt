@@ -2,7 +2,7 @@
 //!
 //! [`Transcript`] absorbs public messages and checks proof-of-work nonces;
 //! [`FieldTranscript`] draws field challenges. Both are implemented on
-//! spongefish's [`ProverState`] and [`VerifierState`] from three sealed
+//! spongefish's [`ProverState`] and [`VerifierState`] from sealed
 //! sponge operations, so every method has one implementation that the two
 //! sides run alike. The traits are sealed: a transcript that drew challenges
 //! some other way would void the codecs' bounds.
@@ -34,7 +34,7 @@ use spongefish::{
 };
 
 use crate::challenge::message_bytes;
-use crate::codec::{word_padding, BytesMsg, WORD_BYTES};
+use crate::codec::{word_padding, AlignedBytes, BytesMsg, INLINE_BYTES, WORD_BYTES};
 use crate::pow::{nonce_word, SpongePow, CHECK_BYTES};
 use crate::{ChallengeCodec, ChallengeSetSize, UniformBytes};
 use sealed::Sealed;
@@ -42,13 +42,22 @@ use sealed::Sealed;
 pub(crate) mod sealed {
     use spongefish::{Encoding, VerificationError};
 
-    /// The three sponge operations every transcript method is built from.
+    /// The sponge operations every transcript method is built from.
     pub trait Sealed {
         /// Absorbs `message` as a public message.
         fn absorb<M: Encoding + ?Sized>(&mut self, message: &M);
 
         /// Squeezes `len` bytes and decodes them with `decode`.
         fn squeeze<T>(&mut self, len: usize, decode: impl FnOnce(&[u8]) -> T) -> T;
+
+        /// Squeezes a fixed-size tape, preserving the wrapper's squeeze hooks.
+        fn squeeze_array<const N: usize>(&mut self) -> [u8; N] {
+            self.squeeze(N, |bytes| {
+                let mut tape = [0; N];
+                tape.copy_from_slice(bytes);
+                tape
+            })
+        }
 
         /// `Ok` when `ok` holds. On failure the verifier also poisons its
         /// state, so later reads and `check_eof` fail.
@@ -97,12 +106,31 @@ pub trait Transcript: Sealed {
         if values.is_empty() {
             return;
         }
-        let mut bytes = Vec::new();
-        for value in values {
-            bytes.extend_from_slice(value.encode().as_ref());
+        let mut inline = AlignedBytes::<INLINE_BYTES>::default();
+        let mut len = 0;
+        let mut values = values.iter();
+        while let Some(value) = values.next() {
+            let encoding = value.encode();
+            let encoded = encoding.as_ref();
+            let end = len + encoded.len();
+            if let Some(dst) = inline.0.get_mut(len..end) {
+                dst.copy_from_slice(encoded);
+                len = end;
+            } else {
+                let mut bytes = Vec::with_capacity(end + word_padding(end));
+                bytes.extend_from_slice(inline.0.split_at(len).0);
+                bytes.extend_from_slice(encoded);
+                // The next encoding may borrow the same storage.
+                drop(encoding);
+                for value in values {
+                    bytes.extend_from_slice(value.encode().as_ref());
+                }
+                bytes.resize(bytes.len() + word_padding(bytes.len()), 0);
+                self.absorb(&WordAligned(&bytes));
+                return;
+            }
         }
-        bytes.resize(bytes.len() + word_padding(bytes.len()), 0);
-        self.absorb(&WordAligned(bytes));
+        self.absorb(&WordAligned(inline.0.split_at(len + word_padding(len)).0));
     }
 
     /// Absorbs `bytes` as a [`BytesMsg`]: a `u64` length, the bytes, and zero
@@ -143,7 +171,7 @@ pub trait Transcript: Sealed {
             return self.require(false);
         };
         self.absorb(&nonce_word(nonce));
-        let passes = self.squeeze(CHECK_BYTES, |check| pow.accepts(check));
+        let passes = pow.accepts(&self.squeeze_array::<CHECK_BYTES>());
         self.require(passes)
     }
 }
@@ -151,11 +179,11 @@ pub trait Transcript: Sealed {
 impl<T: Sealed + ?Sized> Transcript for T {}
 
 /// Bytes already padded to a whole number of words, absorbed as they are.
-struct WordAligned(Vec<u8>);
+struct WordAligned<'a>(&'a [u8]);
 
-impl Encoding for WordAligned {
+impl Encoding for WordAligned<'_> {
     fn encode(&self) -> impl AsRef<[u8]> {
-        self.0.as_slice()
+        self.0
     }
 }
 
@@ -206,25 +234,32 @@ pub trait FieldTranscript<F>: Transcript {
     }
 }
 
-/// One codec message of `len` challenges: the single implementation behind
-/// every [`FieldTranscript`].
-pub(crate) fn draw_challenges<T, F>(
-    transcript: &mut T,
+/// Squeezes one codec message of `len` challenges in `F` and decodes it.
+fn draw<F, U>(
+    transcript: &mut (impl Sealed + ?Sized),
     len: usize,
-) -> Result<Vec<F>, VerificationError>
+    decode: impl FnOnce(&[u8]) -> Option<U>,
+) -> Result<U, VerificationError>
 where
-    T: Sealed + ?Sized,
     F: ChallengeCodec,
 {
-    // A length the codec rejects poisons the verifier too, so a caller that
-    // drops the error still fails `check_eof`.
+    // A rejected length or tape poisons the verifier even if the caller
+    // discards the error and continues to check_eof.
     let bytes = message_bytes::<F>(len);
     transcript.require(bytes.is_ok())?;
-    let bytes = bytes?;
-    if len == 0 {
-        return Ok(Vec::new());
-    }
-    let challenges = transcript.squeeze(bytes, |tape| F::decode_challenges(tape, len));
+    // An empty message squeezes nothing. Single-challenge tapes: 56 bytes for
+    // BN254, 32 for Akita's Prime128Offset6A23801F, and 8, 16 and 24 for the
+    // binary fields and Prime64Offset59. Other lengths take spongefish's
+    // boxed squeeze.
+    let challenges = match bytes? {
+        0 => decode(&[]),
+        8 => decode(&transcript.squeeze_array::<8>()),
+        16 => decode(&transcript.squeeze_array::<16>()),
+        24 => decode(&transcript.squeeze_array::<24>()),
+        32 => decode(&transcript.squeeze_array::<32>()),
+        56 => decode(&transcript.squeeze_array::<56>()),
+        bytes => transcript.squeeze(bytes, decode),
+    };
     transcript.require(challenges.is_some())?;
     challenges.ok_or(VerificationError)
 }
@@ -240,6 +275,10 @@ where
 
     fn squeeze<T>(&mut self, len: usize, decode: impl FnOnce(&[u8]) -> T) -> T {
         ProverState::verifier_message_as(self, len, decode)
+    }
+
+    fn squeeze_array<const N: usize>(&mut self) -> [u8; N] {
+        self.verifier_message::<AlignedBytes<N>>().0
     }
 
     fn require(&mut self, ok: bool) -> Result<(), VerificationError> {
@@ -263,6 +302,10 @@ where
         VerifierState::verifier_message_as(self, len, decode)
     }
 
+    fn squeeze_array<const N: usize>(&mut self) -> [u8; N] {
+        self.verifier_message::<AlignedBytes<N>>().0
+    }
+
     fn require(&mut self, ok: bool) -> Result<(), VerificationError> {
         self.check(|| ok)
     }
@@ -277,7 +320,11 @@ where
     const CHALLENGE_SET: ChallengeSetSize = F::CHALLENGE_SET_SIZE;
 
     fn challenge_vector(&mut self, len: usize) -> Result<Vec<F>, VerificationError> {
-        draw_challenges(self, len)
+        draw::<F, _>(self, len, |tape| F::decode_challenges(tape, len))
+    }
+
+    fn challenge(&mut self) -> Result<F, VerificationError> {
+        draw::<F, _>(self, 1, F::decode_challenge)
     }
 }
 
@@ -289,6 +336,10 @@ where
     const CHALLENGE_SET: ChallengeSetSize = F::CHALLENGE_SET_SIZE;
 
     fn challenge_vector(&mut self, len: usize) -> Result<Vec<F>, VerificationError> {
-        draw_challenges(self, len)
+        draw::<F, _>(self, len, |tape| F::decode_challenges(tape, len))
+    }
+
+    fn challenge(&mut self) -> Result<F, VerificationError> {
+        draw::<F, _>(self, 1, F::decode_challenge)
     }
 }
