@@ -56,7 +56,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install taplo
-        uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2
+        uses: taiki-e/install-action@fe3acb53a98b62c772db35de75ce0e4595e7ca8c # v2
         with:
           tool: taplo-cli
       - name: taplo fmt --check
@@ -100,7 +100,7 @@ jobs:
           shared-key: field-stack
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Install nextest
-        uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2
+        uses: taiki-e/install-action@fe3acb53a98b62c772db35de75ce0e4595e7ca8c # v2
         with:
           tool: nextest
       - name: Require one jolt-algebra and one jolt-field identity (no akita-field)
@@ -326,7 +326,7 @@ jobs:
       - name: Build and install jolt CLI
         run: cargo install --path . --locked --force --profile ci --target-dir target
       - name: Install nextest
-        uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2
+        uses: taiki-e/install-action@fe3acb53a98b62c772db35de75ce0e4595e7ca8c # v2
         with:
           tool: nextest
       - name: Run jolt-prover tests
@@ -382,7 +382,7 @@ jobs:
           save-if: false
           cache-directories: ~/.cache/dory
       - name: Install nextest
-        uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2
+        uses: taiki-e/install-action@fe3acb53a98b62c772db35de75ce0e4595e7ca8c # v2
         with:
           tool: nextest
       # Guest ELFs link ZeroOS, so building them needs its musl toolchain.
@@ -436,7 +436,7 @@ jobs:
       - name: Build and install jolt CLI
         run: cargo install --path . --locked --force --profile ci --target-dir target
       - name: Install nextest
-        uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2
+        uses: taiki-e/install-action@fe3acb53a98b62c772db35de75ce0e4595e7ca8c # v2
         with:
           tool: nextest
       - name: Run jolt-prover tests with zk feature
@@ -473,7 +473,7 @@ jobs:
       - name: Build and install jolt CLI
         run: cargo install --path . --locked --force --profile ci --target-dir target
       - name: Install nextest
-        uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2
+        uses: taiki-e/install-action@fe3acb53a98b62c772db35de75ce0e4595e7ca8c # v2
         with:
           tool: nextest
       # The Akita arm of the guest x mode matrix plus the Akita prover
@@ -518,7 +518,7 @@ jobs:
       - name: Build and install jolt CLI
         run: cargo install --path . --locked --force --profile ci --target-dir target
       - name: Install nextest
-        uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2
+        uses: taiki-e/install-action@fe3acb53a98b62c772db35de75ce0e4595e7ca8c # v2
         with:
           tool: nextest
       # e2e_matrix selects field_ops, exact_domain, panic_halt, ram_padding,
@@ -569,7 +569,7 @@ jobs:
       - name: Build and install jolt CLI
         run: cargo install --path . --locked --force --profile ci --target-dir target
       - name: Install nextest
-        uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2
+        uses: taiki-e/install-action@fe3acb53a98b62c772db35de75ce0e4595e7ca8c # v2
         with:
           tool: nextest
       - name: Run field-inline matrix and specialized suites (zk)
@@ -604,7 +604,7 @@ jobs:
       - name: Build and install jolt CLI
         run: cargo install --path . --locked --force --profile ci --target-dir target
       - name: Install nextest
-        uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2
+        uses: taiki-e/install-action@fe3acb53a98b62c772db35de75ce0e4595e7ca8c # v2
         with:
           tool: nextest
       # The same field-inline matrix table runs over fp128.
@@ -630,7 +630,7 @@ jobs:
           save-if: false
           cache-directories: ~/.cache/dory
       - name: Install nextest
-        uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2
+        uses: taiki-e/install-action@fe3acb53a98b62c772db35de75ce0e4595e7ca8c # v2
         with:
           tool: nextest
       # akita-planner runs at most three schedule searches at once, a memory
@@ -661,7 +661,7 @@ jobs:
           save-if: false
           cache-directories: ~/.cache/dory
       - name: Install nextest
-        uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2
+        uses: taiki-e/install-action@fe3acb53a98b62c772db35de75ce0e4595e7ca8c # v2
         with:
           tool: nextest
       # The combined-feature kernels unit suite: the composed Akita field-inline
@@ -684,7 +684,7 @@ jobs:
           save-if: false
           cache-directories: ~/.cache/dory
       - name: Install nextest
-        uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2
+        uses: taiki-e/install-action@fe3acb53a98b62c772db35de75ce0e4595e7ca8c # v2
         with:
           tool: nextest
       - name: Run jolt-kernels tests with zk feature
@@ -706,7 +706,7 @@ jobs:
           save-if: false
           cache-directories: ~/.cache/dory
       - name: Install nextest
-        uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2
+        uses: taiki-e/install-action@fe3acb53a98b62c772db35de75ce0e4595e7ca8c # v2
         with:
           tool: nextest
       - name: Test Akita profiling artifact and CSV names
@@ -741,7 +741,7 @@ jobs:
       - name: Build and install jolt CLI
         run: cargo install --path . --locked --force --profile ci --target-dir target
       - name: Install nextest
-        uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2
+        uses: taiki-e/install-action@fe3acb53a98b62c772db35de75ce0e4595e7ca8c # v2
         with:
           tool: nextest
       # The fixture-driven field-inline suites: valid-fixture acceptance
@@ -780,7 +780,7 @@ jobs:
       - name: Build and install jolt CLI
         run: cargo install --path . --locked --force --profile ci --target-dir target
       - name: Install nextest
-        uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2
+        uses: taiki-e/install-action@fe3acb53a98b62c772db35de75ce0e4595e7ca8c # v2
         with:
           tool: nextest
       # The fixture-driven akita suites: valid-fixture acceptance
@@ -819,7 +819,7 @@ jobs:
       - name: Build and install jolt CLI
         run: cargo install --path . --locked --force --profile ci --target-dir target
       - name: Install nextest
-        uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2
+        uses: taiki-e/install-action@fe3acb53a98b62c772db35de75ce0e4595e7ca8c # v2
         with:
           tool: nextest
       - name: Run jolt-verifier with prover-fixtures,field-inline,akita
@@ -854,7 +854,7 @@ jobs:
       - name: Build and install jolt CLI
         run: cargo install --path . --locked --force --profile ci --target-dir target
       - name: Install nextest
-        uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2
+        uses: taiki-e/install-action@fe3acb53a98b62c772db35de75ce0e4595e7ca8c # v2
         with:
           tool: nextest
       # The jolt-verifier ZK fixture suites (completeness, tampering, FS
@@ -1020,7 +1020,7 @@ jobs:
           shared-key: dev-tests-${{ matrix.shard }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Install nextest
-        uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2
+        uses: taiki-e/install-action@fe3acb53a98b62c772db35de75ce0e4595e7ca8c # v2
         with:
           tool: nextest
       - name: Discover modular crates
@@ -1162,7 +1162,7 @@ jobs:
       - name: Build and install jolt CLI
         run: cargo install --path . --locked --force --profile ci --target-dir target
       - name: Install nextest
-        uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2
+        uses: taiki-e/install-action@fe3acb53a98b62c772db35de75ce0e4595e7ca8c # v2
         with:
           tool: nextest
       - name: Run verifier fixtures
@@ -1181,7 +1181,7 @@ jobs:
           shared-key: dev-inlines
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Install nextest
-        uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2
+        uses: taiki-e/install-action@fe3acb53a98b62c772db35de75ce0e4595e7ca8c # v2
         with:
           tool: nextest
       - name: Discover inline crates
@@ -1219,7 +1219,7 @@ jobs:
       - name: Build and install jolt CLI
         run: cargo install --path . --locked --force --profile ci --target-dir target
       - name: Install nextest
-        uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2
+        uses: taiki-e/install-action@fe3acb53a98b62c772db35de75ce0e4595e7ca8c # v2
         with:
           tool: nextest
       - name: Generate test fixtures
@@ -1243,7 +1243,7 @@ jobs:
       - name: Build and install jolt CLI
         run: cargo install --path . --locked --force --profile ci --target-dir target
       - name: Install nextest
-        uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2
+        uses: taiki-e/install-action@fe3acb53a98b62c772db35de75ce0e4595e7ca8c # v2
         with:
           tool: nextest
       - name: Run tracer tests
@@ -1266,7 +1266,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install nextest
-        uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2
+        uses: taiki-e/install-action@fe3acb53a98b62c772db35de75ce0e4595e7ca8c # v2
         with:
           tool: nextest
       - name: Run extractor tests
