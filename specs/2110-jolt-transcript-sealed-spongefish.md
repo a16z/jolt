@@ -8,9 +8,10 @@
 | PR          | [#2110](https://github.com/a16z/jolt/pull/2110) |
 
 The current API supersedes the sponge seal and challenge-set constant
-described below. Protocols built on Jolt can use an external byte sponge by
-implementing the unsafe `UniformBytes` contract. `Transcript` and each
-`FieldTranscript<F>` state and field pair remain sealed.
+described below. `Transcript` stays sealed, and this release also seals each
+`FieldTranscript<F>` pair. To extend field challenge support, implement the
+unsafe `UniformBytes` trait for a byte sponge or `RuntimePrimeChallenge` for
+a supported prime field.
 `FieldTranscript::challenge_set()` gives the challenge set size at runtime.
 
 ## Summary

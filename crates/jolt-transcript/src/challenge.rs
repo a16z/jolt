@@ -125,10 +125,13 @@ pub trait ChallengeCodec: Sized + Sealed {
     /// Decodes exactly `challenge_bytes(len)` bytes in little-endian order.
     /// Returns `None` on a wrong or unsupported length, rejection-pool exhaustion,
     /// or output reservation failure in the runtime-prime codec.
-    /// Allocates only the returned vector, with capacity `len`.
+    /// The runtime-prime codec reserves space for the result before reducing
+    /// the elements.
     fn decode_challenges(bytes: &[u8], len: usize) -> Option<Vec<Self>>;
 
-    /// `decode_challenges(bytes, 1)`'s one element, without allocating.
+    /// Decodes one element as in `decode_challenges(bytes, 1)`.
+    /// The runtime-prime codec calls
+    /// [`RuntimePrimeChallenge::from_le_bytes_wide`] directly.
     fn decode_challenge(bytes: &[u8]) -> Option<Self>;
 }
 

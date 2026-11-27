@@ -192,8 +192,11 @@ impl Encoding for WordAligned<'_> {
 
 /// A transcript that draws challenges in `F`.
 ///
-/// Jolt seals each transcript and field pair. An external byte sponge needs
-/// an unsafe [`UniformBytes`] implementation to draw field challenges.
+/// [`Transcript`] stays sealed, and this release also seals each
+/// `FieldTranscript<F>` pair. To extend field challenge support, implement
+/// the unsafe [`UniformBytes`] trait for a byte sponge or
+/// [`RuntimePrimeChallenge`](crate::RuntimePrimeChallenge) for a supported
+/// prime field.
 ///
 /// ```compile_fail,E0277
 /// use jolt_transcript::{ChallengeSetSize, FieldTranscript, RuntimePrimeChallenge,
@@ -259,17 +262,20 @@ pub trait FieldTranscript<F>: Transcript + SealedField<F> {
     /// `gamma` is drawn even for `len == 0`.
     ///
     /// # Errors
-    /// As [`challenge_vector`](Self::challenge_vector).
+    /// Returns `VerificationError` if the powers cannot be reserved before the
+    /// draw, or if [`challenge`](Self::challenge) fails. On error the verifier's
+    /// state is poisoned and `check_eof` fails too.
     fn challenge_powers(&mut self, len: usize) -> Result<Vec<F>, VerificationError>
     where
         F: Ring,
     {
+        let mut powers = Vec::new();
+        self.require(powers.try_reserve_exact(len).is_ok())?;
         let gamma = self.challenge()?;
-        Ok(
-            std::iter::successors(Some(F::from_u64(1)), |power| Some(*power * gamma))
-                .take(len)
-                .collect(),
-        )
+        powers.extend(
+            std::iter::successors(Some(F::from_u64(1)), |power| Some(*power * gamma)).take(len),
+        );
+        Ok(powers)
     }
 }
 
@@ -431,5 +437,18 @@ mod tests {
     #[test]
     fn scalar_exhaustion_fails_on_both_sides_and_poisons_the_verifier() {
         assert_exhaustion(1, Prime64Offset59::decode_challenge);
+    }
+
+    #[cfg(feature = "transcript-keccak")]
+    #[test]
+    fn power_capacity_overflow_poisons_the_verifier() {
+        use super::FieldTranscript;
+        use crate::Keccak;
+
+        let len = isize::MAX.unsigned_abs() / size_of::<Prime64Offset59>() + 1;
+        let mut verifier = verifier_transcript::<Keccak>(&SESSION, &INSTANCE, &[]);
+        let powers: Result<Vec<Prime64Offset59>, _> = verifier.challenge_powers(len);
+        assert!(powers.is_err());
+        assert!(verifier.check_eof().is_err());
     }
 }

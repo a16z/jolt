@@ -23,10 +23,11 @@ The transcript lives in `crates/jolt-transcript`. It is built on the
 framework. The normative design is in the
 [transcript spec](https://github.com/a16z/jolt/blob/main/specs/2110-jolt-transcript-sealed-spongefish.md).
 
-The current API keeps `Transcript` and each `FieldTranscript<F>` state and
-field pair sealed. Protocols built on Jolt can use an external byte sponge by
-implementing the unsafe `UniformBytes` contract. Proof-of-work pricing reads
-the challenge set at runtime through `FieldTranscript::challenge_set()`.
+`Transcript` stays sealed, and this release also seals each
+`FieldTranscript<F>` pair. To extend field challenge support, implement the
+unsafe `UniformBytes` trait for a byte sponge or `RuntimePrimeChallenge` for
+a supported prime field. Proof-of-work pricing reads the challenge set at
+runtime through `FieldTranscript::challenge_set()`.
 
 ## The sponge
 
