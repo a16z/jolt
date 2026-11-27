@@ -112,6 +112,15 @@
 //! stay internal to `jolt-sumcheck`.
 //!
 //! See `specs/sumcheck-batch-derive.md`.
+//!
+//! # Migrating output point access
+//!
+//! Declare the batch struct at module scope.
+//! Construct an `OutputPoints` aggregate with the batch's `derive_opening_points`.
+//! The member cells support shared field access. Replace a struct pattern with
+//! shared field reads, or destructure the cells through `&*output_points` and
+//! use `..` to omit unused cells. To use a different batch challenge vector,
+//! derive the entire aggregate again.
 
 // In the jolt-verifier runtime closure: stricter panic and unsafe discipline
 // than the workspace lints (specs/verifier-closure-lints.md).
@@ -133,7 +142,6 @@
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
-use syn::ext::IdentExt;
 use syn::{
     parse_macro_input, parse_quote, Attribute, Data, DeriveInput, Fields, GenericArgument,
     GenericParam, Ident, ItemFn, Meta, PathArguments, Token, Type,
@@ -288,6 +296,8 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
     let input_points_name = format_ident!("{base}InputPoints");
     let output_claims_name = format_ident!("{base}OutputClaims");
     let output_points_name = format_ident!("{base}OutputPoints");
+    let output_point_cells_name = format_ident!("{base}OutputPointCells");
+    let output_points_module = format_ident!("__{}_output_points", snake_case(&base));
     let challenges_name = format_ident!("{base}Challenges");
     let batching_coefficients_name = format_ident!("{base}BatchingCoefficients");
 
@@ -311,14 +321,6 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
             name.span(),
             "SumcheckBatch requires at least one instance field",
         ));
-    }
-
-    let mut output_scales_field = format_ident!("__sumcheck_batch_output_scales");
-    while plans
-        .iter()
-        .any(|plan| plan.ident.unraw() == output_scales_field)
-    {
-        output_scales_field = format_ident!("_{output_scales_field}");
     }
 
     let relations = quote!(#krate::stages::relations);
@@ -712,6 +714,9 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
 
         quote! {
             /// Verify committed sumcheck consistency for a constant-extension batch.
+            ///
+            /// For a field that requires zero extension, return
+            /// `ProtocolAxisUnimplemented` before accessing the transcript.
             pub fn verify_zk<__C, __T>(
                 &self,
                 proof: &::jolt_sumcheck::SumcheckProof<#f, __C>,
@@ -767,6 +772,15 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
     // method serves both the clear and ZK paths (each supplies its own
     // challenge vector).
     let derive_points_method = {
+        let mut point_krate = krate.clone();
+        let krate = match point_krate.segments.first_mut() {
+            Some(root) if root.ident == "self" => {
+                root.ident = format_ident!("super");
+                quote!(#point_krate)
+            }
+            Some(root) if root.ident == "super" => quote!(super::#point_krate),
+            _ => quote!(#point_krate),
+        };
         let field_bindings = plans.iter().map(|plan| {
             let id = &plan.ident;
             let field = format_ident!("__points_{}", id);
@@ -824,15 +838,16 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
         });
 
         quote! {
+            /// Derive the member opening points at the batch challenge vector.
             pub fn derive_opening_points(
                 &self,
                 batch_point: &[#f],
                 input_points: &#input_points_name<#f>,
             ) -> ::core::result::Result<#output_points_name<#f>, #krate::VerifierError> {
-                use #relations::ConcreteSumcheck as _;
+                use #krate::stages::relations::ConcreteSumcheck as _;
 
                 #(#point_bindings)*
-                let __sumcheck_batch_output_scales = if #uses_zero_extension {
+                let __scales = if #uses_zero_extension {
                     let mut __members = ::std::vec::Vec::new();
                     let mut __max_degree = 0usize;
                     #(#scale_members)*
@@ -854,10 +869,10 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                 } else {
                     ::core::option::Option::None
                 };
-                ::core::result::Result::Ok(#output_points_name {
-                    #(#point_fields,)*
-                    #output_scales_field: __sumcheck_batch_output_scales,
-                })
+                ::core::result::Result::Ok(#output_points_name(self::Storage {
+                    cells: #output_point_cells_name { #(#point_fields,)* },
+                    scales: __scales,
+                }))
             }
         }
     };
@@ -987,6 +1002,9 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
         quote! {
             /// Fold the native member outputs with the batching coefficients
             /// and the padding scales from [`Self::derive_opening_points`].
+            ///
+            /// Derive `output_points` with this batch and the challenge vector
+            /// from the same sumcheck reduction.
             pub fn expected_final_claim(
                 &self,
                 coefficients: &#batching_coefficients_name<#f>,
@@ -1002,7 +1020,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                 let mut __terms = ::std::vec::Vec::new();
                 #(#output_terms)*
                 let __expected: #f = if let ::core::option::Option::Some(__scales) =
-                    output_points.#output_scales_field.as_ref()
+                    output_points.padding_scales()
                 {
                     if __terms.len() != __scales.len() {
                         return ::core::result::Result::Err(
@@ -1256,7 +1274,6 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
             #begin_batch_method
             #verify_clear_method
             #verify_zk_method
-            #derive_points_method
             #validate_aliases_method
             #expected_final_claim_method
             #output_shape_methods
@@ -1298,11 +1315,48 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
             #(#output_claims_fields,)*
         }
 
+        /// Read-only member opening points paired with their padding scales.
+        /// Use the entire aggregate from one batch and one sumcheck reduction.
         #[derive(Clone, Debug, PartialEq, Eq)]
         #[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
-        #vis struct #output_points_name<#f: ::jolt_field::JoltField> {
+        #vis struct #output_points_name<#f: ::jolt_field::JoltField>(
+            #output_points_module::Storage<#f>,
+        );
+
+        /// Member cells exposed by shared reference from the opening-point aggregate.
+        #[derive(Clone, Debug, PartialEq, Eq)]
+        #[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
+        #vis struct #output_point_cells_name<#f: ::jolt_field::JoltField> {
             #(#output_points_fields,)*
-            #output_scales_field: ::core::option::Option<::std::vec::Vec<#f>>,
+        }
+
+        mod #output_points_module {
+            use super::*;
+
+            #[derive(Clone, Debug, PartialEq, Eq)]
+            #[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
+            pub(super) struct Storage<#f: ::jolt_field::JoltField> {
+                cells: #output_point_cells_name<#f>,
+                scales: ::core::option::Option<::std::vec::Vec<#f>>,
+            }
+
+            impl<#f: ::jolt_field::JoltField> ::core::ops::Deref for #output_points_name<#f> {
+                type Target = #output_point_cells_name<#f>;
+
+                fn deref(&self) -> &Self::Target {
+                    &self.0.cells
+                }
+            }
+
+            impl<#f: ::jolt_field::JoltField> #output_points_name<#f> {
+                pub(super) fn padding_scales(&self) -> ::core::option::Option<&[#f]> {
+                    self.0.scales.as_deref()
+                }
+            }
+
+            impl<#f: ::jolt_field::JoltField> #name<#f> {
+                #derive_points_method
+            }
         }
 
         #[derive(Clone, Debug, PartialEq, Eq)]

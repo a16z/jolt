@@ -4172,8 +4172,15 @@ dependencies = [
 name = "jolt-verifier-derive"
 version = "0.1.0"
 dependencies = [
+ "jolt-claims",
+ "jolt-field",
+ "jolt-poly",
+ "jolt-sumcheck",
+ "jolt-transcript",
+ "jolt-verifier",
  "proc-macro2",
  "quote",
+ "serde",
  "syn 3.0.10",
 ]
 

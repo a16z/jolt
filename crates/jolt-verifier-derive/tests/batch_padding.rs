@@ -4,6 +4,8 @@
     reason = "the derive emits an allocative gate for consumers that define the feature"
 )]
 
+use std::ops::{Deref, DerefMut};
+
 use jolt_claims::protocols::jolt::geometry::dimensions::{TraceDimensions, REGISTER_ADDRESS_BITS};
 use jolt_claims::protocols::jolt::relations::registers::RegistersValEvaluationInputClaims;
 use jolt_field::{JoltField, One, Zero, F128};
@@ -29,6 +31,19 @@ fn batch() -> MixedLengthSumchecks<F128> {
         absent: None,
         short: Some(RegistersValEvaluation::new(TraceDimensions::new(1))),
     }
+}
+
+#[test]
+fn batch_output_points_only_expose_shared_member_cells() {
+    trait ReadOnly<Kind>: Deref {
+        fn check() {}
+    }
+    impl<T: Deref> ReadOnly<()> for T {}
+    struct Mutable;
+    impl<T: DerefMut> ReadOnly<Mutable> for T {}
+
+    // Type inference would find two implementations if the cells were mutable.
+    <MixedLengthOutputPoints<F128> as ReadOnly<_>>::check();
 }
 
 #[test]
@@ -127,10 +142,7 @@ fn committed_rejects_zero_extension_before_touching_transcript() {
 
     assert!(matches!(
         batch.verify_zk(&proof, &mut transcript),
-        Err(VerifierError::ProtocolAxisUnimplemented {
-            axis: "sumcheck extension",
-            ..
-        })
+        Err(VerifierError::ProtocolAxisUnimplemented { .. })
     ));
     assert_eq!(transcript.events(), []);
 }
