@@ -115,12 +115,32 @@
 //!
 //! # Migrating output point access
 //!
-//! Declare the batch struct at module scope.
 //! Construct an `OutputPoints` aggregate with the batch's `derive_opening_points`.
 //! The member cells support shared field access. Replace a struct pattern with
 //! shared field reads, or destructure the cells through `&*output_points` and
 //! use `..` to omit unused cells. To use a different batch challenge vector,
 //! derive the entire aggregate again.
+//!
+//! ```compile_fail,E0594
+//! use jolt_field::JoltField;
+//! use jolt_verifier::stages::stage5::{
+//!     RegistersValEvaluation, RegistersValEvaluationOutputClaims,
+//! };
+//! use jolt_verifier_derive::SumcheckBatch;
+//!
+//! #[derive(SumcheckBatch)]
+//! struct ExampleSumchecks<F: JoltField> {
+//!     long: RegistersValEvaluation<F>,
+//!     short: Option<RegistersValEvaluation<F>>,
+//! }
+//!
+//! fn replace_short<F: JoltField>(
+//!     mut points: ExampleOutputPoints<F>,
+//!     replacement: RegistersValEvaluationOutputClaims<Vec<F>>,
+//! ) {
+//!     points.short = Some(replacement);
+//! }
+//! ```
 
 // In the jolt-verifier runtime closure: stricter panic and unsafe discipline
 // than the workspace lints (specs/verifier-closure-lints.md).
@@ -772,15 +792,6 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
     // method serves both the clear and ZK paths (each supplies its own
     // challenge vector).
     let derive_points_method = {
-        let mut point_krate = krate.clone();
-        let krate = match point_krate.segments.first_mut() {
-            Some(root) if root.ident == "self" => {
-                root.ident = format_ident!("super");
-                quote!(#point_krate)
-            }
-            Some(root) if root.ident == "super" => quote!(super::#point_krate),
-            _ => quote!(#point_krate),
-        };
         let field_bindings = plans.iter().map(|plan| {
             let id = &plan.ident;
             let field = format_ident!("__points_{}", id);
@@ -869,10 +880,12 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                 } else {
                     ::core::option::Option::None
                 };
-                ::core::result::Result::Ok(#output_points_name(self::Storage {
-                    cells: #output_point_cells_name { #(#point_fields,)* },
-                    scales: __scales,
-                }))
+                ::core::result::Result::Ok(#output_points_name(
+                    #output_points_module::Storage::new(
+                        #output_point_cells_name { #(#point_fields,)* },
+                        __scales,
+                    ),
+                ))
             }
         }
     };
@@ -1274,6 +1287,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
             #begin_batch_method
             #verify_clear_method
             #verify_zk_method
+            #derive_points_method
             #validate_aliases_method
             #expected_final_claim_method
             #output_shape_methods
@@ -1320,7 +1334,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
         #[derive(Clone, Debug, PartialEq, Eq)]
         #[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
         #vis struct #output_points_name<#f: ::jolt_field::JoltField>(
-            #output_points_module::Storage<#f>,
+            #output_points_module::Storage<#output_point_cells_name<#f>, #f>,
         );
 
         /// Member cells exposed by shared reference from the opening-point aggregate.
@@ -1331,31 +1345,42 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
         }
 
         mod #output_points_module {
-            use super::*;
-
             #[derive(Clone, Debug, PartialEq, Eq)]
             #[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
-            pub(super) struct Storage<#f: ::jolt_field::JoltField> {
-                cells: #output_point_cells_name<#f>,
-                scales: ::core::option::Option<::std::vec::Vec<#f>>,
+            pub(super) struct Storage<Cells, F> {
+                cells: Cells,
+                scales: ::core::option::Option<::std::vec::Vec<F>>,
             }
 
-            impl<#f: ::jolt_field::JoltField> ::core::ops::Deref for #output_points_name<#f> {
-                type Target = #output_point_cells_name<#f>;
+            impl<Cells, F> Storage<Cells, F> {
+                pub(super) fn new(
+                    cells: Cells,
+                    scales: ::core::option::Option<::std::vec::Vec<F>>,
+                ) -> Self {
+                    Self { cells, scales }
+                }
 
-                fn deref(&self) -> &Self::Target {
-                    &self.0.cells
+                pub(super) fn cells(&self) -> &Cells {
+                    &self.cells
+                }
+
+                pub(super) fn padding_scales(&self) -> ::core::option::Option<&[F]> {
+                    self.scales.as_deref()
                 }
             }
+        }
 
-            impl<#f: ::jolt_field::JoltField> #output_points_name<#f> {
-                pub(super) fn padding_scales(&self) -> ::core::option::Option<&[#f]> {
-                    self.0.scales.as_deref()
-                }
+        impl<#f: ::jolt_field::JoltField> ::core::ops::Deref for #output_points_name<#f> {
+            type Target = #output_point_cells_name<#f>;
+
+            fn deref(&self) -> &Self::Target {
+                self.0.cells()
             }
+        }
 
-            impl<#f: ::jolt_field::JoltField> #name<#f> {
-                #derive_points_method
+        impl<#f: ::jolt_field::JoltField> #output_points_name<#f> {
+            fn padding_scales(&self) -> ::core::option::Option<&[#f]> {
+                self.0.padding_scales()
             }
         }
 
