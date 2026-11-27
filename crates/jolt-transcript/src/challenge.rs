@@ -99,23 +99,21 @@ mod sealed {
 /// making the map a bijection with zero bias and no exhaustion. An `F8`
 /// message squeezes `ceil(len / 8)` words and decodes its first `len` bytes.
 ///
-/// The trait is sealed: every implementation lives in this module, next to
-/// the argument for its TV bound.
-///
 /// # Use outside this crate
 ///
-/// `ChallengeCodec` bounds the field of every `FieldTranscript<F>`
-/// implementation on spongefish's prover and verifier states, so a protocol
-/// that draws field challenges from them names it as a bound. Callers cannot
-/// implement it. The widths and decodings above are part of the transcript's
-/// wire format: changing one changes every proof that draws challenges in
-/// that field.
+/// The transcript uses this sealed trait to draw field challenges. External
+/// fields with a runtime modulus can implement [`RuntimePrimeChallenge`] to
+/// use the fixed-width reduction codec. Each codec's width and decoding are
+/// part of the proof's wire format.
 pub trait ChallengeCodec: Sized + Sealed {
     /// `|Self|`, the number of values one challenge can take. Proof-of-work
     /// difficulties are priced from it ([`grind_bits_for_loss`]).
     ///
+    /// This method replaces the `CHALLENGE_SET_SIZE` associated constant.
+    /// Callers must now read the size at runtime.
+    ///
     /// [`grind_bits_for_loss`]: crate::grind_bits_for_loss
-    const CHALLENGE_SET_SIZE: ChallengeSetSize;
+    fn challenge_set_size() -> ChallengeSetSize;
 
     /// Bytes squeezed for `len` elements; depends only on the type and `len`.
     /// Returns `None` on arithmetic overflow or an unattainable rejection bound.
@@ -130,26 +128,39 @@ pub trait ChallengeCodec: Sized + Sealed {
     fn decode_challenge(bytes: &[u8]) -> Option<Self>;
 }
 
-/// A sponge whose squeezed bytes are uniform, up to the sponge's own
-/// security. Field challenges are decoded from raw squeezed bytes, so the
-/// codecs' TV bounds hold only on such a sponge.
+/// A byte-oriented duplex sponge suitable for drawing Fiat-Shamir challenges.
 ///
-/// `PoseidonSponge` is not one: each block it squeezes is the little-endian
-/// encoding of a BN254 scalar, whose top bits are far from uniform.
+/// # Safety
 ///
-/// It is public because it bounds the sponge of the public
-/// `FieldTranscript<F>` implementations. Callers name it only as that bound
-/// and cannot implement it.
-pub trait UniformBytes: DuplexSpongeInterface<U = u8> + Sealed {}
+/// Under the sponge's security assumption, each fresh squeeze in the
+/// protocol's fixed schedule must yield bytes computationally indistinguishable
+/// from independent uniform bytes. The sponge must bind the session identifier
+/// at initialization and preserve domain separation for the transcript's
+/// unambiguously encoded statement and message history. Replaying the same
+/// session and operations with the same inputs must reproduce the same bytes
+/// on every platform.
+///
+/// The challenge codecs assume a uniform byte tape when bounding bias. If a
+/// sponge biases that tape or lets a prover reuse challenges across domains,
+/// the protocol's soundness bound no longer holds. Determinism lets the
+/// verifier reproduce the prover's challenges.
+#[expect(
+    unsafe_code,
+    reason = "implementors attest to the Fiat-Shamir sponge contract"
+)]
+pub unsafe trait UniformBytes: DuplexSpongeInterface<U = u8> + Sync {}
 
 #[cfg(feature = "transcript-keccak")]
-impl Sealed for Keccak {}
-#[cfg(feature = "transcript-keccak")]
-impl UniformBytes for Keccak {}
+#[expect(unsafe_code, reason = "attests to the UniformBytes contract")]
+// SAFETY: Spongefish initializes the Keccak duplex with the session identifier.
+// Its duplex construction yields pseudorandom rate bytes for the transcript's
+// fixed schedule under the Keccak permutation assumption.
+unsafe impl UniformBytes for Keccak {}
 #[cfg(feature = "transcript-blake2b")]
-impl Sealed for Blake2b512 {}
-#[cfg(feature = "transcript-blake2b")]
-impl UniformBytes for Blake2b512 {}
+#[expect(unsafe_code, reason = "attests to the UniformBytes contract")]
+// SAFETY: Spongefish's session-initialized hash bridge uses separate absorb
+// and squeeze prefixes and emits the bytes of counter-indexed Blake2b digests.
+unsafe impl UniformBytes for Blake2b512 {}
 
 /// Largest challenge message, in squeezed bytes. Larger requests are rejected
 /// before touching the sponge, so a length taken from the input cannot make
@@ -244,8 +255,9 @@ macro_rules! prime_codec {
         impl<const P: $word> Sealed for $field<P> {}
 
         impl<const P: $word> ChallengeCodec for $field<P> {
-            const CHALLENGE_SET_SIZE: ChallengeSetSize =
-                ChallengeSetSize::from_limbs(<Self as CanonicalEncoding>::CHALLENGE_SET_LIMBS);
+            fn challenge_set_size() -> ChallengeSetSize {
+                ChallengeSetSize::from_limbs(<Self as CanonicalEncoding>::CHALLENGE_SET_LIMBS)
+            }
 
             fn challenge_bytes(len: usize) -> Option<usize> {
                 pool_bytes::<Self>(len)
@@ -298,8 +310,9 @@ macro_rules! extension_codec {
         impl<F: TowerBase> Sealed for $extension<F> {}
 
         impl<F: TowerBase> ChallengeCodec for $extension<F> {
-            const CHALLENGE_SET_SIZE: ChallengeSetSize =
-                ChallengeSetSize::from_limbs(F::CHALLENGE_SET_LIMBS).pow(Self::DEGREE as u32);
+            fn challenge_set_size() -> ChallengeSetSize {
+                ChallengeSetSize::from_limbs(F::CHALLENGE_SET_LIMBS).pow(Self::DEGREE as u32)
+            }
 
             fn challenge_bytes(len: usize) -> Option<usize> {
                 pool_bytes::<F>(len.checked_mul(Self::DEGREE)?)
@@ -333,8 +346,9 @@ macro_rules! reduction_codec {
         impl Sealed for $field {}
 
         impl ChallengeCodec for $field {
-            const CHALLENGE_SET_SIZE: ChallengeSetSize =
-                ChallengeSetSize::from_limbs(<Self as CanonicalEncoding>::CHALLENGE_SET_LIMBS);
+            fn challenge_set_size() -> ChallengeSetSize {
+                ChallengeSetSize::from_limbs(<Self as CanonicalEncoding>::CHALLENGE_SET_LIMBS)
+            }
 
             fn challenge_bytes(len: usize) -> Option<usize> {
                 len.checked_mul(BN254_ELEMENT_BYTES)
@@ -370,8 +384,9 @@ macro_rules! binary_codec {
         impl Sealed for $field {}
 
         impl ChallengeCodec for $field {
-            const CHALLENGE_SET_SIZE: ChallengeSetSize =
-                ChallengeSetSize::from_limbs(<Self as CanonicalEncoding>::CHALLENGE_SET_LIMBS);
+            fn challenge_set_size() -> ChallengeSetSize {
+                ChallengeSetSize::from_limbs(<Self as CanonicalEncoding>::CHALLENGE_SET_LIMBS)
+            }
 
             fn challenge_bytes(len: usize) -> Option<usize> {
                 len.checked_mul(<Self as CanonicalBytes>::NUM_BYTES)?
@@ -405,6 +420,52 @@ macro_rules! binary_codec {
 #[cfg(feature = "binary")]
 binary_codec!(F8, F64, F128, F192);
 
+/// Number of bytes reduced modulo the runtime prime for each challenge.
+pub const RUNTIME_PRIME_WIDE_BYTES: usize = 40;
+
+/// A field with a prime modulus `q < 2^128` chosen at runtime.
+///
+/// The protocol must bind `q` to the session or public statement. Both
+/// parties must use the same modulus throughout the proof, including when
+/// pricing proof of work.
+///
+/// The codec reduces one 320-bit little-endian integer modulo `q` for each
+/// challenge. For uniform input the total variation distance from uniform
+/// is at most `q / 2^320 < 2^-192` per element. [`MAX_CHALLENGE_BYTES`]
+/// permits fewer than 2^19 elements per message, giving a total distance
+/// below 2^-173.
+pub trait RuntimePrimeChallenge: Sized {
+    /// The current proof's prime modulus.
+    fn modulus() -> u128;
+
+    /// Returns the field element represented by `bytes` modulo [`Self::modulus`].
+    fn from_le_bytes_wide(bytes: &[u8; RUNTIME_PRIME_WIDE_BYTES]) -> Self;
+}
+
+impl<T: RuntimePrimeChallenge> Sealed for T {}
+
+impl<T: RuntimePrimeChallenge> ChallengeCodec for T {
+    fn challenge_set_size() -> ChallengeSetSize {
+        ChallengeSetSize::field_order(T::modulus(), 1).unwrap_or(ChallengeSetSize::power_of_two(0))
+    }
+
+    fn challenge_bytes(len: usize) -> Option<usize> {
+        len.checked_mul(RUNTIME_PRIME_WIDE_BYTES)
+    }
+
+    fn decode_challenge(bytes: &[u8]) -> Option<Self> {
+        Some(T::from_le_bytes_wide(bytes.try_into().ok()?))
+    }
+
+    fn decode_challenges(bytes: &[u8], len: usize) -> Option<Vec<Self>> {
+        if bytes.len() != Self::challenge_bytes(len)? {
+            return None;
+        }
+        let (elements, _) = bytes.as_chunks::<RUNTIME_PRIME_WIDE_BYTES>();
+        Some(elements.iter().map(T::from_le_bytes_wide).collect())
+    }
+}
+
 /// Bytes squeezed for a message of `len` elements of `F`.
 ///
 /// # Errors
@@ -418,14 +479,14 @@ pub(crate) fn message_bytes<F: ChallengeCodec>(len: usize) -> Result<usize, Veri
 
 #[cfg(all(test, feature = "solinas"))]
 mod tests {
-    use super::{Prime64Offset59, Sealed, UniformBytes};
+    use super::{Prime64Offset59, UniformBytes};
     use crate::{
         prover_transcript, verifier_transcript, BytesMsg, FieldTranscript, ProverTranscript,
     };
     use spongefish::{DuplexSpongeInit, DuplexSpongeInterface};
 
     /// A sponge whose output is all ones, so every pooled candidate is
-    /// rejected. It lives here because `UniformBytes` is sealed.
+    /// rejected.
     #[derive(Clone)]
     struct Saturated;
 
@@ -448,8 +509,13 @@ mod tests {
         }
     }
 
-    impl Sealed for Saturated {}
-    impl UniformBytes for Saturated {}
+    #[expect(
+        unsafe_code,
+        reason = "injects a rejection tape only in exhaustion tests"
+    )]
+    // SAFETY: Only these rejection tests use this deliberately nonuniform
+    // sponge. They exercise error handling and never rely on its security.
+    unsafe impl UniformBytes for Saturated {}
 
     const SESSION: [u8; 32] = crate::protocol_tag(b"jolt/challenge-codecs/v1");
     const INSTANCE: [u8; 32] = [0x42; 32];

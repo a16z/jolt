@@ -25,7 +25,7 @@
 #![deny(missing_docs)]
 // In the jolt-verifier runtime closure: stricter panic and unsafe discipline
 // than the workspace lints (specs/verifier-closure-lints.md).
-#![forbid(unsafe_code)]
+#![deny(unsafe_code)]
 #![deny(
     clippy::indexing_slicing,
     clippy::get_unwrap,
@@ -58,7 +58,10 @@ mod shake128;
 mod transcript;
 mod verifier;
 
-pub use challenge::{ChallengeCodec, UniformBytes, MAX_CHALLENGE_BYTES};
+pub use challenge::{
+    ChallengeCodec, RuntimePrimeChallenge, UniformBytes, MAX_CHALLENGE_BYTES,
+    RUNTIME_PRIME_WIDE_BYTES,
+};
 pub use claim_domain::{ClaimDomain, ClaimMismatch, ClearDomain};
 pub use codec::{protocol_tag, word_padding, BytesMsg, NargMessage, TAG_BYTES, WORD_BYTES};
 pub use digest_hash::{DigestHash, DigestHasher, DIGEST_HASH};

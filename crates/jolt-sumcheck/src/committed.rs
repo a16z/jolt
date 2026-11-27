@@ -256,7 +256,7 @@ where
     where
         T: FieldTranscript<F> + ProverTranscript,
     {
-        require_no_pow(T::CHALLENGE_SET).map_err(|_| SumcheckError::NeedsProofOfWork)?;
+        require_no_pow(T::challenge_set()).map_err(|_| SumcheckError::NeedsProofOfWork)?;
         let coefficients = round_poly.coefficients().to_vec();
         if coefficients.len() > VC::capacity(self.setup) {
             return Err(SumcheckError::RoundExceedsCommitmentCapacity {

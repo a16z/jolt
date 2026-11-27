@@ -156,7 +156,7 @@ impl SumcheckVerifier {
             });
         }
         // Committed proofs carry no proof-of-work nonces.
-        require_no_pow(T::CHALLENGE_SET).map_err(|_| SumcheckError::NeedsProofOfWork)?;
+        require_no_pow(T::challenge_set()).map_err(|_| SumcheckError::NeedsProofOfWork)?;
 
         let mut rounds = Vec::with_capacity(statement.num_vars);
         for round_proof in round_proofs {

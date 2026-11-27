@@ -472,17 +472,20 @@ mod tests {
         };
 
         let order = |modulus, degree| ChallengeSetSize::field_order(modulus, degree).unwrap();
-        assert_eq!(Prime128Offset275::CHALLENGE_SET_SIZE, order(P128, 1));
-        assert_eq!(Prime24Offset3::CHALLENGE_SET_SIZE, order((1 << 24) - 3, 1));
+        assert_eq!(Prime128Offset275::challenge_set_size(), order(P128, 1));
         assert_eq!(
-            FpExt4::<Prime32Offset99>::CHALLENGE_SET_SIZE,
+            Prime24Offset3::challenge_set_size(),
+            order((1 << 24) - 3, 1)
+        );
+        assert_eq!(
+            FpExt4::<Prime32Offset99>::challenge_set_size(),
             order((1 << 32) - 99, 4)
         );
         assert_eq!(
-            FpExt8::<Prime24Offset3>::CHALLENGE_SET_SIZE,
+            FpExt8::<Prime24Offset3>::challenge_set_size(),
             order((1 << 24) - 3, 8)
         );
-        let ext2 = Ext2::<Prime64Offset59>::CHALLENGE_SET_SIZE;
+        let ext2 = Ext2::<Prime64Offset59>::challenge_set_size();
         assert_eq!(ext2, order(P64, 2));
         for (d, bits) in [(1, 1), (2, 2), (3, 2), (8, 4)] {
             assert_eq!(grind_bits_for_loss(d, ext2, 128), Ok(bits), "d={d}");
@@ -499,7 +502,7 @@ mod tests {
             b"21888242871839275222246405745257275088548364400416034343698204186575808495617";
         let q: &[u8] =
             b"21888242871839275222246405745257275088696311157297823662689037894645226208583";
-        for (size, modulus) in [(Fr::CHALLENGE_SET_SIZE, r), (Fq::CHALLENGE_SET_SIZE, q)] {
+        for (size, modulus) in [(Fr::challenge_set_size(), r), (Fq::challenge_set_size(), q)] {
             assert_eq!(big(size), BigUint::parse_bytes(modulus, 10).unwrap());
             for d in [2, 3, 8, u64::MAX] {
                 assert_eq!(grind_bits_for_loss(d, size, 128), Ok(0), "d={d}");
@@ -518,8 +521,8 @@ mod tests {
         use jolt_field::{Prime128Offset275, Prime128Offset6A23801F};
 
         for set in [
-            <Prime128Offset275 as ChallengeCodec>::CHALLENGE_SET_SIZE,
-            <Prime128Offset6A23801F as ChallengeCodec>::CHALLENGE_SET_SIZE,
+            <Prime128Offset275 as ChallengeCodec>::challenge_set_size(),
+            <Prime128Offset6A23801F as ChallengeCodec>::challenge_set_size(),
         ] {
             for (loss, bits) in [(1, 1), (2, 2), (3, 2), (6, 3), (10, 4), (27, 5), (42, 6)] {
                 assert_eq!(
@@ -537,19 +540,25 @@ mod tests {
         use crate::ChallengeCodec;
         use jolt_field::{F128, F192, F64, F8};
 
-        assert_eq!(F8::CHALLENGE_SET_SIZE, ChallengeSetSize::power_of_two(8));
-        assert_eq!(F64::CHALLENGE_SET_SIZE, ChallengeSetSize::power_of_two(64));
+        assert_eq!(F8::challenge_set_size(), ChallengeSetSize::power_of_two(8));
         assert_eq!(
-            F128::CHALLENGE_SET_SIZE,
+            F64::challenge_set_size(),
+            ChallengeSetSize::power_of_two(64)
+        );
+        assert_eq!(
+            F128::challenge_set_size(),
             ChallengeSetSize::power_of_two(128)
         );
         assert_eq!(
-            F192::CHALLENGE_SET_SIZE,
+            F192::challenge_set_size(),
             ChallengeSetSize::power_of_two(192)
         );
-        assert_eq!(grind_bits_for_loss(2, F128::CHALLENGE_SET_SIZE, 128), Ok(1));
         assert_eq!(
-            grind_bits_for_loss(u64::MAX, F192::CHALLENGE_SET_SIZE, 128),
+            grind_bits_for_loss(2, F128::challenge_set_size(), 128),
+            Ok(1)
+        );
+        assert_eq!(
+            grind_bits_for_loss(u64::MAX, F192::challenge_set_size(), 128),
             Ok(0)
         );
     }

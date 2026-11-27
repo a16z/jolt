@@ -190,11 +190,14 @@ impl Encoding for WordAligned<'_> {
 /// A transcript that draws challenges in `F`.
 pub trait FieldTranscript<F>: Transcript {
     /// Size of the set every challenge is drawn from: the codec's
-    /// [`CHALLENGE_SET_SIZE`](ChallengeCodec::CHALLENGE_SET_SIZE). Prices the
+    /// [`challenge_set_size`](ChallengeCodec::challenge_set_size). Prices the
     /// proof of work before a challenge ([`grind_bits_for_loss`]).
     ///
+    /// This method replaces the `CHALLENGE_SET` associated constant.
+    /// Callers must now read the size at runtime.
+    ///
     /// [`grind_bits_for_loss`]: crate::grind_bits_for_loss
-    const CHALLENGE_SET: ChallengeSetSize;
+    fn challenge_set() -> ChallengeSetSize;
 
     /// Draws `len` challenges as one message of `F`'s [`ChallengeCodec`].
     ///
@@ -317,7 +320,9 @@ where
     R: DuplexSpongeInit<U = u8>,
     F: ChallengeCodec,
 {
-    const CHALLENGE_SET: ChallengeSetSize = F::CHALLENGE_SET_SIZE;
+    fn challenge_set() -> ChallengeSetSize {
+        F::challenge_set_size()
+    }
 
     fn challenge_vector(&mut self, len: usize) -> Result<Vec<F>, VerificationError> {
         draw::<F, _>(self, len, |tape| F::decode_challenges(tape, len))
@@ -333,7 +338,9 @@ where
     H: UniformBytes,
     F: ChallengeCodec,
 {
-    const CHALLENGE_SET: ChallengeSetSize = F::CHALLENGE_SET_SIZE;
+    fn challenge_set() -> ChallengeSetSize {
+        F::challenge_set_size()
+    }
 
     fn challenge_vector(&mut self, len: usize) -> Result<Vec<F>, VerificationError> {
         draw::<F, _>(self, len, |tape| F::decode_challenges(tape, len))

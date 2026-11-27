@@ -195,11 +195,13 @@ where
     F: Clone,
     S: Script<F>,
 {
-    const CHALLENGE_SET: ChallengeSetSize = if S::UNPRICED {
-        ChallengeSetSize::power_of_two(256)
-    } else {
-        T::CHALLENGE_SET
-    };
+    fn challenge_set() -> ChallengeSetSize {
+        if S::UNPRICED {
+            ChallengeSetSize::power_of_two(256)
+        } else {
+            T::challenge_set()
+        }
+    }
 
     fn challenge_vector(&mut self, len: usize) -> Result<Vec<F>, VerificationError> {
         let mut challenges = self.inner.challenge_vector(len)?;
