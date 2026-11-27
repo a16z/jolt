@@ -45,7 +45,7 @@
 //! - `begin_batch` — the batched-sumcheck *head*, shared by `verify_clear` and
 //!   the prove-side stage recipes: per-member `input_claim` (declaration order)
 //!   → `recorder.absorb_input_claims` → one batching-coefficient draw per
-//!   present member → the `2^(max − rounds)`-padded random linear combination.
+//!   present member → the padded random linear combination.
 //!   Generic over `jolt_sumcheck::SumcheckRecorder`, the clear/ZK seam: whether
 //!   the claim absorb writes transcript bytes is decided by the recorder TYPE
 //!   (clear appends, committed no-ops), never by a runtime flag. Returns the
@@ -68,7 +68,8 @@
 //!   verifier. Returns the stage's produced `OutputPoints`.
 //! - `verify_zk` — the ZK-path driver: fold the members' dimensions, draw the
 //!   batching coefficients, and check committed consistency through
-//!   `SumcheckProof::verify_committed_consistency_dims`. Committed proofs reveal no
+//!   `SumcheckProof::verify_committed_consistency_dims`. This path requires
+//!   constant-extension padding. Committed proofs reveal no
 //!   claim scalars, so the caller must have absorbed claim COMMITMENTS beforehand
 //!   (the coefficients are squeezed before the consistency rounds).
 //! - `derive_opening_points` — slice each member's point from the batch challenge
@@ -78,7 +79,8 @@
 //!   Takes the challenge vector as `&[F]`, so the clear and ZK paths each pass
 //!   their own.
 //! - `expected_final_claim` — run `validate_aliases`, then fold the members'
-//!   `ConcreteSumcheck::expected_output` with the batch coefficients.
+//!   `ConcreteSumcheck::expected_output` with the batch coefficients and output
+//!   scales.
 //! - `validate_aliases` — each member's declared `(aliased, source)` opening pairs,
 //!   via `relations::validate_member_aliases` against the batch-wide resolver. Run
 //!   unskippably by `expected_final_claim`, so declaring a pair on a relation
@@ -131,6 +133,7 @@
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
+use syn::ext::IdentExt;
 use syn::{
     parse_macro_input, parse_quote, Attribute, Data, DeriveInput, Fields, GenericArgument,
     GenericParam, Ident, ItemFn, Meta, PathArguments, Token, Type,
@@ -310,7 +313,17 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
         ));
     }
 
+    let mut output_scales_field = format_ident!("__sumcheck_batch_output_scales");
+    while plans
+        .iter()
+        .any(|plan| plan.ident.unraw() == output_scales_field)
+    {
+        output_scales_field = format_ident!("_{output_scales_field}");
+    }
+
     let relations = quote!(#krate::stages::relations);
+    // PaddingRule in jolt-sumcheck selects zero extension when 2 has no inverse.
+    let uses_zero_extension = quote!(::jolt_field::Zero::is_zero(&#f::from_u64(2)));
 
     let project = |alias: &TokenStream2, plan: &InstanceField| {
         let instance = &plan.instance;
@@ -513,8 +526,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
 
         // Each present member's engine-form entry `{ input_claim, coefficient,
         // rounds }`, in declaration order. `BatchPrelude::new` folds these into
-        // the combined claim `Σ coeff · sum · 2^(max − rounds)` (the front-loaded
-        // padding scale).
+        // the combined claim using the field's padding rule.
         let member_pushes =
             plans
                 .iter()
@@ -553,8 +565,8 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
             /// The batched-sumcheck head, shared by `verify_clear` and the
             /// prove-side stage recipes: per-member `input_claim` (declaration
             /// order) → `recorder.absorb_input_claims` → one batching-coefficient
-            /// draw per present member → the `2^(max − rounds)`-padded random
-            /// linear combination. Whether the claim absorb writes transcript
+            /// draw per present member → the padded random linear combination.
+            /// Whether the claim absorb writes transcript
             /// bytes is decided by the recorder type (clear appends, committed
             /// no-ops), never by a runtime flag. Returns the engine-form
             /// `jolt_sumcheck::BatchPrelude` paired with the stage's named
@@ -699,6 +711,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
         });
 
         quote! {
+            /// Verify committed sumcheck consistency for a constant-extension batch.
             pub fn verify_zk<__C, __T>(
                 &self,
                 proof: &::jolt_sumcheck::SumcheckProof<#f, __C>,
@@ -712,6 +725,15 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                 __T: ::jolt_transcript::FieldTranscript<#f>,
             {
                 use #relations::ConcreteSumcheck as _;
+
+                if #uses_zero_extension {
+                    return ::core::result::Result::Err(
+                        #krate::VerifierError::ProtocolAxisUnimplemented {
+                            axis: "sumcheck extension",
+                            pending: "committed verification requires constant extension",
+                        },
+                    );
+                }
 
                 let mut __max_num_vars = 0usize;
                 let mut __max_degree = 0usize;
@@ -784,6 +806,22 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
         let point_fields = field_bindings
             .iter()
             .map(|(_, id, field)| quote!(#id: #field));
+        let scale_members = plans.iter().map(|plan| {
+            let id = &plan.ident;
+            per_member(
+                plan.is_option,
+                &[(&member_ident, quote!(self.#id))],
+                quote! {
+                    __max_degree = ::core::cmp::max(__max_degree, __member.degree());
+                    __members.push(::jolt_sumcheck::BatchMember {
+                        input_claim: #f::zero(),
+                        coefficient: #f::zero(),
+                        rounds: __member.rounds(),
+                        offset: __member.instance_point_offset(batch_point.len())?,
+                    });
+                },
+            )
+        });
 
         quote! {
             pub fn derive_opening_points(
@@ -794,8 +832,31 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                 use #relations::ConcreteSumcheck as _;
 
                 #(#point_bindings)*
+                let __sumcheck_batch_output_scales = if #uses_zero_extension {
+                    let mut __members = ::std::vec::Vec::new();
+                    let mut __max_degree = 0usize;
+                    #(#scale_members)*
+                    let __scale_error = |error: ::jolt_sumcheck::SumcheckError<#f>| {
+                        #krate::VerifierError::StageClaimSumcheckFailed {
+                            stage: #base_lit.to_string(),
+                            reason: error.to_string(),
+                        }
+                    };
+                    // Output scales depend only on the member windows and batch point.
+                    let __batch = ::jolt_sumcheck::BatchPrelude::try_new(
+                        __members, batch_point.len(), __max_degree,
+                    ).map_err(__scale_error)?;
+                    let __scales = (0..__batch.members.len())
+                        .map(|__index| __batch.member_output_scale(__index, batch_point))
+                        .collect::<::core::result::Result<::std::vec::Vec<_>, _>>()
+                        .map_err(__scale_error)?;
+                    ::core::option::Option::Some(__scales)
+                } else {
+                    ::core::option::Option::None
+                };
                 ::core::result::Result::Ok(#output_points_name {
                     #(#point_fields,)*
+                    #output_scales_field: __sumcheck_batch_output_scales,
                 })
             }
         }
@@ -874,8 +935,6 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
         }
     };
 
-    // Fold the members' expected output claims with the batch coefficients into the
-    // final claim the reduction is checked against: `Σ coeff_m * expected_output_m`.
     // A present `Option` member with any absent cell errors rather than silently
     // dropping its term (which would surface as an opaque final-claim mismatch).
     let expected_final_claim_method = {
@@ -926,6 +985,8 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
             }
         });
         quote! {
+            /// Fold the native member outputs with the batching coefficients
+            /// and the padding scales from [`Self::derive_opening_points`].
             pub fn expected_final_claim(
                 &self,
                 coefficients: &#batching_coefficients_name<#f>,
@@ -940,7 +1001,23 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                 self.validate_aliases(output_values)?;
                 let mut __terms = ::std::vec::Vec::new();
                 #(#output_terms)*
-                let __expected: #f = __terms.into_iter().sum();
+                let __expected: #f = if let ::core::option::Option::Some(__scales) =
+                    output_points.#output_scales_field.as_ref()
+                {
+                    if __terms.len() != __scales.len() {
+                        return ::core::result::Result::Err(
+                            #krate::VerifierError::StageClaimSumcheckFailed {
+                                stage: #base_lit.to_string(),
+                                reason: "final-claim terms do not match the batch members"
+                                    .to_string(),
+                            },
+                        );
+                    }
+                    __terms.into_iter().zip(__scales)
+                        .map(|(__term, &__scale)| __term * __scale).sum()
+                } else {
+                    __terms.into_iter().sum()
+                };
                 ::core::result::Result::Ok(__expected)
             }
         }
@@ -1225,6 +1302,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
         #[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
         #vis struct #output_points_name<#f: ::jolt_field::JoltField> {
             #(#output_points_fields,)*
+            #output_scales_field: ::core::option::Option<::std::vec::Vec<#f>>,
         }
 
         #[derive(Clone, Debug, PartialEq, Eq)]

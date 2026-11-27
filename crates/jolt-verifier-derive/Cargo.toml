@@ -16,3 +16,12 @@ workspace = true
 syn = { workspace = true }
 quote = { workspace = true }
 proc-macro2 = { workspace = true }
+
+[dev-dependencies]
+jolt-claims.workspace = true
+jolt-field = { workspace = true, features = ["binary"] }
+jolt-poly.workspace = true
+jolt-sumcheck.workspace = true
+jolt-transcript = { workspace = true, features = ["binary", "test-utils", "transcript-blake2b"] }
+jolt-verifier.workspace = true
+serde = { workspace = true, features = ["derive"] }
