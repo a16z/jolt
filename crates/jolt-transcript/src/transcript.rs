@@ -403,48 +403,51 @@ where
     }
 }
 
-#[cfg(all(test, feature = "solinas"))]
+#[cfg(all(test, feature = "solinas", feature = "transcript-keccak"))]
 mod tests {
     use jolt_field::Prime64Offset59;
 
-    use super::draw;
+    use super::FieldTranscript;
+    use crate::challenge::test_codec::ExhaustedPrime64;
     use crate::{
-        protocol_tag, prover_transcript, verifier_transcript, BytesMsg, ChallengeCodec,
-        ProverTranscript, Shake128,
+        protocol_tag, prover_transcript, verifier_transcript, BytesMsg, Keccak, ProverTranscript,
     };
 
     const SESSION: [u8; 32] = protocol_tag(b"jolt/challenge-codecs/v1");
     const INSTANCE: [u8; 32] = [0x42; 32];
 
-    fn assert_exhaustion<U>(len: usize, decode: impl Fn(&[u8]) -> Option<U>) {
-        let reject = |tape: &[u8]| decode(&vec![u8::MAX; tape.len()]);
-        let mut prover = prover_transcript::<Shake128>(&SESSION, &INSTANCE);
-        assert!(draw::<Prime64Offset59, _>(&mut prover, len, reject).is_err());
-
+    #[test]
+    fn exhaustion_fails_on_both_sides_and_poisons_the_verifier() {
+        let mut prover = prover_transcript::<Keccak>(&SESSION, &INSTANCE);
+        ExhaustedPrime64::assert_exhausted(|| {
+            FieldTranscript::<ExhaustedPrime64>::challenge_vector(&mut prover, 3)
+        });
         prover.send(&BytesMsg(b"after".to_vec()));
-        let mut verifier =
-            verifier_transcript::<Shake128>(&SESSION, &INSTANCE, prover.narg_string());
-        assert!(draw::<Prime64Offset59, _>(&mut verifier, len, reject).is_err());
+        let mut verifier = verifier_transcript::<Keccak>(&SESSION, &INSTANCE, prover.narg_string());
+        ExhaustedPrime64::assert_exhausted(|| {
+            FieldTranscript::<ExhaustedPrime64>::challenge_vector(&mut verifier, 3)
+        });
         assert!(verifier.prover_message::<BytesMsg>().is_err());
         assert!(verifier.check_eof().is_err());
     }
 
     #[test]
-    fn exhaustion_fails_on_both_sides_and_poisons_the_verifier() {
-        assert_exhaustion(3, |tape| Prime64Offset59::decode_challenges(tape, 3));
-    }
-
-    #[test]
     fn scalar_exhaustion_fails_on_both_sides_and_poisons_the_verifier() {
-        assert_exhaustion(1, Prime64Offset59::decode_challenge);
+        let mut prover = prover_transcript::<Keccak>(&SESSION, &INSTANCE);
+        ExhaustedPrime64::assert_exhausted(|| {
+            FieldTranscript::<ExhaustedPrime64>::challenge(&mut prover)
+        });
+        prover.send(&BytesMsg(b"after".to_vec()));
+        let mut verifier = verifier_transcript::<Keccak>(&SESSION, &INSTANCE, prover.narg_string());
+        ExhaustedPrime64::assert_exhausted(|| {
+            FieldTranscript::<ExhaustedPrime64>::challenge(&mut verifier)
+        });
+        assert!(verifier.prover_message::<BytesMsg>().is_err());
+        assert!(verifier.check_eof().is_err());
     }
 
-    #[cfg(feature = "transcript-keccak")]
     #[test]
     fn power_capacity_overflow_poisons_the_verifier() {
-        use super::FieldTranscript;
-        use crate::Keccak;
-
         let len = isize::MAX.unsigned_abs() / size_of::<Prime64Offset59>() + 1;
         let mut verifier = verifier_transcript::<Keccak>(&SESSION, &INSTANCE, &[]);
         let powers: Result<Vec<Prime64Offset59>, _> = verifier.challenge_powers(len);

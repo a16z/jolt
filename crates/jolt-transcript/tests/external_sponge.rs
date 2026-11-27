@@ -77,11 +77,18 @@ fn external_sponge_draws_matching_challenges() {
     let _ = sponge.absorb(BytesMsg(&statement).encode().as_ref());
     let _ = sponge.absorb(commitment.encode().as_ref());
     let expected = Challenge::from_le_bytes_wide(&sponge.squeeze_array());
+    let mut tape = [[0u8; RUNTIME_PRIME_WIDE_BYTES]; 2];
+    let _ = sponge.squeeze(tape.as_flattened_mut());
+    let [first, second] = tape.map(|chunk| Challenge::from_le_bytes_wide(&chunk));
+    assert_ne!(first, second);
+    let expected_vector = [first, second];
 
     let mut prover = prover_transcript::<ExternalSponge>(&session, &statement);
     prover.send(&commitment);
     let challenge: Challenge = prover.challenge().unwrap();
     assert_eq!(challenge, expected);
+    let challenges: Vec<Challenge> = prover.challenge_vector(2).unwrap();
+    assert_eq!(challenges, expected_vector);
 
     let mut verifier =
         verifier_transcript::<ExternalSponge>(&session, &statement, prover.narg_string());
@@ -89,6 +96,8 @@ fn external_sponge_draws_matching_challenges() {
     assert_eq!(message.as_slice(), commitment.as_slice());
     let challenge: Challenge = verifier.challenge().unwrap();
     assert_eq!(challenge, expected);
+    let challenges: Vec<Challenge> = verifier.challenge_vector(2).unwrap();
+    assert_eq!(challenges, expected_vector);
     VerifierTranscript::check_eof(verifier).unwrap();
 }
 

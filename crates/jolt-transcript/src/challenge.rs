@@ -117,9 +117,11 @@ pub trait ChallengeCodec: Sized + Sealed {
     /// [`grind_bits_for_loss`]: crate::grind_bits_for_loss
     fn challenge_set_size() -> ChallengeSetSize;
 
-    /// Bytes squeezed for `len` elements; depends only on the type and `len`.
-    /// Returns `None` on arithmetic overflow, an unrepresentable output vector
-    /// layout, or an unattainable rejection bound.
+    /// Bytes squeezed for `len` elements, determined by the type and `len`.
+    /// Returns `None` on arithmetic overflow or an unattainable rejection bound.
+    /// The runtime-prime codec also returns `None` for an unrepresentable output
+    /// vector layout. The transcript rejects binary draws that exceed
+    /// [`MAX_CHALLENGE_BYTES`].
     fn challenge_bytes(len: usize) -> Option<usize>;
 
     /// Decodes exactly `challenge_bytes(len)` bytes in little-endian order.
@@ -494,6 +496,61 @@ pub(crate) fn message_bytes<F: ChallengeCodec>(len: usize) -> Result<usize, Veri
     F::challenge_bytes(len)
         .filter(|&bytes| bytes <= MAX_CHALLENGE_BYTES)
         .ok_or(VerificationError)
+}
+
+#[cfg(all(test, feature = "solinas", feature = "transcript-keccak"))]
+pub(crate) mod test_codec {
+    use std::cell::Cell;
+
+    use super::{ChallengeCodec, ChallengeSetSize, Prime64Offset59, Sealed, VerificationError};
+
+    thread_local! {
+        static DECODE_CALLS: Cell<usize> = const { Cell::new(0) };
+    }
+
+    pub(crate) struct ExhaustedPrime64 {
+        _value: Prime64Offset59,
+    }
+
+    impl ExhaustedPrime64 {
+        pub(crate) fn assert_exhausted<T>(draw: impl FnOnce() -> Result<T, VerificationError>) {
+            DECODE_CALLS.set(0);
+            assert!(draw().is_err());
+            assert_eq!(DECODE_CALLS.get(), 1, "decode attempts for one draw");
+        }
+
+        fn exhausted_tape(bytes: &[u8]) -> Vec<u8> {
+            DECODE_CALLS.set(DECODE_CALLS.get() + 1);
+            vec![u8::MAX; bytes.len()]
+        }
+    }
+
+    impl Sealed for ExhaustedPrime64 {}
+
+    impl ChallengeCodec for ExhaustedPrime64 {
+        fn challenge_set_size() -> ChallengeSetSize {
+            Prime64Offset59::challenge_set_size()
+        }
+
+        fn challenge_bytes(len: usize) -> Option<usize> {
+            Prime64Offset59::challenge_bytes(len)
+        }
+
+        fn decode_challenges(bytes: &[u8], len: usize) -> Option<Vec<Self>> {
+            let values = Prime64Offset59::decode_challenges(&Self::exhausted_tape(bytes), len)?;
+            Some(
+                values
+                    .into_iter()
+                    .map(|value| Self { _value: value })
+                    .collect(),
+            )
+        }
+
+        fn decode_challenge(bytes: &[u8]) -> Option<Self> {
+            let value = Prime64Offset59::decode_challenge(&Self::exhausted_tape(bytes))?;
+            Some(Self { _value: value })
+        }
+    }
 }
 
 #[cfg(test)]
