@@ -151,10 +151,12 @@ pub trait ChallengeCodec: Sized + Sealed {
 /// The sponge must bind the session identifier at initialization and preserve
 /// domain separation for the transcript's unambiguously encoded statement
 /// and message history. Replaying the same session and operations with the
-/// same inputs must reproduce the same bytes on every platform. Cloning must
-/// create an independent snapshot: operations on either copy leave the other's
-/// state unchanged. An override of `squeeze_boxed` must return exactly the
-/// requested bytes and advance the stream exactly as `squeeze` would.
+/// same inputs must reproduce the same bytes on every platform. Counters that
+/// affect replay, including cumulative lengths across calls, must have
+/// platform-independent ranges and encodings. Cloning must create an
+/// independent snapshot: operations on either copy leave the other's state
+/// unchanged. An override of `squeeze_boxed` must return exactly the requested
+/// bytes and advance the stream exactly as `squeeze` would.
 ///
 /// The challenge codecs assume a uniform byte tape when bounding bias. If a
 /// sponge biases that tape or lets a prover reuse challenges across domains,
@@ -174,9 +176,12 @@ pub unsafe trait UniformBytes: DuplexSpongeInterface<U = u8> + Sync {}
 unsafe impl UniformBytes for Keccak {}
 #[cfg(feature = "transcript-blake2b")]
 #[expect(unsafe_code, reason = "attests to the UniformBytes contract")]
-// SAFETY: Spongefish's session-initialized hash bridge uses separate absorb
-// and squeeze prefixes and emits the bytes of counter-indexed Blake2b digests.
-// The transcript models Blake2b as a random oracle for these inputs.
+// SAFETY: The bridge absorbs the session identifier at initialization and uses
+// distinct masks for absorption, squeeze blocks, and squeeze completion.
+// Checked u64 arithmetic and big-endian encoding keep block indices and
+// cumulative squeeze lengths identical on all platforms. Cloning copies the
+// digest state and buffered output. The transcript models Blake2b as a random
+// oracle for these inputs.
 unsafe impl UniformBytes for Blake2b512 {}
 
 /// Largest challenge message, in squeezed bytes. Larger requests are rejected

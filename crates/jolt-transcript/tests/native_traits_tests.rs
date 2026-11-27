@@ -3,22 +3,21 @@
 #![cfg(all(feature = "bn254", feature = "transcript-blake2b"))]
 #![expect(clippy::unwrap_used, reason = "tests")]
 
-use blake2::Blake2b512;
 use jolt_field::Fr;
-use jolt_transcript::FieldTranscript;
-use jolt_transcript::{protocol_tag, prover_transcript, verifier_transcript, TAG_BYTES};
-use spongefish::instantiations::Hash;
+use jolt_transcript::{
+    protocol_tag, prover_transcript, verifier_transcript, Blake2b512, FieldTranscript, TAG_BYTES,
+};
 
 const SESSION: [u8; TAG_BYTES] = protocol_tag(b"native-traits");
 const INSTANCE: [u8; 32] = [0x77; 32];
 
 fn prover_challenge(session: [u8; TAG_BYTES], instance: [u8; 32]) -> Vec<Fr> {
-    let mut prover = prover_transcript::<Hash<Blake2b512>>(&session, &instance);
+    let mut prover = prover_transcript::<Blake2b512>(&session, &instance);
     FieldTranscript::<Fr>::challenge_vector(&mut prover, 1).unwrap()
 }
 
 fn verifier_challenge(session: [u8; TAG_BYTES], instance: [u8; 32]) -> Vec<Fr> {
-    let mut verifier = verifier_transcript::<Hash<Blake2b512>>(&session, &instance, &[]);
+    let mut verifier = verifier_transcript::<Blake2b512>(&session, &instance, &[]);
     FieldTranscript::<Fr>::challenge_vector(&mut verifier, 1).unwrap()
 }
 

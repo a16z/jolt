@@ -17,7 +17,7 @@
 //! ([`PROTOCOL_ID`] lists the layout).
 //!
 //! Three sponges are feature-gated: `transcript-keccak` (spongefish `Keccak`,
-//! the default), `transcript-blake2b` (spongefish `Blake2b512`) and
+//! the default), `transcript-blake2b` (Jolt's `Blake2b512`) and
 //! `transcript-poseidon` (a Circom-compatible BN254 [`PoseidonSponge`]).
 //! Field challenges need uniform squeezed bytes ([`UniformBytes`]), which
 //! Poseidon does not give, so a Poseidon transcript cannot draw them.
@@ -46,6 +46,8 @@ mod codec;
 mod coins;
 mod digest_hash;
 mod grind_bits;
+#[cfg(feature = "transcript-blake2b")]
+mod hash_bridge;
 #[cfg(feature = "transcript-poseidon")]
 mod poseidon;
 mod pow;
@@ -90,6 +92,8 @@ pub use verifier::{VerifierInit, VerifierTranscript};
     not(all(feature = "blake2-inline", target_arch = "riscv64"))
 ))]
 use blake2::Blake2b512 as Blake2b512Digest;
+#[cfg(feature = "transcript-blake2b")]
+use hash_bridge::HashBridge;
 #[cfg(all(
     feature = "transcript-blake2b",
     feature = "blake2-inline",
@@ -102,12 +106,10 @@ use jolt_inlines_blake2::digest_adapter::{Blake2b, U64};
     target_arch = "riscv64"
 ))]
 type Blake2b512Digest = Blake2b<U64>;
-#[cfg(feature = "transcript-blake2b")]
-use spongefish::instantiations::Hash;
 
-/// Spongefish's fixed-output hash bridge instantiated with Blake2b-512.
+/// Blake2b-512 duplex sponge with portable squeeze counts.
 #[cfg(feature = "transcript-blake2b")]
-pub type Blake2b512 = Hash<Blake2b512Digest>;
+pub type Blake2b512 = HashBridge<Blake2b512Digest>;
 
 /// Spongefish's Keccak-f[1600] duplex sponge.
 #[cfg(feature = "transcript-keccak")]
