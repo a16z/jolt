@@ -2,11 +2,13 @@
 #![expect(clippy::unwrap_used, reason = "tests")]
 
 use jolt_transcript::{
-    protocol_tag, prover_transcript, verifier_transcript, BytesMsg, FieldTranscript, Keccak,
-    ProverTranscript, RuntimePrimeChallenge, UniformBytes, VerifierTranscript,
-    RUNTIME_PRIME_WIDE_BYTES,
+    protocol_tag, prover_transcript, session_id, verifier_transcript, BytesMsg, Encoding,
+    FieldTranscript, Keccak, ProverTranscript, RuntimePrimeChallenge, UniformBytes,
+    VerifierTranscript, RUNTIME_PRIME_WIDE_BYTES,
 };
 use spongefish::{DuplexSpongeInit, DuplexSpongeInterface};
+
+const PERSONALIZATION: [u8; 32] = protocol_tag(b"jolt/test/personalized-keccak");
 
 #[derive(Clone)]
 struct ExternalSponge(Keccak);
@@ -27,11 +29,14 @@ impl DuplexSpongeInterface for ExternalSponge {
 
 impl DuplexSpongeInit for ExternalSponge {
     fn init(session_id: &[u8; 32]) -> Self {
-        Self(Keccak::init(session_id))
+        let mut sponge = Keccak::init(session_id);
+        let _ = sponge.absorb(&PERSONALIZATION);
+        Self(sponge)
     }
 }
 
-// SAFETY: Initialization, absorbs, and squeezes preserve Keccak's behavior.
+// SAFETY: The fixed personalization extends Keccak's session prefix. Cloning,
+// absorption, and squeezing preserve the underlying duplex behavior.
 unsafe impl UniformBytes for ExternalSponge {}
 
 #[derive(Debug, PartialEq, Eq)]
@@ -57,14 +62,24 @@ impl RuntimePrimeChallenge for Challenge {
 fn external_sponge_draws_matching_challenges() {
     let session = protocol_tag(b"jolt/external-sponge-test");
     let statement = [0x42u8; 32];
+    let commitment = BytesMsg(b"commitment");
+
+    let mut sponge = Keccak::init(session_id().as_bytes());
+    let _ = sponge.absorb(&PERSONALIZATION);
+    let _ = sponge.absorb(&session);
+    let _ = sponge.absorb(BytesMsg(&statement).encode().as_ref());
+    let _ = sponge.absorb(commitment.encode().as_ref());
+    let expected = Challenge::from_le_bytes_wide(&sponge.squeeze_array());
+
     let mut prover = prover_transcript::<ExternalSponge>(&session, &statement);
-    prover.send(&BytesMsg(b"commitment".to_vec()));
-    let expected: Challenge = prover.challenge().unwrap();
+    prover.send(&commitment);
+    let challenge: Challenge = prover.challenge().unwrap();
+    assert_eq!(challenge, expected);
 
     let mut verifier =
         verifier_transcript::<ExternalSponge>(&session, &statement, prover.narg_string());
     let message: BytesMsg = verifier.prover_message().unwrap();
-    assert_eq!(message.as_slice(), b"commitment");
+    assert_eq!(message.as_slice(), commitment.as_slice());
     let challenge: Challenge = verifier.challenge().unwrap();
     assert_eq!(challenge, expected);
     VerifierTranscript::check_eof(verifier).unwrap();

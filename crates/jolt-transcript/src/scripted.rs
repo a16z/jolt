@@ -4,7 +4,7 @@
 use std::borrow::{Borrow, BorrowMut};
 use std::collections::VecDeque;
 
-use crate::transcript::sealed::Sealed;
+use crate::transcript::sealed::{Sealed, SealedField};
 #[cfg(feature = "prover-coins")]
 use crate::ProverCoins;
 use crate::{
@@ -187,6 +187,14 @@ impl<T: Sealed, F, S: Script<F>> Sealed for ScriptedTranscript<T, F, S> {
     fn require(&mut self, ok: bool) -> Result<(), VerificationError> {
         self.inner.require(ok)
     }
+}
+
+impl<T, F, S> SealedField<F> for ScriptedTranscript<T, F, S>
+where
+    T: FieldTranscript<F>,
+    F: Clone,
+    S: Script<F>,
+{
 }
 
 impl<T, F, S> FieldTranscript<F> for ScriptedTranscript<T, F, S>

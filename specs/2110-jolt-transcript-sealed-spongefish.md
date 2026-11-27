@@ -7,6 +7,12 @@
 | Status      | in review                                       |
 | PR          | [#2110](https://github.com/a16z/jolt/pull/2110) |
 
+The current API supersedes the sponge seal and challenge-set constant
+described below. Protocols built on Jolt can use an external byte sponge by
+implementing the unsafe `UniformBytes` contract. `Transcript` and each
+`FieldTranscript<F>` state and field pair remain sealed.
+`FieldTranscript::challenge_set()` gives the challenge set size at runtime.
+
 ## Summary
 
 Jolt's Fiat-Shamir transcript had two surfaces in `crates/jolt-transcript`: a
