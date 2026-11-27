@@ -500,29 +500,10 @@ pub(crate) fn message_bytes<F: ChallengeCodec>(len: usize) -> Result<usize, Veri
 
 #[cfg(all(test, feature = "solinas", feature = "transcript-keccak"))]
 pub(crate) mod test_codec {
-    use std::cell::Cell;
-
-    use super::{ChallengeCodec, ChallengeSetSize, Prime64Offset59, Sealed, VerificationError};
-
-    thread_local! {
-        static DECODE_CALLS: Cell<usize> = const { Cell::new(0) };
-    }
+    use super::{ChallengeCodec, ChallengeSetSize, Prime64Offset59, Sealed};
 
     pub(crate) struct ExhaustedPrime64 {
         _value: Prime64Offset59,
-    }
-
-    impl ExhaustedPrime64 {
-        pub(crate) fn assert_exhausted<T>(draw: impl FnOnce() -> Result<T, VerificationError>) {
-            DECODE_CALLS.set(0);
-            assert!(draw().is_err());
-            assert_eq!(DECODE_CALLS.get(), 1, "decode attempts for one draw");
-        }
-
-        fn exhausted_tape(bytes: &[u8]) -> Vec<u8> {
-            DECODE_CALLS.set(DECODE_CALLS.get() + 1);
-            vec![u8::MAX; bytes.len()]
-        }
     }
 
     impl Sealed for ExhaustedPrime64 {}
@@ -537,7 +518,7 @@ pub(crate) mod test_codec {
         }
 
         fn decode_challenges(bytes: &[u8], len: usize) -> Option<Vec<Self>> {
-            let values = Prime64Offset59::decode_challenges(&Self::exhausted_tape(bytes), len)?;
+            let values = Prime64Offset59::decode_challenges(&vec![u8::MAX; bytes.len()], len)?;
             Some(
                 values
                     .into_iter()
@@ -547,7 +528,7 @@ pub(crate) mod test_codec {
         }
 
         fn decode_challenge(bytes: &[u8]) -> Option<Self> {
-            let value = Prime64Offset59::decode_challenge(&Self::exhausted_tape(bytes))?;
+            let value = Prime64Offset59::decode_challenge(&vec![u8::MAX; bytes.len()])?;
             Some(Self { _value: value })
         }
     }

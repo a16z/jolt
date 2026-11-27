@@ -77,9 +77,11 @@ fn external_sponge_draws_matching_challenges() {
     let _ = sponge.absorb(BytesMsg(&statement).encode().as_ref());
     let _ = sponge.absorb(commitment.encode().as_ref());
     let expected = Challenge::from_le_bytes_wide(&sponge.squeeze_array());
-    let mut tape = [[0u8; RUNTIME_PRIME_WIDE_BYTES]; 2];
-    let _ = sponge.squeeze(tape.as_flattened_mut());
-    let [first, second] = tape.map(|chunk| Challenge::from_le_bytes_wide(&chunk));
+    let tape = sponge.squeeze_array::<80>();
+    let (first, second) = tape.split_first_chunk::<40>().unwrap();
+    let second: &[u8; 40] = second.try_into().unwrap();
+    let first = Challenge::from_le_bytes_wide(first);
+    let second = Challenge::from_le_bytes_wide(second);
     assert_ne!(first, second);
     let expected_vector = [first, second];
 

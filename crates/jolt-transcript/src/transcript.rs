@@ -404,13 +404,15 @@ where
 }
 
 #[cfg(all(test, feature = "solinas", feature = "transcript-keccak"))]
+#[expect(clippy::unwrap_used, reason = "tests")]
 mod tests {
     use jolt_field::Prime64Offset59;
 
     use super::FieldTranscript;
     use crate::challenge::test_codec::ExhaustedPrime64;
     use crate::{
-        protocol_tag, prover_transcript, verifier_transcript, BytesMsg, Keccak, ProverTranscript,
+        protocol_tag, prover_transcript, verifier_transcript, BytesMsg, ChallengeCodec, Keccak,
+        ProverState, ProverTranscript,
     };
 
     const SESSION: [u8; 32] = protocol_tag(b"jolt/challenge-codecs/v1");
@@ -419,14 +421,11 @@ mod tests {
     #[test]
     fn exhaustion_fails_on_both_sides_and_poisons_the_verifier() {
         let mut prover = prover_transcript::<Keccak>(&SESSION, &INSTANCE);
-        ExhaustedPrime64::assert_exhausted(|| {
-            FieldTranscript::<ExhaustedPrime64>::challenge_vector(&mut prover, 3)
-        });
+        assert!(FieldTranscript::<ExhaustedPrime64>::challenge_vector(&mut prover, 3).is_err());
+        assert_one_tape_consumed(&mut prover, 3);
         prover.send(&BytesMsg(b"after".to_vec()));
         let mut verifier = verifier_transcript::<Keccak>(&SESSION, &INSTANCE, prover.narg_string());
-        ExhaustedPrime64::assert_exhausted(|| {
-            FieldTranscript::<ExhaustedPrime64>::challenge_vector(&mut verifier, 3)
-        });
+        assert!(FieldTranscript::<ExhaustedPrime64>::challenge_vector(&mut verifier, 3).is_err());
         assert!(verifier.prover_message::<BytesMsg>().is_err());
         assert!(verifier.check_eof().is_err());
     }
@@ -434,16 +433,23 @@ mod tests {
     #[test]
     fn scalar_exhaustion_fails_on_both_sides_and_poisons_the_verifier() {
         let mut prover = prover_transcript::<Keccak>(&SESSION, &INSTANCE);
-        ExhaustedPrime64::assert_exhausted(|| {
-            FieldTranscript::<ExhaustedPrime64>::challenge(&mut prover)
-        });
+        assert!(FieldTranscript::<ExhaustedPrime64>::challenge(&mut prover).is_err());
+        assert_one_tape_consumed(&mut prover, 1);
         prover.send(&BytesMsg(b"after".to_vec()));
         let mut verifier = verifier_transcript::<Keccak>(&SESSION, &INSTANCE, prover.narg_string());
-        ExhaustedPrime64::assert_exhausted(|| {
-            FieldTranscript::<ExhaustedPrime64>::challenge(&mut verifier)
-        });
+        assert!(FieldTranscript::<ExhaustedPrime64>::challenge(&mut verifier).is_err());
         assert!(verifier.prover_message::<BytesMsg>().is_err());
         assert!(verifier.check_eof().is_err());
+    }
+
+    fn assert_one_tape_consumed(prover: &mut ProverState<Keccak>, len: usize) {
+        let mut reference = prover_transcript::<Keccak>(&SESSION, &INSTANCE);
+        let tape_bytes = Prime64Offset59::challenge_bytes(len).unwrap();
+        let () = reference.verifier_message_as(tape_bytes, |_| ());
+        assert_eq!(
+            prover.verifier_message::<[u8; 32]>(),
+            reference.verifier_message::<[u8; 32]>()
+        );
     }
 
     #[test]
