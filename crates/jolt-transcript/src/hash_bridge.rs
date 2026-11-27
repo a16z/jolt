@@ -3,12 +3,15 @@
 //! The masks and state transitions follow spongefish's `instantiations::Hash`.
 //! Squeeze block indices and committed byte lengths use checked `u64` arithmetic.
 
+use core::sync::atomic::{compiler_fence, Ordering};
+
 use blake2::digest::{
     block_api::{Block, BlockSizeUser},
     typenum::Unsigned,
     Digest, FixedOutputReset, Output,
 };
 use spongefish::{DuplexSpongeInit, DuplexSpongeInterface};
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
 /// A duplex sponge over a fixed-output digest.
 ///
@@ -121,6 +124,7 @@ impl<D: BlockSizeUser + Digest + Clone + FixedOutputReset> HashBridge<D> {
         if self.mode == Mode::Absorb {
             self.cv = D::digest(self.hasher.finalize_reset());
         }
+        self.leftover.as_mut_slice().zeroize();
         self.mode = Mode::Start;
         self
     }
@@ -163,18 +167,41 @@ impl<D: BlockSizeUser + Digest + Clone + FixedOutputReset> HashBridge<D> {
 
     #[cfg(test)]
     fn with_squeeze_count(cv: Output<D>, blocks: u64, unread: u64) -> Self {
-        Self {
-            cv,
-            mode: Mode::Squeeze(blocks),
-            unread,
-            ..Self::default()
-        }
+        let mut sponge = Self::default();
+        sponge.cv = cv;
+        sponge.mode = Mode::Squeeze(blocks);
+        sponge.unread = unread;
+        sponge
     }
+}
+
+impl<D: BlockSizeUser + Digest + Clone + FixedOutputReset> Zeroize for HashBridge<D> {
+    fn zeroize(&mut self) {
+        self.cv.as_mut_slice().zeroize();
+        self.leftover.as_mut_slice().zeroize();
+        self.unread = 0;
+        compiler_fence(Ordering::SeqCst);
+        Digest::reset(&mut self.hasher);
+    }
+}
+
+impl<D: BlockSizeUser + Digest + Clone + FixedOutputReset> Drop for HashBridge<D> {
+    fn drop(&mut self) {
+        self.zeroize();
+    }
+}
+
+/// The bridge wipes its chaining value and buffered output on drop. The
+/// `D: ZeroizeOnDrop` bound ensures the digest also wipes its own state.
+impl<D: BlockSizeUser + Digest + Clone + FixedOutputReset + ZeroizeOnDrop> ZeroizeOnDrop
+    for HashBridge<D>
+{
 }
 
 #[cfg(test)]
 mod tests {
     use spongefish::instantiations::Hash;
+    use zeroize::Zeroize;
 
     use super::{Digest, DuplexSpongeInit, DuplexSpongeInterface};
     use crate::{Blake2b512, Blake2b512Digest};
@@ -235,5 +262,32 @@ mod tests {
             expected.update(length);
             assert_eq!(sponge.cv, expected.finalize());
         }
+    }
+
+    #[test]
+    fn zeroize_wipes_partial_squeeze_and_preserves_squeeze_position() {
+        let session = [0x37; 32];
+        let mut sponge = Blake2b512::init(&session);
+        let _ = sponge.squeeze_array::<1>();
+        let zero = &[0; 64];
+        assert_ne!(sponge.cv.as_slice(), zero);
+        assert_ne!(sponge.leftover.as_slice(), zero);
+
+        let mut ratcheted = sponge.clone();
+        let _ = ratcheted.ratchet();
+        assert_eq!(ratcheted.leftover.as_slice(), zero);
+
+        sponge.zeroize();
+        assert_eq!(sponge.cv.as_slice(), zero);
+        assert_eq!(sponge.leftover.as_slice(), zero);
+        let expected = Blake2b512Digest::digest(1u64.to_be_bytes());
+        assert_eq!(sponge.squeeze_array::<64>().as_slice(), expected.as_slice());
+
+        ratcheted.zeroize();
+        let _ = ratcheted.absorb(&session);
+        assert_eq!(
+            ratcheted.squeeze_array::<64>(),
+            Blake2b512::init(&session).squeeze_array::<64>()
+        );
     }
 }

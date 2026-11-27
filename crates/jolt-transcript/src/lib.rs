@@ -108,6 +108,10 @@ use jolt_inlines_blake2::digest_adapter::{Blake2b, U64};
 type Blake2b512Digest = Blake2b<U64>;
 
 /// Blake2b-512 duplex sponge with portable squeeze counts.
+///
+/// This alias changed from `spongefish::instantiations::Hash<_>` to Jolt's own
+/// digest bridge. If you used that type for field challenges, switch to
+/// `jolt_transcript::Blake2b512` for its [`UniformBytes`] implementation.
 #[cfg(feature = "transcript-blake2b")]
 pub type Blake2b512 = HashBridge<Blake2b512Digest>;
 
