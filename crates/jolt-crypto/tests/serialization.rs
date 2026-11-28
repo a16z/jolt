@@ -1,6 +1,6 @@
 #![expect(clippy::expect_used)]
 
-use jolt_crypto::{Bn254, Bn254G1, Bn254GT, JoltGroup, PedersenSetup};
+use jolt_crypto::{Bn254, Bn254G1, Bn254GT, JoltGroup, NoCommitment, PedersenSetup};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
 
@@ -52,4 +52,16 @@ fn pedersen_setup_bincode_roundtrip() {
         bincode::serde::decode_from_slice(&bytes, config).expect("deserialize");
     assert_eq!(setup.message_generators, recovered.message_generators);
     assert_eq!(setup.blinding_generator, recovered.blinding_generator);
+}
+
+/// A sequence of `NoCommitment` decodes only when empty. An element that
+/// decoded from zero bytes would cost the decoder one step per announced
+/// element with nothing behind the count.
+#[test]
+fn no_commitment_is_never_decoded() {
+    let config = bincode::config::standard();
+    let (empty, consumed): (Vec<NoCommitment>, _) =
+        bincode::serde::decode_from_slice(&[0], config).expect("empty sequence");
+    assert_eq!((empty, consumed), (Vec::new(), 1));
+    assert!(bincode::serde::decode_from_slice::<Vec<NoCommitment>, _>(&[3], config).is_err());
 }

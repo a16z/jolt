@@ -26,8 +26,9 @@ use akita_pcs::{
 use akita_types::AkitaExpandedSetup;
 use jolt_openings::OpeningsError;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use serde_bytes::{ByteBuf, Bytes};
+use serde_bytes::Bytes;
 
+use crate::byte_string;
 use crate::one_hot_family::with_one_hot_family;
 use crate::AkitaBatchProof;
 
@@ -44,9 +45,7 @@ use crate::adapters::{
 /// ([`AkitaVerifierSetup::attach_prepared_payloads`]), so multi-megabyte
 /// payloads are never copied out of the setup record.
 ///
-/// Serialized as an optional byte string, absent when detached. Bincode would
-/// otherwise decode a `Vec<u8>` element by element, at roughly 27 guest cycles
-/// per byte.
+/// Serialized as an optional [`byte_string`], absent when detached.
 ///
 /// The backend key and terminal cache are used unchecked, so they are taken
 /// only from payloads this process prepared or a guest attached. Inline copies
@@ -156,8 +155,7 @@ impl Serialize for PreparedBytes {
 
 impl<'de> Deserialize<'de> for PreparedBytes {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        Ok(Option::<ByteBuf>::deserialize(deserializer)?
-            .map_or(Self::Detached, |bytes| Self::Decoded(bytes.into_vec())))
+        Ok(byte_string::deserialize_option(deserializer)?.map_or(Self::Detached, Self::Decoded))
     }
 }
 
@@ -414,8 +412,10 @@ mod wire_tests {
         reason = "wire fixtures assert decoding and exact byte boundaries"
     )]
     use super::*;
-    use crate::adapters::AkitaVerifierScheduleArtifacts;
+    use crate::adapters::{AkitaCommitment, AkitaVerifierScheduleArtifacts};
     use crate::AkitaChunkProfile;
+    use bincode::error::DecodeError;
+    use serde::de::DeserializeOwned;
 
     #[test]
     fn current_setup_encoding_decodes_with_optional_payloads() {
@@ -475,5 +475,29 @@ mod wire_tests {
             prepared_bytes
         );
         assert!(setup.prepared.unwrap().catalog.trusted_bytes().is_err());
+    }
+
+    /// Regression: these inputs made the host decoder allocate the announced
+    /// length, which aborted it at 2^46 bytes and panicked it at `u64::MAX`.
+    #[test]
+    fn payload_length_beyond_the_input_is_an_error() {
+        fn rejects<T: DeserializeOwned>(fields_before_length: &[u8]) {
+            let config = bincode::config::standard();
+            for announced in [1u64 << 31, 1 << 46, u64::MAX] {
+                let mut input = fields_before_length.to_vec();
+                input.extend(bincode::serde::encode_to_vec(announced, config).unwrap());
+                // Only the payload read reports the announced length as missing.
+                assert!(matches!(
+                    bincode::serde::decode_from_slice::<T, _>(&input, config),
+                    Err(DecodeError::UnexpectedEnd { additional })
+                        if u64::try_from(additional) == Ok(announced)
+                ));
+            }
+        }
+        // Flavor, layout digest and four zero counts.
+        rejects::<AkitaCommitment>(&[0; 37]);
+        rejects::<AkitaBatchProof>(&[0; SCHEDULE_SELECTION_BYTES]);
+        // The `Some` tag.
+        rejects::<PreparedBytes>(&[1]);
     }
 }
