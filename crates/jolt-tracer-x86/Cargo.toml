@@ -31,6 +31,7 @@ libc = "0.2"
 tracing = { workspace = true }
 
 [dev-dependencies]
+jolt-host = { workspace = true }
 jolt-inlines-keccak256 = { workspace = true, features = ["host"] }
 jolt-inlines-sha2 = { workspace = true, features = ["host"] }
 postcard = { workspace = true, features = ["use-std"] }

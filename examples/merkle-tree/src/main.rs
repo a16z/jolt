@@ -5,8 +5,8 @@ use tracing::info;
 pub fn main() {
     tracing_subscriber::fmt::init();
 
-    let target_dir = "/tmp/jolt-guest-targets";
-    let mut program = guest::compile_merkle_tree(target_dir);
+    let target_dir = jolt_sdk::host::default_target_dir();
+    let mut program = guest::compile_merkle_tree(&target_dir.to_string_lossy());
 
     let shared_preprocessing = guest::preprocess_shared_merkle_tree(&mut program).unwrap();
     let prover_preprocessing = guest::preprocess_prover_merkle_tree(shared_preprocessing.clone());

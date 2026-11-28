@@ -28,6 +28,7 @@ jolt-platform.workspace = true
 jolt-program = { workspace = true, features = ["image", "serialization"] }
 jolt-riscv = { workspace = true, features = ["serialization"] }
 serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true, features = ["std"] }
 thiserror.workspace = true
 tracer = { workspace = true, default-features = false, features = ["std"] }
 tracing.workspace = true
