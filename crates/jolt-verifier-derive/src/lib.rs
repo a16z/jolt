@@ -68,10 +68,13 @@
 //!   verifier. Returns the stage's produced `OutputPoints`.
 //! - `verify_zk` — the ZK-path driver: fold the members' dimensions, draw the
 //!   batching coefficients, and check committed consistency through
-//!   `SumcheckProof::verify_committed_consistency_dims`. This path requires
-//!   constant-extension padding. Committed proofs reveal no
+//!   `SumcheckProof::verify_committed_consistency_dims`. Committed proofs reveal no
 //!   claim scalars, so the caller must have absorbed claim COMMITMENTS beforehand
-//!   (the coefficients are squeezed before the consistency rounds).
+//!   (the coefficients are squeezed before the consistency rounds). Returns
+//!   `ProtocolAxisUnimplemented`, before any transcript access, for a field of
+//!   characteristic 2: the BlindFold lowering that consumes the result
+//!   (`jolt-verifier`'s `stages::zk::blindfold`) folds a batch with
+//!   constant-extension padding.
 //! - `derive_opening_points` — slice each member's point from the batch challenge
 //!   vector (`ConcreteSumcheck::instance_point`, at the member's overridable
 //!   `instance_point_offset`) and map it through the member's
@@ -705,10 +708,17 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
         });
 
         quote! {
-            /// Verify committed sumcheck consistency for a constant-extension batch.
+            /// Draw the batching coefficients and check committed sumcheck
+            /// consistency.
             ///
-            /// For a field that requires zero extension, return
+            /// For a field of characteristic 2, returns
             /// `ProtocolAxisUnimplemented` before accessing the transcript.
+            /// The consistency check does not depend on the padding rule.
+            /// The BlindFold lowering that consumes its result does
+            /// (`add_batched_stage` and the stage-1 remainder in
+            /// `jolt-verifier`'s `stages::zk::blindfold`): it scales each
+            /// input claim by `2^(max − rounds)` and applies no output
+            /// multiplier, which is constant extension.
             pub fn verify_zk<__C, __T>(
                 &self,
                 proof: &::jolt_sumcheck::SumcheckProof<#f, __C>,
@@ -726,8 +736,9 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                 if #uses_zero_extension {
                     return ::core::result::Result::Err(
                         #krate::VerifierError::ProtocolAxisUnimplemented {
-                            axis: "sumcheck extension",
-                            pending: "committed verification requires constant extension",
+                            axis: "zk",
+                            pending: "BlindFold batch lowering under zero-extension padding \
+                                      (a field of characteristic 2)",
                         },
                     );
                 }

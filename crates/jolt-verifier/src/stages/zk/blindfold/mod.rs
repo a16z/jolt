@@ -32,7 +32,11 @@
 //! sumcheck. Their output expression is the batching-coefficient-weighted sum
 //! of component output expressions. This keeps the hidden claim relation in one
 //! place: the same formula metadata used by clear verification is what
-//! BlindFold lowers into R1CS.
+//! BlindFold lowers into R1CS. The power-of-two input scaling with an unscaled
+//! output is constant-extension padding, which requires 2 to be invertible in
+//! the field. Every stage's ZK path takes its batch consistency from the
+//! generated `verify_zk` (`jolt-verifier-derive`), which rejects a field of
+//! characteristic 2.
 //!
 //! Stage 8 contributes the final opening binding. The verifier has already
 //! formed the linear PCS batch, so the BlindFold statement adds one final
