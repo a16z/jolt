@@ -1,3 +1,6 @@
+use std::ops::Range;
+
+use akita_algebra::ntt::{tile_dot, NttKernelPlan};
 use akita_algebra::{ring::WideCyclotomicRing, CyclotomicRing};
 use akita_error::AkitaError;
 use akita_pcs::custom_source::CommitInnerPlan;
@@ -8,6 +11,7 @@ use rayon::prelude::*;
 use super::digit_windows::{flush_digit_accumulators, DigitWindows};
 use super::ntt_commit::{PreparedNttCommit, MAX_NTT_POSITIONS};
 use super::source::TraceOneHotColumn;
+use super::tile_commit::PreparedTileCommit;
 use super::traversal::{
     flush_deferred_rank, flush_wide, row_is_committed, trace_block_task_schedule,
     validate_block_geometry, visit_segment_ring_range, visit_segment_ring_row_range,
@@ -17,6 +21,40 @@ use super::{
     COMMIT_TASKS_PER_RAYON_WORKER, K256_ROW_BATCH, MAX_WIDE_ACCUMULATIONS, NO_SELECTED_ROW,
 };
 use crate::AkitaField;
+
+/// The prepared key behind the sixteen-way one-hot commitment. Both compute
+/// the same commitment: the tile path where its kernels are vector code, the
+/// pointwise path elsewhere, where only its kernels are.
+enum PreparedCommit<'a, const D: usize> {
+    Tile(PreparedTileCommit<'a, D>),
+    Pointwise(PreparedNttCommit<'a, D>),
+}
+
+impl<'a, const D: usize> PreparedCommit<'a, D> {
+    fn new(
+        source: &TraceOneHotColumn,
+        plan: CommitInnerPlan,
+        matrix_row: &'a [CyclotomicRing<AkitaField, D>],
+    ) -> Option<Self> {
+        if tile_dot::is_vectorized(NttKernelPlan::detect::<i32>()) {
+            PreparedTileCommit::new(source, plan, matrix_row).map(Self::Tile)
+        } else {
+            PreparedNttCommit::new(source, plan, matrix_row).map(Self::Pointwise)
+        }
+    }
+
+    fn commit_part(
+        &self,
+        source: &TraceOneHotColumn,
+        block_ring_start: usize,
+        rings: Range<usize>,
+    ) -> Result<Vec<CyclotomicRing<AkitaField, D>>, AkitaError> {
+        match self {
+            Self::Tile(prepared) => prepared.commit_part(source, block_ring_start, rings),
+            Self::Pointwise(prepared) => prepared.commit_part(source, block_ring_start, rings),
+        }
+    }
+}
 
 pub(super) fn commit_columns<const D: usize>(
     expanded: &AkitaExpandedSetup<AkitaField>,
@@ -74,7 +112,7 @@ pub(super) fn commit_columns<const D: usize>(
         let num_columns = source.rows.num_columns();
         let ntt_commit = a_rows
             .first()
-            .and_then(|row| PreparedNttCommit::new(source, plan, row));
+            .and_then(|row| PreparedCommit::new(source, plan, row));
         if ntt_commit.is_some() {
             // Splitting inside a reconstruction batch repeats inverse transforms
             // and leaves each task with a separately reduced partial commitment.
