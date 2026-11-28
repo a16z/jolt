@@ -22,6 +22,8 @@ mod field_inline;
 pub use field_inline::{FieldInlineModulus, FIELD_INLINE_MODULUS_ENV};
 
 mod spoil;
+#[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
+pub use spoil::emit_unsatisfiable_assertion;
 pub use spoil::{spoil_proof, UnwrapOrSpoilProof};
 
 #[cfg(target_arch = "riscv64")]

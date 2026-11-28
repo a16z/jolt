@@ -824,21 +824,28 @@ impl MacroBuilder {
         });
 
         let untrusted_advice_args_fetch = self.untrusted_func_args.iter().map(|(name, ty)| {
-            if let Some(input_error) = &attributes.input_error {
-                quote! {
-                    let (#name, __jolt_untrusted_advice_slice) =
-                        match jolt::postcard::take_from_bytes::<#ty>(__jolt_untrusted_advice_slice) {
-                            Ok(value) => value,
-                            Err(_) => break '__jolt_decode { #input_error },
-                        };
-                }
-            } else {
-                quote! {
-                    let (#name, __jolt_untrusted_advice_slice) =
-                        jolt::postcard::take_from_bytes::<#ty>(__jolt_untrusted_advice_slice).unwrap();
-                }
+            quote! {
+                let (#name, __jolt_untrusted_advice_slice) =
+                    jolt::postcard::take_from_bytes::<#ty>(__jolt_untrusted_advice_slice).unwrap();
             }
         });
+        // Only the prover chooses these bytes, so a decode that panics or
+        // aborts must leave no proof: the abort path spoils it inside this
+        // span. `input_error` does not apply, because the prover could force
+        // that output for any public input. Public inputs and trusted advice
+        // are fixed by the verifier's statement: their decode failure is a
+        // true outcome, which stays provable. They are decoded first, so that
+        // their allocations cannot fail on heap that a value the prover chose
+        // already holds.
+        let untrusted_advice_args_fetch = if self.untrusted_func_args.is_empty() {
+            quote! {}
+        } else {
+            quote! {
+                jolt::runtime::decoding_untrusted_advice(true);
+                #(#untrusted_advice_args_fetch;)*
+                jolt::runtime::decoding_untrusted_advice(false);
+            }
+        };
 
         let trusted_advice_args_fetch = self.trusted_func_args.iter().map(|(name, ty)| {
             if let Some(input_error) = &attributes.input_error {
@@ -885,8 +892,8 @@ impl MacroBuilder {
 
         let decode_and_call = quote! {
             #(#pub_args_fetch;)*
-            #(#untrusted_advice_args_fetch;)*
             #(#trusted_advice_args_fetch;)*
+            #untrusted_advice_args_fetch
             #check_input_len
             #block
         };
