@@ -45,17 +45,13 @@ pub trait ProverTranscript: Transcript {
     /// prover message in its absorbed form. The transcript is unchanged, and
     /// the callback holds a copy of the public sponge only: no private
     /// randomness, no proof bytes. This is the extension oracle of
-    /// state-restoration soundness, shaped like spongefish's
-    /// `ProverState::verifier_message_oracle` (arkworks-rs/spongefish#306),
-    /// which is not in the published 0.8.0.
+    /// state-restoration soundness: spongefish's
+    /// `ProverState::verifier_message_oracle` (arkworks-rs/spongefish#306).
     ///
     /// A prover uses it to search over the next prover message, a
     /// proof-of-work nonce or a retry counter whose following challenges must
     /// satisfy a prover-side condition, and then sends the chosen message
     /// through the ordinary calls.
-    ///
-    /// Needs the `prover-grinding` feature, which enables spongefish's
-    /// `yolocrypto` to copy the sponge state.
     #[cfg(feature = "prover-grinding")]
     fn verifier_message_oracle(&self) -> impl Fn(&[u8], &mut [u8]) + Clone + use<Self>;
 
@@ -184,12 +180,7 @@ where
 
     #[cfg(feature = "prover-grinding")]
     fn verifier_message_oracle(&self) -> impl Fn(&[u8], &mut [u8]) + Clone + use<H, R> {
-        let snapshot = self.duplex_sponge_state.clone();
-        move |candidate, output| {
-            let mut sponge = snapshot.clone();
-            let _ = sponge.absorb(candidate);
-            let _ = sponge.squeeze(output);
-        }
+        ProverState::verifier_message_oracle(self)
     }
 
     #[cfg(feature = "prover-grinding")]

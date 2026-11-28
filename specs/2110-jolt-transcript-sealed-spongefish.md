@@ -265,11 +265,11 @@ spongefish::ProverState<H, Shake128>      spongefish::VerifierState<'_, H>
   closure; it holds no private coins and no proof bytes. `grind` scans nonces
   in increasing order against that closure on the calling thread, then sends
   the least passing nonce through the ordinary path and re-checks it. The
-  oracle's shape follows arkworks-rs/spongefish#306, and the layout and
-  difficulty rule follow #301 and #307. Spongefish 0.8.0 exposes the sponge
-  state only under `yolocrypto`, so the search is behind `prover-grinding`.
-  `jolt-prover` enables it, and verifier-only builds leave it off. In 0.8.0
-  the feature changes visibility only.
+  oracle is spongefish's `ProverState::verifier_message_oracle`
+  (arkworks-rs/spongefish#306, released in 0.9.0), and the layout and
+  difficulty rule follow #301 and #307. The search is behind
+  `prover-grinding`: `jolt-prover` enables it, and verifier-only builds leave
+  it off.
 - **Dory adapter.** `JoltToDoryTranscript` implements dory-pcs's
   `DoryTranscript` over any `FieldTranscript<Fr>`. It drops Dory's labels,
   absorbs group elements through `append_values` (fixed compressed width), and
@@ -343,7 +343,7 @@ Implemented in #2110. Follow-ups:
 
 ## References
 
-- [spongefish](https://github.com/arkworks-rs/spongefish) 0.8.0. Upstream
+- [spongefish](https://github.com/arkworks-rs/spongefish) 0.9.0. Upstream
   proposals: #301 (proof-of-work layout), #306 (`verifier_message_oracle`),
   #307 (difficulty rule).
 - draft-irtf-cfrg-fiat-shamir: session-id derivation and the SHAKE128 suite.

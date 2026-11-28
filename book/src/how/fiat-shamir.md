@@ -19,7 +19,7 @@ stage-8 opening, and through BlindFold in ZK builds. Dory and Akita both run
 their openings on Jolt's transcript.
 
 The transcript lives in `crates/jolt-transcript`. It is built on the
-[spongefish](https://github.com/arkworks-rs/spongefish) 0.8 duplex-sponge
+[spongefish](https://github.com/arkworks-rs/spongefish) 0.9 duplex-sponge
 framework. The normative design is in the
 [transcript spec](https://github.com/a16z/jolt/blob/main/specs/2110-jolt-transcript-sealed-spongefish.md).
 

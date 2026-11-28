@@ -137,7 +137,7 @@ impl<const N: usize> FromUniform for AlignedBytes<N> {
 }
 
 impl FromNarg for BytesMsg {
-    fn from_narg(reader: &mut NargReader<'_>) -> Result<Self, VerificationError> {
+    fn from_narg(reader: &NargReader<'_>) -> Result<Self, VerificationError> {
         reader.read_with(|reader| {
             let len_bytes = reader.take_array::<8>()?;
             let len =
@@ -215,8 +215,8 @@ mod tests {
         assert_eq!(narg.len(), 8 + 3);
         assert_eq!(&narg[..8], &3u64.to_le_bytes());
         assert_eq!(&narg[8..], &[9, 8, 7]);
-        let mut reader = NargReader::new(&narg);
-        assert_eq!(BytesMsg::from_narg(&mut reader).unwrap(), m);
+        let reader = NargReader::new(&narg);
+        assert_eq!(BytesMsg::from_narg(&reader).unwrap(), m);
         assert!(reader.read::<u8>().is_err());
     }
 
@@ -251,8 +251,8 @@ mod tests {
         let mut narg: Vec<u8> = Vec::new();
         m.write_narg(&mut narg);
         let _ = narg.pop();
-        let mut reader = NargReader::new(&narg);
-        let result = BytesMsg::from_narg(&mut reader);
+        let reader = NargReader::new(&narg);
+        let result = BytesMsg::from_narg(&reader);
         assert!(result.is_err());
         assert!(reader.is_poisoned());
         assert!(reader.read::<u8>().is_err());
@@ -262,8 +262,8 @@ mod tests {
     fn bytes_msg_narg_rejects_oversized_length() {
         let mut narg = Vec::new();
         narg.extend_from_slice(&u64::MAX.to_le_bytes());
-        let mut reader = NargReader::new(&narg);
-        let result = BytesMsg::from_narg(&mut reader);
+        let reader = NargReader::new(&narg);
+        let result = BytesMsg::from_narg(&reader);
         assert!(result.is_err());
         assert!(reader.is_poisoned());
         assert!(reader.read::<u8>().is_err());
@@ -279,8 +279,8 @@ mod tests {
         let mut narg = Vec::new();
         narg.extend_from_slice(&(1u64 << 40).to_le_bytes());
         narg.extend_from_slice(&[0u8; 16]);
-        let mut reader = NargReader::new(&narg);
-        assert!(BytesMsg::from_narg(&mut reader).is_err());
+        let reader = NargReader::new(&narg);
+        assert!(BytesMsg::from_narg(&reader).is_err());
         assert!(reader.is_poisoned());
         assert!(reader.read::<u8>().is_err());
     }
@@ -299,8 +299,8 @@ mod tests {
         let mut narg = Vec::new();
         narg.extend_from_slice(&len.to_le_bytes());
 
-        let mut reader = NargReader::new(&narg);
-        assert!(BytesMsg::from_narg(&mut reader).is_err());
+        let reader = NargReader::new(&narg);
+        assert!(BytesMsg::from_narg(&reader).is_err());
         assert!(reader.is_poisoned());
         assert!(reader.read::<u8>().is_err());
     }
