@@ -597,3 +597,176 @@ fn field_equality_and_zero_checks_every_bit() {
         }
     }
 }
+
+/// Runs the secp256k1 field inlines with advice that differs from the honest
+/// advice. A wrong value must fail one of the sequence's assert rows; an
+/// unreduced division result passes the sequence and fails the SDK check.
+mod dishonest_advice_tests {
+    use std::panic::{catch_unwind, AssertUnwindSafe};
+
+    use ark_ff::{BigInt, BigInteger, PrimeField};
+    use ark_secp256k1::{Fq, Fr};
+    use jolt_inlines_sdk::host::{InlineAdvice, InlineOp, ModularDivisionAdvice, QuotientAdvice};
+    use tracer::emulator::mmu::DRAM_BASE;
+    use tracer::instruction::Instruction;
+    use tracer::utils::inline_test_harness::{InlineMemoryLayout, InlineTestHarness};
+
+    use crate::sequence_builder::{
+        Secp256k1DivQ, Secp256k1DivR, Secp256k1MulQ, Secp256k1MulR, Secp256k1SquareQ,
+        Secp256k1SquareR,
+    };
+    use crate::{Secp256k1Error, Secp256k1Fq, Secp256k1Fr};
+
+    /// A divisor below 2^255, so that adding it to an honest quotient `w`
+    /// still fits in four limbs.
+    const DIVISOR: [u64; 4] = [
+        0x0FED_CBA9_8765_4321,
+        0x1234_5678_9ABC_DEF0,
+        0x3333_3333_3333_3333,
+        0x0444_4444_4444_4444,
+    ];
+    const FACTOR: [u64; 4] = [
+        0x1234_5678_9ABC_DEF0,
+        0x0FED_CBA9_8765_4321,
+        0x1111_1111_1111_1111,
+        0x2222_2222_2222_2222,
+    ];
+
+    /// Loads `a` and `b` as the inline's first and second operands. With
+    /// `aliased`, the result pointer `rs3` equals `rs1`.
+    fn harness(aliased: bool, a: &[u64; 4], b: &[u64; 4]) -> InlineTestHarness {
+        let layout = InlineMemoryLayout::two_inputs(32, 32, 32);
+        let layout = if aliased {
+            InlineMemoryLayout {
+                output_base: DRAM_BASE,
+                ..layout
+            }
+        } else {
+            layout
+        };
+        let mut harness = InlineTestHarness::new(layout);
+        harness.setup_registers();
+        harness.load_input64(a);
+        harness.load_input2_64(b);
+        harness
+    }
+
+    /// Executes `Op`'s rows one at a time, with the honest advice changed by
+    /// `tamper` patched into the `VirtualAdvice` rows. Returns the row that
+    /// panicked, or `None` if every row ran.
+    fn run_with_advice<Op: InlineOp>(
+        harness: &mut InlineTestHarness,
+        tamper: impl FnOnce(&mut Op::Advice),
+    ) -> Option<Instruction> {
+        let inline =
+            InlineTestHarness::create_default_instruction(Op::OPCODE, Op::FUNCT3, Op::FUNCT7);
+        let mut advice =
+            Op::build_advice(inline.operands, &mut harness.cpu).expect("honest advice");
+        tamper(&mut advice);
+        let mut values = advice.into_runtime_advice().expect("inline takes advice");
+        for mut row in inline.inline_sequence(&harness.cpu.vr_allocator) {
+            if let Instruction::VirtualAdvice(advice_row) = &mut row {
+                advice_row.advice = values.pop_front().expect("too few advice values");
+            }
+            let step = catch_unwind(AssertUnwindSafe(|| {
+                harness.execute_sequence(std::slice::from_ref(&row))
+            }));
+            if step.is_err() {
+                return Some(row);
+            }
+        }
+        assert!(values.is_empty(), "too many advice values");
+        None
+    }
+
+    fn assert_rejected_by_assert_row(failed: Option<Instruction>, case: &str) {
+        assert!(
+            matches!(
+                failed,
+                Some(Instruction::VirtualAssertEQ(_) | Instruction::VirtualAssertLTE(_))
+            ),
+            "{case}: expected an assert row to fail, got {failed:?}"
+        );
+    }
+
+    fn output(harness: &mut InlineTestHarness) -> [u64; 4] {
+        harness
+            .read_output64(4)
+            .try_into()
+            .expect("four output limbs")
+    }
+
+    fn add(x: [u64; 4], y: [u64; 4]) -> [u64; 4] {
+        let mut sum = BigInt(x);
+        assert!(!sum.add_with_carry(&BigInt(y)), "sum exceeds 256 bits");
+        sum.0
+    }
+
+    fn assert_div_rejects_dishonest_advice<Op, F, E>(
+        from_limbs: fn(&[u64; 4]) -> Result<E, Secp256k1Error>,
+    ) where
+        Op: InlineOp<Advice = ModularDivisionAdvice>,
+        F: PrimeField<BigInt = BigInt<4>>,
+    {
+        let result = F::from(5u64);
+        let divisor = F::from_bigint(BigInt(DIVISOR)).expect("divisor is reduced");
+        let dividend = (divisor * result).into_bigint().0;
+        let wrong_result: fn(&mut ModularDivisionAdvice) = |advice| advice.result[0] ^= 1;
+        let wrong_quotient: fn(&mut ModularDivisionAdvice) = |advice| advice.quotient[0] ^= 1;
+        for aliased in [false, true] {
+            let mut honest = harness(aliased, &dividend, &DIVISOR);
+            assert!(run_with_advice::<Op>(&mut honest, |_| {}).is_none());
+            assert_eq!(output(&mut honest), result.into_bigint().0);
+
+            for (case, tamper) in [("result", wrong_result), ("quotient", wrong_quotient)] {
+                let mut dishonest = harness(aliased, &dividend, &DIVISOR);
+                assert_rejected_by_assert_row(
+                    run_with_advice::<Op>(&mut dishonest, tamper),
+                    &format!("{} wrong {case}, aliased = {aliased}", Op::NAME),
+                );
+            }
+
+            // `result + modulus` with quotient `w + divisor` satisfies
+            // `b * c == w * q + a` over the integers, and the sequence does
+            // not range-check `c` (see the comment above `MulqBuilder`). The
+            // SDK's canonicity check after the inline is what rejects it.
+            let mut unreduced = harness(aliased, &dividend, &DIVISOR);
+            let failed = run_with_advice::<Op>(&mut unreduced, |advice| {
+                advice.result = add(advice.result, F::MODULUS.0);
+                advice.quotient = add(advice.quotient, DIVISOR);
+            });
+            assert!(failed.is_none(), "{failed:?}");
+            let stored = output(&mut unreduced);
+            assert_eq!(stored, add(result.into_bigint().0, F::MODULUS.0));
+            assert!(from_limbs(&stored).is_err());
+        }
+    }
+
+    fn assert_quotient_rejects_dishonest_advice<Op: InlineOp<Advice = QuotientAdvice>>() {
+        let mut honest = harness(false, &FACTOR, &DIVISOR);
+        assert!(run_with_advice::<Op>(&mut honest, |_| {}).is_none());
+        let mut dishonest = harness(false, &FACTOR, &DIVISOR);
+        assert_rejected_by_assert_row(
+            run_with_advice::<Op>(&mut dishonest, |advice| advice.quotient[0] ^= 1),
+            &format!("{} wrong quotient", Op::NAME),
+        );
+    }
+
+    #[test]
+    fn divq_rejects_dishonest_advice() {
+        assert_div_rejects_dishonest_advice::<Secp256k1DivQ, Fq, _>(Secp256k1Fq::from_u64_arr);
+    }
+
+    #[test]
+    fn divr_rejects_dishonest_advice() {
+        assert_div_rejects_dishonest_advice::<Secp256k1DivR, Fr, _>(Secp256k1Fr::from_u64_arr);
+    }
+
+    #[test]
+    fn mul_and_square_reject_wrong_quotient_advice() {
+        assert_quotient_rejects_dishonest_advice::<Secp256k1MulQ>();
+        assert_quotient_rejects_dishonest_advice::<Secp256k1SquareQ>();
+        assert_quotient_rejects_dishonest_advice::<Secp256k1MulR>();
+        assert_quotient_rejects_dishonest_advice::<Secp256k1SquareR>();
+    }
+}

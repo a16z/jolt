@@ -57,8 +57,10 @@ impl BigIntMulSequenceBuilder {
                 .emit_ld(Kind::LD, self.b(i), self.operands.rs2, i as i64 * 8);
         }
 
-        // Inline finalization ensures that s0 and s1 start at zero
-        // Thus no explicit initialization is needed
+        // Every accumulator is written before it is read: MUL writes s(0),
+        // MULHU writes s(1), and the first term of each output limb k
+        // overwrites the carry register s(k + 1). The sequence does not depend
+        // on the registers' initial values.
 
         self.asm.emit_r(Kind::MUL, self.s(0), self.a(0), self.b(0));
         self.asm.emit_s(Kind::SD, self.operands.rs3, self.s(0), 0);

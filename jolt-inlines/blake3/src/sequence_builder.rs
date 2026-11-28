@@ -83,8 +83,9 @@ impl Blake3SequenceBuilder {
         // counter = 0, block_len = 64, flags = CHUNK_START|CHUNK_END|ROOT|KEYED_HASH
         //
         // NOTE: We intentionally omit the two `LUI 0` initializations for v[12], v[13].
-        // Inline virtual registers are cleared by `finalize_inline`, so newly allocated
-        // inline registers start at 0 across inline calls.
+        // Inline registers are zero when an inline starts: only inline expansions
+        // write them, and `ExpansionState::materialize_inline` appends a reset row
+        // for every inline register an inline allocated.
         self.asm
             .emit_u(Kind::LUI, *self.vr[INTERNAL_STATE_VR_START + 14], 64);
         self.asm.emit_u(

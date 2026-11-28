@@ -295,7 +295,12 @@ Static inline rows with `rd` must satisfy one of these cases:
   recursively expanded helper sequence
 
 Any other inline write target must return
-`ExpansionError::InvalidInlineWriteTarget`.
+`ExpansionError::InvalidInlineWriteTarget`. `ExpansionState::materialize_inline`
+enforces this on the materialized rows, reset rows included: it rejects any row
+whose `rd` is `x1..x31` or `vr32..vr39`. Liveness of inline registers is
+checked when the materializer binds them. The row check cannot tell a helper's
+`vr40..vr47` write from a provider row that names one of those registers
+directly, so it accepts both.
 
 Inline register lifetimes must not rely on Rust `Drop`, RAII guards,
 `Arc<Mutex<_>>`, raw pointers, `unsafe`, or hidden allocator aliases. The
@@ -521,7 +526,7 @@ advice values and trace-time memory/register reads remain host/tracer semantics.
       cannot be reached by program bytecode expansion or static inline builders.
 - [ ] Metadata stamping is performed once over the flattened inline sequence,
       including reset rows.
-- [ ] Static inline rows reject illegal write targets with
+- [x] Static inline rows reject illegal write targets with
       `ExpansionError::InvalidInlineWriteTarget`.
 - [ ] All shipped inline crates emit static expansion through the new recipe
       builder:
