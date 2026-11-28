@@ -378,6 +378,7 @@ fn chunk_profiles_have_distinct_artifact_and_csv_names() {
             streaming: None,
             guest_elf: None,
             input_file: None,
+            advice_file: None,
             result_json: None,
             akita_chunk_profile: profile,
             memory_budget: None,

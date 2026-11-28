@@ -20,6 +20,7 @@ use tracer::emulator::memory::Memory;
 #[cfg(feature = "field-inline")]
 use tracer::instruction::field_inline::FIELD_INLINE_MODULUS;
 use tracer::instruction::Cycle;
+use tracer::AdviceTape;
 use tracer::LazyTraceIterator;
 use tracing::info;
 
@@ -31,6 +32,8 @@ impl Program {
     pub fn new(guest: &str) -> Self {
         Self {
             guest: guest.to_string(),
+            workspace_dir: None,
+            cargo_config: Vec::new(),
             func: None,
             profile: None,
             instruction_profile: RV64IMAC_JOLT_ALL_INLINES,
@@ -50,6 +53,22 @@ impl Program {
 
     pub fn set_std(&mut self, std: bool) {
         self.std = std;
+    }
+
+    /// Build the guest from `dir`, a directory inside the Cargo workspace that
+    /// owns the guest package. If unset, the build runs in the caller's working
+    /// directory, which must then be inside that workspace. Either way, a
+    /// relative `JOLT_PATH` or target directory names a path under the
+    /// caller's working directory.
+    pub fn set_workspace_dir(&mut self, dir: PathBuf) {
+        self.workspace_dir = Some(dir);
+    }
+
+    /// Pass `--config <key_value>` to the Cargo command that builds the guest.
+    /// Cargo ranks its command line above the caller's environment and
+    /// configuration files.
+    pub fn add_cargo_config(&mut self, key_value: &str) {
+        self.cargo_config.push(key_value.to_string());
     }
 
     pub fn set_func(&mut self, func: &str) {
@@ -141,7 +160,23 @@ impl Program {
     )]
     pub fn build_with_features(&mut self, target_dir: &str, extra_features: &[&str]) {
         if self.elf.is_none() {
-            let jolt_cmd = std::env::var("JOLT_PATH").unwrap_or_else(|_| "jolt".to_string());
+            // With `workspace_dir` the child runs in another directory, where a
+            // path relative to this process's directory names another file. A
+            // bare command name is found on PATH and stays as it is.
+            let from_here = |path: String| {
+                if self.workspace_dir.is_none() {
+                    return path;
+                }
+                std::path::absolute(&path)
+                    .ok()
+                    .and_then(|path| path.into_os_string().into_string().ok())
+                    .expect("resolve a UTF-8 path against the working directory")
+            };
+            let mut jolt_cmd = std::env::var("JOLT_PATH").unwrap_or_else(|_| "jolt".to_string());
+            if jolt_cmd.contains(std::path::is_separator) {
+                jolt_cmd = from_here(jolt_cmd);
+            }
+            let target_dir = from_here(target_dir.to_string());
             let mut args = vec!["build".to_string()];
 
             args.push("-p".to_string());
@@ -217,6 +252,11 @@ impl Program {
             cargo_features.extend(features);
             args.push(cargo_features.join(","));
 
+            for key_value in &self.cargo_config {
+                args.push("--config".to_string());
+                args.push(key_value.clone());
+            }
+
             let cmd_line = compose_command_line(
                 &jolt_cmd,
                 &[],
@@ -226,6 +266,9 @@ impl Program {
 
             let mut cmd = Command::new(&jolt_cmd);
             let _ = cmd.args(&args);
+            if let Some(dir) = &self.workspace_dir {
+                let _ = cmd.current_dir(dir);
+            }
 
             // Under cargo-llvm-cov the riscv guest must not inherit host
             // coverage instrumentation: the injected RUSTC_WRAPPER (older
@@ -346,12 +389,15 @@ impl Program {
         )
     }
 
+    /// `advice_tape` is the runtime advice tape a guest built without its
+    /// `compute_advice` feature reads; `None` for a guest that reads none.
     pub fn trace_with_backend<B: ExecutionBackend>(
         &mut self,
         backend: &mut B,
         inputs: &[u8],
         untrusted_advice: &[u8],
         trusted_advice: &[u8],
+        advice_tape: Option<Vec<u8>>,
     ) -> Result<TraceOutput<B::Trace>, TraceError> {
         let program = self.jolt_program()?;
         let memory_config =
@@ -363,7 +409,8 @@ impl Program {
                 untrusted_advice.to_vec(),
                 trusted_advice.to_vec(),
                 memory_config,
-            ),
+            )
+            .with_advice_tape(advice_tape),
         )
     }
 
@@ -405,12 +452,13 @@ impl Program {
         untrusted_advice: &[u8],
         trusted_advice: &[u8],
     ) -> usize {
-        self.execute_with_output(inputs, untrusted_advice, trusted_advice)
+        self.execute_with_output(inputs, untrusted_advice, trusted_advice, None)
             .0
     }
 
     /// Execute without storing trace rows, retaining the row count and device
     /// output so callers can check guest acceptance and panic status.
+    /// `advice_tape` is as in [`Self::trace_with_backend`].
     #[tracing::instrument(skip_all, name = "Program::execute_with_output")]
     #[expect(
         clippy::expect_used,
@@ -421,6 +469,7 @@ impl Program {
         inputs: &[u8],
         untrusted_advice: &[u8],
         trusted_advice: &[u8],
+        advice_tape: Option<Vec<u8>>,
     ) -> (usize, JoltDevice) {
         let elf = self.built_elf();
         let image = jolt_program::image::decode_elf(elf.bytes(), self.instruction_profile)
@@ -435,7 +484,7 @@ impl Program {
             untrusted_advice,
             trusted_advice,
             &memory_config,
-            None,
+            advice_tape.map(AdviceTape::from_bytes),
         );
         (trace_rows, device)
     }
@@ -482,7 +531,7 @@ impl Program {
         let (bytecode, init_memory_state, _, _) = self.decode();
         let mut backend = tracer::TracerBackend::new();
         let trace_output = self
-            .trace_with_backend(&mut backend, inputs, untrusted_advice, trusted_advice)
+            .trace_with_backend(&mut backend, inputs, untrusted_advice, trusted_advice, None)
             .expect("failed to trace program with default tracer backend");
 
         ProgramSummary {

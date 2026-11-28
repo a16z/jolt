@@ -426,6 +426,7 @@ impl MacroBuilder {
                     &__jolt_input_bytes,
                     &__jolt_untrusted_advice_bytes,
                     &__jolt_trusted_advice_bytes,
+                    ::core::option::Option::None,
                 )
             }
         }

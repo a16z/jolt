@@ -280,7 +280,7 @@ def build_inputs(config, tier=None, workloads=(), cases=()):
             if (not case.get('unsupported_reason') and
                     (not workloads or case['workload'] in workloads) and
                     (not cases or case['id'] in cases)):
-                inputs.setdefault(case['workload'], set()).add(case['input']['parameters']['operations'])
+                inputs.setdefault(case['workload'], set()).add(calibration.input_parameter(case)[1])
                 pcs.add(case['pcs'])
     return inputs, pcs
 
@@ -436,7 +436,7 @@ def build_attempt(args, native_harness, fallback_reason=None):
                     entries = [cached['binaries'][pcs] for pcs in cached['binaries']]
                     entries += [cached['runner'], cached['calibration_helper'], *cached['akita_schedules']]
                     for guest in cached['guests'].values():
-                        entries += [guest['elf'], *guest['inputs'].values()]
+                        entries += [guest['elf'], *guest['inputs'].values(), *guest.get('advice', {}).values()]
                     for entry in entries:
                         checked_file(cached_path, entry)
                     checked_file(cached_path, {'path': 'scripts/bench/suites.json',
@@ -465,14 +465,20 @@ def build_attempt(args, native_harness, fallback_reason=None):
             manifest['guest_builder_sha256'] = sha256(guest_builder)
             manifest['guest_preparer_sha256'] = sha256(prepare_binary)
             guest_env = dict(host_env, JOLT_PATH=str(guest_builder))
+            blocks = {case['workload'] for spec in config['tiers'].values() for case in spec['cases']
+                      if not case.get('unsupported_reason') and calibration.input_parameter(case)[0] == 'block'}
             for workload, counts in inputs.items():
                 prepared = out / 'guests' / workload
                 logged([str(prepare_binary), 'prepare', '--name', workload,
-                        '--operations', ','.join(map(str, sorted(counts))),
+                        '--blocks' if workload in blocks else '--operations', ','.join(map(str, sorted(counts))),
                         '--guest-target-dir', str(source / 'target/bench-guests'), '--out', str(prepared)],
                        source, guest_env, log)
                 manifest['guests'][workload] = {'elf': bundle_file(prepared / 'guest.elf', out),
                     'inputs': {str(n): bundle_file(prepared / f'input-{n}.bin', out) for n in counts}}
+                advice = {str(n): bundle_file(prepared / f'advice-{n}.bin', out)
+                          for n in counts if (prepared / f'advice-{n}.bin').exists()}
+                if advice:
+                    manifest['guests'][workload]['advice'] = advice
             for pcs in sorted(required_pcs):
                 features = 'profiling,akita' if pcs == 'akita' else 'profiling'
                 logged([*cargo, '--profile', args.profile, '-p', 'jolt-prover', '--bin', 'jolt-prover',
@@ -730,9 +736,11 @@ def run(args):
                     raise ValueError(f'{leg} build is {manifest["status"]}: {manifest.get("reason")}')
                 check_target(manifest, host)
                 guest = manifest['guests'][case['workload']]
-                input_file = guest['inputs'][str(case['input']['parameters']['operations'])]
+                key = str(calibration.input_parameter(case)[1])
+                input_file, advice = guest['inputs'][key], guest.get('advice', {}).get(key)
                 files[leg] = (checked_file(path, manifest['binaries'][case['pcs']]),
-                              checked_file(path, guest['elf']), checked_file(path, input_file))
+                              checked_file(path, guest['elf']), checked_file(path, input_file),
+                              advice and checked_file(path, advice))
                 if case['input']['sha256'] not in (None, input_file['sha256']):
                     raise ValueError('base and head input bytes differ')
                 case['input']['sha256'] = input_file['sha256']
@@ -752,11 +760,13 @@ def run(args):
             directory = out / 'samples' / f'{sample["order"]:05d}'
             directory.mkdir(parents=True)
             raw = directory / 'metrics.json'
-            binary, elf, input_file = files[item['leg']]
+            binary, elf, input_file, advice = files[item['leg']]
             command = ['taskset', '--cpu-list', ','.join(map(str, case['cpu_ids'])), str(binary),
                        'profile', '--name', case['workload'], '--scale', str(case['scale_log2']),
                        '--format', 'none', '--backend', 'optimized', '--guest-elf', str(elf),
                        '--input-file', str(input_file), '--result-json', str(raw)]
+            if advice:
+                command += ['--advice-file', str(advice)]
             env = {'PATH': os.environ.get('PATH', '/usr/bin:/bin'), 'LANG': 'C.UTF-8',
                    'LOCALAPPDATA': str(cache),
                    'RAYON_NUM_THREADS': str(case['physical_cores']), 'RUST_BACKTRACE': '1'}

@@ -712,6 +712,35 @@ jobs:
       - name: Test Akita profiling artifact and CSV names
         run: cargo nextest run --cargo-profile ci -p jolt-prover --features akita,profiling --lib -E 'test(profile::tests)' --cargo-quiet
 
+  # No test step uses this job's `akita,profiling` binary build, so as a step
+  # of a test job it would only lengthen that job. jeth's guest is `no_std`:
+  # unlike the std guests of the prover jobs, it builds without the ZeroOS
+  # musl toolchain and rust-src.
+  test-prover-ethereum-block:
+    runs-on: ubuntu-latest
+    name: Test jolt-prover (ethereum-block guest)
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions-rust-lang/setup-rust-toolchain@a188e68d0fd2bd36ad51dccb2b07ba6e75105f30 # v2
+        with:
+          cache: false
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          shared-key: release-tests
+          save-if: false
+          cache-directories: ~/.cache/dory
+      - name: Build and install jolt CLI
+        run: cargo install --path . --locked --force --profile ci --target-dir target
+      # jeth's guest is built from another repository against this checkout. This
+      # step shows a change that breaks it, or that makes it reject a checked-in
+      # input, on the pull request that makes the change.
+      # scripts/bench/ethereum-block/README.md has the remedy.
+      - name: Prepare the ethereum-block benchmark guest
+        run: >-
+          cargo run --profile ci -p jolt-prover --features akita,profiling --bin jolt-prover --
+          prepare --name ethereum-block --blocks 26227673,26433846
+          --guest-target-dir target/bench-guests --out target/ethereum-block
+
   test-verifier-field-inline-fixtures:
     runs-on: ubuntu-latest
     name: Test jolt-verifier (field-inline fixtures)

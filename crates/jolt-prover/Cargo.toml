@@ -84,6 +84,18 @@ profiling = [
   "jolt-inlines-sha2/host",
   "dep:jolt-inlines-secp256k1",
   "jolt-inlines-secp256k1/host",
+  "dep:jolt-inlines-bigint",
+  "jolt-inlines-bigint/host",
+  "dep:jolt-inlines-blake2",
+  "jolt-inlines-blake2/host",
+  "dep:jolt-inlines-p256",
+  "jolt-inlines-p256/host",
+  "dep:jeth-inlines-blake2f",
+  "jeth-inlines-blake2f/host",
+  "dep:jeth-inlines-bls12-381",
+  "jeth-inlines-bls12-381/host",
+  "dep:jeth-inlines-bn254",
+  "jeth-inlines-bn254/host",
   "dep:jolt-profiling",
   "jolt-profiling/monitor",
   "jolt-profiling/summary",
@@ -143,6 +155,12 @@ clap = { workspace = true, optional = true }
 jolt-inlines-keccak256 = { workspace = true, optional = true }
 jolt-inlines-sha2 = { workspace = true, optional = true }
 jolt-inlines-secp256k1 = { workspace = true, optional = true }
+jolt-inlines-bigint = { workspace = true, optional = true }
+jolt-inlines-blake2 = { workspace = true, optional = true }
+jolt-inlines-p256 = { workspace = true, optional = true }
+jeth-inlines-blake2f = { workspace = true, optional = true }
+jeth-inlines-bls12-381 = { workspace = true, optional = true }
+jeth-inlines-bn254 = { workspace = true, optional = true }
 jolt-host = { workspace = true, optional = true }
 # default-features = false: the `profiling` feature adds `summary`
 # explicitly; `allocative` needs only the flamegraph hooks.

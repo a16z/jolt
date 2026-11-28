@@ -5,13 +5,23 @@ use clap::Args;
 
 use super::Workload;
 
-/// Build artifacts only; this command never traces, sets up a PCS, or proves.
+/// Build artifacts only; this command never sets up a PCS or proves. It
+/// executes a guest only to validate a checked-in `ethereum-block` input.
 #[derive(Debug, Args)]
 pub struct PrepareArgs {
     #[arg(long, value_enum)]
     pub name: Workload,
-    #[arg(long, value_delimiter = ',', required = true)]
+    /// Operation counts, for a workload that generates its input from one.
+    #[arg(
+        long,
+        value_delimiter = ',',
+        required_unless_present = "blocks",
+        conflicts_with = "blocks"
+    )]
     pub operations: Vec<u32>,
+    /// Mainnet block numbers, for `ethereum-block`.
+    #[arg(long, value_delimiter = ',')]
+    pub blocks: Vec<u64>,
     /// A private directory inside this checkout's target directory.
     #[arg(long)]
     pub guest_target_dir: PathBuf,
@@ -19,10 +29,24 @@ pub struct PrepareArgs {
     pub out: PathBuf,
 }
 
-/// Write guest.elf and one input-N.bin per requested operation count.
+/// Write guest.elf and one input-N.bin per requested operation count or block,
+/// with an advice-N.bin beside each block's input.
 pub fn prepare(args: &PrepareArgs) {
-    assert!(args.operations.iter().all(|&count| count > 0));
     fs::create_dir_all(&args.out).expect("create prepared guest directory");
+    if !args.blocks.is_empty() {
+        return args.ethereum_block();
+    }
+    assert!(args.operations.iter().all(|&count| count > 0));
+    let inputs: Vec<_> = args
+        .operations
+        .iter()
+        .map(|&count| {
+            let input = args.name.input_for_operations(count).unwrap_or_else(|| {
+                panic!("{} takes --blocks, not --operations", args.name.as_str())
+            });
+            (count, input)
+        })
+        .collect();
     let mut program = args.name.program();
     #[cfg(feature = "field-inline")]
     if args.name.uses_field_inline() {
@@ -35,12 +59,9 @@ pub fn prepare(args: &PrepareArgs) {
     );
     let elf = program.elf.expect("guest build produces an ELF");
     fs::write(args.out.join("guest.elf"), elf.bytes()).expect("save guest ELF");
-    for &count in &args.operations {
-        fs::write(
-            args.out.join(format!("input-{count}.bin")),
-            args.name.input_for_operations(count),
-        )
-        .expect("save fixed guest input");
+    for (count, input) in inputs {
+        fs::write(args.out.join(format!("input-{count}.bin")), input)
+            .expect("save fixed guest input");
     }
 }
 
@@ -83,10 +104,12 @@ mod tests {
 
     #[test]
     fn fixed_inputs_use_the_guests_postcard_wire_format() {
-        assert_eq!(Workload::Fibonacci.input_for_operations(300), [0xac, 2]);
-        assert_eq!(Workload::BTreeMap.input_for_operations(300), [0xac, 2]);
+        let count = Some(vec![0xac, 2]);
+        assert_eq!(Workload::Fibonacci.input_for_operations(300), count);
+        assert_eq!(Workload::BTreeMap.input_for_operations(300), count);
         let mut hash_input = vec![5; 32];
         hash_input.extend([0xac, 2]);
+        let hash_input = Some(hash_input);
         assert_eq!(Workload::Sha2Chain.input_for_operations(300), hash_input);
         assert_eq!(Workload::Sha3Chain.input_for_operations(300), hash_input);
     }
