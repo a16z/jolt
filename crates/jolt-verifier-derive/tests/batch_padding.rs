@@ -12,13 +12,11 @@ use jolt_sumcheck::{
     CommittedRound, CommittedSumcheckProof, CompressedSumcheckProof, SumcheckProof,
 };
 use jolt_transcript::{protocol_tag, verifier_transcript, Blake2b512, ScriptedTranscript};
-use jolt_verifier as Storage;
 use jolt_verifier::stages::stage5::{RegistersValEvaluation, RegistersValEvaluationOutputClaims};
 use jolt_verifier::VerifierError;
 use jolt_verifier_derive::SumcheckBatch;
 
 #[derive(SumcheckBatch)]
-#[sumcheck_batch(crate = "Storage")]
 struct MixedLengthSumchecks<F: JoltField> {
     long: RegistersValEvaluation<F>,
     absent: Option<RegistersValEvaluation<F>>,
@@ -31,44 +29,6 @@ fn batch() -> MixedLengthSumchecks<F128> {
         absent: None,
         short: Some(RegistersValEvaluation::new(TraceDimensions::new(1))),
     }
-}
-
-#[test]
-#[expect(
-    non_local_definitions,
-    reason = "the derive exports a member-list macro even for a function-local batch"
-)]
-fn batch_can_be_declared_inside_a_function() {
-    #[derive(SumcheckBatch)]
-    struct LocalSumchecks<F: JoltField> {
-        long: RegistersValEvaluation<F>,
-        absent: Option<RegistersValEvaluation<F>>,
-        short: Option<RegistersValEvaluation<F>>,
-    }
-
-    let batch = LocalSumchecks::<F128> {
-        long: RegistersValEvaluation::new(TraceDimensions::new(2)),
-        absent: None,
-        short: Some(RegistersValEvaluation::new(TraceDimensions::new(1))),
-    };
-    let inputs = LocalInputPoints {
-        long: RegistersValEvaluationInputClaims {
-            registers_val: vec![F128::zero(); REGISTER_ADDRESS_BITS + 2],
-        },
-        absent: None,
-        short: Some(RegistersValEvaluationInputClaims {
-            registers_val: vec![F128::zero(); REGISTER_ADDRESS_BITS + 1],
-        }),
-    };
-    let points = batch
-        .derive_opening_points(&[F128::one(); 2], &inputs)
-        .unwrap();
-    assert!(points.short.is_some());
-}
-
-#[test]
-fn crate_override_resolves_an_import_alias() {
-    assert!(batch().empty_input_points().short.is_some());
 }
 
 #[test]
