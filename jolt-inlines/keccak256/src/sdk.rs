@@ -1,3 +1,5 @@
+#[cfg(feature = "host")]
+use crate::NUM_LANES;
 use crate::{RATE_IN_BYTES, RATE_IN_U64};
 
 const HASH_LEN: usize = 32;
@@ -59,7 +61,10 @@ impl Keccak256 {
         bytes[buffer_len + 1..].fill(0);
         bytes[RATE_IN_BYTES - 1] |= 0x80;
 
-        self.absorb_buffer();
+        // SAFETY: the two initialized, aligned arrays are distinct fields of self.
+        unsafe {
+            keccak256_absorb_digest(self.state.as_mut_ptr(), self.buffer.as_ptr().cast());
+        }
         to_bytes(self.state)
     }
 
@@ -156,7 +161,7 @@ fn absorb_final(state: &mut [u64; 25], input: &[u8]) {
     bytes[input.len()] = 0x01;
     bytes[RATE_IN_BYTES - 1] |= 0x80;
     // SAFETY: `block` is a fresh 8-byte aligned local distinct from `state`.
-    unsafe { keccak256_absorb_permute(state.as_mut_ptr(), block.as_ptr().cast()) };
+    unsafe { keccak256_absorb_digest(state.as_mut_ptr(), block.as_ptr().cast()) };
 }
 
 /// Absorbs one Keccak-256 rate block and applies Keccak-f[1600].
@@ -201,6 +206,100 @@ pub unsafe fn keccak256_absorb_permute(state: *mut u64, block: *const u8) {
     {
         let _ = (state, block);
         panic!("keccak256_absorb_permute requires RISC-V target or host feature");
+    }
+}
+
+/// Computes only the first four output lanes of the final Keccak-f permutation.
+/// No padding is applied.
+///
+/// This entry point supports external consumers such as Jeth that absorb and pad
+/// the final block themselves before requesting the 32-byte digest.
+///
+/// # Safety
+/// `state` must point to 25 initialized, writable, 8-byte-aligned `u64` words.
+/// Only lanes 0..3 are valid permutation outputs. Lanes 4..24 retain their input
+/// values, so the result must not be used to continue absorbing or to extract
+/// more than the first 32 bytes as a digest.
+#[inline(always)]
+pub unsafe fn keccak256_digest(state: *mut u64) {
+    #[cfg(all(
+        not(feature = "host"),
+        any(target_arch = "riscv32", target_arch = "riscv64")
+    ))]
+    {
+        use crate::{INLINE_OPCODE, KECCAK256_DIGEST_FUNCT3, KECCAK256_FUNCT7};
+        core::arch::asm!(
+            ".insn r {opcode}, {funct3}, {funct7}, x0, {rs1}, x0",
+            opcode = const INLINE_OPCODE,
+            funct3 = const KECCAK256_DIGEST_FUNCT3,
+            funct7 = const KECCAK256_FUNCT7,
+            rs1 = in(reg) state,
+            options(nostack)
+        );
+    }
+    #[cfg(feature = "host")]
+    {
+        let state = &mut *state.cast::<[u64; NUM_LANES]>();
+        let mut final_state = *state;
+        crate::exec::execute_keccak_f(&mut final_state);
+        state[..4].copy_from_slice(&final_state[..4]);
+    }
+    #[cfg(all(
+        not(feature = "host"),
+        not(any(target_arch = "riscv32", target_arch = "riscv64"))
+    ))]
+    {
+        let _ = state;
+        panic!("keccak256_digest requires RISC-V target or host feature");
+    }
+}
+
+/// Computes only the first four output lanes of the final Keccak-f permutation.
+/// No padding is applied.
+///
+/// # Safety
+/// `state` must point to 25 initialized, writable, 8-byte-aligned `u64` words.
+/// `block` must point to 136 readable, 8-byte-aligned bytes, disjoint from `state`.
+/// Its 17 little-endian lanes are XORed into the state before permutation.
+/// Only lanes 0..3 are valid permutation outputs. Lanes 4..24 retain their input
+/// values, so the result must not be used to continue absorbing or to extract
+/// more than the first 32 bytes as a digest.
+#[inline(always)]
+pub unsafe fn keccak256_absorb_digest(state: *mut u64, block: *const u8) {
+    #[cfg(all(
+        not(feature = "host"),
+        any(target_arch = "riscv32", target_arch = "riscv64")
+    ))]
+    {
+        use crate::{INLINE_OPCODE, KECCAK256_ABSORB_DIGEST_FUNCT3, KECCAK256_FUNCT7};
+        core::arch::asm!(
+            ".insn r {opcode}, {funct3}, {funct7}, x0, {rs1}, {rs2}",
+            opcode = const INLINE_OPCODE,
+            funct3 = const KECCAK256_ABSORB_DIGEST_FUNCT3,
+            funct7 = const KECCAK256_FUNCT7,
+            rs1 = in(reg) state,
+            rs2 = in(reg) block,
+            options(nostack)
+        );
+    }
+    #[cfg(feature = "host")]
+    {
+        let state = &mut *state.cast::<[u64; NUM_LANES]>();
+        let mut final_state = *state;
+        let block = &*block.cast::<[u64; RATE_IN_U64]>();
+        for (lane, word) in final_state.iter_mut().zip(block) {
+            *lane ^= u64::from_le(*word);
+        }
+        crate::exec::execute_keccak_f(&mut final_state);
+        state[..4].copy_from_slice(&final_state[..4]);
+    }
+    #[cfg(all(
+        not(feature = "host"),
+        not(any(target_arch = "riscv32", target_arch = "riscv64"))
+    ))]
+    {
+        let _ = (state, block);
+        panic!("keccak256_absorb_digest requires RISC-V target or host feature");
     }
 }
 

@@ -3,10 +3,16 @@
 //! Every emitted instruction is one trace row. The π permutation renames
 //! registers at expansion time. Column parities remain live through θ, then
 //! their registers are reused for χ temporaries.
+//!
+//! The digest-only expansions stop the last round at what output lanes 0..4
+//! need: ρ and π for the five lanes that π sends to row 0, χ for four of that
+//! row's lanes, and four stores.
 
 use crate::{
-    INLINE_OPCODE, KECCAK256_ABSORB_PERMUTE_FUNCT3, KECCAK256_ABSORB_PERMUTE_NAME,
-    KECCAK256_FUNCT3, KECCAK256_FUNCT7, KECCAK256_NAME, NUM_LANES, RATE_IN_U64,
+    INLINE_OPCODE, KECCAK256_ABSORB_DIGEST_FUNCT3, KECCAK256_ABSORB_DIGEST_NAME,
+    KECCAK256_ABSORB_PERMUTE_FUNCT3, KECCAK256_ABSORB_PERMUTE_NAME, KECCAK256_DIGEST_FUNCT3,
+    KECCAK256_DIGEST_NAME, KECCAK256_FUNCT3, KECCAK256_FUNCT7, KECCAK256_NAME, NUM_LANES,
+    RATE_IN_U64,
 };
 use jolt_inlines_sdk::host::{
     ExpandedInstructionSequence, ExpansionError, InlineBuilderExt, InlineExpansionBuilder,
@@ -48,6 +54,7 @@ struct Keccak256SequenceBuilder {
     c: [InlineRegister; 5],
     scratch: InlineRegister,
     absorb_block: bool,
+    digest_only: bool,
     operands: InlineOperands,
 }
 
@@ -67,6 +74,7 @@ impl Keccak256SequenceBuilder {
             c,
             scratch,
             absorb_block,
+            digest_only: false,
             operands,
         })
     }
@@ -104,7 +112,18 @@ impl Keccak256SequenceBuilder {
     }
 
     fn store_state(&mut self) {
-        self.asm.store_u64_range(self.operands.rs1, 0, &self.a);
+        let lanes = if self.digest_only {
+            &self.a[..4]
+        } else {
+            &self.a[..]
+        };
+        self.asm.store_u64_range(self.operands.rs1, 0, lanes);
+    }
+
+    /// The last round of a digest-only expansion computes output lanes 0..4
+    /// and nothing else.
+    fn is_digest_final_round(&self) -> bool {
+        self.digest_only && self.round == 23
     }
 
     fn lane(&self, x: usize, y: usize) -> u8 {
@@ -121,6 +140,7 @@ impl Keccak256SequenceBuilder {
         }
 
         // Keep all parities live while applying one column correction at a time.
+        let digest_final = self.is_digest_final_round();
         let mut permuted = self.a;
         for (x, offsets) in ROTATION_OFFSETS.iter().enumerate() {
             let d = *self.scratch;
@@ -128,6 +148,16 @@ impl Keccak256SequenceBuilder {
             let c_next = *self.c[(x + 1) % 5];
             self.asm.emit_r(Kind::VirtualXORROTL1, d, c_prev, c_next);
             for (y, &rotation) in offsets.iter().enumerate() {
+                if digest_final && x != y {
+                    // π sends (x, x) to (x, 0), and only that row feeds the
+                    // digest. The register that held (x, 0) is dead from
+                    // here on; it takes the vacated slot so `a` still names
+                    // every register once.
+                    if y == 0 {
+                        permuted[5 * x + x] = self.a[x];
+                    }
+                    continue;
+                }
                 let a = self.lane(x, y);
                 let fused = match rotation {
                     1 => Some(Kind::VirtualXORROT63),
@@ -151,7 +181,11 @@ impl Keccak256SequenceBuilder {
     }
 
     fn chi(&mut self) {
-        for y in 0..5 {
+        // The digest reads lanes (0..4, 0): its final round needs row 0 only,
+        // and not that row's last output.
+        let digest_final = self.is_digest_final_round();
+        let rows = if digest_final { 1 } else { 5 };
+        for y in 0..rows {
             let b: [u8; 5] = std::array::from_fn(|x| self.lane(x, y));
             let scratch = *self.scratch;
             let t3 = *self.c[0];
@@ -159,7 +193,9 @@ impl Keccak256SequenceBuilder {
 
             self.asm.emit_r(Kind::ANDN, scratch, b[2], b[1]);
             self.asm.emit_r(Kind::ANDN, t3, b[0], b[4]);
-            self.asm.emit_r(Kind::ANDN, t4, b[1], b[0]);
+            if !digest_final {
+                self.asm.emit_r(Kind::ANDN, t4, b[1], b[0]);
+            }
             self.asm.xor(Reg(b[0]), Reg(scratch), b[0]);
 
             self.asm.emit_r(Kind::ANDN, scratch, b[3], b[2]);
@@ -168,7 +204,9 @@ impl Keccak256SequenceBuilder {
             self.asm.emit_r(Kind::ANDN, scratch, b[4], b[3]);
             self.asm.xor(Reg(b[2]), Reg(scratch), b[2]);
             self.asm.xor(Reg(b[3]), Reg(t3), b[3]);
-            self.asm.xor(Reg(b[4]), Reg(t4), b[4]);
+            if !digest_final {
+                self.asm.xor(Reg(b[4]), Reg(t4), b[4]);
+            }
         }
     }
 
@@ -220,5 +258,45 @@ impl InlineOp for Keccak256AbsorbPermutation {
         operands: InlineOperands,
     ) -> Result<ExpandedInstructionSequence, ExpansionError> {
         Keccak256SequenceBuilder::new(asm, operands, true)?.build()
+    }
+}
+
+pub struct Keccak256Digest;
+
+impl InlineOp for Keccak256Digest {
+    type Advice = NoAdvice;
+
+    const OPCODE: u32 = INLINE_OPCODE;
+    const FUNCT3: u32 = KECCAK256_DIGEST_FUNCT3;
+    const FUNCT7: u32 = KECCAK256_FUNCT7;
+    const NAME: &'static str = KECCAK256_DIGEST_NAME;
+
+    fn build_sequence(
+        asm: InlineExpansionBuilder,
+        operands: InlineOperands,
+    ) -> Result<ExpandedInstructionSequence, ExpansionError> {
+        let mut builder = Keccak256SequenceBuilder::new(asm, operands, false)?;
+        builder.digest_only = true;
+        builder.build()
+    }
+}
+
+pub struct Keccak256AbsorbDigest;
+
+impl InlineOp for Keccak256AbsorbDigest {
+    type Advice = NoAdvice;
+
+    const OPCODE: u32 = INLINE_OPCODE;
+    const FUNCT3: u32 = KECCAK256_ABSORB_DIGEST_FUNCT3;
+    const FUNCT7: u32 = KECCAK256_FUNCT7;
+    const NAME: &'static str = KECCAK256_ABSORB_DIGEST_NAME;
+
+    fn build_sequence(
+        asm: InlineExpansionBuilder,
+        operands: InlineOperands,
+    ) -> Result<ExpandedInstructionSequence, ExpansionError> {
+        let mut builder = Keccak256SequenceBuilder::new(asm, operands, true)?;
+        builder.digest_only = true;
+        builder.build()
     }
 }
