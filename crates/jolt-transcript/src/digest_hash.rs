@@ -8,10 +8,19 @@
 //! exactly one. [`PROTOCOL_ID`](crate::PROTOCOL_ID) names the selection, so a
 //! proof made under one never verifies under the other.
 
-#[cfg(feature = "keccak256-digests")]
+#[cfg(all(
+    feature = "keccak256-digests",
+    not(all(feature = "keccak-inline", target_arch = "riscv64"))
+))]
 use sha3::Keccak256;
-#[cfg(not(feature = "keccak256-digests"))]
+#[cfg(not(any(
+    feature = "keccak256-digests",
+    all(feature = "keccak-inline", target_arch = "riscv64")
+)))]
 use sha3::Sha3_256;
+
+#[cfg(all(feature = "keccak-inline", target_arch = "riscv64"))]
+pub use inline::DigestHasher;
 
 /// The hashes a build can select for its digests.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -30,11 +39,51 @@ pub const DIGEST_HASH: DigestHash = DigestHash::Sha3_256;
 pub const DIGEST_HASH: DigestHash = DigestHash::Keccak256;
 
 /// The hasher for [`DIGEST_HASH`].
-#[cfg(not(feature = "keccak256-digests"))]
+#[cfg(not(any(
+    feature = "keccak256-digests",
+    all(feature = "keccak-inline", target_arch = "riscv64")
+)))]
 pub type DigestHasher = Sha3_256;
 /// The hasher for [`DIGEST_HASH`].
-#[cfg(feature = "keccak256-digests")]
+#[cfg(all(
+    feature = "keccak256-digests",
+    not(all(feature = "keccak-inline", target_arch = "riscv64"))
+))]
 pub type DigestHasher = Keccak256;
+
+/// [`DigestHasher`] of an RV64 guest under `keccak-inline`: the same digests,
+/// with Keccak-f[1600] run by the inline instruction.
+#[cfg(all(feature = "keccak-inline", target_arch = "riscv64"))]
+mod inline {
+    #[cfg(feature = "keccak256-digests")]
+    use jolt_inlines_keccak256::Keccak256 as InlineHasher;
+    #[cfg(not(feature = "keccak256-digests"))]
+    use jolt_inlines_keccak256::Sha3_256 as InlineHasher;
+    use sha3::digest::{consts::U32, FixedOutput, HashMarker, Output, OutputSizeUser, Update};
+
+    /// The hasher for [`DIGEST_HASH`](super::DIGEST_HASH), with the traits
+    /// `sha3::Digest` is implemented from.
+    #[derive(Default)]
+    pub struct DigestHasher(InlineHasher);
+
+    impl HashMarker for DigestHasher {}
+
+    impl OutputSizeUser for DigestHasher {
+        type OutputSize = U32;
+    }
+
+    impl Update for DigestHasher {
+        fn update(&mut self, data: &[u8]) {
+            self.0.update(data);
+        }
+    }
+
+    impl FixedOutput for DigestHasher {
+        fn finalize_into(self, out: &mut Output<Self>) {
+            out.copy_from_slice(&self.0.finalize());
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {
