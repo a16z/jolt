@@ -75,22 +75,34 @@ impl<'a, const D: usize> PreparedNttCommit<'a, D> {
         let _span = tracing::info_span!("trace_onehot_commit_prepare_ntt").entered();
         let lut = DigitMontLut::new_with_digit_bound(&params, 2);
         let one_hot = OneHotNtt::new(&params, &lut);
-        let matrix = std::array::from_fn(|limb| {
+        // One pass over the positions: a coefficient leaves Montgomery form
+        // once for its eight digits, and the nested unzip writes each limb's
+        // ring straight into that limb's vector.
+        let limb_ring = |canonical: &[u128; D], limb: usize| {
+            let digits =
+                std::array::from_fn(|j| ((canonical[j] >> (limb * DIGIT_BITS)) & 65535) as i128);
+            let mut ring = NttRing::from_centered_coefficients(&digits, &params);
+            if let Some(one_hot) = &one_hot {
+                one_hot.to_lane_order(&mut ring.limbs[0]);
+            }
+            ring
+        };
+        type Pair<T> = (Vec<T>, Vec<T>);
+        type Quad<T> = (Pair<T>, Pair<T>);
+        let (((m0, m1), (m2, m3)), ((m4, m5), (m6, m7))): (Quad<NttRing<D>>, Quad<NttRing<D>>) =
             matrix_row[..active_positions]
                 .par_iter()
                 .map(|ring| {
-                    let digits = std::array::from_fn(|j| {
-                        ((ring.coeffs[j].to_canonical_u128() >> (limb * DIGIT_BITS)) & 65535)
-                            as i128
-                    });
-                    let mut ring = NttRing::from_centered_coefficients(&digits, &params);
-                    if let Some(one_hot) = &one_hot {
-                        one_hot.to_lane_order(&mut ring.limbs[0]);
-                    }
-                    ring
+                    let canonical: [u128; D] =
+                        std::array::from_fn(|j| ring.coeffs[j].to_canonical_u128());
+                    let limb = |limb| limb_ring(&canonical, limb);
+                    (
+                        ((limb(0), limb(1)), (limb(2), limb(3))),
+                        ((limb(4), limb(5)), (limb(6), limb(7))),
+                    )
                 })
-                .collect()
-        });
+                .unzip();
+        let matrix = [m0, m1, m2, m3, m4, m5, m6, m7];
         Some(Self {
             params,
             lut,
