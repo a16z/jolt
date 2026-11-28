@@ -16,14 +16,14 @@ mod sequence_builder;
 #[cfg(feature = "host")]
 use jolt_inlines_sdk::host::InlineExtension;
 #[cfg(feature = "host")]
-use pointwise_builder::PointwiseDot64;
+use pointwise_builder::{NonnegativePointwiseDot64, PointwiseDot64};
 #[cfg(feature = "host")]
 use sequence_builder::ForwardNtt64;
 #[cfg(feature = "host")]
 jolt_inlines_sdk::register_inlines! {
     trace_file: "ntt_trace.joltinline",
     extension: InlineExtension::Ntt,
-    ops: [ForwardNtt64, PointwiseDot64],
+    ops: [ForwardNtt64, PointwiseDot64, NonnegativePointwiseDot64],
 }
 
 /// Twist, then forward DIF NTT, with bit-reversed output in the input's
@@ -39,6 +39,8 @@ jolt_inlines_sdk::register_inlines! {
 /// Arithmetic outside that domain still follows signed wrapping i32/i64
 /// operations; the inline introduces no trusted advice or unchecked equation.
 /// Arrays without doubleword alignment use aligned stack buffers on RISC-V.
+/// A directly emitted selector 8 requires an 8-byte-aligned stage table for
+/// its paired loads; this wrapper has always supplied doubleword alignment.
 #[inline]
 pub fn forward_ntt64(
     state: &mut [i32; DEGREE],
