@@ -1,0 +1,54 @@
+name: ARM prover kernels
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/arm-prover-kernels.yml"
+      - "crates/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - ".cargo/**"
+  pull_request:
+    paths:
+      - ".github/workflows/arm-prover-kernels.yml"
+      - "crates/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - ".cargo/**"
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  akita-witness:
+    name: Akita witness kernels on AArch64 (${{ matrix.features }})
+    runs-on: ubuntu-24.04-arm
+    strategy:
+      matrix:
+        features: [akita, "akita,field-inline"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions-rust-lang/setup-rust-toolchain@a188e68d0fd2bd36ad51dccb2b07ba6e75105f30 # v2
+      - name: Install nextest
+        uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2
+        with:
+          tool: nextest
+      - name: Require native AArch64 NEON
+        run: |
+          test "$(uname -m)" = "aarch64"
+          grep -Eq '(^|[[:space:]])(asimd|neon)([[:space:]]|$)' /proc/cpuinfo
+      - name: Check witness crates
+        run: cargo clippy -p jolt-kernels -p jolt-akita --all-targets --features '${{ matrix.features }}' -- -D warnings
+      - name: Check digit encodings, slice boundaries, and malformed selectors
+        run: cargo nextest run -p jolt-kernels -p jolt-akita --lib --features '${{ matrix.features }}' --cargo-quiet -E 'test(digit_suffixes) | test(trace_onehot::tests)'

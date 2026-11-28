@@ -1,5 +1,7 @@
 //! Packed trace assembly for the reference Akita commitment kernel.
 
+mod digits;
+
 #[cfg(feature = "field-inline")]
 use crate::field_inline::FieldIncrementColumn;
 use crate::KernelError;
@@ -105,15 +107,12 @@ impl OneHotTraceColumns {
     ) -> bool {
         let (instruction, rest) = selected_rows.split_at_mut(self.layout.instruction());
         let (bytecode, ram) = rest.split_at_mut(self.layout.bytecode());
-        for (mut value, columns) in [
+        for (value, columns) in [
             (row.lookup_index.0, instruction),
             (row.bytecode_pc.0 as u128, bytecode),
             (row.ram_address.0.unwrap_or(0) as u128, ram),
         ] {
-            for column in columns.iter_mut().rev() {
-                *column = (value & ((1 << BITS) - 1)) as u8;
-                value >>= BITS;
-            }
+            digits::fill_digits::<BITS>(value, columns);
         }
         row.ram_address.0.is_some()
     }

@@ -9,6 +9,8 @@ use super::source::{validate_dimension, TraceOneHotColumn};
 use super::{K256_ROW_BATCH, NO_SELECTED_ROW, TASKS_PER_RAYON_WORKER};
 use crate::AkitaField;
 
+const _: () = assert!(NO_SELECTED_ROW == 0);
+
 #[inline(always)]
 pub(super) fn row_is_committed(selected_row: u8, committed_zero_mask: u64, column: usize) -> bool {
     selected_row != NO_SELECTED_ROW || committed_zero_mask & (1u64 << column) != 0
@@ -208,6 +210,7 @@ pub(super) fn visit_segment_ring_row_range<const D: usize>(
     let mut selected_rows = vec![NO_SELECTED_ROW; row_index_count];
     let mut committed_zero_masks = vec![0u64; rows_per_ring];
     let ring_end = ring_end.min(source.rows.nonzero_prefix_len().div_ceil(rows_per_ring));
+    let invalid = |hot| hot != NO_SELECTED_ROW && usize::from(hot) >= source.one_hot_k;
     for ring in ring_start..ring_end {
         let row_start = ring * rows_per_ring;
         let populated_rows = source
@@ -220,12 +223,16 @@ pub(super) fn visit_segment_ring_row_range<const D: usize>(
         source
             .rows
             .fill_rows_with_masks(row_start, populated_indices, populated_masks);
-        for &hot in populated_indices.iter() {
-            if hot != NO_SELECTED_ROW && usize::from(hot) >= source.one_hot_k {
-                return Err(AkitaError::InvalidInput(format!(
-                    "trace one-hot row {hot} is outside K={}",
-                    source.one_hot_k
-                )));
+        // The zero sentinel and valid selectors precede every invalid selector,
+        // so checking the maximum suffices. Rescan to report the first error.
+        if populated_indices.iter().copied().max().is_some_and(invalid) {
+            for &hot in populated_indices.iter() {
+                if invalid(hot) {
+                    return Err(AkitaError::InvalidInput(format!(
+                        "trace one-hot row {hot} is outside K={}",
+                        source.one_hot_k
+                    )));
+                }
             }
         }
         visit(ring, populated_indices, populated_masks);
