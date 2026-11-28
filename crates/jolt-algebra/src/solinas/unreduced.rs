@@ -307,6 +307,8 @@ impl<const P: u128> Unreduced for Fp128<P> {
     type SmallProduct = Fp128MulU64Accum;
     type Wide = Fp128x8i32;
 
+    const PREFER_REDUCED_PRODUCTS: bool = cfg!(target_arch = "riscv64") && Self::FIELD_INLINE;
+
     #[inline]
     fn mul_unreduced(self, other: Self) -> Fp128ProductAccum {
         let [r0, r1, r2, r3] = self.mul_wide(other);
