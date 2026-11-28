@@ -56,6 +56,7 @@ jolt-sumcheck::verifier.rs::CommittedSumcheckProof<C>::verify_committed_consiste
 jolt-sumcheck::verifier.rs::SumcheckVerifier::verify::append_to_transcript#0::round_proof.append_to_transcript(transcript)
 jolt-sumcheck::verifier.rs::SumcheckVerifier::verify_committed_round_consistency::append_to_transcript#0::round_proof.append_to_transcript(transcript)
 jolt-sumcheck::verifier.rs::SumcheckVerifier::verify_compressed::append_compressed_round#0::append_compressed_round(transcript,coeffs)
+jolt-transcript::hash_bridge.rs::HashBridge<D>::init::absorb#0::sponge.absorb(session_id)
 jolt-transcript::poseidon.rs::PoseidonSponge::absorb::absorb_fr_pair#0::self.absorb_fr_pair(len_fr,Fr::zero())
 jolt-transcript::poseidon.rs::PoseidonSponge::absorb::absorb_fr_pair#1::self.absorb_fr_pair(a,b)
 jolt-transcript::poseidon.rs::PoseidonSponge::init::absorb#0::sponge.absorb(session_id)

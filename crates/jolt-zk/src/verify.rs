@@ -29,7 +29,7 @@ where
         T: FieldTranscript<F>,
     {
         // BlindFold proofs carry no proof-of-work nonces.
-        require_no_pow(T::CHALLENGE_SET).map_err(|_| VerificationError::NeedsProofOfWork)?;
+        require_no_pow(T::challenge_set()).map_err(|_| VerificationError::NeedsProofOfWork)?;
         let folded = self.folded_instance_from_proof(proof, transcript)?;
         ensure_len(
             "folded eval outputs",

@@ -4,7 +4,7 @@
 use std::borrow::{Borrow, BorrowMut};
 use std::collections::VecDeque;
 
-use crate::transcript::sealed::Sealed;
+use crate::transcript::sealed::{Sealed, SealedField};
 #[cfg(feature = "prover-coins")]
 use crate::ProverCoins;
 use crate::{
@@ -189,17 +189,27 @@ impl<T: Sealed, F, S: Script<F>> Sealed for ScriptedTranscript<T, F, S> {
     }
 }
 
+impl<T, F, S> SealedField<F> for ScriptedTranscript<T, F, S>
+where
+    T: FieldTranscript<F>,
+    F: Clone,
+    S: Script<F>,
+{
+}
+
 impl<T, F, S> FieldTranscript<F> for ScriptedTranscript<T, F, S>
 where
     T: FieldTranscript<F>,
     F: Clone,
     S: Script<F>,
 {
-    const CHALLENGE_SET: ChallengeSetSize = if S::UNPRICED {
-        ChallengeSetSize::power_of_two(256)
-    } else {
-        T::CHALLENGE_SET
-    };
+    fn challenge_set() -> ChallengeSetSize {
+        if S::UNPRICED {
+            ChallengeSetSize::power_of_two(256)
+        } else {
+            T::challenge_set()
+        }
+    }
 
     fn challenge_vector(&mut self, len: usize) -> Result<Vec<F>, VerificationError> {
         let mut challenges = self.inner.challenge_vector(len)?;

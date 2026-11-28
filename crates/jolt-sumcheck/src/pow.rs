@@ -5,8 +5,8 @@
 //! A false claim survives a round only when the challenge is a root of a
 //! nonzero polynomial of degree at most `d`, so the round loses a factor `d`
 //! (Schwartz-Zippel) and its difficulty is
-//! `grind_bits_for_loss(d, T::CHALLENGE_SET, SECURITY_BITS)`, where
-//! `T::CHALLENGE_SET` is the [`FieldTranscript`] challenge set for `F`.
+//! `grind_bits_for_loss(d, T::challenge_set(), SECURITY_BITS)`, where
+//! `T::challenge_set()` is the [`FieldTranscript`] challenge set for `F`.
 //!
 //! `d` is always the verifier's degree bound for the claim or statement, never
 //! a degree the prover declares, so the difficulty is fixed by the protocol
@@ -36,7 +36,7 @@ pub fn round_pow_bits<F: Field, T: FieldTranscript<F>>(
     degree: usize,
 ) -> Result<u32, SumcheckError<F>> {
     let loss = u64::try_from(degree.max(1)).map_err(|_| SumcheckError::PowDifficulty { degree })?;
-    grind_bits_for_loss(loss, T::CHALLENGE_SET, SECURITY_BITS)
+    grind_bits_for_loss(loss, T::challenge_set(), SECURITY_BITS)
         .map_err(|_| SumcheckError::PowDifficulty { degree })
 }
 

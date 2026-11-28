@@ -153,13 +153,13 @@ fn slot(site: PowSite) -> usize {
 }
 
 /// Proof-of-work difficulty of every stage-level burst: the difficulty for a
-/// loss of [`SITE_LOSS`] over `T::CHALLENGE_SET`.
+/// loss of [`SITE_LOSS`] over `T::challenge_set()`.
 ///
 /// # Errors
 /// [`VerifierError::PowDifficulty`] if no supported difficulty reaches
 /// `SECURITY_BITS` for this challenge set.
 pub fn site_pow_bits<F, T: FieldTranscript<F>>() -> Result<u32, VerifierError> {
-    grind_bits_for_loss(SITE_LOSS, T::CHALLENGE_SET, SECURITY_BITS)
+    grind_bits_for_loss(SITE_LOSS, T::challenge_set(), SECURITY_BITS)
         .map_err(|_| VerifierError::PowDifficulty)
 }
 

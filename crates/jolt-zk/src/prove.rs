@@ -192,7 +192,7 @@ where
     C: BlindFoldRowCommitter<F, VC>,
 {
     // BlindFold runs over wide challenge sets only; no draw here grinds.
-    require_no_pow(T::CHALLENGE_SET).map_err(|_| ProverError::NeedsProofOfWork)?;
+    require_no_pow(T::challenge_set()).map_err(|_| ProverError::NeedsProofOfWork)?;
     validate_witness::<F, VC>(setup, protocol, witness)?;
 
     let auxiliary_range = protocol.dimensions.witness_rows.auxiliary.clone();

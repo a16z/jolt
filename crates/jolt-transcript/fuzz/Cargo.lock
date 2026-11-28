@@ -447,6 +447,7 @@ dependencies = [
  "sha3",
  "shake",
  "spongefish",
+ "zeroize",
 ]
 
 [[package]]

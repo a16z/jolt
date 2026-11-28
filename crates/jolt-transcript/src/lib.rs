@@ -17,7 +17,7 @@
 //! ([`PROTOCOL_ID`] lists the layout).
 //!
 //! Three sponges are feature-gated: `transcript-keccak` (spongefish `Keccak`,
-//! the default), `transcript-blake2b` (spongefish `Blake2b512`) and
+//! the default), `transcript-blake2b` (Jolt's `Blake2b512`) and
 //! `transcript-poseidon` (a Circom-compatible BN254 [`PoseidonSponge`]).
 //! Field challenges need uniform squeezed bytes ([`UniformBytes`]), which
 //! Poseidon does not give, so a Poseidon transcript cannot draw them.
@@ -25,7 +25,7 @@
 #![deny(missing_docs)]
 // In the jolt-verifier runtime closure: stricter panic and unsafe discipline
 // than the workspace lints (specs/verifier-closure-lints.md).
-#![forbid(unsafe_code)]
+#![deny(unsafe_code)]
 #![deny(
     clippy::indexing_slicing,
     clippy::get_unwrap,
@@ -46,6 +46,8 @@ mod codec;
 mod coins;
 mod digest_hash;
 mod grind_bits;
+#[cfg(feature = "transcript-blake2b")]
+mod hash_bridge;
 #[cfg(feature = "transcript-poseidon")]
 mod poseidon;
 mod pow;
@@ -58,7 +60,10 @@ mod shake128;
 mod transcript;
 mod verifier;
 
-pub use challenge::{ChallengeCodec, UniformBytes, MAX_CHALLENGE_BYTES};
+pub use challenge::{
+    ChallengeCodec, RuntimePrimeChallenge, UniformBytes, MAX_CHALLENGE_BYTES,
+    RUNTIME_PRIME_WIDE_BYTES,
+};
 pub use claim_domain::{ClaimDomain, ClaimMismatch, ClearDomain};
 pub use codec::{protocol_tag, word_padding, BytesMsg, NargMessage, TAG_BYTES, WORD_BYTES};
 pub use digest_hash::{DigestHash, DigestHasher, DIGEST_HASH};
@@ -87,6 +92,8 @@ pub use verifier::{VerifierInit, VerifierTranscript};
     not(all(feature = "blake2-inline", target_arch = "riscv64"))
 ))]
 use blake2::Blake2b512 as Blake2b512Digest;
+#[cfg(feature = "transcript-blake2b")]
+use hash_bridge::HashBridge;
 #[cfg(all(
     feature = "transcript-blake2b",
     feature = "blake2-inline",
@@ -99,12 +106,14 @@ use jolt_inlines_blake2::digest_adapter::{Blake2b, U64};
     target_arch = "riscv64"
 ))]
 type Blake2b512Digest = Blake2b<U64>;
-#[cfg(feature = "transcript-blake2b")]
-use spongefish::instantiations::Hash;
 
-/// Spongefish's fixed-output hash bridge instantiated with Blake2b-512.
+/// Blake2b-512 duplex sponge with portable squeeze counts.
+///
+/// This alias changed from `spongefish::instantiations::Hash<_>` to Jolt's own
+/// digest bridge. If you used that type for field challenges, switch to
+/// `jolt_transcript::Blake2b512` for its [`UniformBytes`] implementation.
 #[cfg(feature = "transcript-blake2b")]
-pub type Blake2b512 = Hash<Blake2b512Digest>;
+pub type Blake2b512 = HashBridge<Blake2b512Digest>;
 
 /// Spongefish's Keccak-f[1600] duplex sponge.
 #[cfg(feature = "transcript-keccak")]

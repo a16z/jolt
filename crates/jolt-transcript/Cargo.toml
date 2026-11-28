@@ -33,7 +33,7 @@ prover-coins = ["prover-entropy", "dep:rand_core", "dep:zeroize"]
 solinas = ["jolt-field/solinas"]
 binary = ["jolt-field/binary"]
 bn254 = ["dep:ark-bn254", "dep:ark-ff", "jolt-field/bn254"]
-transcript-blake2b = ["dep:blake2"]
+transcript-blake2b = ["dep:blake2", "dep:zeroize"]
 # Identical BLAKE2b-512 bytes through the existing RISC-V inline.
 blake2-inline = [
   "transcript-blake2b",

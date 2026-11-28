@@ -15,6 +15,8 @@
 //! A protocol's session/version must bind the field, message lengths, and codec
 //! rules; changing any of these changes the Fiat-Shamir decoding map.
 
+use std::alloc::Layout;
+
 #[cfg(feature = "binary")]
 use jolt_field::CanonicalBytes;
 #[cfg(any(feature = "solinas", feature = "bn254", feature = "binary"))]
@@ -99,57 +101,88 @@ mod sealed {
 /// making the map a bijection with zero bias and no exhaustion. An `F8`
 /// message squeezes `ceil(len / 8)` words and decodes its first `len` bytes.
 ///
-/// The trait is sealed: every implementation lives in this module, next to
-/// the argument for its TV bound.
-///
 /// # Use outside this crate
 ///
-/// `ChallengeCodec` bounds the field of every `FieldTranscript<F>`
-/// implementation on spongefish's prover and verifier states, so a protocol
-/// that draws field challenges from them names it as a bound. Callers cannot
-/// implement it. The widths and decodings above are part of the transcript's
-/// wire format: changing one changes every proof that draws challenges in
-/// that field.
+/// The transcript uses this sealed trait to draw field challenges. External
+/// fields with a runtime modulus can implement [`RuntimePrimeChallenge`] to
+/// use the fixed-width reduction codec. Each codec's width and decoding are
+/// part of the proof's wire format.
 pub trait ChallengeCodec: Sized + Sealed {
     /// `|Self|`, the number of values one challenge can take. Proof-of-work
     /// difficulties are priced from it ([`grind_bits_for_loss`]).
     ///
+    /// This method replaces the `CHALLENGE_SET_SIZE` associated constant.
+    /// Callers must now read the size at runtime.
+    ///
     /// [`grind_bits_for_loss`]: crate::grind_bits_for_loss
-    const CHALLENGE_SET_SIZE: ChallengeSetSize;
+    fn challenge_set_size() -> ChallengeSetSize;
 
-    /// Bytes squeezed for `len` elements; depends only on the type and `len`.
+    /// Bytes squeezed for `len` elements, determined by the type and `len`.
     /// Returns `None` on arithmetic overflow or an unattainable rejection bound.
+    /// The runtime-prime codec also returns `None` for an unrepresentable output
+    /// vector layout. The transcript rejects binary draws that exceed
+    /// [`MAX_CHALLENGE_BYTES`].
     fn challenge_bytes(len: usize) -> Option<usize>;
 
     /// Decodes exactly `challenge_bytes(len)` bytes in little-endian order.
-    /// Returns `None` on a wrong/unsupported length or rejection-pool exhaustion.
-    /// Allocates only the returned vector, with capacity `len`.
+    /// Returns `None` on a wrong or unsupported length, rejection-pool exhaustion,
+    /// or output reservation failure in the runtime-prime codec.
+    /// The runtime-prime codec reserves space for the result before reducing
+    /// the elements.
     fn decode_challenges(bytes: &[u8], len: usize) -> Option<Vec<Self>>;
 
-    /// `decode_challenges(bytes, 1)`'s one element, without allocating.
+    /// Decodes one element as in `decode_challenges(bytes, 1)`.
+    /// The runtime-prime codec calls
+    /// [`RuntimePrimeChallenge::from_le_bytes_wide`] directly.
     fn decode_challenge(bytes: &[u8]) -> Option<Self>;
 }
 
-/// A sponge whose squeezed bytes are uniform, up to the sponge's own
-/// security. Field challenges are decoded from raw squeezed bytes, so the
-/// codecs' TV bounds hold only on such a sponge.
+/// A byte-oriented duplex sponge suitable for drawing Fiat-Shamir challenges.
 ///
-/// `PoseidonSponge` is not one: each block it squeezes is the little-endian
-/// encoding of a BN254 scalar, whose top bits are far from uniform.
+/// # Safety
 ///
-/// It is public because it bounds the sponge of the public
-/// `FieldTranscript<F>` implementations. Callers name it only as that bound
-/// and cannot implement it.
-pub trait UniformBytes: DuplexSpongeInterface<U = u8> + Sealed {}
+/// At the claimed security level, the sponge must behave as an ideal duplex
+/// (random oracle) for the protocol's fixed schedule, including across
+/// adversarially chosen continuations of the same prefix. For proof of work,
+/// the check bytes for distinct nonces must behave as independent uniform
+/// bytes. The tape for the protected challenge must remain uniform conditioned
+/// on a successful check and the outcomes of other nonce trials.
+///
+/// The sponge must bind the session identifier at initialization and preserve
+/// domain separation for the transcript's unambiguously encoded statement
+/// and message history. Replaying the same session and operations with the
+/// same inputs must reproduce the same bytes on every platform. Counters that
+/// affect replay, including cumulative lengths across calls, must have
+/// platform-independent ranges and encodings. Cloning must create an
+/// independent snapshot: operations on either copy leave the other's state
+/// unchanged. An override of `squeeze_boxed` must return exactly the requested
+/// bytes and advance the stream exactly as `squeeze` would.
+///
+/// The challenge codecs assume a uniform byte tape when bounding bias. If a
+/// sponge biases that tape or lets a prover reuse challenges across domains,
+/// the protocol's soundness bound no longer holds. Determinism lets the
+/// verifier reproduce the prover's challenges.
+#[expect(
+    unsafe_code,
+    reason = "implementors attest to the Fiat-Shamir sponge contract"
+)]
+pub unsafe trait UniformBytes: DuplexSpongeInterface<U = u8> + Sync {}
 
 #[cfg(feature = "transcript-keccak")]
-impl Sealed for Keccak {}
-#[cfg(feature = "transcript-keccak")]
-impl UniformBytes for Keccak {}
+#[expect(unsafe_code, reason = "attests to the UniformBytes contract")]
+// SAFETY: Spongefish initializes the Keccak duplex with the session identifier.
+// The duplex construction models an ideal duplex under the Keccak permutation
+// assumption.
+unsafe impl UniformBytes for Keccak {}
 #[cfg(feature = "transcript-blake2b")]
-impl Sealed for Blake2b512 {}
-#[cfg(feature = "transcript-blake2b")]
-impl UniformBytes for Blake2b512 {}
+#[expect(unsafe_code, reason = "attests to the UniformBytes contract")]
+// SAFETY: The bridge absorbs the session identifier at initialization and uses
+// distinct masks for absorption, squeeze blocks, and squeeze completion.
+// Checked u64 arithmetic and big-endian encoding keep block indices and
+// cumulative squeeze lengths identical on all platforms. Cloning copies the
+// digest state and buffered output. The transcript models Blake2b as a random
+// oracle for these inputs.
+unsafe impl UniformBytes for Blake2b512 {}
 
 /// Largest challenge message, in squeezed bytes. Larger requests are rejected
 /// before touching the sponge, so a length taken from the input cannot make
@@ -244,8 +277,9 @@ macro_rules! prime_codec {
         impl<const P: $word> Sealed for $field<P> {}
 
         impl<const P: $word> ChallengeCodec for $field<P> {
-            const CHALLENGE_SET_SIZE: ChallengeSetSize =
-                ChallengeSetSize::from_limbs(<Self as CanonicalEncoding>::CHALLENGE_SET_LIMBS);
+            fn challenge_set_size() -> ChallengeSetSize {
+                ChallengeSetSize::from_limbs(<Self as CanonicalEncoding>::CHALLENGE_SET_LIMBS)
+            }
 
             fn challenge_bytes(len: usize) -> Option<usize> {
                 pool_bytes::<Self>(len)
@@ -298,8 +332,9 @@ macro_rules! extension_codec {
         impl<F: TowerBase> Sealed for $extension<F> {}
 
         impl<F: TowerBase> ChallengeCodec for $extension<F> {
-            const CHALLENGE_SET_SIZE: ChallengeSetSize =
-                ChallengeSetSize::from_limbs(F::CHALLENGE_SET_LIMBS).pow(Self::DEGREE as u32);
+            fn challenge_set_size() -> ChallengeSetSize {
+                ChallengeSetSize::from_limbs(F::CHALLENGE_SET_LIMBS).pow(Self::DEGREE as u32)
+            }
 
             fn challenge_bytes(len: usize) -> Option<usize> {
                 pool_bytes::<F>(len.checked_mul(Self::DEGREE)?)
@@ -333,8 +368,9 @@ macro_rules! reduction_codec {
         impl Sealed for $field {}
 
         impl ChallengeCodec for $field {
-            const CHALLENGE_SET_SIZE: ChallengeSetSize =
-                ChallengeSetSize::from_limbs(<Self as CanonicalEncoding>::CHALLENGE_SET_LIMBS);
+            fn challenge_set_size() -> ChallengeSetSize {
+                ChallengeSetSize::from_limbs(<Self as CanonicalEncoding>::CHALLENGE_SET_LIMBS)
+            }
 
             fn challenge_bytes(len: usize) -> Option<usize> {
                 len.checked_mul(BN254_ELEMENT_BYTES)
@@ -370,8 +406,9 @@ macro_rules! binary_codec {
         impl Sealed for $field {}
 
         impl ChallengeCodec for $field {
-            const CHALLENGE_SET_SIZE: ChallengeSetSize =
-                ChallengeSetSize::from_limbs(<Self as CanonicalEncoding>::CHALLENGE_SET_LIMBS);
+            fn challenge_set_size() -> ChallengeSetSize {
+                ChallengeSetSize::from_limbs(<Self as CanonicalEncoding>::CHALLENGE_SET_LIMBS)
+            }
 
             fn challenge_bytes(len: usize) -> Option<usize> {
                 len.checked_mul(<Self as CanonicalBytes>::NUM_BYTES)?
@@ -405,6 +442,56 @@ macro_rules! binary_codec {
 #[cfg(feature = "binary")]
 binary_codec!(F8, F64, F128, F192);
 
+/// Number of bytes reduced modulo the runtime prime for each challenge.
+pub const RUNTIME_PRIME_WIDE_BYTES: usize = 40;
+
+/// A field with a prime modulus `q < 2^128` chosen at runtime.
+///
+/// The protocol must bind `q` to the session or public statement. Both
+/// parties must use the same modulus throughout the proof, including when
+/// pricing proof of work.
+///
+/// The codec reduces one 320-bit little-endian integer modulo `q` for each
+/// challenge. For uniform input the total variation distance from uniform
+/// is at most `q / 2^320 < 2^-192` per element. [`MAX_CHALLENGE_BYTES`]
+/// permits fewer than 2^19 elements per message, giving a total distance
+/// below 2^-173.
+pub trait RuntimePrimeChallenge: Sized {
+    /// The current proof's prime modulus.
+    fn modulus() -> u128;
+
+    /// Returns the field element represented by `bytes` modulo [`Self::modulus`].
+    fn from_le_bytes_wide(bytes: &[u8; RUNTIME_PRIME_WIDE_BYTES]) -> Self;
+}
+
+impl<T: RuntimePrimeChallenge> Sealed for T {}
+
+impl<T: RuntimePrimeChallenge> ChallengeCodec for T {
+    fn challenge_set_size() -> ChallengeSetSize {
+        ChallengeSetSize::field_order(T::modulus(), 1).unwrap_or(ChallengeSetSize::power_of_two(0))
+    }
+
+    fn challenge_bytes(len: usize) -> Option<usize> {
+        let _layout = Layout::array::<T>(len).ok()?;
+        len.checked_mul(RUNTIME_PRIME_WIDE_BYTES)
+    }
+
+    fn decode_challenge(bytes: &[u8]) -> Option<Self> {
+        Some(T::from_le_bytes_wide(bytes.try_into().ok()?))
+    }
+
+    fn decode_challenges(bytes: &[u8], len: usize) -> Option<Vec<Self>> {
+        if bytes.len() != Self::challenge_bytes(len)? {
+            return None;
+        }
+        let (elements, _) = bytes.as_chunks::<RUNTIME_PRIME_WIDE_BYTES>();
+        let mut result = Vec::new();
+        result.try_reserve_exact(len).ok()?;
+        result.extend(elements.iter().map(T::from_le_bytes_wide));
+        Some(result)
+    }
+}
+
 /// Bytes squeezed for a message of `len` elements of `F`.
 ///
 /// # Errors
@@ -416,69 +503,71 @@ pub(crate) fn message_bytes<F: ChallengeCodec>(len: usize) -> Result<usize, Veri
         .ok_or(VerificationError)
 }
 
-#[cfg(all(test, feature = "solinas"))]
+#[cfg(all(test, feature = "solinas", feature = "transcript-keccak"))]
+pub(crate) mod test_codec {
+    use super::{ChallengeCodec, ChallengeSetSize, Prime64Offset59, Sealed};
+
+    pub(crate) struct ExhaustedPrime64 {
+        _value: Prime64Offset59,
+    }
+
+    impl Sealed for ExhaustedPrime64 {}
+
+    impl ChallengeCodec for ExhaustedPrime64 {
+        fn challenge_set_size() -> ChallengeSetSize {
+            Prime64Offset59::challenge_set_size()
+        }
+
+        fn challenge_bytes(len: usize) -> Option<usize> {
+            Prime64Offset59::challenge_bytes(len)
+        }
+
+        fn decode_challenges(bytes: &[u8], len: usize) -> Option<Vec<Self>> {
+            let values = Prime64Offset59::decode_challenges(&vec![u8::MAX; bytes.len()], len)?;
+            Some(
+                values
+                    .into_iter()
+                    .map(|value| Self { _value: value })
+                    .collect(),
+            )
+        }
+
+        fn decode_challenge(bytes: &[u8]) -> Option<Self> {
+            let value = Prime64Offset59::decode_challenge(&vec![u8::MAX; bytes.len()])?;
+            Some(Self { _value: value })
+        }
+    }
+}
+
+#[cfg(test)]
 mod tests {
-    use super::{Prime64Offset59, Sealed, UniformBytes};
-    use crate::{
-        prover_transcript, verifier_transcript, BytesMsg, FieldTranscript, ProverTranscript,
-    };
-    use spongefish::{DuplexSpongeInit, DuplexSpongeInterface};
+    use super::{ChallengeCodec, RuntimePrimeChallenge, RUNTIME_PRIME_WIDE_BYTES};
 
-    /// A sponge whose output is all ones, so every pooled candidate is
-    /// rejected. It lives here because `UniformBytes` is sealed.
-    #[derive(Clone)]
-    struct Saturated;
-
-    impl DuplexSpongeInterface for Saturated {
-        type U = u8;
-
-        fn absorb(&mut self, _input: &[u8]) -> &mut Self {
-            self
-        }
-
-        fn squeeze(&mut self, output: &mut [u8]) -> &mut Self {
-            output.fill(0xff);
-            self
-        }
+    struct WideChallenge {
+        _padding: [u8; 8191],
+        _parity: bool,
     }
 
-    impl DuplexSpongeInit for Saturated {
-        fn init(_session_id: &[u8; 32]) -> Self {
-            Self
+    impl RuntimePrimeChallenge for WideChallenge {
+        fn modulus() -> u128 {
+            2
         }
-    }
 
-    impl Sealed for Saturated {}
-    impl UniformBytes for Saturated {}
-
-    const SESSION: [u8; 32] = crate::protocol_tag(b"jolt/challenge-codecs/v1");
-    const INSTANCE: [u8; 32] = [0x42; 32];
-
-    #[test]
-    fn exhaustion_fails_on_both_sides_and_poisons_the_verifier() {
-        let mut prover = prover_transcript::<Saturated>(&SESSION, &INSTANCE);
-        assert!(FieldTranscript::<Prime64Offset59>::challenge_vector(&mut prover, 3).is_err());
-
-        let mut prover = prover_transcript::<Saturated>(&SESSION, &INSTANCE);
-        prover.send(&BytesMsg(b"after".to_vec()));
-        let mut verifier =
-            verifier_transcript::<Saturated>(&SESSION, &INSTANCE, prover.narg_string());
-        assert!(FieldTranscript::<Prime64Offset59>::challenge_vector(&mut verifier, 3).is_err());
-        assert!(verifier.prover_message::<BytesMsg>().is_err());
-        assert!(verifier.check_eof().is_err());
+        fn from_le_bytes_wide(&[low, ..]: &[u8; RUNTIME_PRIME_WIDE_BYTES]) -> Self {
+            Self {
+                _padding: [0; 8191],
+                _parity: low & 1 == 1,
+            }
+        }
     }
 
     #[test]
-    fn scalar_exhaustion_fails_on_both_sides_and_poisons_the_verifier() {
-        let mut prover = prover_transcript::<Saturated>(&SESSION, &INSTANCE);
-        assert!(FieldTranscript::<Prime64Offset59>::challenge(&mut prover).is_err());
-
-        let mut prover = prover_transcript::<Saturated>(&SESSION, &INSTANCE);
-        prover.send(&BytesMsg(b"after".to_vec()));
-        let mut verifier =
-            verifier_transcript::<Saturated>(&SESSION, &INSTANCE, prover.narg_string());
-        assert!(FieldTranscript::<Prime64Offset59>::challenge(&mut verifier).is_err());
-        assert!(verifier.prover_message::<BytesMsg>().is_err());
-        assert!(verifier.check_eof().is_err());
+    fn runtime_prime_tape_size_requires_a_representable_output_layout() {
+        let max_len = isize::MAX.unsigned_abs() / size_of::<WideChallenge>();
+        assert_eq!(
+            WideChallenge::challenge_bytes(max_len),
+            Some(max_len * RUNTIME_PRIME_WIDE_BYTES)
+        );
+        assert_eq!(WideChallenge::challenge_bytes(max_len + 1), None);
     }
 }

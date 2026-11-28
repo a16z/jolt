@@ -37,7 +37,7 @@ use crate::challenge::message_bytes;
 use crate::codec::{word_padding, AlignedBytes, BytesMsg, INLINE_BYTES, WORD_BYTES};
 use crate::pow::{nonce_word, SpongePow, CHECK_BYTES};
 use crate::{ChallengeCodec, ChallengeSetSize, UniformBytes};
-use sealed::Sealed;
+use sealed::{Sealed, SealedField};
 
 pub(crate) mod sealed {
     use spongefish::{Encoding, VerificationError};
@@ -63,6 +63,9 @@ pub(crate) mod sealed {
         /// state, so later reads and `check_eof` fail.
         fn require(&mut self, ok: bool) -> Result<(), VerificationError>;
     }
+
+    /// Restricts field draws to supported transcript and field pairs.
+    pub trait SealedField<F> {}
 }
 
 /// A Fiat-Shamir transcript: spongefish's prover or verifier state.
@@ -188,24 +191,63 @@ impl Encoding for WordAligned<'_> {
 }
 
 /// A transcript that draws challenges in `F`.
-pub trait FieldTranscript<F>: Transcript {
+///
+/// [`Transcript`] stays sealed, and this release also seals each
+/// `FieldTranscript<F>` pair. To extend field challenge support, implement
+/// the unsafe [`UniformBytes`] trait for a byte sponge or
+/// [`RuntimePrimeChallenge`](crate::RuntimePrimeChallenge) for a supported
+/// prime field.
+///
+/// ```compile_fail,E0277
+/// use jolt_transcript::{ChallengeSetSize, FieldTranscript, RuntimePrimeChallenge,
+///     VerificationError, VerifierState, RUNTIME_PRIME_WIDE_BYTES};
+/// use spongefish::DuplexSpongeInterface;
+///
+/// #[derive(Clone)]
+/// struct LocalSponge;
+/// impl DuplexSpongeInterface for LocalSponge {
+///     type U = u8;
+///     fn absorb(&mut self, _: &[u8]) -> &mut Self { unimplemented!() }
+///     fn squeeze(&mut self, _: &mut [u8]) -> &mut Self { unimplemented!() }
+/// }
+///
+/// struct LocalField(bool);
+/// impl RuntimePrimeChallenge for LocalField {
+///     fn modulus() -> u128 { 2 }
+///     fn from_le_bytes_wide(&[low, ..]: &[u8; RUNTIME_PRIME_WIDE_BYTES]) -> Self {
+///         Self(low & 1 == 1)
+///     }
+/// }
+///
+/// impl FieldTranscript<LocalField> for VerifierState<'_, LocalSponge> {
+///     fn challenge_set() -> ChallengeSetSize { unimplemented!() }
+///     fn challenge_vector(&mut self, _: usize) -> Result<Vec<LocalField>, VerificationError> {
+///         unimplemented!()
+///     }
+/// }
+/// ```
+pub trait FieldTranscript<F>: Transcript + SealedField<F> {
     /// Size of the set every challenge is drawn from: the codec's
-    /// [`CHALLENGE_SET_SIZE`](ChallengeCodec::CHALLENGE_SET_SIZE). Prices the
+    /// [`challenge_set_size`](ChallengeCodec::challenge_set_size). Prices the
     /// proof of work before a challenge ([`grind_bits_for_loss`]).
     ///
+    /// This method replaces the `CHALLENGE_SET` associated constant.
+    /// Callers must now read the size at runtime.
+    ///
     /// [`grind_bits_for_loss`]: crate::grind_bits_for_loss
-    const CHALLENGE_SET: ChallengeSetSize;
+    fn challenge_set() -> ChallengeSetSize;
 
     /// Draws `len` challenges as one message of `F`'s [`ChallengeCodec`].
     ///
     /// `len == 0` returns an empty vector without touching the sponge.
     ///
     /// # Errors
-    /// `VerificationError`, before any sponge operation, when the codec does
+    /// `VerificationError` before any sponge operation when the codec does
     /// not support `len` or the message would exceed
-    /// [`MAX_CHALLENGE_BYTES`](crate::MAX_CHALLENGE_BYTES) bytes; otherwise on
-    /// rejection-pool exhaustion (probability at most 2^-161). The verifier's
-    /// state is poisoned then, so `check_eof` fails too.
+    /// [`MAX_CHALLENGE_BYTES`](crate::MAX_CHALLENGE_BYTES) bytes. Decoding can
+    /// fail on rejection-pool exhaustion (probability at most 2^-161) or if
+    /// the runtime-prime codec cannot reserve the output vector. On error the
+    /// verifier's state is poisoned and `check_eof` fails too.
     fn challenge_vector(&mut self, len: usize) -> Result<Vec<F>, VerificationError>;
 
     /// Draws one challenge, as a message of length one.
@@ -220,17 +262,20 @@ pub trait FieldTranscript<F>: Transcript {
     /// `gamma` is drawn even for `len == 0`.
     ///
     /// # Errors
-    /// As [`challenge_vector`](Self::challenge_vector).
+    /// Returns `VerificationError` if the powers cannot be reserved before the
+    /// draw, or if [`challenge`](Self::challenge) fails. On error the verifier's
+    /// state is poisoned and `check_eof` fails too.
     fn challenge_powers(&mut self, len: usize) -> Result<Vec<F>, VerificationError>
     where
         F: Ring,
     {
+        let mut powers = Vec::new();
+        self.require(powers.try_reserve_exact(len).is_ok())?;
         let gamma = self.challenge()?;
-        Ok(
-            std::iter::successors(Some(F::from_u64(1)), |power| Some(*power * gamma))
-                .take(len)
-                .collect(),
-        )
+        powers.extend(
+            std::iter::successors(Some(F::from_u64(1)), |power| Some(*power * gamma)).take(len),
+        );
+        Ok(powers)
     }
 }
 
@@ -311,13 +356,23 @@ where
     }
 }
 
+impl<H, R, F> SealedField<F> for ProverState<H, R>
+where
+    H: UniformBytes,
+    R: DuplexSpongeInit<U = u8>,
+    F: ChallengeCodec,
+{
+}
+
 impl<H, R, F> FieldTranscript<F> for ProverState<H, R>
 where
     H: UniformBytes,
     R: DuplexSpongeInit<U = u8>,
     F: ChallengeCodec,
 {
-    const CHALLENGE_SET: ChallengeSetSize = F::CHALLENGE_SET_SIZE;
+    fn challenge_set() -> ChallengeSetSize {
+        F::challenge_set_size()
+    }
 
     fn challenge_vector(&mut self, len: usize) -> Result<Vec<F>, VerificationError> {
         draw::<F, _>(self, len, |tape| F::decode_challenges(tape, len))
@@ -328,12 +383,16 @@ where
     }
 }
 
+impl<H: UniformBytes, F: ChallengeCodec> SealedField<F> for VerifierState<'_, H> {}
+
 impl<H, F> FieldTranscript<F> for VerifierState<'_, H>
 where
     H: UniformBytes,
     F: ChallengeCodec,
 {
-    const CHALLENGE_SET: ChallengeSetSize = F::CHALLENGE_SET_SIZE;
+    fn challenge_set() -> ChallengeSetSize {
+        F::challenge_set_size()
+    }
 
     fn challenge_vector(&mut self, len: usize) -> Result<Vec<F>, VerificationError> {
         draw::<F, _>(self, len, |tape| F::decode_challenges(tape, len))
@@ -341,5 +400,64 @@ where
 
     fn challenge(&mut self) -> Result<F, VerificationError> {
         draw::<F, _>(self, 1, F::decode_challenge)
+    }
+}
+
+#[cfg(all(test, feature = "solinas", feature = "transcript-keccak"))]
+#[expect(clippy::unwrap_used, reason = "tests")]
+mod tests {
+    use jolt_field::Prime64Offset59;
+
+    use super::FieldTranscript;
+    use crate::challenge::test_codec::ExhaustedPrime64;
+    use crate::{
+        protocol_tag, prover_transcript, verifier_transcript, BytesMsg, ChallengeCodec, Keccak,
+        ProverState, ProverTranscript,
+    };
+
+    const SESSION: [u8; 32] = protocol_tag(b"jolt/challenge-codecs/v1");
+    const INSTANCE: [u8; 32] = [0x42; 32];
+
+    #[test]
+    fn exhaustion_fails_on_both_sides_and_poisons_the_verifier() {
+        let mut prover = prover_transcript::<Keccak>(&SESSION, &INSTANCE);
+        assert!(FieldTranscript::<ExhaustedPrime64>::challenge_vector(&mut prover, 3).is_err());
+        assert_one_tape_consumed(&mut prover, 3);
+        prover.send(&BytesMsg(b"after".to_vec()));
+        let mut verifier = verifier_transcript::<Keccak>(&SESSION, &INSTANCE, prover.narg_string());
+        assert!(FieldTranscript::<ExhaustedPrime64>::challenge_vector(&mut verifier, 3).is_err());
+        assert!(verifier.prover_message::<BytesMsg>().is_err());
+        assert!(verifier.check_eof().is_err());
+    }
+
+    #[test]
+    fn scalar_exhaustion_fails_on_both_sides_and_poisons_the_verifier() {
+        let mut prover = prover_transcript::<Keccak>(&SESSION, &INSTANCE);
+        assert!(FieldTranscript::<ExhaustedPrime64>::challenge(&mut prover).is_err());
+        assert_one_tape_consumed(&mut prover, 1);
+        prover.send(&BytesMsg(b"after".to_vec()));
+        let mut verifier = verifier_transcript::<Keccak>(&SESSION, &INSTANCE, prover.narg_string());
+        assert!(FieldTranscript::<ExhaustedPrime64>::challenge(&mut verifier).is_err());
+        assert!(verifier.prover_message::<BytesMsg>().is_err());
+        assert!(verifier.check_eof().is_err());
+    }
+
+    fn assert_one_tape_consumed(prover: &mut ProverState<Keccak>, len: usize) {
+        let mut reference = prover_transcript::<Keccak>(&SESSION, &INSTANCE);
+        let tape_bytes = Prime64Offset59::challenge_bytes(len).unwrap();
+        let () = reference.verifier_message_as(tape_bytes, |_| ());
+        assert_eq!(
+            prover.verifier_message::<[u8; 32]>(),
+            reference.verifier_message::<[u8; 32]>()
+        );
+    }
+
+    #[test]
+    fn power_capacity_overflow_poisons_the_verifier() {
+        let len = isize::MAX.unsigned_abs() / size_of::<Prime64Offset59>() + 1;
+        let mut verifier = verifier_transcript::<Keccak>(&SESSION, &INSTANCE, &[]);
+        let powers: Result<Vec<Prime64Offset59>, _> = verifier.challenge_powers(len);
+        assert!(powers.is_err());
+        assert!(verifier.check_eof().is_err());
     }
 }
