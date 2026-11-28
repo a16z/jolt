@@ -10,6 +10,8 @@ use jolt::jolt_verifier::VerifierPreprocessingWire;
 #[cfg(feature = "akita")]
 use jolt::jolt_verifier::{JoltProof, JoltVerifierPreprocessing as GenericVerifierPreprocessing};
 #[cfg(feature = "akita")]
+use jolt::{TrustedAdvice, UntrustedAdvice};
+#[cfg(feature = "akita")]
 use jolt_akita::TrustedBytes;
 #[cfg(feature = "akita")]
 use jolt_crypto::NoVectorCommitment;
@@ -43,39 +45,56 @@ mod embedded_bytes {
 include!("./provable_macro.rs");
 
 mod bounded;
+#[cfg(feature = "akita")]
+mod compiled_rows;
 mod records;
 use records::{RecordError, Records};
 
+/// Where a setup whose record omits the bytecode rows keeps them.
+enum CompiledRows {
+    /// The static table compiled into this image.
+    Image,
+    /// A fixed-width record after the digest, in the setup stream.
+    #[cfg(feature = "akita")]
+    Stream,
+}
+
 impl Records<'_> {
-    /// The baked setup's preprocessing with its compiled bytecode rows.
+    /// A setup's preprocessing with its compiled bytecode rows.
     ///
     /// The record carries the program without its rows, followed by the
     /// preprocessing digest the host computed over the complete program. The
-    /// image fixes both, so the guest assembles the preprocessing from them
-    /// instead of re-encoding and hashing the program.
+    /// image or the committed trusted advice fixes both, so the guest
+    /// assembles the preprocessing from them instead of re-encoding and
+    /// hashing the program.
     #[inline(never)]
-    fn preprocessing(&mut self) -> Result<JoltVerifierPreprocessing, RecordError> {
+    fn compiled_preprocessing(
+        &mut self,
+        rows: CompiledRows,
+    ) -> Result<JoltVerifierPreprocessing, RecordError> {
         let PreprocessingWire {
             mut program,
             pcs_setup,
             vc_setup,
         } = self.record()?;
         let preprocessing_digest: [u8; 32] = self.record()?;
-        if !EMBEDDED_BYTECODE.is_empty() {
+        let rows = match rows {
+            CompiledRows::Image => EMBEDDED_BYTECODE.to_vec(),
+            #[cfg(feature = "akita")]
+            CompiledRows::Stream => {
+                let words = bytemuck::try_cast_slice(self.raw()?).map_err(|_| RecordError)?;
+                compiled_rows::decode(words).ok_or(RecordError)?
+            }
+        };
+        if !rows.is_empty() {
             let ProgramPreprocessing::Full(program) = &mut program else {
-                panic!("compiled bytecode requires full program preprocessing");
+                return Err(RecordError);
             };
             let program = Arc::make_mut(program);
-            assert!(
-                program.bytecode.bytecode.is_empty(),
-                "compiled bytecode placeholder is not empty"
-            );
-            assert_eq!(
-                program.bytecode.code_size,
-                EMBEDDED_BYTECODE.len(),
-                "compiled bytecode shape mismatch"
-            );
-            program.bytecode.bytecode = EMBEDDED_BYTECODE.to_vec();
+            if !program.bytecode.bytecode.is_empty() || program.bytecode.code_size != rows.len() {
+                return Err(RecordError);
+            }
+            program.bytecode.bytecode = rows;
         }
         Ok(JoltVerifierPreprocessing {
             program,
@@ -84,14 +103,66 @@ impl Records<'_> {
             vc_setup,
         })
     }
+
+    /// Attach the bodies `detach_prepared_payloads` moved out of the setup
+    /// record, in its order, as views of where they lie in this stream.
+    ///
+    /// # Safety
+    ///
+    /// The stream must lie in the image, the input region, or the
+    /// trusted-advice region, which stay mapped and unwritten for the whole
+    /// run, and its bytes must be the intended setup, bound to the statement.
+    unsafe fn attach_payloads(
+        &mut self,
+        #[cfg_attr(not(feature = "akita"), expect(unused_variables))]
+        preprocessing: &mut JoltVerifierPreprocessing,
+    ) -> Result<(), RecordError> {
+        let payload_count: u32 = self.record()?;
+        self.check_count(payload_count, 1)?;
+        let payloads: Vec<&[u8]> = (0..payload_count)
+            .map(|_| self.raw())
+            .collect::<Result<_, _>>()?;
+        #[cfg(feature = "akita")]
+        {
+            let payloads: Vec<TrustedBytes> = payloads
+                .iter()
+                // SAFETY: the caller's contract.
+                .map(|payload| unsafe { TrustedBytes::new(assume_static(payload)) })
+                .collect();
+            preprocessing
+                .pcs_setup
+                .attach_prepared_payloads(&payloads)
+                .map_err(|_| RecordError)?;
+        }
+        #[cfg(not(feature = "akita"))]
+        if !payloads.is_empty() {
+            return Err(RecordError);
+        }
+        Ok(())
+    }
+
+    fn proof(&mut self) -> Result<RV64IMACProof, RecordError> {
+        start_cycle_tracking("deserialize proof");
+        let proof = self.record();
+        end_cycle_tracking("deserialize proof");
+        proof
+    }
+
+    fn device(&mut self) -> Result<JoltDevice, RecordError> {
+        start_cycle_tracking("deserialize device");
+        let device = self.record();
+        end_cycle_tracking("deserialize device");
+        device
+    }
 }
 
-/// Extend a slice of the guest's input region or its own image to `'static`.
+/// Extend a slice of the guest's input region, trusted advice, or own image
+/// to `'static`.
 ///
 /// # Safety
 ///
-/// `bytes` must lie in the input region or the image, which are mapped for
-/// the whole run and never written or freed.
+/// `bytes` must lie in the input region, the trusted-advice region, or the
+/// image, which are mapped for the whole run and never written or freed.
 #[cfg(feature = "akita")]
 unsafe fn assume_static(bytes: &[u8]) -> &'static [u8] {
     // SAFETY: the caller's contract; the pointer and length are unchanged.
@@ -104,12 +175,52 @@ fn verify(bytes: &[u8]) -> u32 {
 }
 }
 
+#[cfg(feature = "akita")]
+provable_with_config! {
+/// Advice mode: the setup is trusted advice, the proofs are untrusted
+/// advice, and the public input carries only the statements: the proof count
+/// and one I/O device per proof.
+fn verify_advice(
+    statements: &[u8],
+    setup: TrustedAdvice<&[u8]>,
+    proofs: UntrustedAdvice<&[u8]>,
+) -> u32 {
+    verify_advice_records(statements, *setup, *proofs).unwrap_or(0)
+}
+}
+
 fn setup_result<T>(result: Result<T, RecordError>) -> Result<T, RecordError> {
     if EMBEDDED_BYTES.is_empty() {
         result
     } else {
         Ok(result.expect("corrupt embedded setup"))
     }
+}
+
+fn verify_inner(
+    preprocessing: &JoltVerifierPreprocessing,
+    proof: &RV64IMACProof,
+    device: &JoltDevice,
+) -> bool {
+    start_cycle_tracking("verification");
+    #[cfg(not(feature = "akita"))]
+    let is_valid = jolt::jolt_verifier::verify::<
+        jolt::VerifierField,
+        jolt::VerifierPCS,
+        jolt::VerifierVC,
+        jolt::VerifierTranscript<'_>,
+    >(preprocessing, device, proof, None)
+    .is_ok();
+    #[cfg(feature = "akita")]
+    let is_valid = jolt::jolt_verifier::verify::<
+        AkitaField,
+        AkitaScheme,
+        AkitaVc,
+        AkitaVerifierTranscript<'_>,
+    >(preprocessing, device, proof, None)
+    .is_ok();
+    end_cycle_tracking("verification");
+    is_valid
 }
 
 fn verify_records(bytes: &[u8]) -> Result<u32, RecordError> {
@@ -124,82 +235,67 @@ fn verify_records(bytes: &[u8]) -> Result<u32, RecordError> {
     let setup = embedded.as_mut().unwrap_or(&mut input);
 
     start_cycle_tracking("deserialize preprocessing");
-    #[cfg_attr(not(feature = "akita"), expect(unused_mut))]
     let mut verifier_preprocessing = if EMBEDDED_BYTES.is_empty() {
         setup.record()?
     } else {
         setup
-            .preprocessing()
+            .compiled_preprocessing(CompiledRows::Image)
             .expect("corrupt embedded preprocessing")
     };
-
-    // Setup payloads the host detached from the record (Akita's expanded
-    // verifier keys), attached back as views of where they lie.
-    let payload_count: u32 = setup_result(setup.record())?;
-    setup_result(setup.check_count(payload_count, 1))?;
-    let payloads: Vec<&[u8]> = setup_result(
-        (0..payload_count)
-            .map(|_| setup.raw())
-            .collect::<Result<_, _>>(),
-    )?;
-    #[cfg(feature = "akita")]
-    {
-        let payloads: Vec<TrustedBytes> = payloads
-            .iter()
-            // SAFETY: every payload slice lies in the image or input region,
-            // and is bound by the image: embedded bytes directly, or the
-            // complete input setup authenticated against SETUP_DIGEST above.
-            .map(|payload| unsafe { TrustedBytes::new(assume_static(payload)) })
-            .collect();
-        setup_result(
-            verifier_preprocessing
-                .pcs_setup
-                .attach_prepared_payloads(&payloads)
-                .map_err(|_| RecordError),
-        )?;
-    }
-    #[cfg(not(feature = "akita"))]
-    if !payloads.is_empty() {
-        return setup_result(Err(RecordError));
-    }
+    // SAFETY: the setup stream is this image or the input region. The image
+    // binds embedded bytes directly; the complete input setup was
+    // authenticated against SETUP_DIGEST above.
+    setup_result(unsafe { setup.attach_payloads(&mut verifier_preprocessing) })?;
     end_cycle_tracking("deserialize preprocessing");
 
     start_cycle_tracking("deserialize count of proofs");
-    let n = input.proof_count()?;
+    let n = input.proof_count(2)?;
     end_cycle_tracking("deserialize count of proofs");
 
     let mut all_valid = true;
     for _ in 0..n {
-        start_cycle_tracking("deserialize proof");
-        let proof: RV64IMACProof = input.record()?;
-        end_cycle_tracking("deserialize proof");
-
-        start_cycle_tracking("deserialize device");
-        let device: JoltDevice = input.record()?;
-        end_cycle_tracking("deserialize device");
-
-        start_cycle_tracking("verification");
-        #[cfg(not(feature = "akita"))]
-        let is_valid = jolt::jolt_verifier::verify::<
-            jolt::VerifierField,
-            jolt::VerifierPCS,
-            jolt::VerifierVC,
-            jolt::VerifierTranscript<'_>,
-        >(&verifier_preprocessing, &device, &proof, None)
-        .is_ok();
-        #[cfg(feature = "akita")]
-        let is_valid = jolt::jolt_verifier::verify::<
-            AkitaField,
-            AkitaScheme,
-            AkitaVc,
-            AkitaVerifierTranscript<'_>,
-        >(&verifier_preprocessing, &device, &proof, None)
-        .is_ok();
-        end_cycle_tracking("verification");
-        all_valid = all_valid && is_valid;
+        let proof = input.proof()?;
+        let device = input.device()?;
+        all_valid &= verify_inner(&verifier_preprocessing, &proof, &device);
     }
 
     input.finish()?;
+    Ok(all_valid as u32)
+}
+
+#[cfg(feature = "akita")]
+fn verify_advice_records(
+    statements: &[u8],
+    setup: &[u8],
+    proofs: &[u8],
+) -> Result<u32, RecordError> {
+    let mut setup = Records::new(setup, RECORD_LIMITS)?;
+    start_cycle_tracking("deserialize preprocessing");
+    let mut verifier_preprocessing = setup.compiled_preprocessing(CompiledRows::Stream)?;
+    // SAFETY: the setup stream is the trusted-advice region. An outer
+    // verifier checks that region against the `trusted_advice_commitment` it
+    // is given, which the consumer pins to the published setup, so these are
+    // the published setup bytes.
+    unsafe { setup.attach_payloads(&mut verifier_preprocessing) }?;
+    setup.finish()?;
+    end_cycle_tracking("deserialize preprocessing");
+
+    let mut statements = Records::new(statements, RECORD_LIMITS)?;
+    let mut proofs = Records::new(proofs, RECORD_LIMITS)?;
+    start_cycle_tracking("deserialize count of proofs");
+    let n = statements.proof_count(1)?;
+    proofs.check_count(n, 1)?;
+    end_cycle_tracking("deserialize count of proofs");
+
+    let mut all_valid = true;
+    for _ in 0..n {
+        let proof = proofs.proof()?;
+        let device = statements.device()?;
+        all_valid &= verify_inner(&verifier_preprocessing, &proof, &device);
+    }
+
+    statements.finish()?;
+    proofs.finish()?;
     Ok(all_valid as u32)
 }
 

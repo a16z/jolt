@@ -4,9 +4,10 @@ The recursion example executes Jolt's Akita verifier as a RISC-V guest: it
 verifies an inner Akita, field-inline proof and reports the verdict. The cost of
 interest is the guest's **total trace rows**, the length an outer proof of that
 execution would have to cover, including setup and proof decoding. The working
-target is a Fibonacci inner proof below 2^26 rows; this revision is 11,924,024
-rows above it (see [Measurements](#measurements)). This document records the
-mechanisms the guest uses, the trust they rely on, and where the rows go.
+target is a Fibonacci inner proof below 2^26 rows; this revision is 19,035,984
+rows above it (see [Setup transports](#setup-transports)). This document
+records the mechanisms the guest uses, the trust they rely on, and where the
+rows go.
 
 Only trace execution is implemented for the Akita guest. No outer recursive
 proof of it is generated.
@@ -27,17 +28,35 @@ The guest distinguishes two kinds of input.
   seed-derived without re-expanding it, and uses the NTT residues where they lie
   without a range pass.
 
-Trusted setup data must be bound to the program identity. With `--embed` the
-host bakes it into the guest image, so the ELF digest is the binding. In input
-mode the host bakes a BLAKE2b-512 digest into the image at build time. It covers
-the entire framed setup section: the preprocessing record, detached-body count,
-and every detached body (key matrix, catalog view, and terminal NTT cache),
-including their lengths and padding. The leading input-alignment record is
-excluded. The guest checks this pin before decoding setup or constructing any
-`TrustedBytes`; a missing digest or mismatch returns verdict `0`. Rebuilding
+Trusted setup data must be bound to something the consumer pins: the program
+identity in embedded and input mode, a commitment in advice mode (below). With
+`--embed` the host bakes it into the guest image, so the ELF digest is the
+binding. In input mode the host bakes a BLAKE2b-512 digest into the image at
+build time. It covers the entire framed setup section: the preprocessing
+record, detached-body count, and every detached body (key matrix, catalog view,
+and terminal NTT cache), including their lengths and padding. The leading
+input-alignment record is excluded. The guest checks this pin before decoding
+setup or constructing any `TrustedBytes`; a missing digest or mismatch returns verdict `0`. Rebuilding
 with a different setup changes the image identity, which the consumer must pin.
 The preprocessing digest alone does not cover the detached payloads. Embedded mode is the configuration the row count
 refers to.
+
+In advice mode (`--advice`, Akita builds) the setup is trusted advice, and
+its identity is a commitment rather than the image. An outer verifier opens
+the trusted-advice region against the `trusted_advice_commitment` it is given,
+so the consumer must pin the commitment to the published setup. Jolt checks
+the region against whatever commitment is supplied, and a commitment the prover
+chooses would void the trusted-setup assumptions above. The image bakes no
+setup data, only its region capacities and record limits, so one image serves
+any setup that fits them. The host computes the commitment with
+`jolt_prover::akita::witness::commit_advice` over the region's bytes and
+capacity, with the schedule artifacts the inner proofs use. An outer Akita
+prover's `commit_trusted_advice` builds the same object from a setup on those
+artifacts, and anyone can recompute it from the published setup bytes. The
+Akita guest has no outer proof yet, so this binding is not exercised: the host
+prints the commitment and the inner statements. Neither embedding nor a
+commitment shows that the prepared key and cache were built correctly; each
+binds the publisher's choice.
 
 What the guest still checks on setup data:
 
@@ -64,6 +83,17 @@ A consumer checking a particular computation must bind the runtime input and
 inspect the intended count and devices; checking the verdict alone establishes
 only that some nonempty batch verifies under the image's setup.
 
+In advice mode the statement separates from the evidence. Under the setup bound
+by the pinned commitment, every proof in the untrusted advice verifies against
+the device at the same position in the public input. The input holds the
+nonzero count and the devices, with the same envelope and zero-suffix rules.
+The untrusted-advice slice must hold exactly one proof record per device; a
+missing or extra record returns `0`. Bytes after an advice region's postcard
+envelope are not read. The public I/O therefore binds the statements, not the
+proof bytes. Moving the proofs to advice does not hide them: that needs a
+zero-knowledge outer proof, and the Akita build has no ZK mode (`akita` and
+`zk` are mutually exclusive).
+
 ## Record limits
 
 The image builder runs the same bounded serde adapter over each supplied setup,
@@ -72,9 +102,14 @@ size. The byte cap is the next power of two of the largest record, with a 16 MiB
 floor. The allocation-charge cap is the next power of two of twice the largest
 charge, also with a 16 MiB floor. Both caps are constants in the generated guest;
 untrusted runtime lengths cannot raise them. Detached setup bodies are borrowed
-and are not decoded records. Embedded setup removes the bytecode vector before
-encoding, so using the full input-mode setup to size its cap is conservative;
-the additional embedded digest record is only 32 bytes.
+and are not decoded records. Embedded and advice setups remove the bytecode
+vector before encoding, so using the full input-mode setup to size their cap is
+conservative. The additional digest record is only 32 bytes, and advice mode's
+fixed-width rows are a raw body that decodes to the rows the full record's
+charge already covers. Each region's capacity, the input's and each advice
+region's, is the next power of two of its stream length plus 26 bytes: the pad
+record's prefix and at most seven pad bytes, postcard's length of at most ten
+bytes, and one byte that keeps the framed stream strictly below capacity.
 
 A trace of `2^20` rows does not bound the size of the program image, bytecode,
 public I/O, or schedule catalog. There is consequently no universal largest
@@ -168,7 +203,8 @@ for one row verifies only proofs for that row of its flavor.
 `detach_prepared_payloads` / `attach_prepared_payloads` move the multi-megabyte
 payloads out of the bincode record. Each detached body is self-aligning: a skew
 byte puts the key's coefficients on an 8-byte boundary. The guest then views
-them where they lie, either in its image or its input, instead of copying them.
+them where they lie, in its image, its input, or its trusted advice, instead of
+copying them.
 
 With `--embed` the host also:
 
@@ -177,6 +213,12 @@ With `--embed` the host also:
   row-less record. The guest assembles the preprocessing from the wire form, the
   rows, and that digest. Decoding the ordinary record would re-encode and hash
   the whole program, and would hash the wrong (row-less) program.
+
+With `--advice` the trusted advice carries the same row-less record and digest,
+followed by the rows in a fixed-width layout instead of a static table: four
+little-endian words per row (`guest/src/compiled_rows.rs`). The guest views
+them as words in place and rebuilds each row without bincode. The host decodes
+its own encoding with the guest's decoder before tracing.
 
 ### Guest runtime
 
@@ -241,7 +283,9 @@ Fibonacci, one inner proof, `--features akita,field-inline,ntt-inline`,
 `trace --embed`, release guest, `RAYON_NUM_THREADS=1`. Each row is the
 cumulative total after its change. From the rebase onto `main` through the
 fast-mem rows, every row traces one freshly generated proof with the pinned
-companion; the last row traces a fresh proof at this revision.
+companion; the last row traced a fresh proof when it was recorded. Later merges
+of `main` are not itemized here; [Setup transports](#setup-transports) has
+totals at this revision.
 
 | Build | Total rows |
 | --- | ---: |
@@ -268,10 +312,10 @@ companion; the last row traces a fresh proof at this revision.
 | **Merge `main`: Akita `cf95fd05` (BlockDigits dense commit, #236-#242), whole-table bytecode (#2030), fresh proof** (76,947,621 verification cycles) | **79,032,888** |
 
 The first row was rebuilt and re-measured from its archived sources and
-reproduces its recorded numbers exactly. Input mode, which reads the setup
-from the guest input, accepts at 86,461,879 rows. A proof with one bit flipped
-in its Akita opening proof is rejected after 60,136,155 rows, inside the PCS
-verifier.
+reproduces its recorded numbers exactly. At the 79,032,888-row revision, input
+mode, which then had no setup pin, accepted at 86,461,879 rows, and a proof
+with one bit flipped in its Akita opening proof was rejected after 60,136,155
+rows, inside the PCS verifier.
 
 The merge's increase is inside the Akita trace-batch opening
 (`verify_trace_batch`, 56.07M to 67.86M rows), almost all of it in the root
@@ -279,14 +323,59 @@ fold (`verify_root`, 14.56M to 24.46M rows): its relation-matrix evaluation
 and direct setup-contribution scan run over the natively batched trace
 columns. The terminal checks are unchanged.
 
-The last row's 452,194-row increase nets two measured effects, besides the
-boot-time modulus binding. Replacing the
+The Akita review revisions row's 452,194-row increase nets two measured
+effects, besides the boot-time modulus binding. Replacing the
 hand-written transcript sponge, which reused each phase's compressed mask block,
 with spongefish's sponge over the inline adapter costs about 1.16M rows, and the
 remaining review revisions save about 0.71M. The `signed_sum` accumulator guard
 costs about 9,000 rows. Recovering the mask compressions through a digest that
 recognizes the mask blocks cost more rows (0.36M) than it saved, because the
 128-byte check runs bytewise in the guest.
+
+### Setup transports
+
+Fibonacci, one inner proof, the same features, at this revision: one freshly
+generated proof, traced in each transport. Setup decode is the
+`deserialize preprocessing` span. Proof and device decoding (about 2.17M rows
+together) and verification (about 82.9M rows) agree across transports to within
+0.1%. Setup bytes count the setup stream before region framing; input
+bytes are the framed public input.
+
+| Transport | Setup bytes | Setup location | Input bytes | Setup decode | Total rows |
+| --- | ---: | --- | ---: | ---: | ---: |
+| Embedded (`--embed`) | 15,507,104 | image | 93,768 | 806,351 | 86,144,848 |
+| Input | 15,578,168 | input | 15,671,936 | 11,905,787 | 241,797,691 |
+| Advice (`--advice`) | 15,638,184 | trusted advice | 144 | 1,437,934 | 86,503,398 |
+| Advice, input mode's setup record | 15,578,168 | trusted advice | 144 | 11,905,988 | 97,020,145 |
+
+Input mode spends 144.8M rows outside the spans: about 137M on the BLAKE2b-512
+pin that authenticates the 15.6 MB setup section, and about 7.7M on the
+zero-suffix scan of its 16 MiB input region at about 7 rows per byte. Advice
+mode needs no pin, because the commitment binds the setup, and its input
+region shrinks to 256 bytes. It lands 358,550 rows (0.42%) above embedded
+mode. Decoding the 4,096 fixed-width rows costs 631,583 more rows than copying
+embedded mode's static table, and the smaller input region saves about 260,000
+rows of zero-suffix scan. The record-layout row puts input mode's setup record
+in the trusted advice instead, measured with a temporary patch: decoding the rows with
+bincode and re-hashing the program costs 10.5M rows more than the compiled
+layout.
+
+A proof with one bit flipped in its Akita opening is rejected after 85,820,939
+rows embedded and 86,179,483 rows in advice mode, where the untrusted advice is a
+93,640-byte framed stream (a 93,614-byte proof record) in a 128 KiB region.
+
+An outer Akita proof of the advice-mode trace would cover a 2^27-row trace: 44
+one-hot columns of 31 variables at K = 16 over a 2^21-row recursion bytecode.
+Its batch would also open the 2^21-word trusted-advice group and the untrusted
+group at the 14-variable (2^14-word) floor. At this revision, grouped schedule planning
+(`AkitaScheme::verifier_setup_from_params` on the parameters
+`preprocess_full_with_advice` builds) admits both advice groups, alone or
+together, with full program preprocessing and the default single-chunk witness
+profile. Two shapes are not admitted. Committed program preprocessing admits
+no advice group: a batch that carries the full-width field-increment group
+allows at most three bounded groups, and the two direct program groups and the
+fused increment group already take them. The 8-chunk, 2-level witness profile
+has no catalog row for the one-hot final shape at all, with or without advice.
 
 ## Levers not taken here
 
@@ -328,6 +417,8 @@ cargo run --release -p recursion --features akita,field-inline,ntt-inline -- \
   generate --example fibonacci --workdir /tmp/recursion
 cargo run --release -p recursion --features akita,field-inline,ntt-inline -- \
   trace --embed --example fibonacci --workdir /tmp/recursion
+cargo run --release -p recursion --features akita,field-inline,ntt-inline -- \
+  trace --advice --example fibonacci --workdir /tmp/recursion
 ```
 
 No CI job runs this flow. It is run by hand, together with the check that the
