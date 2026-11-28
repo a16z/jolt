@@ -203,11 +203,10 @@ impl BytecodeClaimReductionLayout {
         inputs: BytecodeOutputWeightInputs<'_, F>,
         opening_point: &[F],
     ) -> Result<F, PointGeometryError> {
-        let permuted = self
-            .precommitted
-            .cycle_phase_permuted_from_opening_point(opening_point)?;
-        let scale =
-            self.eq_combined(&inputs, &permuted)? * self.precommitted.cycle_phase_skip_scale::<F>();
+        self.precommitted
+            .require_cycle_final_opening_point(opening_point)?;
+        let scale = self.eq_combined(&inputs, opening_point)?
+            * self.precommitted.cycle_phase_skip_scale::<F>();
 
         Ok(scale)
     }
