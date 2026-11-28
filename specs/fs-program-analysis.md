@@ -84,7 +84,11 @@ The analysis uses four stable identities:
 - Hash-function cryptanalysis or statistical testing of challenge distributions.
 - Raw-byte proof fuzzing as the primary strategy; it spends most executions on
   decoding and shape rejection rather than algebraic degrees of freedom.
-- Proof uniqueness or non-malleability when all underlying claims remain true.
+- Value-level, or strong, non-malleability when all underlying claims remain
+  true. This property would prevent a third party from producing a different
+  valid proof for the same statement. The verifier separately enforces
+  encoding-level non-malleability by accepting one byte encoding for each
+  decoded verifier-object value.
 
 ## Evaluation
 

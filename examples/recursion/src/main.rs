@@ -99,26 +99,30 @@ fn read_raw<'a>(buffer: &'a [u8], offset: &mut usize) -> Result<&'a [u8], String
     Ok(bytes)
 }
 
-fn read_record<T: DeserializeOwned>(buffer: &[u8], offset: &mut usize) -> Result<T, String> {
+fn read_record<T: DeserializeOwned + Serialize>(
+    buffer: &[u8],
+    offset: &mut usize,
+) -> Result<T, String> {
     let bytes = read_raw(buffer, offset)?;
-    let (value, consumed) = bincode::serde::decode_from_slice(bytes, bincode::config::standard())
-        .map_err(|error| error.to_string())?;
-    assert_eq!(consumed, bytes.len(), "record decoder left trailing bytes");
-    Ok(value)
+    jolt_sdk::jolt_verifier::deserialize_verifier_object(bytes).map_err(|error| error.to_string())
 }
 
 impl RecordLimits {
     // Image construction already trusts these files. Runtime input never sets limits.
-    fn read_record<T: DeserializeOwned>(
+    fn read_record<T: DeserializeOwned + Serialize>(
         &mut self,
         buffer: &[u8],
         offset: &mut usize,
     ) -> Result<T, String> {
         let bytes = read_raw(buffer, offset)?;
         let mut remaining = usize::MAX;
-        let (value, consumed) =
+        let (value, _) =
             bounded::decode(bytes, &mut remaining).map_err(|error| error.to_string())?;
-        assert_eq!(consumed, bytes.len(), "record decoder left trailing bytes");
+        let canonical = bincode::serde::encode_to_vec(&value, bincode::config::standard())
+            .map_err(|error| error.to_string())?;
+        if canonical != bytes {
+            return Err("verifier record has a non-canonical encoding".to_string());
+        }
         let charged = usize::MAX - remaining;
         // Reserve headroom for other honest proofs with the same image's setup.
         let allocation = charged

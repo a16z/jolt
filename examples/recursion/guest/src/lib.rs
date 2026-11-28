@@ -155,12 +155,12 @@ fn verify_records(bytes: &[u8]) -> Result<u32, RecordError> {
             verifier_preprocessing
                 .pcs_setup
                 .attach_prepared_payloads(&payloads)
-                .map_err(|_| RecordError),
+                .map_err(|_| RecordError::InvalidRecord),
         )?;
     }
     #[cfg(not(feature = "akita"))]
     if !payloads.is_empty() {
-        return setup_result(Err(RecordError));
+        return setup_result(Err(RecordError::InvalidRecord));
     }
     end_cycle_tracking("deserialize preprocessing");
 
